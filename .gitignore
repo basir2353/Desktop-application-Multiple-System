@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+target/
+*.tsbuildinfo
+.turbo/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.local
+
+# Logs & test artifacts
+*.log
+npm-debug.log*
+pnpm-debug.log*
+coverage/
+
+# OS & editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# Database tooling
+.drizzle/
+
+# API runtime uploads (keep directory, ignore files)
+services/api/data/uploads/*
+!services/api/data/uploads/.gitkeep
+
+# Expo / React Native
+.expo/
+web-build/
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*

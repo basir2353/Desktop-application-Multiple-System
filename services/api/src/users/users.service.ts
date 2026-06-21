@@ -1,0 +1,458 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from "@nestjs/common";
+import { and, eq, isNull } from "drizzle-orm";
+import {
+  POPS_CAPABILITIES,
+  POPS_ROLE_TEMPLATES,
+  permissionsForPopsRole,
+  type AcceptInvite,
+  type CreateOrgUser,
+  type InviteOrgUser,
+  type UpdateOrgUser,
+} from "@platform/contracts";
+import {
+  organizationMemberships,
+  organizations,
+  userInvites,
+  users,
+  type PlatformPgDb,
+} from "@platform/database-pg";
+import * as bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
+import { ConfigService } from "@nestjs/config";
+import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { MailService } from "../mail/mail.service";
+
+const STAFF_SEEDS = [
+  {
+    email: "cashier1@platform.local",
+    password: "changeme-please-01",
+    role: "cashier",
+    branchScope: "ISB-GT",
+    pinRequired: true,
+  },
+  {
+    email: "manager1@platform.local",
+    password: "changeme-please-01",
+    role: "manager",
+    branchScope: "ISB-GT",
+    pinRequired: true,
+  },
+  {
+    email: "accountant1@platform.local",
+    password: "changeme-please-01",
+    role: "accountant",
+    branchScope: "ISB-GT",
+    pinRequired: false,
+  },
+  {
+    email: "kitchen1@platform.local",
+    password: "changeme-please-01",
+    role: "kitchen",
+    branchScope: "ISB-GT",
+    pinRequired: true,
+  },
+  {
+    email: "waiter1@platform.local",
+    password: "changeme-please-01",
+    role: "waiter",
+    branchScope: "ISB-GT",
+    pinRequired: false,
+  },
+  {
+    email: "waiter2@platform.local",
+    password: "changeme-please-01",
+    role: "waiter",
+    branchScope: "ISB-GT",
+    pinRequired: false,
+  },
+  {
+    email: "hr1@platform.local",
+    password: "changeme-please-01",
+    role: "hr",
+    branchScope: "ISB-GT",
+    pinRequired: false,
+  },
+] as const;
+
+@Injectable()
+export class UsersService implements OnModuleInit {
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PlatformPgDb,
+    private readonly mail: MailService,
+    private readonly config: ConfigService,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.upgradeOwnerPermissions();
+      await this.seedStaffIfMissing();
+    } catch (err) {
+      this.logger.warn(
+        `User bootstrap skipped — run pnpm db:push if the schema changed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  async upgradeOwnerPermissions(): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(organizationMemberships)
+      .where(eq(organizationMemberships.role, "owner"));
+
+    for (const row of rows) {
+      const perms = new Set(row.permissions);
+      perms.add("pops.users.manage");
+      perms.add("pops.menu.manage");
+      perms.add("*");
+      await this.db
+        .update(organizationMemberships)
+        .set({
+          permissions: [...perms],
+          branchScope: row.branchScope ?? "all",
+        })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, row.organizationId),
+            eq(organizationMemberships.userId, row.userId),
+          ),
+        );
+    }
+  }
+
+  async seedStaffIfMissing(): Promise<void> {
+    const org = await this.db.select({ id: organizations.id }).from(organizations).limit(1);
+    const organizationId = org[0]?.id;
+    if (!organizationId) return;
+
+    for (const seed of STAFF_SEEDS) {
+      const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, seed.email)).limit(1);
+      let userId = existing[0]?.id;
+
+      if (!userId) {
+        const passwordHash = await bcrypt.hash(seed.password, 12);
+        const [user] = await this.db.insert(users).values({ email: seed.email, passwordHash }).returning();
+        if (!user) continue;
+        userId = user.id;
+      }
+
+      const membership = await this.db
+        .select({ userId: organizationMemberships.userId })
+        .from(organizationMemberships)
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, userId),
+          ),
+        )
+        .limit(1);
+
+      if (membership.length > 0) continue;
+
+      await this.db.insert(organizationMemberships).values({
+        organizationId,
+        userId,
+        role: seed.role,
+        permissions: permissionsForPopsRole(seed.role),
+        branchScope: seed.branchScope,
+        pinRequired: seed.pinRequired,
+        lastActivityAt: new Date(Date.now() - (seed.role === "cashier" ? 9 * 60_000 : 11 * 60_000)),
+      });
+    }
+  }
+
+  getAccessControl() {
+    return {
+      capabilities: POPS_CAPABILITIES,
+      roles: POPS_ROLE_TEMPLATES.filter((r) => ["admin", "cashier", "kitchen", "manager"].includes(r.id)),
+    };
+  }
+
+  async listUsers(organizationId: string) {
+    const rows = await this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        role: organizationMemberships.role,
+        branchScope: organizationMemberships.branchScope,
+        pinRequired: organizationMemberships.pinRequired,
+        permissions: organizationMemberships.permissions,
+        lastActivityAt: organizationMemberships.lastActivityAt,
+      })
+      .from(organizationMemberships)
+      .innerJoin(users, eq(users.id, organizationMemberships.userId))
+      .where(eq(organizationMemberships.organizationId, organizationId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      role: formatRoleLabel(row.role),
+      branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+      pinRequired: row.pinRequired,
+      permissions: row.permissions,
+      lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
+    }));
+  }
+
+  async createUser(organizationId: string, input: CreateOrgUser) {
+    const email = normalizeEmail(input.email);
+    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing.length > 0) throw new ConflictException(`User already exists: ${email}`);
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+    if (!user) throw new BadRequestException("Failed to create user");
+
+    const branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+
+    await this.db.insert(organizationMemberships).values({
+      organizationId,
+      userId: user.id,
+      role: input.role,
+      permissions: permissionsForPopsRole(input.role),
+      branchScope,
+      pinRequired: input.pinRequired,
+      lastActivityAt: null,
+    });
+
+    return this.getUser(organizationId, user.id);
+  }
+
+  async updateUser(organizationId: string, userId: string, input: UpdateOrgUser) {
+    const membership = await this.getMembership(organizationId, userId);
+
+    if (membership.role === "owner" && input.role && input.role !== "admin") {
+      throw new BadRequestException("Cannot change the organization owner role");
+    }
+
+    if (input.password) {
+      const passwordHash = await bcrypt.hash(input.password, 12);
+      await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    }
+
+    const patch: Partial<typeof organizationMemberships.$inferInsert> = {};
+    if (input.role !== undefined) {
+      patch.role = input.role;
+      patch.permissions = permissionsForPopsRole(input.role);
+    }
+    if (input.branchScope !== undefined) {
+      patch.branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+    }
+    if (input.pinRequired !== undefined) patch.pinRequired = input.pinRequired;
+
+    if (Object.keys(patch).length > 0) {
+      await this.db
+        .update(organizationMemberships)
+        .set(patch)
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, userId),
+          ),
+        );
+    }
+
+    return this.getUser(organizationId, userId);
+  }
+
+  async resetPassword(organizationId: string, userId: string, password: string) {
+    await this.getMembership(organizationId, userId);
+    const passwordHash = await bcrypt.hash(password, 12);
+    await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    return { ok: true };
+  }
+
+  async listPendingInvites(organizationId: string) {
+    const rows = await this.db
+      .select()
+      .from(userInvites)
+      .where(and(eq(userInvites.organizationId, organizationId), isNull(userInvites.acceptedAt)));
+
+    return rows
+      .filter((row) => row.expiresAt.getTime() > Date.now())
+      .map((row) => ({
+        id: row.id,
+        email: row.email,
+        role: formatRoleLabel(row.role),
+        branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+        pinRequired: row.pinRequired,
+        expiresAt: row.expiresAt.toISOString(),
+        createdAt: row.createdAt.toISOString(),
+      }));
+  }
+
+  async inviteUser(organizationId: string, input: InviteOrgUser) {
+    const email = normalizeEmail(input.email);
+    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing.length > 0) throw new ConflictException(`User already exists: ${email}`);
+
+    const pending = await this.db
+      .select({ id: userInvites.id })
+      .from(userInvites)
+      .where(
+        and(
+          eq(userInvites.organizationId, organizationId),
+          eq(userInvites.email, email),
+          isNull(userInvites.acceptedAt),
+        ),
+      )
+      .limit(1);
+
+    if (pending.length > 0) throw new ConflictException(`An invite is already pending for ${email}`);
+
+    const token = randomBytes(32).toString("base64url");
+    const tokenHash = sha256Hex(token);
+    const expiresAt = new Date(Date.now() + 7 * 86_400_000);
+    const branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+
+    const [org] = await this.db
+      .select({ name: organizations.name })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
+
+    await this.db.insert(userInvites).values({
+      organizationId,
+      email,
+      role: input.role,
+      branchScope,
+      pinRequired: input.pinRequired,
+      tokenHash,
+      expiresAt,
+    });
+
+    const publicUrl = (this.config.get<string>("APP_PUBLIC_URL") ?? "http://127.0.0.1:1420").replace(/\/$/, "");
+    const inviteUrl = `${publicUrl}/accept-invite?token=${encodeURIComponent(token)}`;
+    const roleLabel = formatRoleLabel(input.role);
+
+    const emailSent = await this.mail.sendUserInvite({
+      to: email,
+      inviteUrl,
+      roleLabel,
+      organizationName: org?.name ?? "your organization",
+    });
+
+    return { email, emailSent, inviteUrl, expiresAt: expiresAt.toISOString() };
+  }
+
+  async getInvitePreview(token: string) {
+    const invite = await this.findValidInvite(token);
+    const [org] = await this.db
+      .select({ name: organizations.name })
+      .from(organizations)
+      .where(eq(organizations.id, invite.organizationId))
+      .limit(1);
+
+    return {
+      email: invite.email,
+      role: formatRoleLabel(invite.role),
+      branchScope: invite.branchScope === "all" ? "All" : invite.branchScope,
+      organizationName: org?.name ?? "Organization",
+      expiresAt: invite.expiresAt.toISOString(),
+    };
+  }
+
+  async acceptInvite(input: AcceptInvite) {
+    const invite = await this.findValidInvite(input.token);
+    const email = invite.email;
+
+    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing.length > 0) throw new ConflictException("An account with this email already exists");
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+    if (!user) throw new BadRequestException("Failed to create account");
+
+    await this.db.insert(organizationMemberships).values({
+      organizationId: invite.organizationId,
+      userId: user.id,
+      role: invite.role,
+      permissions: permissionsForPopsRole(invite.role),
+      branchScope: invite.branchScope,
+      pinRequired: invite.pinRequired,
+      lastActivityAt: new Date(),
+    });
+
+    await this.db
+      .update(userInvites)
+      .set({ acceptedAt: new Date() })
+      .where(eq(userInvites.id, invite.id));
+
+    return { email };
+  }
+
+  private async findValidInvite(token: string) {
+    const tokenHash = sha256Hex(token);
+    const rows = await this.db
+      .select()
+      .from(userInvites)
+      .where(and(eq(userInvites.tokenHash, tokenHash), isNull(userInvites.acceptedAt)))
+      .limit(1);
+
+    const invite = rows[0];
+    if (!invite) throw new NotFoundException("Invite not found or already used");
+    if (invite.expiresAt.getTime() < Date.now()) throw new BadRequestException("Invite has expired");
+    return invite;
+  }
+
+  async touchActivity(userId: string, organizationId: string): Promise<void> {
+    await this.db
+      .update(organizationMemberships)
+      .set({ lastActivityAt: new Date() })
+      .where(
+        and(
+          eq(organizationMemberships.userId, userId),
+          eq(organizationMemberships.organizationId, organizationId),
+        ),
+      );
+  }
+
+  private async getUser(organizationId: string, userId: string) {
+    const rows = await this.listUsers(organizationId);
+    const user = rows.find((u) => u.id === userId);
+    if (!user) throw new NotFoundException("User not found");
+    return user;
+  }
+
+  private async getMembership(organizationId: string, userId: string) {
+    const rows = await this.db
+      .select()
+      .from(organizationMemberships)
+      .where(
+        and(
+          eq(organizationMemberships.organizationId, organizationId),
+          eq(organizationMemberships.userId, userId),
+        ),
+      )
+      .limit(1);
+
+    const membership = rows[0];
+    if (!membership) throw new NotFoundException("User not found in organization");
+    return membership;
+  }
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function normalizeEmail(raw: string): string {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed.includes("@")) return trimmed;
+  return `${trimmed}@platform.local`;
+}
+
+function formatRoleLabel(role: string): string {
+  if (role === "owner") return "Admin";
+  const template = POPS_ROLE_TEMPLATES.find((r) => r.id === role);
+  return template?.label ?? role.charAt(0).toUpperCase() + role.slice(1);
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "../config/tsconfig/base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}

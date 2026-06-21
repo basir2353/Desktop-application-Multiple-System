@@ -1,0 +1,23 @@
+import { sql } from "drizzle-orm";
+import { boolean, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { organizations } from "./organizations";
+import { users } from "./users";
+
+export const organizationMemberships = pgTable(
+  "organization_memberships",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    permissions: jsonb("permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    branchScope: text("branch_scope").notNull().default("all"),
+    pinRequired: boolean("pin_required").notNull().default(false),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.organizationId, t.userId] })],
+);

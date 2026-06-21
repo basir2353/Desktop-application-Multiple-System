@@ -1,0 +1,35 @@
+{
+  "name": "platform",
+  "description": "Offline-first desktop platform with NestJS API, Tauri launcher, and Expo waiter app",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "dev:stack": "turbo run dev --parallel --filter=@platform/api --filter=@platform/module-sample --filter=@platform/launcher",
+    "dev:launcher": "pnpm --filter @platform/launcher dev",
+    "dev:api": "pnpm --filter @platform/api dev",
+    "dev:module:sample": "pnpm --filter @platform/module-sample dev",
+    "dev:waiter-mobile": "pnpm --filter @platform/waiter-mobile dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @platform/database-pg generate",
+    "db:migrate": "pnpm --filter @platform/database-pg migrate",
+    "db:push": "dotenv -e .env -- pnpm --filter @platform/database-pg push",
+    "db:studio": "pnpm --filter @platform/database-pg studio"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^8.0.0",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "18.3.1",
+      "react-dom": "18.3.1"
+    }
+  }
+}

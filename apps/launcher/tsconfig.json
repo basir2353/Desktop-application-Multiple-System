@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@platform/auth-client": ["../../packages/auth-client/src/index.ts"],
+      "@platform/contracts": ["../../packages/contracts/src/index.ts"],
+      "@platform/database-sqlite": ["../../packages/database-sqlite/src/index.ts"],
+      "@platform/permissions": ["../../packages/permissions/src/index.ts"],
+      "@platform/shell-sdk": ["../../packages/shell-sdk/src/index.ts"],
+      "@platform/sync-engine": ["../../packages/sync-engine/src/index.ts"],
+      "@platform/shared-types": ["../../packages/shared-types/src/index.ts"],
+      "@platform/ui": ["../../packages/ui/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+}
