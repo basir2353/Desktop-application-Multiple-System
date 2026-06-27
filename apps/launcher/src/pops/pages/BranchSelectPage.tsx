@@ -3,10 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
+import { useSystemStore } from "../../stores/systemStore";
+import { getBusinessSystem, getErpEntryPath } from "../../lib/businessSystems";
+import { PHARMACY_ROLE_LABELS } from "../../pharmacy/spec/nav";
+import { STORE_ROLE_LABELS } from "../../store/spec/nav";
 import { createPopsBranch, fetchPopsBranches } from "../api/operations";
 import { usePopsStore, type PopsBranch, type PopsRole } from "../../stores/popsStore";
 
-const roles: { id: PopsRole; label: string }[] = [
+const restaurantRoles: { id: PopsRole; label: string }[] = [
   { id: "admin", label: "Admin" },
   { id: "manager", label: "Manager" },
   { id: "cashier", label: "Cashier" },
@@ -15,6 +19,22 @@ const roles: { id: PopsRole; label: string }[] = [
   { id: "accountant", label: "Accountant" },
   { id: "hr", label: "HR" },
   { id: "rider", label: "Rider" },
+];
+
+const pharmacyRoles: { id: PopsRole; label: string }[] = [
+  { id: "admin", label: PHARMACY_ROLE_LABELS.admin! },
+  { id: "manager", label: PHARMACY_ROLE_LABELS.manager! },
+  { id: "cashier", label: PHARMACY_ROLE_LABELS.cashier! },
+  { id: "accountant", label: PHARMACY_ROLE_LABELS.pharmacist! },
+  { id: "hr", label: PHARMACY_ROLE_LABELS.inventory_manager! },
+];
+
+const storeRoles: { id: PopsRole; label: string }[] = [
+  { id: "admin", label: STORE_ROLE_LABELS.super_admin! },
+  { id: "manager", label: STORE_ROLE_LABELS.inventory_manager! },
+  { id: "cashier", label: STORE_ROLE_LABELS.staff! },
+  { id: "accountant", label: STORE_ROLE_LABELS.accountant! },
+  { id: "hr", label: STORE_ROLE_LABELS.warehouse_manager! },
 ];
 
 function toPopsBranch(row: { id: string; code: string; name: string; city: string }): PopsBranch {
@@ -31,6 +51,9 @@ export function BranchSelectPage(): JSX.Element {
   const setPinSession = usePopsStore((s) => s.setPinSession);
   const displayRole = usePopsStore((s) => s.displayRole);
   const pinSession = usePopsStore((s) => s.pinSession);
+  const systemId = useSystemStore((s) => s.systemId);
+  const system = getBusinessSystem(systemId ?? "restaurant");
+  const roles = systemId === "pharmacy" ? pharmacyRoles : systemId === "general-store" ? storeRoles : restaurantRoles;
 
   const branchesQuery = useQuery({
     queryKey: ["operations", "branches", accessToken],
@@ -97,15 +120,17 @@ export function BranchSelectPage(): JSX.Element {
 
   function continueToDashboard(): void {
     if (selected) setBranch(selected);
-    navigate("/pops/dashboard", { replace: true });
+    navigate(getErpEntryPath(systemId ?? "restaurant", true));
   }
 
   return (
     <div className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
       <div className="mx-auto max-w-3xl">
         <header className="text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-400/90">POPS</p>
-          <h1 className="mt-2 text-2xl font-semibold text-white">Restaurant ERP</h1>
+          <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${system.accentClass}`}>
+            {system.shortName}
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">{system.name}</h1>
           <p className="mt-2 text-sm text-slate-400">Choose a branch to load permissions, pricing, and inventory scope.</p>
         </header>
 

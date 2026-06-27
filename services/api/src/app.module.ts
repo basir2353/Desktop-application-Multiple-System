@@ -18,6 +18,8 @@ import { MenuModule } from "./menu/menu.module";
 import { OperationsModule } from "./operations/operations.module";
 import { SyncModule } from "./sync/sync.module";
 import { ClosingModule } from "./closing/closing.module";
+import { PharmacyModule } from "./pharmacy/pharmacy.module";
+import { StoreModule } from "./store/store.module";
 import { SecurityModule } from "./security/security.module";
 import { TablesModule } from "./tables/tables.module";
 import { UsersModule } from "./users/users.module";
@@ -49,6 +51,8 @@ import { UsersModule } from "./users/users.module";
     SyncModule,
     SecurityModule,
     ClosingModule,
+    PharmacyModule,
+    StoreModule,
   ],
 })
 export class AppModule {}

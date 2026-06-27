@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { DashboardPage } from "./pages/DashboardPage";
+import { SystemSelectPage } from "./pages/SystemSelectPage";
 import { AcceptInvitePage } from "./pages/AcceptInvitePage";
 import { LoginPage } from "./pages/LoginPage";
+import { SystemGate } from "./components/SystemGate";
 import { useSessionStore } from "./stores/sessionStore";
 import { bootstrapSession } from "./lib/authFetch";
 import { useSessionReady } from "./hooks/useSessionReady";
@@ -73,7 +75,43 @@ import { SettingsPage } from "./pops/pages/modules/SettingsPage";
 import { SyncPage } from "./pops/pages/modules/SyncPage";
 import { TaxPage } from "./pops/pages/modules/TaxPage";
 import { WaiterPage } from "./pops/pages/modules/WaiterPage";
+import { PharmacyDashboardPage } from "./pharmacy/pages/PharmacyDashboardPage";
+import { MedicinesPage } from "./pharmacy/pages/MedicinesPage";
+import { PharmacyInventoryPage } from "./pharmacy/pages/PharmacyInventoryPage";
+import { PharmacyExpiryPage } from "./pharmacy/pages/PharmacyExpiryPage";
+import { PharmacyPosPage } from "./pharmacy/pages/PharmacyPosPage";
+import { PrescriptionsPage } from "./pharmacy/pages/PrescriptionsPage";
+import { PharmacyCustomersPage } from "./pharmacy/pages/PharmacyCustomersPage";
+import { PharmacyDoctorsPage } from "./pharmacy/pages/PharmacyDoctorsPage";
+import { PharmacyFinancePage } from "./pharmacy/pages/PharmacyFinancePage";
+import { PharmacyReportsPage } from "./pharmacy/pages/PharmacyReportsPage";
+import { PharmacyStaffPanelPage } from "./pharmacy/pages/PharmacyStaffPanelPage";
+import { PharmacyAdminPanelPage } from "./pharmacy/pages/PharmacyAdminPanelPage";
+import { PharmacySuppliersPage } from "./pharmacy/pages/PharmacySuppliersPage";
+import { PharmacyStaffPage } from "./pharmacy/pages/PharmacyStaffPage";
+import {
+  PharmacyPurchaseStatementPage,
+  PharmacySupplierPaymentsPage,
+  PharmacySalesManagementPage,
+  PharmacySalesStatementPage,
+  PharmacyProfitLossPage,
+  PharmacySalesMonthPage,
+  PharmacyExpiredProductsPage,
+} from "./pharmacy/pages/PharmacyFeaturePages";
+import { StoreDashboardPage } from "./store/pages/StoreDashboardPage";
+import { StoreProductsPage } from "./store/pages/StoreProductsPage";
+import { StoreCategoriesPage } from "./store/pages/StoreCategoriesPage";
+import { StoreInventoryPage } from "./store/pages/StoreInventoryPage";
+import { StoreStockMovementPage } from "./store/pages/StoreStockMovementPage";
+import { StoreBatchesPage, StoreBarcodePage } from "./store/pages/StoreBatchesPage";
+import { StorePosPage } from "./store/pages/StorePosPage";
+import { StoreSuppliersPage } from "./store/pages/StoreSuppliersPage";
+import { StoreCustomersPage, StoreSalesPage } from "./store/pages/StoreCustomersPage";
+import { StoreWarehousesPage, StoreTransfersPage, StoreAdjustmentsPage, StoreAuditsPage } from "./store/pages/StoreWarehousePages";
+import { StorePurchaseRequisitionsPage, StorePurchaseOrdersPage, StoreGrnPage } from "./store/pages/StorePurchasePages";
+import { StoreReportsPage, StoreStockReportPage, StoreProfitLossPage, StoreInventoryValuationPage } from "./store/pages/StoreReportsPage";
 import { HistoryNavBar } from "./components/HistoryNavBar";
+import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { screenCenterClass } from "./pops/lib/themeClasses";
@@ -112,14 +150,16 @@ export function App(): JSX.Element {
   return (
     <ThemeProvider>
       <BrowserRouter>
+        <NavigationHistoryProvider>
         <>
           <HistoryNavBar />
           <RootErrorBoundary>
           <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
+          <Route path="/" element={<SystemSelectPage />} />
           <Route
-            path="/"
+            path="/platform"
             element={
               <Protected>
                 <DashboardPage />
@@ -130,7 +170,7 @@ export function App(): JSX.Element {
             path="/pops"
             element={
               <Protected>
-                <Outlet />
+                <SystemGate />
               </Protected>
             }
           >
@@ -200,6 +240,49 @@ export function App(): JSX.Element {
                 <Route path="security" element={<SecurityPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="closing" element={<ClosingPage />} />
+                <Route path="pharmacy/dashboard" element={<PharmacyDashboardPage />} />
+                <Route path="pharmacy/medicines" element={<MedicinesPage />} />
+                <Route path="pharmacy/inventory" element={<PharmacyInventoryPage />} />
+                <Route path="pharmacy/expiry" element={<PharmacyExpiryPage />} />
+                <Route path="pharmacy/pos" element={<PharmacyPosPage />} />
+                <Route path="pharmacy/prescriptions" element={<PrescriptionsPage />} />
+                <Route path="pharmacy/customers" element={<PharmacyCustomersPage />} />
+                <Route path="pharmacy/doctors" element={<PharmacyDoctorsPage />} />
+                <Route path="pharmacy/finance" element={<PharmacyFinancePage />} />
+                <Route path="pharmacy/reports" element={<PharmacyReportsPage />} />
+                <Route path="pharmacy/staff-panel" element={<PharmacyStaffPanelPage />} />
+                <Route path="pharmacy/admin-panel" element={<PharmacyAdminPanelPage />} />
+                <Route path="pharmacy/suppliers" element={<PharmacySuppliersPage />} />
+                <Route path="pharmacy/staff" element={<PharmacyStaffPage />} />
+                <Route path="pharmacy/purchase-statement" element={<PharmacyPurchaseStatementPage />} />
+                <Route path="pharmacy/supplier-payments" element={<PharmacySupplierPaymentsPage />} />
+                <Route path="pharmacy/sales" element={<PharmacySalesManagementPage />} />
+                <Route path="pharmacy/sales-statement" element={<PharmacySalesStatementPage />} />
+                <Route path="pharmacy/sales-month" element={<PharmacySalesMonthPage />} />
+                <Route path="pharmacy/profit-loss" element={<PharmacyProfitLossPage />} />
+                <Route path="pharmacy/expired" element={<PharmacyExpiredProductsPage />} />
+                <Route path="store/dashboard" element={<StoreDashboardPage />} />
+                <Route path="store/products" element={<StoreProductsPage />} />
+                <Route path="store/categories" element={<StoreCategoriesPage />} />
+                <Route path="store/inventory" element={<StoreInventoryPage />} />
+                <Route path="store/stock-movement" element={<StoreStockMovementPage />} />
+                <Route path="store/batches" element={<StoreBatchesPage />} />
+                <Route path="store/barcode" element={<StoreBarcodePage />} />
+                <Route path="store/pos" element={<StorePosPage />} />
+                <Route path="store/suppliers" element={<StoreSuppliersPage />} />
+                <Route path="store/customers" element={<StoreCustomersPage />} />
+                <Route path="store/sales" element={<StoreSalesPage />} />
+                <Route path="store/warehouses" element={<StoreWarehousesPage />} />
+                <Route path="store/transfers" element={<StoreTransfersPage />} />
+                <Route path="store/adjustments" element={<StoreAdjustmentsPage />} />
+                <Route path="store/audits" element={<StoreAuditsPage />} />
+                <Route path="store/purchase/requisitions" element={<StorePurchaseRequisitionsPage />} />
+                <Route path="store/purchase/orders" element={<StorePurchaseOrdersPage />} />
+                <Route path="store/purchase/grn" element={<StoreGrnPage />} />
+                <Route path="store/reports" element={<StoreReportsPage />} />
+                <Route path="store/reports/stock" element={<StoreStockReportPage />} />
+                <Route path="store/reports/profit-loss" element={<StoreProfitLossPage />} />
+                <Route path="store/reports/inventory" element={<StoreInventoryValuationPage />} />
               </Route>
             </Route>
           </Route>
@@ -207,6 +290,7 @@ export function App(): JSX.Element {
           </Routes>
           </RootErrorBoundary>
         </>
+        </NavigationHistoryProvider>
       </BrowserRouter>
     </ThemeProvider>
   );

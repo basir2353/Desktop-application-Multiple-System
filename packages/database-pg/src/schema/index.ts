@@ -12,6 +12,8 @@ export * from "./modules";
 export * from "./operations";
 export * from "./organizations";
 export * from "./closing";
+export * from "./pharmacy";
+export * from "./store";
 export * from "./security";
 export * from "./refresh-tokens";
 export * from "./users";

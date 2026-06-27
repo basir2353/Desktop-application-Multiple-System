@@ -12,5 +12,7 @@ export * from "./multi-branch";
 export * from "./tables";
 export * from "./module-manifest";
 export * from "./operations";
+export * from "./pharmacy";
+export * from "./store";
 export * from "./security";
 export * from "./users";

@@ -1,8 +1,10 @@
 import { Button } from "@platform/ui";
 import { useEffect, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
+import { getBusinessSystem } from "../../lib/businessSystems";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
+import { useSystemStore } from "../../stores/systemStore";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { PopsAlertCenter } from "../components/PopsAlertCenter";
 import { PopsMobileNav, PopsSidebarNav } from "./PopsNavMenu";
@@ -53,6 +55,8 @@ export function PopsShell(): JSX.Element {
   const clearBranch = usePopsStore((s) => s.clearBranch);
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
+  const systemId = useSystemStore((s) => s.systemId);
+  const system = getBusinessSystem(systemId ?? "restaurant");
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarVisible);
 
   useEffect(() => {
@@ -66,7 +70,7 @@ export function PopsShell(): JSX.Element {
   function signOut(): void {
     clearSession();
     clearBranch();
-    navigate("/login", { replace: true });
+    navigate("/", { replace: true });
   }
 
   return (
@@ -76,14 +80,14 @@ export function PopsShell(): JSX.Element {
           <div className="shrink-0 border-b border-slate-600 bg-slate-800 px-4 py-4">
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 text-sm font-bold text-slate-950 shadow-md shadow-amber-500/30">
-                  P
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${system.gradientClass} text-sm font-bold text-slate-950 shadow-md`}>
+                  {system.iconLetter}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-400">
-                    POPS
+                  <div className={`text-[11px] font-bold uppercase tracking-[0.22em] ${system.accentClass}`}>
+                    {system.shortName}
                   </div>
-                  <div className="truncate text-sm font-bold text-white">Restaurant ERP</div>
+                  <div className="truncate text-sm font-bold text-white">{system.name}</div>
                 </div>
               </div>
               <button
@@ -145,7 +149,10 @@ export function PopsShell(): JSX.Element {
               Switch branch
             </Button>
             <Button variant="ghost" className="text-xs" onClick={() => navigate("/")}>
-              Platform shell
+              Switch system
+            </Button>
+            <Button variant="ghost" className="text-xs" onClick={() => navigate("/platform")}>
+              Module runtime
             </Button>
             <Button variant="ghost" className="text-xs" onClick={signOut}>
               Sign out

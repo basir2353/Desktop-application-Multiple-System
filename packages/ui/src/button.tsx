@@ -14,7 +14,7 @@ export function Button({ className, variant = "primary", ...props }: ButtonProps
         variant === "primary" &&
           "bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600",
         variant === "ghost" &&
-          "bg-transparent text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800",
+          "bg-transparent text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-200 dark:hover:bg-slate-800",
         className,
       )}
       {...props}

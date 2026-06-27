@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { getNavItemsForSystem } from "../../lib/businessSystems";
+import { useSystemStore } from "../../stores/systemStore";
 import { amberPillActiveClass, pillInactiveClass } from "../lib/themeClasses";
-import { popsNavItems, type PopsNavGroup, type PopsNavItem } from "../spec/modules";
+import { type PopsNavGroup, type PopsNavItem } from "../spec/modules";
 import { PopsNavIcon } from "./popsNavIcons";
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -142,10 +144,20 @@ function renderMobileItem(item: PopsNavItem): JSX.Element {
   return <PopsNavGroupMobile key={item.label} group={item} />;
 }
 
+function useSystemNavItems(): PopsNavItem[] {
+  const systemId = useSystemStore((s) => s.systemId);
+  return useMemo(
+    () => getNavItemsForSystem(systemId ?? "restaurant"),
+    [systemId],
+  );
+}
+
 export function PopsSidebarNav(): JSX.Element {
-  return <div className="space-y-0.5">{popsNavItems.map(renderSidebarItem)}</div>;
+  const navItems = useSystemNavItems();
+  return <div className="space-y-0.5">{navItems.map(renderSidebarItem)}</div>;
 }
 
 export function PopsMobileNav(): JSX.Element {
-  return <>{popsNavItems.map(renderMobileItem)}</>;
+  const navItems = useSystemNavItems();
+  return <>{navItems.map(renderMobileItem)}</>;
 }

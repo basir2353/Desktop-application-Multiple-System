@@ -1,6 +1,6 @@
 {
   "name": "platform",
-  "description": "Offline-first desktop platform with NestJS API, Tauri launcher, and Expo waiter app",
+  "description": "Multi-system desktop ERP — Restaurant (POPS), Pharmacy, and General Store with NestJS API and Tauri launcher",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "engines": {

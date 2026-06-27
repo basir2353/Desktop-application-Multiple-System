@@ -33,6 +33,16 @@ Default seeded admin credentials are in `.env.example`:
 - Email: `admin@platform.local`
 - Password: `changeme-please-01`
 
+## Multi-system ERP
+
+After login, choose a business system on the home screen:
+
+1. **Restaurant ERP (POPS)** — full restaurant stack
+2. **Pharmacy ERP** — `/pops/pharmacy/*` routes and `/v1/pharmacy` API
+3. **General Store ERP** — `/pops/store/*` routes and `/v1/store` API
+
+Select a branch, then use the sidebar for that system's modules. Run `pnpm db:push` after pulling schema changes so pharmacy and store tables exist.
+
 ## Common commands
 
 | Command | Purpose |
