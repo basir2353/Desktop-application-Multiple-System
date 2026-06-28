@@ -6,10 +6,11 @@ import { fieldInputClass, fieldSelectClass } from "../lib/themeClasses";
 export function useInventoryAccess() {
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
-  const canManage =
+  const canManage = Boolean(
     claims?.permissions.includes("*") ||
-    claims?.permissions.includes("pops.inventory.manage") ||
-    claims?.permissions.includes("pops.menu.manage");
+      claims?.permissions.includes("pops.inventory.manage") ||
+      claims?.permissions.includes("pops.menu.manage"),
+  );
 
   return { branch, canManage };
 }

@@ -10,7 +10,9 @@ function defaultApiBaseUrl(): string {
 }
 
 export function getApiBaseUrl(): string {
-  const fromEnv = process.env.EXPO_PUBLIC_API_BASE_URL;
+  const fromEnv = (
+    globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } }
+  ).process?.env?.EXPO_PUBLIC_API_BASE_URL;
   if (fromEnv?.trim()) return fromEnv.replace(/\/$/, "");
 
   const extra = Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined;
