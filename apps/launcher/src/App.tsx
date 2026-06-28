@@ -98,6 +98,13 @@ import {
   PharmacySalesMonthPage,
   PharmacyExpiredProductsPage,
 } from "./pharmacy/pages/PharmacyFeaturePages";
+import {
+  PharmacyControlledDrugsPage,
+  PharmacyKhataPage,
+  PharmacyRefillRemindersPage,
+  PharmacyShiftPage,
+  PharmacyTaxCompliancePage,
+} from "./pharmacy/pages/PharmacyExtendedPages";
 import { StoreDashboardPage } from "./store/pages/StoreDashboardPage";
 import { StoreProductsPage } from "./store/pages/StoreProductsPage";
 import { StoreCategoriesPage } from "./store/pages/StoreCategoriesPage";
@@ -105,6 +112,18 @@ import { StoreInventoryPage } from "./store/pages/StoreInventoryPage";
 import { StoreStockMovementPage } from "./store/pages/StoreStockMovementPage";
 import { StoreBatchesPage, StoreBarcodePage } from "./store/pages/StoreBatchesPage";
 import { StorePosPage } from "./store/pages/StorePosPage";
+import { StorePromotionsPage, StoreShiftPage, StoreShortcutsPage } from "./store/pages/StoreExtendedPages";
+import { StoreCustomerDisplayPage } from "./store/pages/StoreCustomerDisplayPage";
+import { StorePriceCheckerPage } from "./store/pages/StorePriceCheckerPage";
+import {
+  StoreCouponsPage,
+  StoreEmployeeReportPage,
+  StoreGiftCardsPage,
+  StorePeakHoursPage,
+  StorePurchaseReturnsPage,
+  StoreReturnsPage,
+  StoreWastageReportPage,
+} from "./store/pages/StoreGroceryPages";
 import { StoreSuppliersPage } from "./store/pages/StoreSuppliersPage";
 import { StoreCustomersPage, StoreSalesPage } from "./store/pages/StoreCustomersPage";
 import { StoreWarehousesPage, StoreTransfersPage, StoreAdjustmentsPage, StoreAuditsPage } from "./store/pages/StoreWarehousePages";
@@ -261,6 +280,11 @@ export function App(): JSX.Element {
                 <Route path="pharmacy/sales-month" element={<PharmacySalesMonthPage />} />
                 <Route path="pharmacy/profit-loss" element={<PharmacyProfitLossPage />} />
                 <Route path="pharmacy/expired" element={<PharmacyExpiredProductsPage />} />
+                <Route path="pharmacy/khata" element={<PharmacyKhataPage />} />
+                <Route path="pharmacy/shifts" element={<PharmacyShiftPage />} />
+                <Route path="pharmacy/controlled-drugs" element={<PharmacyControlledDrugsPage />} />
+                <Route path="pharmacy/refill-reminders" element={<PharmacyRefillRemindersPage />} />
+                <Route path="pharmacy/tax-compliance" element={<PharmacyTaxCompliancePage />} />
                 <Route path="store/dashboard" element={<StoreDashboardPage />} />
                 <Route path="store/products" element={<StoreProductsPage />} />
                 <Route path="store/categories" element={<StoreCategoriesPage />} />
@@ -269,6 +293,18 @@ export function App(): JSX.Element {
                 <Route path="store/batches" element={<StoreBatchesPage />} />
                 <Route path="store/barcode" element={<StoreBarcodePage />} />
                 <Route path="store/pos" element={<StorePosPage />} />
+                <Route path="store/shifts" element={<StoreShiftPage />} />
+                <Route path="store/promotions" element={<StorePromotionsPage />} />
+                <Route path="store/shortcuts" element={<StoreShortcutsPage />} />
+                <Route path="store/customer-display" element={<StoreCustomerDisplayPage />} />
+                <Route path="store/price-checker" element={<StorePriceCheckerPage />} />
+                <Route path="store/coupons" element={<StoreCouponsPage />} />
+                <Route path="store/gift-cards" element={<StoreGiftCardsPage />} />
+                <Route path="store/returns" element={<StoreReturnsPage />} />
+                <Route path="store/purchase/returns" element={<StorePurchaseReturnsPage />} />
+                <Route path="store/reports/peak-hours" element={<StorePeakHoursPage />} />
+                <Route path="store/reports/employees" element={<StoreEmployeeReportPage />} />
+                <Route path="store/reports/wastage" element={<StoreWastageReportPage />} />
                 <Route path="store/suppliers" element={<StoreSuppliersPage />} />
                 <Route path="store/customers" element={<StoreCustomersPage />} />
                 <Route path="store/sales" element={<StoreSalesPage />} />

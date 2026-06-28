@@ -67,6 +67,7 @@ export const storeProductSchema = z.object({
   inventoryValue: z.number(),
   trackBatch: z.boolean(),
   trackSerial: z.boolean(),
+  isWeighed: z.boolean().default(false),
   nearestExpiry: z.string().nullable(),
 });
 
@@ -108,6 +109,7 @@ export const storeCustomerSchema = z.object({
   outstandingPkr: z.number(),
   loyaltyPoints: z.number(),
   totalPurchases: z.number(),
+  membershipTier: z.enum(["standard", "silver", "gold", "vip"]).default("standard"),
 });
 
 export const storeWarehouseSchema = z.object({
@@ -225,6 +227,17 @@ export const storeStockAuditSchema = z.object({
   approvedAt: z.string().nullable(),
 });
 
+export const STORE_SALE_STATUSES = ["Completed", "Held", "Reserved", "Void"] as const;
+export const storeSaleStatusSchema = z.enum(STORE_SALE_STATUSES);
+
+export const storePaymentLineSchema = z.object({
+  method: storePaymentMethodSchema,
+  amount: z.number().min(0),
+});
+
+export const STORE_PROMOTION_TYPES = ["percent_off", "buy_x_get_y", "fixed_bundle", "mix_match", "cross_sell", "category_off"] as const;
+export const storePromotionTypeSchema = z.enum(STORE_PROMOTION_TYPES);
+
 export const storeSaleLineSchema = z.object({
   id: z.string().uuid(),
   productId: z.string().uuid(),
@@ -233,6 +246,8 @@ export const storeSaleLineSchema = z.object({
   qty: z.number(),
   unitPrice: z.number(),
   lineTotal: z.number(),
+  isWeighed: z.boolean().optional(),
+  qtyLabel: z.string().optional(),
 });
 
 export const storeSaleSchema = z.object({
@@ -241,14 +256,22 @@ export const storeSaleSchema = z.object({
   orderNumber: z.string().nullable(),
   customerId: z.string().uuid().nullable(),
   customerName: z.string().nullable(),
-  status: z.string(),
+  status: storeSaleStatusSchema,
   paymentMethod: storePaymentMethodSchema,
   isCredit: z.boolean(),
   subtotal: z.number(),
   tax: z.number(),
   discount: z.number(),
+  promotionDiscount: z.number().default(0),
+  loyaltyPointsEarned: z.number().default(0),
+  loyaltyPointsRedeemed: z.number().default(0),
+  amountPaid: z.number().default(0),
+  amountDue: z.number().default(0),
   total: z.number(),
   deliveryStatus: z.string(),
+  shiftId: z.string().uuid().nullable().optional(),
+  terminalId: z.string().nullable().optional(),
+  heldLabel: z.string().nullable().optional(),
   lines: z.array(storeSaleLineSchema),
   createdAt: z.string(),
 });
@@ -329,6 +352,7 @@ export const createStoreProductSchema = z.object({
   availableStock: z.number().min(0).default(0),
   trackBatch: z.boolean().default(false),
   trackSerial: z.boolean().default(false),
+  isWeighed: z.boolean().default(false),
   batchNumber: z.string().optional(),
   expiryDate: z.string().optional(),
 });
@@ -439,7 +463,95 @@ export const createStoreSaleSchema = z.object({
   discount: z.number().min(0).default(0),
   isCredit: z.boolean().default(false),
   reserveStock: z.boolean().default(false),
-  lines: z.array(z.object({ productId: z.string().uuid(), qty: z.number().min(1) })).min(1),
+  status: z.enum(["Completed", "Held"]).default("Completed"),
+  shiftId: z.string().uuid().optional(),
+  terminalId: z.string().optional(),
+  heldLabel: z.string().optional(),
+  loyaltyPointsRedeem: z.number().min(0).default(0),
+  couponCode: z.string().optional(),
+  giftCardNumber: z.string().optional(),
+  payments: z.array(storePaymentLineSchema).optional(),
+  lines: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        qty: z.number().min(0.001),
+        qtyGrams: z.number().min(1).optional(),
+      }),
+    )
+    .min(1),
+});
+
+export const completeStoreHeldSaleSchema = z.object({
+  paymentMethod: storePaymentMethodSchema,
+  discount: z.number().min(0).default(0),
+  isCredit: z.boolean().default(false),
+  loyaltyPointsRedeem: z.number().min(0).default(0),
+  payments: z.array(storePaymentLineSchema).optional(),
+});
+
+export const storeShiftSchema = z.object({
+  id: z.string().uuid(),
+  cashierName: z.string(),
+  openingCashPkr: z.number(),
+  closingCashPkr: z.number().nullable(),
+  expectedCashPkr: z.number().nullable(),
+  cashDifferencePkr: z.number().nullable(),
+  totalSalesPkr: z.number(),
+  transactionCount: z.number(),
+  status: z.enum(["open", "closed"]),
+  openedAt: z.string(),
+  closedAt: z.string().nullable(),
+});
+
+export const openStoreShiftSchema = z.object({
+  branchCode: z.string().min(1),
+  cashierName: z.string().min(1),
+  openingCashPkr: z.number().min(0).default(0),
+  terminalId: z.string().optional(),
+});
+
+export const closeStoreShiftSchema = z.object({
+  closingCashPkr: z.number().min(0),
+});
+
+export type StorePromotionType = z.infer<typeof storePromotionTypeSchema>;
+
+export const storePromotionSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  type: storePromotionTypeSchema,
+  isActive: z.boolean(),
+  productIds: z.array(z.string().uuid()),
+  config: z.record(z.unknown()),
+  startsAt: z.string().nullable(),
+  endsAt: z.string().nullable(),
+});
+
+export const createStorePromotionSchema = z.object({
+  branchCode: z.string().min(1),
+  name: z.string().min(1),
+  type: storePromotionTypeSchema,
+  productIds: z.array(z.string().uuid()).default([]),
+  config: z.record(z.unknown()),
+  startsAt: z.string().optional(),
+  endsAt: z.string().optional(),
+});
+
+export const storePosShortcutSchema = z.object({
+  id: z.string().uuid(),
+  hotkey: z.string(),
+  label: z.string(),
+  productId: z.string().uuid(),
+  productName: z.string(),
+  sku: z.string(),
+});
+
+export const upsertStorePosShortcutSchema = z.object({
+  branchCode: z.string().min(1),
+  hotkey: z.string().min(1),
+  label: z.string().min(1),
+  productId: z.string().uuid(),
 });
 
 export const storeProfitLossSchema = z.object({
@@ -505,4 +617,14 @@ export type CreateStoreStockTransfer = z.infer<typeof createStoreStockTransferSc
 export type CreateStoreStockAdjustment = z.infer<typeof createStoreStockAdjustmentSchema>;
 export type CreateStoreStockAudit = z.infer<typeof createStoreStockAuditSchema>;
 export type CreateStoreSale = z.infer<typeof createStoreSaleSchema>;
+export type CompleteStoreHeldSale = z.infer<typeof completeStoreHeldSaleSchema>;
+export type StoreShift = z.infer<typeof storeShiftSchema>;
+export type OpenStoreShift = z.infer<typeof openStoreShiftSchema>;
+export type CloseStoreShift = z.infer<typeof closeStoreShiftSchema>;
+export type CreateStorePromotion = z.infer<typeof createStorePromotionSchema>;
+export type UpsertStorePosShortcut = z.infer<typeof upsertStorePosShortcutSchema>;
+export type StorePromotion = z.infer<typeof storePromotionSchema>;
+export type StorePosShortcut = z.infer<typeof storePosShortcutSchema>;
+export type StorePaymentLine = z.infer<typeof storePaymentLineSchema>;
+export type StorePaymentMethod = z.infer<typeof storePaymentMethodSchema>;
 export type StockMovement = z.infer<typeof stockMovementSchema>;

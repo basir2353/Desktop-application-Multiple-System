@@ -4,12 +4,15 @@ import { PageHeader } from "../../pops/ui/PageHeader";
 
 const staffLinks = [
   { to: "/pops/pharmacy/dashboard", label: "Dashboard", desc: "Today's sales and alerts" },
-  { to: "/pops/pharmacy/pos", label: "Quick billing", desc: "Add medicines and print bills" },
+  { to: "/pops/pharmacy/pos", label: "Sales screen", desc: "Scan, batch select, checkout" },
+  { to: "/pops/pharmacy/khata", label: "Khata payments", desc: "Record partial customer payments" },
+  { to: "/pops/pharmacy/shifts", label: "My shift", desc: "Open/close shift and cash count" },
   { to: "/pops/pharmacy/prescriptions", label: "Prescriptions", desc: "Verify and dispense medicines" },
-  { to: "/pops/pharmacy/inventory", label: "Stock check", desc: "View medicine inventory levels" },
-  { to: "/pops/pharmacy/expired", label: "Expired products", desc: "Check batches to remove" },
-  { to: "/pops/pharmacy/sales-month", label: "Sales report", desc: "Filter sales by date" },
-  { to: "/pops/pharmacy/customers", label: "Customers", desc: "Lookup patient profiles" },
+  { to: "/pops/pharmacy/controlled-drugs", label: "Controlled drugs", desc: "Approval and compliance log" },
+  { to: "/pops/pharmacy/inventory", label: "Stock check", desc: "Levels, rack locations, low stock" },
+  { to: "/pops/pharmacy/expired", label: "Expiry alerts", desc: "Near-expiry batches to prioritize" },
+  { to: "/pops/pharmacy/refill-reminders", label: "Refill reminders", desc: "Chronic patient follow-ups" },
+  { to: "/pops/pharmacy/customers", label: "Patients", desc: "Profiles, allergies, history" },
 ];
 
 export function PharmacyStaffPanelPage(): JSX.Element {

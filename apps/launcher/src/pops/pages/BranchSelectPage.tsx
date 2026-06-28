@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
-import { useSystemStore } from "../../stores/systemStore";
+import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { getBusinessSystem, getErpEntryPath } from "../../lib/businessSystems";
 import { PHARMACY_ROLE_LABELS } from "../../pharmacy/spec/nav";
 import { STORE_ROLE_LABELS } from "../../store/spec/nav";
@@ -51,8 +51,8 @@ export function BranchSelectPage(): JSX.Element {
   const setPinSession = usePopsStore((s) => s.setPinSession);
   const displayRole = usePopsStore((s) => s.displayRole);
   const pinSession = usePopsStore((s) => s.pinSession);
-  const systemId = useSystemStore((s) => s.systemId);
-  const system = getBusinessSystem(systemId ?? "restaurant");
+  const systemId = useActiveSystemId();
+  const system = getBusinessSystem(systemId);
   const roles = systemId === "pharmacy" ? pharmacyRoles : systemId === "general-store" ? storeRoles : restaurantRoles;
 
   const branchesQuery = useQuery({
@@ -120,7 +120,7 @@ export function BranchSelectPage(): JSX.Element {
 
   function continueToDashboard(): void {
     if (selected) setBranch(selected);
-    navigate(getErpEntryPath(systemId ?? "restaurant", true));
+    navigate(getErpEntryPath(systemId, true));
   }
 
   return (

@@ -110,7 +110,8 @@ export function StoreTransfersPage(): JSX.Element {
 export function StoreAdjustmentsPage(): JSX.Element {
   const { branch, canManage } = useStoreAccess();
   const invalidate = useInvalidateStore();
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState("expired");
+  const [stockType, setStockType] = useState<"available" | "damaged" | "expired">("damaged");
   const [productId, setProductId] = useState("");
   const [qtyChange, setQtyChange] = useState(-1);
   const [items, setItems] = useState<{ productId: string; qtyChange: number; stockType: "available" | "damaged" | "expired" }[]>([]);
@@ -131,15 +132,30 @@ export function StoreAdjustmentsPage(): JSX.Element {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Stock adjustments" subtitle="Adjust inventory with approval workflow." />
+      <PageHeader title="Stock adjustments & wastage" subtitle="Record expired, damaged, lost, or theft write-offs with approval workflow." />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {canManage ? (
         <StoreFormSection title="New adjustment">
-          <StoreField label="Reason"><StoreInput value={reason} onChange={(e) => setReason(e.target.value)} /></StoreField>
+          <StoreField label="Wastage reason">
+            <StoreSelect value={reason} onChange={(e) => setReason(e.target.value)}>
+              <option value="expired">Expired</option>
+              <option value="damaged">Damaged / breakage</option>
+              <option value="lost">Lost</option>
+              <option value="theft">Theft / shrinkage</option>
+              <option value="spoilage">Spoilage</option>
+            </StoreSelect>
+          </StoreField>
+          <StoreField label="Stock bucket">
+            <StoreSelect value={stockType} onChange={(e) => setStockType(e.target.value as typeof stockType)}>
+              <option value="damaged">Damaged stock</option>
+              <option value="expired">Expired stock</option>
+              <option value="available">Available (general)</option>
+            </StoreSelect>
+          </StoreField>
           <StoreField label="Product"><StoreSelect value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">Select</option>{(productsQuery.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</StoreSelect></StoreField>
           <StoreField label="Qty change (+/-)"><StoreInput type="number" value={qtyChange} onChange={(e) => setQtyChange(Number(e.target.value))} /></StoreField>
           <div className="col-span-full flex gap-2">
-            <button type="button" onClick={() => { if (productId) setItems([...items, { productId, qtyChange, stockType: "available" }]); }} className="rounded-lg border px-3 py-2 text-xs">Add line</button>
+            <button type="button" onClick={() => { if (productId) setItems([...items, { productId, qtyChange, stockType }]); }} className="rounded-lg border px-3 py-2 text-xs">Add line</button>
             <button type="button" onClick={() => createMutation.mutate()} disabled={!reason || items.length === 0} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white">Submit adjustment</button>
           </div>
         </StoreFormSection>

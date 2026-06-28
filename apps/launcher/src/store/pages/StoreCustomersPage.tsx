@@ -69,9 +69,9 @@ export function StoreCustomersPage(): JSX.Element {
         <div className="col-span-full"><button type="button" onClick={() => createMutation.mutate()} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white">Add customer</button></div>
       </StoreFormSection>
       <StoreDataTable
-        columns={["Name", "Phone", "Loyalty pts", "Credit limit", "Outstanding", "Total purchases"]}
+        columns={["Name", "Phone", "Tier", "Loyalty pts", "Credit limit", "Outstanding", "Total purchases"]}
         rows={(customersQuery.data ?? []).map((c) => [
-          c.name, c.phone ?? "—", c.loyaltyPoints, formatPkr(c.creditLimitPkr), formatPkr(c.outstandingPkr), formatPkr(c.totalPurchases),
+          c.name, c.phone ?? "—", (c.membershipTier ?? "standard").toUpperCase(), c.loyaltyPoints, formatPkr(c.creditLimitPkr), formatPkr(c.outstandingPkr), formatPkr(c.totalPurchases),
         ])}
       />
     </div>

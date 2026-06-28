@@ -1,10 +1,11 @@
 import { Button } from "@platform/ui";
 import { useEffect, useState } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { getBusinessSystem } from "../../lib/businessSystems";
+import { useActiveSystemId } from "../../hooks/useActiveSystemId";
+import { SystemRouteGuard } from "../../components/SystemRouteGuard";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
-import { useSystemStore } from "../../stores/systemStore";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { PopsAlertCenter } from "../components/PopsAlertCenter";
 import { PopsMobileNav, PopsSidebarNav } from "./PopsNavMenu";
@@ -55,8 +56,8 @@ export function PopsShell(): JSX.Element {
   const clearBranch = usePopsStore((s) => s.clearBranch);
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
-  const systemId = useSystemStore((s) => s.systemId);
-  const system = getBusinessSystem(systemId ?? "restaurant");
+  const systemId = useActiveSystemId();
+  const system = getBusinessSystem(systemId);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarVisible);
 
   useEffect(() => {
@@ -167,7 +168,7 @@ export function PopsShell(): JSX.Element {
         </div>
 
         <main className="flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
-          <Outlet />
+          <SystemRouteGuard />
         </main>
       </div>
     </div>

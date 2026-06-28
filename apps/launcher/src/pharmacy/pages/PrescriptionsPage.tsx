@@ -8,6 +8,7 @@ import {
   fetchPharmacyMedicines,
   fetchPharmacyPatients,
   fetchPharmacyPrescriptions,
+  fetchPrescriptionAttachment,
   verifyPharmacyPrescription,
 } from "../api/pharmacy";
 import { useInvalidatePharmacy, usePharmacyAccess } from "../hooks/usePharmacy";
@@ -22,9 +23,9 @@ import { PageHeader } from "../../pops/ui/PageHeader";
 import { Badge } from "../../pops/ui/Badge";
 import { noticeErrorClass } from "../../pops/lib/themeClasses";
 
-function statusTone(s: string): "success" | "info" | "danger" | "warning" {
+function statusTone(s: string): "success" | "neutral" | "danger" | "warning" {
   if (s === "Dispensed") return "success";
-  if (s === "Verified") return "info";
+  if (s === "Verified") return "neutral";
   if (s === "Cancelled") return "danger";
   return "warning";
 }
@@ -41,7 +42,32 @@ export function PrescriptionsPage(): JSX.Element {
   const [dosage, setDosage] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [notes, setNotes] = useState("");
+  const [attachmentName, setAttachmentName] = useState<string | null>(null);
+  const [attachmentDataUrl, setAttachmentDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  function onAttachmentFile(file: File | null): void {
+    if (!file) {
+      setAttachmentName(null);
+      setAttachmentDataUrl(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAttachmentName(file.name);
+      setAttachmentDataUrl(typeof reader.result === "string" ? reader.result : null);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function viewAttachment(prescriptionId: string): Promise<void> {
+    try {
+      const att = await fetchPrescriptionAttachment(prescriptionId);
+      window.open(att.dataUrl, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   const rxQuery = useQuery({
     queryKey: ["pharmacy", "prescriptions", branch?.code],
@@ -71,6 +97,8 @@ export function PrescriptionsPage(): JSX.Element {
         patientId: patientId || undefined,
         doctorId: doctorId || undefined,
         notes: notes.trim() || undefined,
+        attachmentName: attachmentName ?? undefined,
+        attachmentDataUrl: attachmentDataUrl ?? undefined,
         items: [{ medicineId, dosage: dosage.trim() || undefined, quantity: Number(quantity) || 1 }],
       }),
     onSuccess: () => {
@@ -79,6 +107,8 @@ export function PrescriptionsPage(): JSX.Element {
       setDosage("");
       setQuantity("1");
       setNotes("");
+      setAttachmentName(null);
+      setAttachmentDataUrl(null);
       setError(null);
     },
     onError: (e: Error) => setError(e.message),
@@ -141,7 +171,7 @@ export function PrescriptionsPage(): JSX.Element {
     <div className="space-y-6">
       <PageHeader
         title="Prescription management"
-        subtitle="Register prescriptions, verify with the pharmacist, and dispense medicines to patients."
+        subtitle="Upload or scan doctor prescriptions, verify medicines, and link to patient invoices."
         actions={
           <button
             type="button"
@@ -158,7 +188,7 @@ export function PrescriptionsPage(): JSX.Element {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <PharmacyStatCard label="Total prescriptions" value={stats.total} />
         <PharmacyStatCard label="Pending verification" value={stats.pending} tone="warning" />
-        <PharmacyStatCard label="Ready to dispense" value={stats.verified} tone="info" />
+        <PharmacyStatCard label="Ready to dispense" value={stats.verified} tone="default" />
         <PharmacyStatCard label="Dispensed" value={stats.dispensed} tone="success" />
       </div>
 
@@ -235,6 +265,18 @@ export function PrescriptionsPage(): JSX.Element {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
               />
+            </PharmacyField>
+          </PharmacyFormSection>
+
+          <PharmacyFormSection title="Prescription attachment" description="Upload a photo or scanned PDF of the doctor's prescription.">
+            <PharmacyField label="Scan / upload image" hint="JPEG, PNG, or PDF">
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                onChange={(e) => onAttachmentFile(e.target.files?.[0] ?? null)}
+              />
+              {attachmentName ? <p className="mt-1 text-xs text-emerald-600">Attached: {attachmentName}</p> : null}
             </PharmacyField>
           </PharmacyFormSection>
 
@@ -329,6 +371,15 @@ export function PrescriptionsPage(): JSX.Element {
                     {rx.notes ? <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">Note: {rx.notes}</p> : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {rx.hasAttachment ? (
+                      <button
+                        type="button"
+                        onClick={() => void viewAttachment(rx.id)}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"
+                      >
+                        View attachment
+                      </button>
+                    ) : null}
                     {rx.status === "Pending" ? (
                       <button
                         type="button"

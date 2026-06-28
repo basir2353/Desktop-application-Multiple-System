@@ -19,6 +19,18 @@ import {
   storeSaleSchema,
   storeProfitLossSchema,
   storeStockReportSchema,
+  storeShiftSchema,
+  storePromotionSchema,
+  storePosShortcutSchema,
+  storeCouponSchema,
+  storeGiftCardSchema,
+  storeSaleReturnSchema,
+  storePurchaseReturnSchema,
+  storePeakHoursReportSchema,
+  storeEmployeeReportSchema,
+  storeWastageReportSchema,
+  storeCustomerDetailSchema,
+  storeCashMovementSchema,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
 
@@ -255,8 +267,10 @@ export async function approveStoreAudit(auditId: string) {
   if (!res.ok) await parseError(res, "Failed to approve audit");
 }
 
-export async function fetchStoreSales(branchCode: string) {
-  const res = await authFetch(`/v1/store/sales?${qs(branchCode)}`);
+export async function fetchStoreSales(branchCode: string, status?: string) {
+  const params: Record<string, string> = { branchCode };
+  if (status) params.status = status;
+  const res = await authFetch(`/v1/store/sales?${new URLSearchParams(params)}`);
   if (!res.ok) await parseError(res, "Failed to load sales");
   return parseArray(storeSaleSchema, await res.json());
 }
@@ -265,6 +279,88 @@ export async function createStoreSale(body: unknown) {
   const res = await authFetch("/v1/store/sales", { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) await parseError(res, "Failed to create sale");
   return storeSaleSchema.parse(await res.json());
+}
+
+export async function completeStoreHeldSale(saleId: string, body: unknown) {
+  const res = await authFetch(`/v1/store/sales/${saleId}/complete`, { method: "PATCH", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to complete held sale");
+  return storeSaleSchema.parse(await res.json());
+}
+
+export async function voidStoreHeldSale(saleId: string) {
+  const res = await authFetch(`/v1/store/sales/${saleId}`, { method: "DELETE" });
+  if (!res.ok) await parseError(res, "Failed to void held sale");
+}
+
+export async function fetchStoreShifts(branchCode: string) {
+  const res = await authFetch(`/v1/store/shifts?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load shifts");
+  return parseArray(storeShiftSchema, await res.json());
+}
+
+export async function fetchStoreOpenShift(branchCode: string, terminalId?: string) {
+  const params: Record<string, string> = { branchCode };
+  if (terminalId) params.terminalId = terminalId;
+  const res = await authFetch(`/v1/store/shifts/open?${new URLSearchParams(params)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) await parseError(res, "Failed to load open shift");
+  const json = await res.json();
+  return json ? storeShiftSchema.parse(json) : null;
+}
+
+export async function openStoreShift(body: unknown) {
+  const res = await authFetch("/v1/store/shifts/open", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to open shift");
+  return storeShiftSchema.parse(await res.json());
+}
+
+export async function closeStoreShift(shiftId: string, body: unknown) {
+  const res = await authFetch(`/v1/store/shifts/${shiftId}/close`, { method: "PATCH", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to close shift");
+  return storeShiftSchema.parse(await res.json());
+}
+
+export async function fetchStorePromotions(branchCode: string) {
+  const res = await authFetch(`/v1/store/promotions?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load promotions");
+  return parseArray(storePromotionSchema, await res.json());
+}
+
+export async function createStorePromotion(body: unknown) {
+  const res = await authFetch("/v1/store/promotions", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to create promotion");
+  return storePromotionSchema.parse(await res.json());
+}
+
+export async function toggleStorePromotion(promotionId: string, isActive: boolean) {
+  const res = await authFetch(`/v1/store/promotions/${promotionId}/toggle`, {
+    method: "PATCH",
+    body: JSON.stringify({ isActive }),
+  });
+  if (!res.ok) await parseError(res, "Failed to toggle promotion");
+}
+
+export async function fetchStorePosShortcuts(branchCode: string) {
+  const res = await authFetch(`/v1/store/pos-shortcuts?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load POS shortcuts");
+  return parseArray(storePosShortcutSchema, await res.json());
+}
+
+export async function upsertStorePosShortcut(body: unknown) {
+  const res = await authFetch("/v1/store/pos-shortcuts", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to save shortcut");
+  return storePosShortcutSchema.parse(await res.json());
+}
+
+export async function deleteStorePosShortcut(shortcutId: string) {
+  const res = await authFetch(`/v1/store/pos-shortcuts/${shortcutId}`, { method: "DELETE" });
+  if (!res.ok) await parseError(res, "Failed to delete shortcut");
+}
+
+export async function syncStoreInventory(branchCode: string) {
+  const res = await authFetch(`/v1/store/inventory/sync?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to sync inventory");
+  return res.json() as Promise<{ syncedAt: string; products: Array<{ id: string; sku: string; name: string; availableStock: number; isWeighed: boolean }> }>;
 }
 
 export async function fetchStoreStockReport(branchCode: string, from?: string, to?: string) {
@@ -283,4 +379,121 @@ export async function fetchStoreProfitLoss(branchCode: string, from?: string, to
   const res = await authFetch(`/v1/store/reports/profit-loss?${new URLSearchParams(params)}`);
   if (!res.ok) await parseError(res, "Failed to load profit/loss report");
   return storeProfitLossSchema.parse(await res.json());
+}
+
+export async function lookupStoreProduct(branchCode: string, q: string) {
+  const res = await authFetch(`/v1/store/products/lookup?${new URLSearchParams({ branchCode, q })}`);
+  if (!res.ok) await parseError(res, "Product not found");
+  return res.json() as Promise<{ id: string; sku: string; name: string; barcode: string | null; sellingPrice: number; isWeighed: boolean; availableStock: number; priceLabel: string }>;
+}
+
+export async function fetchStoreCustomerDetail(customerId: string) {
+  const res = await authFetch(`/v1/store/customers/${customerId}`);
+  if (!res.ok) await parseError(res, "Failed to load customer");
+  return storeCustomerDetailSchema.parse(await res.json());
+}
+
+export async function updateStoreCustomerTier(customerId: string, membershipTier: string) {
+  const res = await authFetch(`/v1/store/customers/${customerId}/tier`, { method: "PATCH", body: JSON.stringify({ membershipTier }) });
+  if (!res.ok) await parseError(res, "Failed to update tier");
+  return storeCustomerDetailSchema.parse(await res.json());
+}
+
+export async function recordStoreCashMovement(body: unknown) {
+  const res = await authFetch("/v1/store/cash-movements", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to record cash movement");
+  return storeCashMovementSchema.parse(await res.json());
+}
+
+export async function fetchStoreCashMovements(shiftId: string) {
+  const res = await authFetch(`/v1/store/cash-movements?shiftId=${shiftId}`);
+  if (!res.ok) await parseError(res, "Failed to load cash movements");
+  return parseArray(storeCashMovementSchema, await res.json());
+}
+
+export async function fetchStoreCoupons(branchCode: string) {
+  const res = await authFetch(`/v1/store/coupons?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load coupons");
+  return parseArray(storeCouponSchema, await res.json());
+}
+
+export async function createStoreCoupon(body: unknown) {
+  const res = await authFetch("/v1/store/coupons", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to create coupon");
+  return storeCouponSchema.parse(await res.json());
+}
+
+export async function validateStoreCoupon(body: unknown) {
+  const res = await authFetch("/v1/store/coupons/validate", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Invalid coupon");
+  return res.json() as Promise<{ code: string; name: string; discount: number }>;
+}
+
+export async function fetchStoreGiftCards(branchCode: string) {
+  const res = await authFetch(`/v1/store/gift-cards?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load gift cards");
+  return parseArray(storeGiftCardSchema, await res.json());
+}
+
+export async function createStoreGiftCard(body: unknown) {
+  const res = await authFetch("/v1/store/gift-cards", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to create gift card");
+  return storeGiftCardSchema.parse(await res.json());
+}
+
+export async function validateStoreGiftCard(body: unknown) {
+  const res = await authFetch("/v1/store/gift-cards/validate", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Invalid gift card");
+  return res.json() as Promise<{ cardNumber: string; balancePkr: number }>;
+}
+
+export async function fetchStoreSaleReturns(branchCode: string) {
+  const res = await authFetch(`/v1/store/returns/sales?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load returns");
+  return parseArray(storeSaleReturnSchema, await res.json());
+}
+
+export async function createStoreSaleReturn(body: unknown) {
+  const res = await authFetch("/v1/store/returns/sales", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to create return");
+  return storeSaleReturnSchema.parse(await res.json());
+}
+
+export async function fetchStorePurchaseReturns(branchCode: string) {
+  const res = await authFetch(`/v1/store/returns/purchase?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load purchase returns");
+  return parseArray(storePurchaseReturnSchema, await res.json());
+}
+
+export async function createStorePurchaseReturn(body: unknown) {
+  const res = await authFetch("/v1/store/returns/purchase", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to create purchase return");
+  return storePurchaseReturnSchema.parse(await res.json());
+}
+
+export async function fetchStorePeakHoursReport(branchCode: string, from?: string, to?: string) {
+  const params: Record<string, string> = { branchCode };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const res = await authFetch(`/v1/store/reports/peak-hours?${new URLSearchParams(params)}`);
+  if (!res.ok) await parseError(res, "Failed to load peak hours report");
+  return storePeakHoursReportSchema.parse(await res.json());
+}
+
+export async function fetchStoreEmployeeReport(branchCode: string, from?: string, to?: string) {
+  const params: Record<string, string> = { branchCode };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const res = await authFetch(`/v1/store/reports/employees?${new URLSearchParams(params)}`);
+  if (!res.ok) await parseError(res, "Failed to load employee report");
+  return storeEmployeeReportSchema.parse(await res.json());
+}
+
+export async function fetchStoreWastageReport(branchCode: string, from?: string, to?: string) {
+  const params: Record<string, string> = { branchCode };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const res = await authFetch(`/v1/store/reports/wastage?${new URLSearchParams(params)}`);
+  if (!res.ok) await parseError(res, "Failed to load wastage report");
+  return storeWastageReportSchema.parse(await res.json());
 }

@@ -114,6 +114,30 @@ export function getErpEntryPath(systemId: BusinessSystemId, hasBranch: boolean):
   return hasBranch ? "/pops/dashboard" : "/pops/branches";
 }
 
+const SHARED_ERP_PATHS = new Set(["auth", "notifications", "settings"]);
+
+/** Infer business system from the current `/pops` route, when unambiguous. */
+export function resolveBusinessSystemFromPath(pathname: string): BusinessSystemId | null {
+  if (pathname.startsWith("/pops/pharmacy/") || pathname === "/pops/pharmacy") {
+    return "pharmacy";
+  }
+  if (pathname.startsWith("/pops/store/") || pathname === "/pops/store") {
+    return "general-store";
+  }
+  return null;
+}
+
+/** True for restaurant-only screens (not pharmacy, store, or shared settings/auth). */
+export function isRestaurantExclusivePath(pathname: string): boolean {
+  const sub = pathname.replace(/^\/pops\/?/, "").replace(/\/$/, "");
+  if (!sub || sub === "branches") return false;
+  if (sub.startsWith("pharmacy/") || sub === "pharmacy") return false;
+  if (sub.startsWith("store/") || sub === "store") return false;
+  if (SHARED_ERP_PATHS.has(sub)) return false;
+  if (sub.startsWith("notifications/")) return false;
+  return true;
+}
+
 function filterNavItem(item: PopsNavItem, hidden: Set<string>): PopsNavItem | null {
   if (item.type === "link") {
     return hidden.has(item.path) ? null : item;

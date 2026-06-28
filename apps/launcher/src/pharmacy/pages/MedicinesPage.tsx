@@ -26,7 +26,13 @@ const emptyForm = {
   purchasePrice: "",
   sellingPrice: "",
   reorderLevel: "10",
+  suggestedReorderQty: "",
   currentStock: "",
+  tabletsPerStrip: "10",
+  stripsPerBox: "10",
+  aisleLocation: "",
+  rackLocation: "",
+  shelfLocation: "",
   batchNumber: "",
   expiryDate: "",
 };
@@ -72,7 +78,13 @@ export function MedicinesPage(): JSX.Element {
         purchasePrice: Number(form.purchasePrice) || 0,
         sellingPrice: Number(form.sellingPrice) || 0,
         reorderLevel: Number(form.reorderLevel) || 10,
+        suggestedReorderQty: Number(form.suggestedReorderQty) || undefined,
         currentStock: Number(form.currentStock) || 0,
+        tabletsPerStrip: Number(form.tabletsPerStrip) || 1,
+        stripsPerBox: Number(form.stripsPerBox) || 1,
+        aisleLocation: form.aisleLocation.trim() || undefined,
+        rackLocation: form.rackLocation.trim() || undefined,
+        shelfLocation: form.shelfLocation.trim() || undefined,
         batchNumber: form.batchNumber.trim() || undefined,
         expiryDate: form.expiryDate || undefined,
       }),
@@ -246,7 +258,7 @@ export function MedicinesPage(): JSX.Element {
                 onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })}
               />
             </PharmacyField>
-            <PharmacyField label="Selling price (Rs)">
+            <PharmacyField label="Selling price (Rs)" hint="Price per strip when pack fields are set">
               <PharmacyInput
                 type="number"
                 min={0}
@@ -255,7 +267,13 @@ export function MedicinesPage(): JSX.Element {
                 onChange={(e) => setForm({ ...form, sellingPrice: e.target.value })}
               />
             </PharmacyField>
-            <PharmacyField label="Reorder level" hint="Alert when stock falls below">
+            <PharmacyField label="Tablets per strip">
+              <PharmacyInput type="number" min={1} value={form.tabletsPerStrip} onChange={(e) => setForm({ ...form, tabletsPerStrip: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Strips per box">
+              <PharmacyInput type="number" min={1} value={form.stripsPerBox} onChange={(e) => setForm({ ...form, stripsPerBox: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Reorder level" hint="Minimum stock (in tablets)">
               <PharmacyInput
                 type="number"
                 min={0}
@@ -263,7 +281,10 @@ export function MedicinesPage(): JSX.Element {
                 onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })}
               />
             </PharmacyField>
-            <PharmacyField label="Opening stock">
+            <PharmacyField label="Suggested reorder qty">
+              <PharmacyInput type="number" min={0} value={form.suggestedReorderQty} onChange={(e) => setForm({ ...form, suggestedReorderQty: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Opening stock" hint="Total tablets in stock">
               <PharmacyInput
                 type="number"
                 min={0}
@@ -271,6 +292,18 @@ export function MedicinesPage(): JSX.Element {
                 value={form.currentStock}
                 onChange={(e) => setForm({ ...form, currentStock: e.target.value })}
               />
+            </PharmacyField>
+          </PharmacyFormSection>
+
+          <PharmacyFormSection title="Rack / shelf mapping" description="Physical location for fast picking during billing.">
+            <PharmacyField label="Aisle">
+              <PharmacyInput placeholder="e.g. Aisle 2" value={form.aisleLocation} onChange={(e) => setForm({ ...form, aisleLocation: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Rack">
+              <PharmacyInput placeholder="e.g. Rack B" value={form.rackLocation} onChange={(e) => setForm({ ...form, rackLocation: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Shelf">
+              <PharmacyInput placeholder="e.g. Shelf 1" value={form.shelfLocation} onChange={(e) => setForm({ ...form, shelfLocation: e.target.value })} />
             </PharmacyField>
           </PharmacyFormSection>
 

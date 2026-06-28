@@ -2,31 +2,30 @@ import { Link } from "react-router-dom";
 import { PageHeader } from "../../pops/ui/PageHeader";
 
 const adminLinks = [
-  { to: "/pops/pharmacy/dashboard", label: "Dashboard", desc: "Sales, stock, and alerts overview" },
-  { to: "/pops/pharmacy/medicines", label: "Medicines & generic names", desc: "Add medicines and opening stock" },
-  { to: "/pops/pharmacy/inventory", label: "Medicine inventory", desc: "Stock levels and alerts" },
-  { to: "/pops/pharmacy/expiry", label: "Batch & expiry", desc: "Batch-level stock tracking" },
-  { to: "/pops/pharmacy/suppliers", label: "Manage suppliers", desc: "Supplier contacts and terms" },
-  { to: "/pops/pharmacy/purchase-statement", label: "Purchase statement", desc: "All purchase orders" },
-  { to: "/pops/pharmacy/supplier-payments", label: "Supplier payments", desc: "Balances and amounts due" },
-  { to: "/pops/pharmacy/pos", label: "Quick billing", desc: "Counter sales and invoices" },
-  { to: "/pops/pharmacy/prescriptions", label: "Prescriptions", desc: "Verify and dispense to patients" },
-  { to: "/pops/pharmacy/customers", label: "Customers", desc: "Patient profiles and loyalty" },
-  { to: "/pops/pharmacy/doctors", label: "Doctors", desc: "Prescribing doctors database" },
-  { to: "/pops/pharmacy/sales", label: "Sales history", desc: "Invoices and reprints" },
-  { to: "/pops/pharmacy/sales-month", label: "Sales of the month", desc: "Filtered monthly sales" },
-  { to: "/pops/pharmacy/profit-loss", label: "Profit / loss report", desc: "Revenue vs costs" },
-  { to: "/pops/pharmacy/expired", label: "Expired products", desc: "Expired and near-expiry batches" },
-  { to: "/pops/pharmacy/finance", label: "Finance summary", desc: "Revenue and transactions" },
-  { to: "/pops/pharmacy/reports", label: "Reports hub", desc: "Combined analytics" },
+  { to: "/pops/pharmacy/dashboard", label: "Dashboard", desc: "Sales, stock, expiry alerts, and KPIs" },
+  { to: "/pops/pharmacy/pos", label: "Sales screen (POS)", desc: "Barcode billing, batches, mixed payments" },
+  { to: "/pops/pharmacy/khata", label: "Khata & credit", desc: "Partial payments and customer statements" },
+  { to: "/pops/pharmacy/shifts", label: "Shift management", desc: "Cash reconciliation and cashier reports" },
+  { to: "/pops/pharmacy/prescriptions", label: "Prescriptions", desc: "Upload, verify, and dispense" },
+  { to: "/pops/pharmacy/controlled-drugs", label: "Controlled substances", desc: "Regulatory compliance logs" },
+  { to: "/pops/pharmacy/refill-reminders", label: "Refill reminders", desc: "SMS, email, WhatsApp for chronic patients" },
+  { to: "/pops/pharmacy/medicines", label: "Medicines catalog", desc: "Generic names, rack/shelf, warnings" },
+  { to: "/pops/pharmacy/inventory", label: "Inventory", desc: "Low stock and reorder alerts" },
+  { to: "/pops/pharmacy/expiry", label: "Batch & expiry", desc: "1/2/3 month expiry tracking" },
+  { to: "/pops/pharmacy/suppliers", label: "Suppliers", desc: "Vendor records and purchase history" },
+  { to: "/pops/pharmacy/customers", label: "Patients & CRM", desc: "Allergies, conditions, purchase history" },
+  { to: "/pops/pharmacy/sales-month", label: "Sales reports", desc: "Daily and monthly analytics" },
+  { to: "/pops/pharmacy/profit-loss", label: "Profit / loss", desc: "Revenue, COGS, net profit" },
+  { to: "/pops/pharmacy/expired", label: "Expiry reports", desc: "Expired and near-expiry stock" },
+  { to: "/pops/pharmacy/tax-compliance", label: "Tax & compliance", desc: "FBR invoicing and GST summaries" },
   { to: "/pops/pharmacy/staff", label: "Staff management", desc: "Employees and payroll" },
-  { to: "/pops/auth", label: "Users & permissions", desc: "System access control" },
+  { to: "/pops/auth", label: "Users & permissions", desc: "Admin, pharmacist, cashier roles" },
 ];
 
 export function PharmacyAdminPanelPage(): JSX.Element {
   return (
     <div className="space-y-6">
-      <PageHeader title="Admin panel" subtitle="Full pharmacy control — all modules linked from one place." />
+      <PageHeader title="Admin panel" subtitle="Full pharmacy ERP — billing, inventory, CRM, compliance, and reports." />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {adminLinks.map((link) => (
           <Link

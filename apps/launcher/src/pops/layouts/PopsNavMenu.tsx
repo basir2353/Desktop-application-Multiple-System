@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { getNavItemsForSystem } from "../../lib/businessSystems";
-import { useSystemStore } from "../../stores/systemStore";
+import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { amberPillActiveClass, pillInactiveClass } from "../lib/themeClasses";
 import { type PopsNavGroup, type PopsNavItem } from "../spec/modules";
 import { PopsNavIcon } from "./popsNavIcons";
@@ -145,11 +145,8 @@ function renderMobileItem(item: PopsNavItem): JSX.Element {
 }
 
 function useSystemNavItems(): PopsNavItem[] {
-  const systemId = useSystemStore((s) => s.systemId);
-  return useMemo(
-    () => getNavItemsForSystem(systemId ?? "restaurant"),
-    [systemId],
-  );
+  const systemId = useActiveSystemId();
+  return useMemo(() => getNavItemsForSystem(systemId), [systemId]);
 }
 
 export function PopsSidebarNav(): JSX.Element {

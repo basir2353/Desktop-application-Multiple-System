@@ -6,10 +6,12 @@ import { PageHeader } from "../../pops/ui/PageHeader";
 import { PharmacyStatCard } from "../ui/PharmacyUi";
 
 const reportLinks = [
-  { to: "/pops/pharmacy/sales-month", label: "Sales of the month" },
+  { to: "/pops/pharmacy/sales-month", label: "Daily & monthly sales" },
   { to: "/pops/pharmacy/profit-loss", label: "Profit / loss" },
-  { to: "/pops/pharmacy/expired", label: "Expired products" },
+  { to: "/pops/pharmacy/expired", label: "Expiry reports" },
+  { to: "/pops/pharmacy/tax-compliance", label: "Tax & compliance" },
   { to: "/pops/pharmacy/sales-statement", label: "Sales statement" },
+  { to: "/pops/pharmacy/controlled-drugs", label: "Controlled drug log" },
 ];
 
 export function PharmacyReportsPage(): JSX.Element {

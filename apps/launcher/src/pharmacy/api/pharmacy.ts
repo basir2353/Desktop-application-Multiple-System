@@ -1,16 +1,24 @@
 import {
   medicineSchema,
+  medicineAlternativeSchema,
   medicineBatchSchema,
+  pharmacyControlledDrugLogSchema,
   pharmacyDashboardSchema,
   pharmacyDoctorSchema,
   pharmacyExpiredProductsReportSchema,
+  pharmacyKhataEntrySchema,
+  pharmacyKhataStatementSchema,
   pharmacyPatientSchema,
   pharmacyProfitLossSchema,
   pharmacyPurchaseLineSchema,
+  pharmacyRefillReminderSchema,
   pharmacySaleSchema,
   pharmacySalesOfMonthSchema,
   pharmacySalesStatementSchema,
+  pharmacyShiftSchema,
   pharmacySupplierPaymentSchema,
+  pharmacyTaxComplianceSchema,
+  pharmacyReorderSuggestionSchema,
   prescriptionSchema,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
@@ -168,4 +176,109 @@ export async function fetchPharmacyExpiredProducts(branchCode: string, from?: st
   const res = await authFetch(`/v1/pharmacy/reports/expired-products?${params.toString()}`);
   if (!res.ok) await parseError(res, "Failed to load expired products");
   return pharmacyExpiredProductsReportSchema.parse(await res.json());
+}
+
+export async function fetchPharmacyMedicineBatches(branchCode: string, medicineId: string) {
+  const res = await authFetch(`/v1/pharmacy/medicines/${medicineId}/batches?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load batches");
+  return parseArray(medicineBatchSchema, await res.json());
+}
+
+export async function fetchPharmacyAlternatives(branchCode: string, medicineId: string) {
+  const res = await authFetch(`/v1/pharmacy/medicines/${medicineId}/alternatives?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load alternatives");
+  return parseArray(medicineAlternativeSchema, await res.json());
+}
+
+export async function lookupPharmacyBarcode(branchCode: string, barcode: string) {
+  const res = await authFetch(`/v1/pharmacy/medicines/barcode/${encodeURIComponent(barcode)}?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Barcode not found");
+  return medicineSchema.parse(await res.json());
+}
+
+export async function updatePharmacyPatient(patientId: string, body: unknown) {
+  const res = await authFetch(`/v1/pharmacy/patients/${patientId}`, { method: "PATCH", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to update patient");
+  return pharmacyPatientSchema.parse(await res.json());
+}
+
+const khataStatementSchema = pharmacyKhataStatementSchema;
+
+export async function fetchPharmacyKhataStatement(patientId: string) {
+  const res = await authFetch(`/v1/pharmacy/patients/${patientId}/khata`);
+  if (!res.ok) await parseError(res, "Failed to load khata statement");
+  return khataStatementSchema.parse(await res.json());
+}
+
+export async function recordPharmacyKhataPayment(patientId: string, body: unknown) {
+  const res = await authFetch(`/v1/pharmacy/patients/${patientId}/khata-payment`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await parseError(res, "Failed to record payment");
+  return khataStatementSchema.parse(await res.json());
+}
+
+export async function fetchPharmacyShifts(branchCode: string) {
+  const res = await authFetch(`/v1/pharmacy/shifts?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load shifts");
+  return parseArray(pharmacyShiftSchema, await res.json());
+}
+
+export async function fetchPharmacyOpenShift(branchCode: string) {
+  const res = await authFetch(`/v1/pharmacy/shifts/open?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load open shift");
+  const json = await res.json();
+  if (json === null) return null;
+  return pharmacyShiftSchema.parse(json);
+}
+
+export async function openPharmacyShift(body: unknown) {
+  const res = await authFetch("/v1/pharmacy/shifts/open", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to open shift");
+  return pharmacyShiftSchema.parse(await res.json());
+}
+
+export async function closePharmacyShift(shiftId: string, body: unknown) {
+  const res = await authFetch(`/v1/pharmacy/shifts/${shiftId}/close`, { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) await parseError(res, "Failed to close shift");
+  return pharmacyShiftSchema.parse(await res.json());
+}
+
+export async function fetchPharmacyControlledDrugLogs(branchCode: string) {
+  const res = await authFetch(`/v1/pharmacy/controlled-drugs?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load controlled drug logs");
+  return parseArray(pharmacyControlledDrugLogSchema, await res.json());
+}
+
+export async function fetchPharmacyRefillReminders(branchCode: string) {
+  const res = await authFetch(`/v1/pharmacy/refill-reminders?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load refill reminders");
+  return parseArray(pharmacyRefillReminderSchema, await res.json());
+}
+
+export async function markPharmacyRefillReminderSent(reminderId: string) {
+  const res = await authFetch(`/v1/pharmacy/refill-reminders/${reminderId}/sent`, { method: "POST" });
+  if (!res.ok) await parseError(res, "Failed to mark reminder sent");
+}
+
+export async function fetchPharmacyTaxCompliance(branchCode: string, from?: string, to?: string) {
+  const params = new URLSearchParams({ branchCode });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const res = await authFetch(`/v1/pharmacy/reports/tax-compliance?${params.toString()}`);
+  if (!res.ok) await parseError(res, "Failed to load tax report");
+  return pharmacyTaxComplianceSchema.parse(await res.json());
+}
+
+export async function fetchPharmacyReorderSuggestions(branchCode: string) {
+  const res = await authFetch(`/v1/pharmacy/reports/reorder-suggestions?${qs(branchCode)}`);
+  if (!res.ok) await parseError(res, "Failed to load reorder suggestions");
+  return parseArray(pharmacyReorderSuggestionSchema, await res.json());
+}
+
+export async function fetchPrescriptionAttachment(prescriptionId: string) {
+  const res = await authFetch(`/v1/pharmacy/prescriptions/${prescriptionId}/attachment`);
+  if (!res.ok) await parseError(res, "Failed to load attachment");
+  return (await res.json()) as { name: string; dataUrl: string };
 }

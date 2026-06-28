@@ -1,4 +1,4 @@
-import type { PharmacySale } from "@platform/contracts";
+import { saleUnitLabel, type PharmacySale } from "@platform/contracts";
 
 function escapeHtml(value: string): string {
   return value
@@ -19,14 +19,16 @@ export function printPharmacyInvoice(
 ): boolean {
   const printedAt = new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
   const lineRows = sale.lines
-    .map(
-      (line) => `<tr>
-        <td>${escapeHtml(line.medicineName)}</td>
-        <td class="qty">${line.qty}</td>
+    .map((line) => {
+      const qtyLabel =
+        line.saleUnit != null ? saleUnitLabel(line.saleUnit, line.qty) : String(line.qty);
+      return `<tr>
+        <td>${escapeHtml(line.medicineName)}${line.batchNumber ? `<br/><small>Batch: ${escapeHtml(line.batchNumber)}</small>` : ""}</td>
+        <td class="qty">${escapeHtml(qtyLabel)}</td>
         <td class="amt">${formatMoney(line.unitPrice)}</td>
         <td class="amt">${formatMoney(line.lineTotal)}</td>
-      </tr>`,
-    )
+      </tr>`;
+    })
     .join("");
 
   const html = `<!DOCTYPE html><html><head><title>Invoice ${escapeHtml(sale.invoiceNumber)}</title>

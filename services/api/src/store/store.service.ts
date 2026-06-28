@@ -7,11 +7,14 @@ import {
   OnModuleInit,
 } from "@nestjs/common";
 import type {
+  CloseStoreShift,
+  CompleteStoreHeldSale,
   CreateStoreBrand,
   CreateStoreCategory,
   CreateStoreCustomer,
   CreateStoreGrn,
   CreateStoreProduct,
+  CreateStorePromotion,
   CreateStorePurchaseOrder,
   CreateStorePurchaseRequisition,
   CreateStoreSale,
@@ -21,12 +24,15 @@ import type {
   CreateStoreSupplier,
   CreateStoreUnit,
   CreateStoreWarehouse,
+  OpenStoreShift,
   StockMovement,
+  UpsertStorePosShortcut,
 } from "@platform/contracts";
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import {
   popsBranches,
   storeBrands,
+  storeCashMovements,
   storeCategories,
   storeCustomers,
   storeGrn,
@@ -38,8 +44,11 @@ import {
   storePurchaseOrders,
   storePurchaseRequisitionItems,
   storePurchaseRequisitions,
+  storePosShortcuts,
+  storePromotions,
   storeSaleLines,
   storeSales,
+  storeShifts,
   storeStockAdjustmentItems,
   storeStockAdjustments,
   storeStockAuditItems,
@@ -52,6 +61,15 @@ import {
   storeZones,
   type PlatformPgDb,
 } from "@platform/database-pg";
+import {
+  applyStorePromotions,
+  loyaltyPointsForTotal,
+  loyaltyRedeemValuePkr,
+  priceSaleLine,
+  resolveSaleLineQty,
+  type PricedSaleLine,
+} from "./store-pos";
+import { StoreGroceryService } from "./store-grocery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 
 const PRODUCT_SEEDS = [
@@ -63,6 +81,10 @@ const PRODUCT_SEEDS = [
   { sku: "SKU-006", name: "Nestle Milkpak 1L", category: "Dairy", subcategory: "Milk", brand: "Nestle", unit: "Pack", barcode: "8901001001006", purchase: 210, selling: 250, stock: 60, reorder: 20, batch: "MLK-2026-A", expiry: "2026-07-15" },
   { sku: "SKU-007", name: "Dettol Antiseptic 500ml", category: "Health", subcategory: "Antiseptics", brand: "Dettol", unit: "Bottle", barcode: "8901001001007", purchase: 420, selling: 520, stock: 35, reorder: 15, batch: "DET-2026-B", expiry: "2027-01-20" },
   { sku: "SKU-008", name: "Samsung Galaxy A15", category: "Electronics", subcategory: "Mobile Phones", brand: "Samsung", unit: "Piece", barcode: "8901001001008", purchase: 42000, selling: 48000, stock: 5, reorder: 2, trackSerial: true },
+  { sku: "SKU-009", name: "Fresh Apples", category: "Produce", subcategory: "Fruits", brand: "Local", unit: "Kilogram", barcode: "8901001001009", purchase: 200, selling: 300, stock: 50000, reorder: 5000, isWeighed: true },
+  { sku: "SKU-010", name: "Basmati Rice (loose)", category: "Groceries", subcategory: "Rice & Pulses", brand: "Local", unit: "Kilogram", barcode: "8901001001010", purchase: 180, selling: 250, stock: 500000, reorder: 10000, isWeighed: true },
+  { sku: "SKU-011", name: "White Bread", category: "Bakery", subcategory: "Bread", brand: "Local", unit: "Loaf", barcode: "8901001001011", purchase: 80, selling: 120, stock: 40, reorder: 15 },
+  { sku: "SKU-012", name: "Fresh Eggs (dozen)", category: "Dairy", subcategory: "Eggs", brand: "Local", unit: "Pack", barcode: "8901001001012", purchase: 280, selling: 350, stock: 30, reorder: 10 },
 ] as const;
 
 @Injectable()
@@ -70,7 +92,10 @@ export class StoreService implements OnModuleInit {
   private readonly logger = new Logger(StoreService.name);
   private seqCounters = new Map<string, number>();
 
-  constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PlatformPgDb,
+    private readonly grocery: StoreGroceryService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     try {
@@ -137,6 +162,7 @@ export class StoreService implements OnModuleInit {
       inventoryValue: p.availableStock * p.purchasePricePkr,
       trackBatch: p.trackBatch === "yes",
       trackSerial: p.trackSerial === "yes",
+      isWeighed: p.isWeighed === "yes",
       nearestExpiry: extras?.nearestExpiry ?? null,
     };
   }
@@ -237,6 +263,7 @@ export class StoreService implements OnModuleInit {
           availableStock: seed.stock,
           trackBatch: "batch" in seed ? "yes" : "no",
           trackSerial: "trackSerial" in seed ? "yes" : "no",
+          isWeighed: "isWeighed" in seed ? "yes" : "no",
         })
         .returning();
 
@@ -636,6 +663,7 @@ export class StoreService implements OnModuleInit {
         availableStock: input.availableStock,
         trackBatch: input.trackBatch ? "yes" : "no",
         trackSerial: input.trackSerial ? "yes" : "no",
+        isWeighed: input.isWeighed ? "yes" : "no",
       })
       .returning();
 
@@ -861,6 +889,7 @@ export class StoreService implements OnModuleInit {
       creditLimitPkr: c.creditLimitPkr,
       outstandingPkr: c.outstandingPkr,
       loyaltyPoints: c.loyaltyPoints,
+      membershipTier: (c.membershipTier ?? "standard") as "standard" | "silver" | "gold" | "vip",
       totalPurchases: sales.filter((s) => s.customerId === c.id).reduce((sum, s) => sum + s.totalPkr, 0),
     }));
   }
@@ -1511,12 +1540,62 @@ export class StoreService implements OnModuleInit {
     return { ok: true };
   }
 
-  async listSales(organizationId: string, branchCode: string) {
+  private mapSaleRow(
+    sale: typeof storeSales.$inferSelect,
+    lines: (typeof storeSaleLines.$inferSelect)[],
+    customer: typeof storeCustomers.$inferSelect | undefined,
+    products: (typeof storeProducts.$inferSelect)[],
+  ) {
+    return {
+      id: sale.id,
+      invoiceNumber: sale.invoiceNumber,
+      orderNumber: sale.orderNumber,
+      customerId: sale.customerId,
+      customerName: customer?.name ?? null,
+      status: sale.status as "Completed" | "Held" | "Reserved" | "Void",
+      paymentMethod: sale.paymentMethod as "Cash" | "Card" | "Bank Transfer" | "Mobile Wallet" | "Credit",
+      isCredit: sale.isCredit === "yes",
+      subtotal: sale.subtotalPkr,
+      tax: sale.taxPkr,
+      discount: sale.discountPkr,
+      promotionDiscount: sale.promotionDiscountPkr ?? 0,
+      loyaltyPointsEarned: sale.loyaltyPointsEarned ?? 0,
+      loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed ?? 0,
+      amountPaid: sale.amountPaidPkr ?? 0,
+      amountDue: sale.amountDuePkr ?? 0,
+      total: sale.totalPkr,
+      deliveryStatus: sale.deliveryStatus,
+      shiftId: sale.shiftId,
+      terminalId: sale.terminalId,
+      heldLabel: sale.heldLabel,
+      lines: lines.map((l) => {
+        const prod = products.find((p) => p.id === l.productId);
+        const isWeighed = l.isWeighed === "yes" || prod?.isWeighed === "yes";
+        return {
+          id: l.id,
+          productId: l.productId,
+          productName: prod?.name ?? "Unknown",
+          sku: prod?.sku ?? "—",
+          qty: l.qty,
+          unitPrice: l.unitPricePkr,
+          lineTotal: l.lineTotalPkr,
+          isWeighed,
+          qtyLabel: isWeighed ? `${(l.qty / 1000).toFixed(3)} kg` : String(l.qty),
+        };
+      }),
+      createdAt: sale.createdAt.toISOString(),
+    };
+  }
+
+  async listSales(organizationId: string, branchCode: string, status?: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
+    const conditions = [eq(storeSales.organizationId, organizationId), eq(storeSales.branchId, branch.id)];
+    if (status) conditions.push(eq(storeSales.status, status));
+
     const sales = await this.db
       .select()
       .from(storeSales)
-      .where(and(eq(storeSales.organizationId, organizationId), eq(storeSales.branchId, branch.id)))
+      .where(and(...conditions))
       .orderBy(desc(storeSales.createdAt))
       .limit(100);
 
@@ -1527,45 +1606,18 @@ export class StoreService implements OnModuleInit {
     for (const sale of sales) {
       const lines = await this.db.select().from(storeSaleLines).where(eq(storeSaleLines.saleId, sale.id));
       const customer = customers.find((c) => c.id === sale.customerId);
-      result.push({
-        id: sale.id,
-        invoiceNumber: sale.invoiceNumber,
-        orderNumber: sale.orderNumber,
-        customerId: sale.customerId,
-        customerName: customer?.name ?? null,
-        status: sale.status,
-        paymentMethod: sale.paymentMethod as "Cash" | "Card" | "Bank Transfer" | "Mobile Wallet" | "Credit",
-        isCredit: sale.isCredit === "yes",
-        subtotal: sale.subtotalPkr,
-        tax: sale.taxPkr,
-        discount: sale.discountPkr,
-        total: sale.totalPkr,
-        deliveryStatus: sale.deliveryStatus,
-        lines: lines.map((l) => {
-          const prod = products.find((p) => p.id === l.productId);
-          return {
-            id: l.id,
-            productId: l.productId,
-            productName: prod?.name ?? "Unknown",
-            sku: prod?.sku ?? "—",
-            qty: l.qty,
-            unitPrice: l.unitPricePkr,
-            lineTotal: l.lineTotalPkr,
-          };
-        }),
-        createdAt: sale.createdAt.toISOString(),
-      });
+      result.push(this.mapSaleRow(sale, lines, customer, products));
     }
     return result;
   }
 
   async createSale(organizationId: string, input: CreateStoreSale) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
-    const invoiceNumber = this.nextSeq(branch.id, "INV");
+    const isHeld = input.status === "Held";
+    const invoiceNumber = isHeld ? this.nextSeq(branch.id, "HOLD") : this.nextSeq(branch.id, "INV");
 
-    let subtotal = 0;
-    let tax = 0;
-    const lineDetails: { productId: string; qty: number; unitPrice: number; lineTotal: number }[] = [];
+    const promotions = await this.loadActivePromotions(organizationId, branch.id);
+    const pricedLines: PricedSaleLine[] = [];
 
     for (const line of input.lines) {
       const [product] = await this.db
@@ -1575,37 +1627,76 @@ export class StoreService implements OnModuleInit {
         .limit(1);
       if (!product) throw new NotFoundException(`Product not found: ${line.productId}`);
 
-      if (input.reserveStock) {
-        if (product.availableStock < line.qty) throw new BadRequestException(`Insufficient stock for ${product.name}`);
-        await this.db
-          .update(storeProducts)
-          .set({ availableStock: product.availableStock - line.qty, reservedStock: product.reservedStock + line.qty })
-          .where(eq(storeProducts.id, line.productId));
-      } else {
-        if (product.availableStock < line.qty) throw new BadRequestException(`Insufficient stock for ${product.name}`);
-        await this.db
-          .update(storeProducts)
-          .set({ availableStock: product.availableStock - line.qty })
-          .where(eq(storeProducts.id, line.productId));
-
-        await this.db.insert(storeInventoryTransactions).values({
-          organizationId,
-          branchId: branch.id,
-          productId: line.productId,
-          type: "sale",
-          qty: line.qty,
-          reference: invoiceNumber,
-        });
+      const resolved = resolveSaleLineQty(product.isWeighed === "yes", line);
+      if (!isHeld && !input.reserveStock) {
+        if (product.availableStock < resolved.qtyUnits) {
+          throw new BadRequestException(`Insufficient stock for ${product.name}`);
+        }
       }
 
-      const lineSub = product.sellingPricePkr * line.qty;
-      const lineTax = Math.round((lineSub * product.taxPct) / 100);
-      subtotal += lineSub;
-      tax += lineTax;
-      lineDetails.push({ productId: line.productId, qty: line.qty, unitPrice: product.sellingPricePkr, lineTotal: lineSub + lineTax });
+      pricedLines.push(
+        priceSaleLine(
+          {
+            name: product.name,
+            sku: product.sku,
+            sellingPricePkr: product.sellingPricePkr,
+            taxPct: product.taxPct,
+            isWeighed: product.isWeighed === "yes",
+          },
+          resolved,
+        ),
+      );
     }
 
-    const total = subtotal + tax - input.discount;
+    const subtotal = pricedLines.reduce((s, l) => s + l.lineSubtotal, 0);
+    const tax = pricedLines.reduce((s, l) => s + l.lineTax, 0);
+    const promotionDiscount = applyStorePromotions(
+      pricedLines,
+      promotions.map((p) => ({
+        type: p.type as "percent_off" | "buy_x_get_y" | "fixed_bundle" | "mix_match" | "cross_sell" | "category_off",
+        productIds: p.productIds,
+        config: p.config,
+        isActive: p.isActive,
+      })),
+    );
+    const manualDiscount = input.discount;
+    const loyaltyRedeem = input.loyaltyPointsRedeem ?? 0;
+    const loyaltyDiscount = loyaltyRedeemValuePkr(loyaltyRedeem);
+
+    let couponDiscount = 0;
+    if (!isHeld && input.couponCode) {
+      const couponResult = await this.grocery.validateCoupon(organizationId, input.branchCode, input.couponCode, subtotal + tax - manualDiscount - promotionDiscount);
+      couponDiscount = couponResult.discount;
+    }
+
+    let giftCardApplied = 0;
+    if (!isHeld && input.giftCardNumber) {
+      const card = await this.grocery.validateGiftCard(organizationId, input.branchCode, input.giftCardNumber);
+      giftCardApplied = Math.min(card.balancePkr, subtotal + tax - manualDiscount - promotionDiscount - couponDiscount - loyaltyDiscount);
+    }
+
+    const total = Math.max(0, subtotal + tax - manualDiscount - promotionDiscount - couponDiscount - loyaltyDiscount - giftCardApplied);
+
+    const payments = input.payments ?? [{ method: input.paymentMethod, amount: total }];
+    const amountPaid = payments.reduce((s, p) => s + p.amount, 0);
+    const amountDue = Math.max(0, total - amountPaid);
+
+    if (!isHeld && input.customerId && loyaltyRedeem > 0) {
+      const [customer] = await this.db.select().from(storeCustomers).where(eq(storeCustomers.id, input.customerId)).limit(1);
+      if (!customer || customer.loyaltyPoints < loyaltyRedeem) {
+        throw new BadRequestException("Insufficient loyalty points");
+      }
+    }
+
+    let loyaltyEarn = 0;
+    if (!isHeld) {
+      if (input.customerId) {
+        const [customer] = await this.db.select().from(storeCustomers).where(eq(storeCustomers.id, input.customerId)).limit(1);
+        loyaltyEarn = this.grocery.loyaltyPointsForCustomer(total, customer?.membershipTier ?? "standard");
+      } else {
+        loyaltyEarn = loyaltyPointsForTotal(total);
+      }
+    }
 
     const [sale] = await this.db
       .insert(storeSales)
@@ -1618,34 +1709,414 @@ export class StoreService implements OnModuleInit {
         isCredit: input.isCredit ? "yes" : "no",
         subtotalPkr: subtotal,
         taxPkr: tax,
-        discountPkr: input.discount,
+        discountPkr: manualDiscount + couponDiscount + giftCardApplied,
+        promotionDiscountPkr: promotionDiscount,
+        loyaltyPointsEarned: loyaltyEarn,
+        loyaltyPointsRedeemed: loyaltyRedeem,
+        amountPaidPkr: isHeld ? 0 : amountPaid,
+        amountDuePkr: isHeld ? total : amountDue,
+        paymentsJson: isHeld ? null : JSON.stringify(payments),
+        shiftId: input.shiftId ?? null,
+        terminalId: input.terminalId ?? null,
+        heldLabel: isHeld ? input.heldLabel ?? `Hold ${invoiceNumber}` : null,
+        heldCartJson: isHeld ? JSON.stringify({ lines: input.lines, discount: manualDiscount, customerId: input.customerId }) : null,
+        couponCode: input.couponCode ?? null,
+        giftCardNumber: input.giftCardNumber ?? null,
         totalPkr: total,
-        status: input.reserveStock ? "Reserved" : "Completed",
+        status: isHeld ? "Held" : input.reserveStock ? "Reserved" : "Completed",
       })
       .returning();
 
-    for (const ld of lineDetails) {
+    if (!isHeld && input.couponCode) await this.grocery.applyCouponUsage(organizationId, input.couponCode);
+    if (!isHeld && input.giftCardNumber && giftCardApplied > 0) {
+      await this.grocery.redeemGiftCard(organizationId, input.giftCardNumber, giftCardApplied);
+    }
+
+    for (const ld of pricedLines) {
       await this.db.insert(storeSaleLines).values({
         saleId: sale!.id,
         productId: ld.productId,
-        qty: ld.qty,
+        qty: ld.qtyUnits,
+        isWeighed: ld.isWeighed ? "yes" : "no",
         unitPricePkr: ld.unitPrice,
         lineTotalPkr: ld.lineTotal,
       });
     }
 
-    if (input.isCredit && input.customerId) {
-      const [customer] = await this.db.select().from(storeCustomers).where(eq(storeCustomers.id, input.customerId)).limit(1);
-      if (customer) {
+    if (!isHeld) {
+      await this.finalizeSaleStock(organizationId, branch.id, invoiceNumber, pricedLines, input.reserveStock);
+      if (input.shiftId) {
         await this.db
-          .update(storeCustomers)
-          .set({ outstandingPkr: customer.outstandingPkr + total, loyaltyPoints: customer.loyaltyPoints + Math.floor(total / 100) })
-          .where(eq(storeCustomers.id, input.customerId));
+          .update(storeShifts)
+          .set({
+            totalSalesPkr: sql`${storeShifts.totalSalesPkr} + ${total}`,
+            transactionCount: sql`${storeShifts.transactionCount} + 1`,
+          })
+          .where(eq(storeShifts.id, input.shiftId));
+      }
+      if (input.customerId) {
+        await this.applyCustomerSaleEffects(input.customerId, total, input.isCredit, loyaltyRedeem, loyaltyEarn);
       }
     }
 
     const sales = await this.listSales(organizationId, input.branchCode);
     return sales.find((s) => s.id === sale!.id)!;
+  }
+
+  private async finalizeSaleStock(
+    organizationId: string,
+    branchId: string,
+    invoiceNumber: string,
+    pricedLines: PricedSaleLine[],
+    reserveStock: boolean,
+  ): Promise<void> {
+    for (const ld of pricedLines) {
+      const [product] = await this.db.select().from(storeProducts).where(eq(storeProducts.id, ld.productId)).limit(1);
+      if (!product) continue;
+
+      if (reserveStock) {
+        await this.db
+          .update(storeProducts)
+          .set({ availableStock: product.availableStock - ld.qtyUnits, reservedStock: product.reservedStock + ld.qtyUnits })
+          .where(eq(storeProducts.id, ld.productId));
+      } else {
+        await this.db
+          .update(storeProducts)
+          .set({ availableStock: product.availableStock - ld.qtyUnits })
+          .where(eq(storeProducts.id, ld.productId));
+        await this.db.insert(storeInventoryTransactions).values({
+          organizationId,
+          branchId,
+          productId: ld.productId,
+          type: "sale",
+          qty: ld.qtyUnits,
+          reference: invoiceNumber,
+        });
+      }
+    }
+  }
+
+  private async applyCustomerSaleEffects(
+    customerId: string,
+    total: number,
+    isCredit: boolean,
+    loyaltyRedeem: number,
+    loyaltyEarn: number,
+  ): Promise<void> {
+    const [customer] = await this.db.select().from(storeCustomers).where(eq(storeCustomers.id, customerId)).limit(1);
+    if (!customer) return;
+    const newPoints = Math.max(0, customer.loyaltyPoints - loyaltyRedeem + loyaltyEarn);
+    await this.db
+      .update(storeCustomers)
+      .set({
+        outstandingPkr: isCredit ? customer.outstandingPkr + total : customer.outstandingPkr,
+        loyaltyPoints: newPoints,
+      })
+      .where(eq(storeCustomers.id, customerId));
+  }
+
+  async completeHeldSale(organizationId: string, saleId: string, input: CompleteStoreHeldSale) {
+    const [sale] = await this.db
+      .select()
+      .from(storeSales)
+      .where(and(eq(storeSales.id, saleId), eq(storeSales.organizationId, organizationId)))
+      .limit(1);
+    if (!sale) throw new NotFoundException("Sale not found");
+    if (sale.status !== "Held") throw new BadRequestException("Sale is not held");
+
+    const lines = await this.db.select().from(storeSaleLines).where(eq(storeSaleLines.saleId, saleId));
+    const pricedLines: PricedSaleLine[] = [];
+    for (const line of lines) {
+      const [product] = await this.db.select().from(storeProducts).where(eq(storeProducts.id, line.productId)).limit(1);
+      if (!product) continue;
+      if (product.availableStock < line.qty) throw new BadRequestException(`Insufficient stock for ${product.name}`);
+      pricedLines.push({
+        productId: line.productId,
+        qtyUnits: line.qty,
+        isWeighed: line.isWeighed === "yes",
+        unitPrice: line.unitPricePkr,
+        lineSubtotal: line.lineTotalPkr - Math.round((line.lineTotalPkr * product.taxPct) / (100 + product.taxPct)),
+        lineTax: Math.round((line.lineTotalPkr * product.taxPct) / (100 + product.taxPct)),
+        lineTotal: line.lineTotalPkr,
+        productName: product.name,
+        sku: product.sku,
+        qtyLabel: line.isWeighed === "yes" ? `${(line.qty / 1000).toFixed(3)} kg` : String(line.qty),
+      });
+    }
+
+    const payments = input.payments ?? [{ method: input.paymentMethod, amount: sale.totalPkr }];
+    const amountPaid = payments.reduce((s, p) => s + p.amount, 0);
+    const amountDue = Math.max(0, sale.totalPkr - amountPaid);
+    const loyaltyRedeem = input.loyaltyPointsRedeem ?? 0;
+
+    await this.finalizeSaleStock(organizationId, sale.branchId, sale.invoiceNumber, pricedLines, false);
+
+    await this.db
+      .update(storeSales)
+      .set({
+        status: "Completed",
+        paymentMethod: input.paymentMethod,
+        isCredit: input.isCredit ? "yes" : "no",
+        discountPkr: input.discount,
+        loyaltyPointsEarned: loyaltyPointsForTotal(sale.totalPkr),
+        loyaltyPointsRedeemed: loyaltyRedeem,
+        amountPaidPkr: amountPaid,
+        amountDuePkr: amountDue,
+        paymentsJson: JSON.stringify(payments),
+        heldCartJson: null,
+      })
+      .where(eq(storeSales.id, saleId));
+
+    if (sale.shiftId) {
+      await this.db
+        .update(storeShifts)
+        .set({
+          totalSalesPkr: sql`${storeShifts.totalSalesPkr} + ${sale.totalPkr}`,
+          transactionCount: sql`${storeShifts.transactionCount} + 1`,
+        })
+        .where(eq(storeShifts.id, sale.shiftId));
+    }
+    if (sale.customerId) {
+      await this.applyCustomerSaleEffects(sale.customerId, sale.totalPkr, input.isCredit, loyaltyRedeem, loyaltyPointsForTotal(sale.totalPkr));
+    }
+
+    const [branchRow] = await this.db.select().from(popsBranches).where(eq(popsBranches.id, sale.branchId)).limit(1);
+    const sales = await this.listSales(organizationId, branchRow?.code ?? "");
+    return sales.find((s) => s.id === saleId)!;
+  }
+
+  async voidHeldSale(organizationId: string, saleId: string) {
+    const [sale] = await this.db
+      .select()
+      .from(storeSales)
+      .where(and(eq(storeSales.id, saleId), eq(storeSales.organizationId, organizationId)))
+      .limit(1);
+    if (!sale) throw new NotFoundException("Sale not found");
+    if (sale.status !== "Held") throw new BadRequestException("Only held sales can be voided");
+    await this.db.update(storeSales).set({ status: "Void" }).where(eq(storeSales.id, saleId));
+    return { ok: true };
+  }
+
+  private async loadActivePromotions(organizationId: string, branchId: string) {
+    const rows = await this.db
+      .select()
+      .from(storePromotions)
+      .where(and(eq(storePromotions.organizationId, organizationId), eq(storePromotions.branchId, branchId), eq(storePromotions.isActive, "yes")));
+    const now = new Date();
+    return rows
+      .filter((r) => {
+        if (r.startsAt && r.startsAt > now) return false;
+        if (r.endsAt && r.endsAt < now) return false;
+        return true;
+      })
+      .map((r) => ({
+        type: r.type,
+        productIds: JSON.parse(r.productIdsJson || "[]") as string[],
+        config: JSON.parse(r.configJson || "{}") as Record<string, unknown>,
+        isActive: r.isActive === "yes",
+      }));
+  }
+
+  async listPromotions(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const rows = await this.db
+      .select()
+      .from(storePromotions)
+      .where(and(eq(storePromotions.organizationId, organizationId), eq(storePromotions.branchId, branch.id)))
+      .orderBy(desc(storePromotions.createdAt));
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      isActive: r.isActive === "yes",
+      productIds: JSON.parse(r.productIdsJson || "[]") as string[],
+      config: JSON.parse(r.configJson || "{}") as Record<string, unknown>,
+      startsAt: r.startsAt?.toISOString() ?? null,
+      endsAt: r.endsAt?.toISOString() ?? null,
+    }));
+  }
+
+  async createPromotion(organizationId: string, input: CreateStorePromotion) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const [row] = await this.db
+      .insert(storePromotions)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        name: input.name,
+        type: input.type,
+        productIdsJson: JSON.stringify(input.productIds ?? []),
+        configJson: JSON.stringify(input.config ?? {}),
+        startsAt: input.startsAt ? new Date(input.startsAt) : null,
+        endsAt: input.endsAt ? new Date(input.endsAt) : null,
+      })
+      .returning();
+    return (await this.listPromotions(organizationId, input.branchCode)).find((p) => p.id === row!.id)!;
+  }
+
+  async togglePromotion(organizationId: string, promotionId: string, isActive: boolean) {
+    await this.db.update(storePromotions).set({ isActive: isActive ? "yes" : "no" }).where(and(eq(storePromotions.id, promotionId), eq(storePromotions.organizationId, organizationId)));
+    return { ok: true };
+  }
+
+  async listPosShortcuts(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const rows = await this.db
+      .select({
+        id: storePosShortcuts.id,
+        hotkey: storePosShortcuts.hotkey,
+        label: storePosShortcuts.label,
+        productId: storePosShortcuts.productId,
+        productName: storeProducts.name,
+        sku: storeProducts.sku,
+      })
+      .from(storePosShortcuts)
+      .innerJoin(storeProducts, eq(storeProducts.id, storePosShortcuts.productId))
+      .where(and(eq(storePosShortcuts.organizationId, organizationId), eq(storePosShortcuts.branchId, branch.id)))
+      .orderBy(asc(storePosShortcuts.hotkey));
+    return rows;
+  }
+
+  async upsertPosShortcut(organizationId: string, input: UpsertStorePosShortcut) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const [existing] = await this.db
+      .select()
+      .from(storePosShortcuts)
+      .where(and(eq(storePosShortcuts.branchId, branch.id), eq(storePosShortcuts.hotkey, input.hotkey)))
+      .limit(1);
+    if (existing) {
+      await this.db
+        .update(storePosShortcuts)
+        .set({ label: input.label, productId: input.productId })
+        .where(eq(storePosShortcuts.id, existing.id));
+    } else {
+      await this.db.insert(storePosShortcuts).values({
+        organizationId,
+        branchId: branch.id,
+        hotkey: input.hotkey,
+        label: input.label,
+        productId: input.productId,
+      });
+    }
+    return (await this.listPosShortcuts(organizationId, input.branchCode)).find((s) => s.hotkey === input.hotkey)!;
+  }
+
+  async deletePosShortcut(organizationId: string, shortcutId: string) {
+    await this.db.delete(storePosShortcuts).where(and(eq(storePosShortcuts.id, shortcutId), eq(storePosShortcuts.organizationId, organizationId)));
+    return { ok: true };
+  }
+
+  private mapShift(row: typeof storeShifts.$inferSelect) {
+    return {
+      id: row.id,
+      cashierName: row.cashierName,
+      openingCashPkr: row.openingCashPkr,
+      closingCashPkr: row.closingCashPkr,
+      expectedCashPkr: row.expectedCashPkr,
+      cashDifferencePkr: row.cashDifferencePkr,
+      totalSalesPkr: row.totalSalesPkr,
+      transactionCount: row.transactionCount,
+      status: row.status as "open" | "closed",
+      openedAt: row.openedAt.toISOString(),
+      closedAt: row.closedAt?.toISOString() ?? null,
+    };
+  }
+
+  async listShifts(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const rows = await this.db
+      .select()
+      .from(storeShifts)
+      .where(and(eq(storeShifts.organizationId, organizationId), eq(storeShifts.branchId, branch.id)))
+      .orderBy(desc(storeShifts.openedAt))
+      .limit(50);
+    return rows.map((r) => this.mapShift(r));
+  }
+
+  async getOpenShift(organizationId: string, branchCode: string, terminalId?: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const conditions = [
+      eq(storeShifts.organizationId, organizationId),
+      eq(storeShifts.branchId, branch.id),
+      eq(storeShifts.status, "open"),
+    ];
+    if (terminalId) conditions.push(eq(storeShifts.terminalId, terminalId));
+    const [row] = await this.db
+      .select()
+      .from(storeShifts)
+      .where(and(...conditions))
+      .orderBy(desc(storeShifts.openedAt))
+      .limit(1);
+    return row ? this.mapShift(row) : null;
+  }
+
+  async openShift(organizationId: string, input: OpenStoreShift) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const existing = await this.getOpenShift(organizationId, input.branchCode, input.terminalId);
+    if (existing) throw new BadRequestException("A shift is already open on this terminal");
+
+    const [shift] = await this.db
+      .insert(storeShifts)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        cashierName: input.cashierName.trim(),
+        openingCashPkr: Math.round(input.openingCashPkr ?? 0),
+        terminalId: input.terminalId ?? null,
+        status: "open",
+      })
+      .returning();
+    if (!shift) throw new BadRequestException("Failed to open shift");
+    return this.mapShift(shift);
+  }
+
+  async closeShift(organizationId: string, shiftId: string, input: CloseStoreShift) {
+    const [shift] = await this.db
+      .select()
+      .from(storeShifts)
+      .where(and(eq(storeShifts.id, shiftId), eq(storeShifts.organizationId, organizationId)))
+      .limit(1);
+    if (!shift) throw new NotFoundException("Shift not found");
+    if (shift.status === "closed") throw new BadRequestException("Shift already closed");
+
+    const cashSales = await this.db
+      .select({ total: sql<number>`coalesce(sum(${storeSales.amountPaidPkr}), 0)` })
+      .from(storeSales)
+      .where(and(eq(storeSales.shiftId, shiftId), eq(storeSales.paymentMethod, "Cash"), eq(storeSales.status, "Completed")));
+
+    const cashMovements = await this.db.select().from(storeCashMovements).where(eq(storeCashMovements.shiftId, shiftId));
+    const cashAdjustments = cashMovements.reduce((s, r) => s + (r.type === "paid_in" ? r.amountPkr : -r.amountPkr), 0);
+
+    const expectedCash = shift.openingCashPkr + Number(cashSales[0]?.total ?? 0) + cashAdjustments;
+    const closingCash = Math.round(input.closingCashPkr);
+    const difference = closingCash - expectedCash;
+
+    await this.db
+      .update(storeShifts)
+      .set({
+        status: "closed",
+        closingCashPkr: closingCash,
+        expectedCashPkr: expectedCash,
+        cashDifferencePkr: difference,
+        closedAt: new Date(),
+      })
+      .where(eq(storeShifts.id, shiftId));
+
+    return this.mapShift({ ...shift, status: "closed", closingCashPkr: closingCash, expectedCashPkr: expectedCash, cashDifferencePkr: difference, closedAt: new Date() });
+  }
+
+  async syncInventorySnapshot(organizationId: string, branchCode: string) {
+    const products = await this.listProducts(organizationId, branchCode);
+    return {
+      syncedAt: new Date().toISOString(),
+      products: products.map((p) => ({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        availableStock: p.availableStock,
+        isWeighed: p.isWeighed,
+      })),
+    };
   }
 
   async getStockReport(organizationId: string, branchCode: string, fromIso?: string, toIso?: string) {

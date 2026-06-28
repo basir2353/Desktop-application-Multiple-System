@@ -17,7 +17,7 @@ export function StoreProductsPage(): JSX.Element {
   const [form, setForm] = useState({
     sku: "", name: "", description: "", categoryId: "", brandId: "", unitId: "",
     barcode: "", purchasePrice: 0, sellingPrice: 0, taxPct: 0, reorderLevel: 10, availableStock: 0,
-    trackBatch: false, batchNumber: "", expiryDate: "",
+    trackBatch: false, isWeighed: false, batchNumber: "", expiryDate: "",
   });
 
   const productsQuery = useQuery({ queryKey: ["store", "products", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchStoreProducts(branch!.code) });
@@ -41,6 +41,7 @@ export function StoreProductsPage(): JSX.Element {
       reorderLevel: form.reorderLevel,
       availableStock: form.availableStock,
       trackBatch: form.trackBatch,
+      isWeighed: form.isWeighed,
       batchNumber: form.batchNumber || undefined,
       expiryDate: form.expiryDate || undefined,
     }),
@@ -104,6 +105,10 @@ export function StoreProductsPage(): JSX.Element {
           <StoreField label="Tax %"><StoreInput type="number" value={form.taxPct} onChange={(e) => setForm({ ...form, taxPct: Number(e.target.value) })} /></StoreField>
           <StoreField label="Reorder level"><StoreInput type="number" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: Number(e.target.value) })} /></StoreField>
           <StoreField label="Opening stock"><StoreInput type="number" value={form.availableStock} onChange={(e) => setForm({ ...form, availableStock: Number(e.target.value) })} /></StoreField>
+          <label className="col-span-full flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.isWeighed} onChange={(e) => setForm({ ...form, isWeighed: e.target.checked })} />
+            Sold by weight (stock in grams, price per kg)
+          </label>
           <div className="col-span-full">
             <button type="button" onClick={() => createMutation.mutate()} disabled={createMutation.isPending} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50">
               Save product

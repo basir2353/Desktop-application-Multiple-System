@@ -24,14 +24,47 @@ export const medicineCategorySchema = z.enum(MEDICINE_CATEGORIES);
 export const PRESCRIPTION_STATUSES = ["Pending", "Verified", "Dispensed", "Cancelled"] as const;
 export const prescriptionStatusSchema = z.enum(PRESCRIPTION_STATUSES);
 
-export const PHARMACY_PAYMENT_METHODS = ["Cash", "Card", "Bank Transfer", "Mobile Wallet"] as const;
+export const PHARMACY_PAYMENT_METHODS = [
+  "Cash",
+  "Card",
+  "EasyPaisa",
+  "JazzCash",
+  "Bank Transfer",
+  "Mixed",
+  "Khata",
+] as const;
 export const pharmacyPaymentMethodSchema = z.enum(PHARMACY_PAYMENT_METHODS);
+
+export const REFILL_CHANNELS = ["sms", "email", "whatsapp"] as const;
+export const refillChannelSchema = z.enum(REFILL_CHANNELS);
+
+export const MEDICINE_WARNINGS = [
+  "Take after meals",
+  "Take before meals",
+  "Do not drive after consumption",
+  "Avoid alcohol",
+  "High dosage warning",
+  "Drug interaction alert",
+  "Allergy alert",
+] as const;
+
+export const PHARMACY_SALE_UNITS = ["tablet", "strip", "box", "piece"] as const;
+export const pharmacySaleUnitSchema = z.enum(PHARMACY_SALE_UNITS);
+export type PharmacySaleUnit = (typeof PHARMACY_SALE_UNITS)[number];
+export type PharmacyPaymentMethod = z.infer<typeof pharmacyPaymentMethodSchema>;
+export type PharmacyPaymentLine = z.infer<typeof pharmacyPaymentLineSchema>;
+
+export const pharmacyPaymentLineSchema = z.object({
+  method: pharmacyPaymentMethodSchema,
+  amount: z.number().min(0),
+});
 
 export const medicineSchema = z.object({
   id: z.string().uuid(),
   sku: z.string(),
   name: z.string(),
   genericName: z.string().nullable(),
+  dosageStrength: z.string().nullable(),
   presentation: z.string().nullable(),
   brandName: z.string().nullable(),
   category: z.string(),
@@ -41,9 +74,28 @@ export const medicineSchema = z.object({
   sellingPrice: z.number(),
   taxPct: z.number(),
   reorderLevel: z.number(),
+  suggestedReorderQty: z.number(),
   currentStock: z.number(),
   unit: z.string(),
+  rackLocation: z.string().nullable(),
+  shelfLocation: z.string().nullable(),
+  aisleLocation: z.string().nullable(),
+  tabletsPerStrip: z.number(),
+  stripsPerBox: z.number(),
+  isControlled: z.boolean(),
+  warnings: z.array(z.string()),
+  instructions: z.array(z.string()),
   nearestExpiry: z.string().nullable(),
+});
+
+export const medicineAlternativeSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  brandName: z.string().nullable(),
+  genericName: z.string().nullable(),
+  dosageStrength: z.string().nullable(),
+  currentStock: z.number(),
+  sellingPrice: z.number(),
 });
 
 export const medicineBatchSchema = z.object({
@@ -62,9 +114,36 @@ export const pharmacyPatientSchema = z.object({
   phone: z.string().nullable(),
   email: z.string().nullable(),
   address: z.string().nullable(),
+  dateOfBirth: z.string().nullable(),
+  allergies: z.array(z.string()),
+  medicalConditions: z.array(z.string()),
+  chronicDiseases: z.array(z.string()),
   loyaltyPoints: z.number(),
   outstandingPkr: z.number(),
+  creditLimitPkr: z.number(),
+  creditDueDate: z.string().nullable(),
+  refillReminderEnabled: z.boolean(),
+  refillReminderChannel: refillChannelSchema.nullable(),
   totalPurchases: z.number(),
+});
+
+export const pharmacyKhataEntrySchema = z.object({
+  id: z.string().uuid(),
+  type: z.enum(["sale", "payment", "adjustment"]),
+  amountPkr: z.number(),
+  balanceAfterPkr: z.number(),
+  notes: z.string().nullable(),
+  invoiceNumber: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const pharmacyKhataStatementSchema = z.object({
+  patientId: z.string().uuid(),
+  patientName: z.string(),
+  outstandingPkr: z.number(),
+  creditLimitPkr: z.number(),
+  creditDueDate: z.string().nullable(),
+  entries: z.array(pharmacyKhataEntrySchema),
 });
 
 export const pharmacyDoctorSchema = z.object({
@@ -95,6 +174,8 @@ export const prescriptionSchema = z.object({
   doctorName: z.string().nullable(),
   status: prescriptionStatusSchema,
   notes: z.string().nullable(),
+  attachmentName: z.string().nullable(),
+  hasAttachment: z.boolean(),
   items: z.array(prescriptionItemSchema),
   createdAt: z.string(),
   verifiedAt: z.string().nullable(),
@@ -105,7 +186,11 @@ export const pharmacySaleLineSchema = z.object({
   id: z.string().uuid(),
   medicineId: z.string().uuid(),
   medicineName: z.string(),
+  batchId: z.string().uuid().nullable(),
+  batchNumber: z.string().nullable(),
+  saleUnit: pharmacySaleUnitSchema.nullable(),
   qty: z.number(),
+  tabletsQty: z.number(),
   unitPrice: z.number(),
   lineTotal: z.number(),
 });
@@ -116,6 +201,9 @@ export const pharmacySaleSchema = z.object({
   patientId: z.string().uuid().nullable(),
   patientName: z.string().nullable(),
   paymentMethod: pharmacyPaymentMethodSchema,
+  payments: z.array(pharmacyPaymentLineSchema),
+  amountPaid: z.number(),
+  amountDue: z.number(),
   subtotal: z.number(),
   tax: z.number(),
   discount: z.number(),
@@ -124,8 +212,52 @@ export const pharmacySaleSchema = z.object({
   createdAt: z.string(),
 });
 
+export const pharmacyShiftSchema = z.object({
+  id: z.string().uuid(),
+  cashierName: z.string(),
+  openingCashPkr: z.number(),
+  closingCashPkr: z.number().nullable(),
+  expectedCashPkr: z.number().nullable(),
+  cashDifferencePkr: z.number().nullable(),
+  totalSalesPkr: z.number(),
+  transactionCount: z.number(),
+  status: z.enum(["open", "closed"]),
+  openedAt: z.string(),
+  closedAt: z.string().nullable(),
+});
+
+export const pharmacyControlledDrugLogSchema = z.object({
+  id: z.string().uuid(),
+  medicineName: z.string(),
+  patientName: z.string().nullable(),
+  prescriptionNumber: z.string().nullable(),
+  qty: z.number(),
+  approvedByName: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const pharmacyRefillReminderSchema = z.object({
+  id: z.string().uuid(),
+  patientName: z.string(),
+  medicineName: z.string(),
+  refillDueDate: z.string(),
+  channel: refillChannelSchema,
+  status: z.enum(["pending", "sent", "skipped"]),
+  sentAt: z.string().nullable(),
+});
+
 export const pharmacyAlertSchema = z.object({
-  type: z.enum(["low_stock", "out_of_stock", "expiry", "near_expiry", "payment_due"]),
+  type: z.enum([
+    "low_stock",
+    "out_of_stock",
+    "expiry",
+    "near_expiry",
+    "expiry_3mo",
+    "expiry_2mo",
+    "expiry_1mo",
+    "payment_due",
+    "reorder",
+  ]),
   severity: z.enum(["info", "warning", "danger"]),
   message: z.string(),
   medicineId: z.string().uuid().optional(),
@@ -158,6 +290,7 @@ export const createMedicineSchema = z.object({
   sku: z.string().min(1),
   name: z.string().min(1),
   genericName: z.string().optional(),
+  dosageStrength: z.string().optional(),
   presentation: z.string().optional(),
   brandName: z.string().optional(),
   category: medicineCategorySchema.default("Tablet"),
@@ -167,8 +300,17 @@ export const createMedicineSchema = z.object({
   sellingPrice: z.number().min(0).default(0),
   taxPct: z.number().min(0).max(100).default(0),
   reorderLevel: z.number().min(0).default(10),
+  suggestedReorderQty: z.number().min(0).default(0),
   currentStock: z.number().min(0).default(0),
   unit: z.string().default("Piece"),
+  aisleLocation: z.string().optional(),
+  tabletsPerStrip: z.number().min(1).default(1),
+  stripsPerBox: z.number().min(1).default(1),
+  rackLocation: z.string().optional(),
+  shelfLocation: z.string().optional(),
+  isControlled: z.boolean().default(false),
+  warnings: z.array(z.string()).optional(),
+  instructions: z.array(z.string()).optional(),
   batchNumber: z.string().optional(),
   expiryDate: z.string().optional(),
 });
@@ -181,6 +323,22 @@ export const createPatientSchema = z.object({
   phone: z.string().optional(),
   email: z.string().optional(),
   address: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  allergies: z.array(z.string()).optional(),
+  medicalConditions: z.array(z.string()).optional(),
+  chronicDiseases: z.array(z.string()).optional(),
+  creditLimitPkr: z.number().min(0).optional(),
+  creditDueDate: z.string().optional(),
+  refillReminderEnabled: z.boolean().optional(),
+  refillReminderChannel: refillChannelSchema.optional(),
+});
+
+export const updatePatientSchema = createPatientSchema.omit({ branchCode: true }).partial();
+
+export const recordKhataPaymentSchema = z.object({
+  branchCode: z.string().min(1),
+  amountPkr: z.number().min(1),
+  notes: z.string().optional(),
 });
 
 export const createDoctorSchema = z.object({
@@ -197,6 +355,8 @@ export const createPrescriptionSchema = z.object({
   patientId: z.string().uuid().optional(),
   doctorId: z.string().uuid().optional(),
   notes: z.string().optional(),
+  attachmentName: z.string().optional(),
+  attachmentDataUrl: z.string().optional(),
   items: z.array(
     z.object({
       medicineId: z.string().uuid(),
@@ -209,28 +369,63 @@ export const createPrescriptionSchema = z.object({
 export const createPharmacySaleSchema = z.object({
   branchCode: z.string().min(1),
   patientId: z.string().uuid().optional(),
+  prescriptionId: z.string().uuid().optional(),
+  shiftId: z.string().uuid().optional(),
   paymentMethod: pharmacyPaymentMethodSchema,
+  payments: z.array(pharmacyPaymentLineSchema).optional(),
   discount: z.number().min(0).default(0),
+  controlledApproved: z.boolean().optional(),
   lines: z.array(
     z.object({
       medicineId: z.string().uuid(),
       qty: z.number().min(1),
+      batchId: z.string().uuid().optional(),
+      saleUnit: pharmacySaleUnitSchema.optional(),
     }),
   ).min(1),
 });
 
+export const pharmacyReorderSuggestionSchema = z.object({
+  medicineId: z.string().uuid(),
+  medicineName: z.string(),
+  currentStock: z.number(),
+  reorderLevel: z.number(),
+  suggestedReorderQty: z.number(),
+  location: z.string().nullable(),
+});
+
+export const openPharmacyShiftSchema = z.object({
+  branchCode: z.string().min(1),
+  cashierName: z.string().min(1),
+  openingCashPkr: z.number().min(0).default(0),
+});
+
+export const closePharmacyShiftSchema = z.object({
+  closingCashPkr: z.number().min(0),
+});
+
+export type PharmacyReorderSuggestion = z.infer<typeof pharmacyReorderSuggestionSchema>;
 export type Medicine = z.infer<typeof medicineSchema>;
+export type MedicineAlternative = z.infer<typeof medicineAlternativeSchema>;
 export type MedicineBatch = z.infer<typeof medicineBatchSchema>;
 export type PharmacyPatient = z.infer<typeof pharmacyPatientSchema>;
+export type PharmacyKhataEntry = z.infer<typeof pharmacyKhataEntrySchema>;
 export type PharmacyDoctor = z.infer<typeof pharmacyDoctorSchema>;
 export type Prescription = z.infer<typeof prescriptionSchema>;
 export type PharmacySale = z.infer<typeof pharmacySaleSchema>;
+export type PharmacyShift = z.infer<typeof pharmacyShiftSchema>;
+export type PharmacyControlledDrugLog = z.infer<typeof pharmacyControlledDrugLogSchema>;
+export type PharmacyRefillReminder = z.infer<typeof pharmacyRefillReminderSchema>;
 export type PharmacyDashboard = z.infer<typeof pharmacyDashboardSchema>;
 export type CreateMedicine = z.infer<typeof createMedicineSchema>;
 export type CreatePatient = z.infer<typeof createPatientSchema>;
+export type UpdatePatient = z.infer<typeof updatePatientSchema>;
 export type CreateDoctor = z.infer<typeof createDoctorSchema>;
 export type CreatePrescription = z.infer<typeof createPrescriptionSchema>;
 export type CreatePharmacySale = z.infer<typeof createPharmacySaleSchema>;
+export type OpenPharmacyShift = z.infer<typeof openPharmacyShiftSchema>;
+export type ClosePharmacyShift = z.infer<typeof closePharmacyShiftSchema>;
+export type RecordKhataPayment = z.infer<typeof recordKhataPaymentSchema>;
 
 export const pharmacyPurchaseLineSchema = z.object({
   poNumber: z.string(),
@@ -334,4 +529,22 @@ export const pharmacyExpiredProductsReportSchema = z.object({
   expiringSoonCount: z.number(),
   estimatedLossPkr: z.number(),
   products: z.array(pharmacyExpiredProductSchema),
+});
+
+export const pharmacyTaxComplianceSchema = z.object({
+  periodLabel: z.string(),
+  from: z.string(),
+  to: z.string(),
+  totalSales: z.number(),
+  taxableSales: z.number(),
+  taxCollected: z.number(),
+  taxExemptSales: z.number(),
+  invoiceCount: z.number(),
+  fbrCompliant: z.boolean(),
+  summary: z.array(
+    z.object({
+      label: z.string(),
+      amount: z.number(),
+    }),
+  ),
 });
