@@ -18,6 +18,12 @@ export function printPharmacyInvoice(
   sale: PharmacySale,
 ): boolean {
   const printedAt = new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
+  const paymentRows =
+    sale.payments.length > 1
+      ? sale.payments
+          .map((p) => `<div class="row"><span>${escapeHtml(p.method)}</span><span>${formatMoney(p.amount)}</span></div>`)
+          .join("")
+      : "";
   const lineRows = sale.lines
     .map((line) => {
       const qtyLabel =
@@ -49,6 +55,7 @@ export function printPharmacyInvoice(
     Invoice: ${escapeHtml(sale.invoiceNumber)}<br/>
     ${sale.patientName ? `Customer: ${escapeHtml(sale.patientName)}<br/>` : ""}
     Payment: ${escapeHtml(sale.paymentMethod)}<br/>
+    ${paymentRows ? `<div class="totals" style="margin-top:6px">${paymentRows}</div>` : ""}
     ${printedAt}</div>
     <table><thead><tr><th>Item</th><th class="qty">Qty</th><th class="amt">Rate</th><th class="amt">Total</th></tr></thead>
     <tbody>${lineRows}</tbody></table>

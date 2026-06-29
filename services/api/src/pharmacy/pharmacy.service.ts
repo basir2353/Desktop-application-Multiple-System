@@ -16,10 +16,11 @@ import type {
   OpenPharmacyShift,
   PharmacySaleUnit,
   RecordKhataPayment,
+  UpdateMedicine,
   UpdatePatient,
 } from "@platform/contracts";
 import { computeLinePrice, formatMedicineLocation, saleQtyToTablets } from "@platform/contracts";
-import { and, asc, desc, eq, gte, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import {
   pharmacyControlledDrugLogs,
   pharmacyDoctors,
@@ -735,6 +736,111 @@ export class PharmacyService implements OnModuleInit {
     await this.db.delete(pharmacyMedicines).where(eq(pharmacyMedicines.id, medicineId));
   }
 
+  async updateMedicine(
+    organizationId: string,
+    medicineId: string,
+    branchCode: string,
+    input: UpdateMedicine,
+  ) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const [existing] = await this.db
+      .select()
+      .from(pharmacyMedicines)
+      .where(
+        and(
+          eq(pharmacyMedicines.id, medicineId),
+          eq(pharmacyMedicines.organizationId, organizationId),
+          eq(pharmacyMedicines.branchId, branch.id),
+        ),
+      )
+      .limit(1);
+    if (!existing) throw new NotFoundException("Medicine not found");
+
+    const [row] = await this.db
+      .update(pharmacyMedicines)
+      .set({
+        sku: input.sku?.trim() ?? existing.sku,
+        name: input.name?.trim() ?? existing.name,
+        genericName: input.genericName !== undefined ? input.genericName.trim() || null : existing.genericName,
+        dosageStrength:
+          input.dosageStrength !== undefined ? input.dosageStrength.trim() || null : existing.dosageStrength,
+        presentation: input.presentation !== undefined ? input.presentation.trim() || null : existing.presentation,
+        brandName: input.brandName !== undefined ? input.brandName.trim() || null : existing.brandName,
+        category: input.category ?? existing.category,
+        manufacturer: input.manufacturer !== undefined ? input.manufacturer.trim() || null : existing.manufacturer,
+        barcode: input.barcode !== undefined ? input.barcode.trim() || null : existing.barcode,
+        purchasePricePkr:
+          input.purchasePrice !== undefined ? Math.round(input.purchasePrice) : existing.purchasePricePkr,
+        sellingPricePkr:
+          input.sellingPrice !== undefined ? Math.round(input.sellingPrice) : existing.sellingPricePkr,
+        taxPct: input.taxPct !== undefined ? Math.round(input.taxPct) : existing.taxPct,
+        reorderLevel: input.reorderLevel !== undefined ? Math.round(input.reorderLevel) : existing.reorderLevel,
+        suggestedReorderQty:
+          input.suggestedReorderQty !== undefined
+            ? Math.round(input.suggestedReorderQty)
+            : existing.suggestedReorderQty,
+        currentStock: input.currentStock !== undefined ? Math.round(input.currentStock) : existing.currentStock,
+        unit: input.unit ?? existing.unit,
+        rackLocation: input.rackLocation !== undefined ? input.rackLocation.trim() || null : existing.rackLocation,
+        shelfLocation: input.shelfLocation !== undefined ? input.shelfLocation.trim() || null : existing.shelfLocation,
+        aisleLocation: input.aisleLocation !== undefined ? input.aisleLocation.trim() || null : existing.aisleLocation,
+        tabletsPerStrip:
+          input.tabletsPerStrip !== undefined ? Math.max(1, Math.round(input.tabletsPerStrip)) : existing.tabletsPerStrip,
+        stripsPerBox:
+          input.stripsPerBox !== undefined ? Math.max(1, Math.round(input.stripsPerBox)) : existing.stripsPerBox,
+        isControlled: input.isControlled !== undefined ? input.isControlled : existing.isControlled,
+        warningsJson: input.warnings ? stringifyJsonArray(input.warnings) : existing.warningsJson,
+        instructionsJson: input.instructions ? stringifyJsonArray(input.instructions) : existing.instructionsJson,
+      })
+      .where(eq(pharmacyMedicines.id, medicineId))
+      .returning();
+    if (!row) throw new BadRequestException("Failed to update medicine");
+    return this.listMedicines(organizationId, branchCode).then((list) => list.find((m) => m.id === medicineId)!);
+  }
+
+  async matchMedicines(organizationId: string, branchCode: string, query: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+
+    const rows = await this.db
+      .select()
+      .from(pharmacyMedicines)
+      .where(and(eq(pharmacyMedicines.organizationId, organizationId), eq(pharmacyMedicines.branchId, branch.id)));
+
+    const scored = rows
+      .map((m) => {
+        const name = m.name.toLowerCase();
+        const generic = (m.genericName ?? "").toLowerCase();
+        const brand = (m.brandName ?? "").toLowerCase();
+        const sku = m.sku.toLowerCase();
+        let score = 0;
+        if (name === q || generic === q) score = 100;
+        else if (name.startsWith(q) || generic.startsWith(q)) score = 80;
+        else if (name.includes(q) || generic.includes(q) || brand.includes(q)) score = 60;
+        else if (sku.includes(q)) score = 40;
+        else {
+          const tokens = q.split(/\s+/).filter(Boolean);
+          const haystack = `${name} ${generic} ${brand}`;
+          const hits = tokens.filter((t) => haystack.includes(t)).length;
+          if (hits > 0) score = 20 + hits * 10;
+        }
+        return { m, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+
+    return scored.map(({ m, score }) => ({
+      id: m.id,
+      name: m.name,
+      genericName: m.genericName,
+      brandName: m.brandName,
+      currentStock: m.currentStock,
+      matchScore: score,
+    }));
+  }
+
   async listBatches(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     const rows = await this.db
@@ -1345,18 +1451,25 @@ export class PharmacyService implements OnModuleInit {
       }
 
       if (input.patientId) {
-        const dueDate = new Date();
-        dueDate.setDate(dueDate.getDate() + 30);
-        await this.db.insert(pharmacyRefillReminders).values({
-          organizationId,
-          branchId: branch.id,
-          patientId: input.patientId,
-          medicineId: line.medicineId,
-          lastSaleId: sale.id,
-          refillDueDate: dueDate.toISOString().slice(0, 10),
-          channel: "sms",
-          status: "pending",
-        });
+        const [patient] = await this.db
+          .select()
+          .from(pharmacyPatients)
+          .where(eq(pharmacyPatients.id, input.patientId))
+          .limit(1);
+        if (patient?.refillReminderEnabled) {
+          const dueDate = new Date();
+          dueDate.setDate(dueDate.getDate() + 30);
+          await this.db.insert(pharmacyRefillReminders).values({
+            organizationId,
+            branchId: branch.id,
+            patientId: input.patientId,
+            medicineId: line.medicineId,
+            lastSaleId: sale.id,
+            refillDueDate: dueDate.toISOString().slice(0, 10),
+            channel: patient.refillReminderChannel ?? "sms",
+            status: "pending",
+          });
+        }
       }
     }
 
@@ -1884,6 +1997,66 @@ export class PharmacyService implements OnModuleInit {
     const [branchRow] = await this.db.select().from(popsBranches).where(eq(popsBranches.id, existing.branchId)).limit(1);
     if (!branchRow) throw new NotFoundException("Branch not found");
     return this.listPatients(organizationId, branchRow.code).then((list) => list.find((p) => p.id === patientId)!);
+  }
+
+  async getPatientHistory(organizationId: string, patientId: string) {
+    const [patient] = await this.db
+      .select()
+      .from(pharmacyPatients)
+      .where(and(eq(pharmacyPatients.id, patientId), eq(pharmacyPatients.organizationId, organizationId)))
+      .limit(1);
+    if (!patient) throw new NotFoundException("Patient not found");
+
+    const [branchRow] = await this.db.select().from(popsBranches).where(eq(popsBranches.id, patient.branchId)).limit(1);
+    if (!branchRow) throw new NotFoundException("Branch not found");
+
+    const patientDto = await this.listPatients(organizationId, branchRow.code).then((list) =>
+      list.find((p) => p.id === patientId),
+    );
+    if (!patientDto) throw new NotFoundException("Patient not found");
+
+    const sales = await this.db
+      .select({
+        id: pharmacySales.id,
+        invoiceNumber: pharmacySales.invoiceNumber,
+        totalPkr: pharmacySales.totalPkr,
+        createdAt: pharmacySales.createdAt,
+      })
+      .from(pharmacySales)
+      .where(and(eq(pharmacySales.patientId, patientId), eq(pharmacySales.organizationId, organizationId)))
+      .orderBy(desc(pharmacySales.createdAt))
+      .limit(50);
+
+    const saleIds = sales.map((s) => s.id);
+    const lineRows =
+      saleIds.length > 0
+        ? await this.db
+            .select({
+              saleId: pharmacySaleLines.saleId,
+              medicineName: pharmacyMedicines.name,
+            })
+            .from(pharmacySaleLines)
+            .innerJoin(pharmacyMedicines, eq(pharmacyMedicines.id, pharmacySaleLines.medicineId))
+            .where(inArray(pharmacySaleLines.saleId, saleIds))
+        : [];
+
+    const medsBySale = new Map<string, string[]>();
+    for (const row of lineRows) {
+      const list = medsBySale.get(row.saleId) ?? [];
+      list.push(row.medicineName);
+      medsBySale.set(row.saleId, list);
+    }
+
+    return {
+      patient: patientDto,
+      sales: sales.map((s) => ({
+        saleId: s.id,
+        invoiceNumber: s.invoiceNumber,
+        total: s.totalPkr,
+        createdAt: s.createdAt.toISOString(),
+        medicines: medsBySale.get(s.id) ?? [],
+      })),
+    };
   }
 
   async getKhataStatement(organizationId: string, patientId: string) {

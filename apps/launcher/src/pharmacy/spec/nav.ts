@@ -28,6 +28,7 @@ export const pharmacyNavItems: PopsNavItem[] = [
     label: "Inventory & stock",
     children: [
       { path: "pharmacy/medicines", label: "Medicines & generic names" },
+      { path: "pharmacy/rack-map", label: "Rack / shelf map" },
       { path: "pharmacy/inventory", label: "Stock levels & alerts" },
       { path: "pharmacy/expiry", label: "Batch & expiry tracking" },
       { path: "pharmacy/suppliers", label: "Suppliers & vendors" },

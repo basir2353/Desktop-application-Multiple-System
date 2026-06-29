@@ -46,6 +46,20 @@ export const MEDICINE_WARNINGS = [
   "High dosage warning",
   "Drug interaction alert",
   "Allergy alert",
+  "Not for pregnant women",
+  "May cause drowsiness",
+] as const;
+
+export const CHRONIC_DISEASES = [
+  "Diabetes",
+  "Hypertension",
+  "Asthma",
+  "Heart Disease",
+  "Kidney Disease",
+  "Liver Disease",
+  "Thyroid Disorder",
+  "Arthritis",
+  "Epilepsy",
 ] as const;
 
 export const PHARMACY_SALE_UNITS = ["tablet", "strip", "box", "piece"] as const;
@@ -317,6 +331,28 @@ export const createMedicineSchema = z.object({
 
 export const updateMedicineSchema = createMedicineSchema.omit({ branchCode: true }).partial();
 
+export const medicineMatchSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  genericName: z.string().nullable(),
+  brandName: z.string().nullable(),
+  currentStock: z.number(),
+  matchScore: z.number(),
+});
+
+export const pharmacyPatientHistorySaleSchema = z.object({
+  saleId: z.string().uuid(),
+  invoiceNumber: z.string(),
+  total: z.number(),
+  createdAt: z.string(),
+  medicines: z.array(z.string()),
+});
+
+export const pharmacyPatientHistorySchema = z.object({
+  patient: pharmacyPatientSchema,
+  sales: z.array(pharmacyPatientHistorySaleSchema),
+});
+
 export const createPatientSchema = z.object({
   branchCode: z.string().min(1),
   name: z.string().min(1),
@@ -418,6 +454,9 @@ export type PharmacyControlledDrugLog = z.infer<typeof pharmacyControlledDrugLog
 export type PharmacyRefillReminder = z.infer<typeof pharmacyRefillReminderSchema>;
 export type PharmacyDashboard = z.infer<typeof pharmacyDashboardSchema>;
 export type CreateMedicine = z.infer<typeof createMedicineSchema>;
+export type UpdateMedicine = z.infer<typeof updateMedicineSchema>;
+export type MedicineMatch = z.infer<typeof medicineMatchSchema>;
+export type PharmacyPatientHistory = z.infer<typeof pharmacyPatientHistorySchema>;
 export type CreatePatient = z.infer<typeof createPatientSchema>;
 export type UpdatePatient = z.infer<typeof updatePatientSchema>;
 export type CreateDoctor = z.infer<typeof createDoctorSchema>;

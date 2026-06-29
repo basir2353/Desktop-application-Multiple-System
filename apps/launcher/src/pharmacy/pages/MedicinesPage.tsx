@@ -1,7 +1,12 @@
-import { MEDICINE_CATEGORIES, type Medicine } from "@platform/contracts";
+import { formatMedicineLocation, MEDICINE_CATEGORIES, MEDICINE_WARNINGS, type Medicine } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { createPharmacyMedicine, deletePharmacyMedicine, fetchPharmacyMedicines } from "../api/pharmacy";
+import {
+  createPharmacyMedicine,
+  deletePharmacyMedicine,
+  fetchPharmacyMedicines,
+  updatePharmacyMedicine,
+} from "../api/pharmacy";
 import { formatPkr, useInvalidatePharmacy, usePharmacyAccess } from "../hooks/usePharmacy";
 import {
   PharmacyField,
@@ -35,6 +40,8 @@ const emptyForm = {
   shelfLocation: "",
   batchNumber: "",
   expiryDate: "",
+  warnings: [] as string[],
+  instructions: "",
 };
 
 function stockTone(m: Medicine): "success" | "warning" | "danger" {
@@ -56,6 +63,17 @@ export function MedicinesPage(): JSX.Element {
   const [showForm, setShowForm] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<Medicine | null>(null);
+  const [editForm, setEditForm] = useState({
+    reorderLevel: "",
+    aisleLocation: "",
+    rackLocation: "",
+    shelfLocation: "",
+    warnings: [] as string[],
+    instructions: "",
+    barcode: "",
+    genericName: "",
+  });
 
   const query = useQuery({
     queryKey: ["pharmacy", "medicines", branch?.code],
@@ -87,6 +105,11 @@ export function MedicinesPage(): JSX.Element {
         shelfLocation: form.shelfLocation.trim() || undefined,
         batchNumber: form.batchNumber.trim() || undefined,
         expiryDate: form.expiryDate || undefined,
+        warnings: form.warnings.length ? form.warnings : undefined,
+        instructions: form.instructions
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
       }),
     onSuccess: () => {
       invalidate();
@@ -104,6 +127,43 @@ export function MedicinesPage(): JSX.Element {
     },
     onError: (e: Error) => setError(e.message),
   });
+
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      updatePharmacyMedicine(editing!.id, branch!.code, {
+        reorderLevel: Number(editForm.reorderLevel) || 0,
+        aisleLocation: editForm.aisleLocation.trim() || undefined,
+        rackLocation: editForm.rackLocation.trim() || undefined,
+        shelfLocation: editForm.shelfLocation.trim() || undefined,
+        barcode: editForm.barcode.trim() || undefined,
+        genericName: editForm.genericName.trim() || undefined,
+        warnings: editForm.warnings,
+        instructions: editForm.instructions
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      }),
+    onSuccess: () => {
+      invalidate();
+      setEditing(null);
+      setError(null);
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  function openEdit(m: Medicine): void {
+    setEditing(m);
+    setEditForm({
+      reorderLevel: String(m.reorderLevel),
+      aisleLocation: m.aisleLocation ?? "",
+      rackLocation: m.rackLocation ?? "",
+      shelfLocation: m.shelfLocation ?? "",
+      warnings: [...m.warnings],
+      instructions: m.instructions.join("\n"),
+      barcode: m.barcode ?? "",
+      genericName: m.genericName ?? "",
+    });
+  }
 
   const allMedicines = query.data ?? [];
 
@@ -307,6 +367,40 @@ export function MedicinesPage(): JSX.Element {
             </PharmacyField>
           </PharmacyFormSection>
 
+          <PharmacyFormSection title="Dosage & safety alerts" description="Shown at POS when dispensing this medicine.">
+            <div className="sm:col-span-2">
+              <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Warnings</p>
+              <div className="flex flex-wrap gap-2">
+                {MEDICINE_WARNINGS.map((w) => (
+                  <label key={w} className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-1 text-xs dark:border-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={form.warnings.includes(w)}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          warnings: e.target.checked
+                            ? [...form.warnings, w]
+                            : form.warnings.filter((x) => x !== w),
+                        })
+                      }
+                    />
+                    {w}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <PharmacyField label="Usage instructions" hint="One per line">
+              <textarea
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                rows={3}
+                placeholder="Take 1 tablet after meals"
+                value={form.instructions}
+                onChange={(e) => setForm({ ...form, instructions: e.target.value })}
+              />
+            </PharmacyField>
+          </PharmacyFormSection>
+
           <PharmacyFormSection title="Batch & expiry" description="Optional — used for expiry tracking and FEFO.">
             <PharmacyField label="Batch number">
               <PharmacyInput
@@ -338,6 +432,76 @@ export function MedicinesPage(): JSX.Element {
               className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
             >
               Clear form
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {editing ? (
+        <form
+          className="space-y-4 rounded-2xl border border-emerald-500/40 bg-emerald-50/30 p-5 dark:bg-emerald-950/20"
+          onSubmit={(e) => {
+            e.preventDefault();
+            updateMutation.mutate();
+          }}
+        >
+          <h2 className="text-base font-semibold">Edit — {editing.name}</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <PharmacyField label="Generic / salt name">
+              <PharmacyInput value={editForm.genericName} onChange={(e) => setEditForm({ ...editForm, genericName: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Barcode">
+              <PharmacyInput value={editForm.barcode} onChange={(e) => setEditForm({ ...editForm, barcode: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Reorder level (tablets)">
+              <PharmacyInput type="number" min={0} value={editForm.reorderLevel} onChange={(e) => setEditForm({ ...editForm, reorderLevel: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Aisle">
+              <PharmacyInput value={editForm.aisleLocation} onChange={(e) => setEditForm({ ...editForm, aisleLocation: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Rack">
+              <PharmacyInput value={editForm.rackLocation} onChange={(e) => setEditForm({ ...editForm, rackLocation: e.target.value })} />
+            </PharmacyField>
+            <PharmacyField label="Shelf">
+              <PharmacyInput value={editForm.shelfLocation} onChange={(e) => setEditForm({ ...editForm, shelfLocation: e.target.value })} />
+            </PharmacyField>
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Warnings</p>
+            <div className="flex flex-wrap gap-2">
+              {MEDICINE_WARNINGS.map((w) => (
+                <label key={w} className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-1 text-xs dark:border-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={editForm.warnings.includes(w)}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        warnings: e.target.checked
+                          ? [...editForm.warnings, w]
+                          : editForm.warnings.filter((x) => x !== w),
+                      })
+                    }
+                  />
+                  {w}
+                </label>
+              ))}
+            </div>
+          </div>
+          <PharmacyField label="Instructions">
+            <textarea
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              rows={2}
+              value={editForm.instructions}
+              onChange={(e) => setEditForm({ ...editForm, instructions: e.target.value })}
+            />
+          </PharmacyField>
+          <div className="flex gap-2">
+            <button type="submit" disabled={updateMutation.isPending} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
+              Save changes
+            </button>
+            <button type="button" onClick={() => setEditing(null)} className="text-sm text-slate-500">
+              Cancel
             </button>
           </div>
         </form>
@@ -389,6 +553,7 @@ export function MedicinesPage(): JSX.Element {
                     <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3">Stock</th>
                     <th className="px-4 py-3">Price</th>
+                    <th className="px-4 py-3">Location</th>
                     <th className="px-4 py-3">Expiry</th>
                     <th className="px-4 py-3">Status</th>
                     {canManage ? <th className="px-4 py-3 text-right">Actions</th> : null}
@@ -431,12 +596,22 @@ export function MedicinesPage(): JSX.Element {
                       <td className="px-4 py-3 font-medium tabular-nums text-slate-900 dark:text-white">
                         {formatPkr(m.sellingPrice)}
                       </td>
+                      <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">
+                        {formatMedicineLocation(m) || "—"}
+                      </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{m.nearestExpiry ?? "—"}</td>
                       <td className="px-4 py-3">
                         <Badge tone={stockTone(m)}>{stockLabel(m)}</Badge>
                       </td>
                       {canManage ? (
                         <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(m)}
+                            className="mr-2 rounded-md px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400"
+                          >
+                            Edit
+                          </button>
                           <button
                             type="button"
                             onClick={() => {

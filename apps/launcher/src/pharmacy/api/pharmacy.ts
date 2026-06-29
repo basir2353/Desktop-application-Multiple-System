@@ -2,6 +2,7 @@ import {
   medicineSchema,
   medicineAlternativeSchema,
   medicineBatchSchema,
+  medicineMatchSchema,
   pharmacyControlledDrugLogSchema,
   pharmacyDashboardSchema,
   pharmacyDoctorSchema,
@@ -9,6 +10,7 @@ import {
   pharmacyKhataEntrySchema,
   pharmacyKhataStatementSchema,
   pharmacyPatientSchema,
+  pharmacyPatientHistorySchema,
   pharmacyProfitLossSchema,
   pharmacyPurchaseLineSchema,
   pharmacyRefillReminderSchema,
@@ -60,6 +62,22 @@ export async function createPharmacyMedicine(body: unknown) {
   const res = await authFetch("/v1/pharmacy/medicines", { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) await parseError(res, "Failed to create medicine");
   return medicineSchema.parse(await res.json());
+}
+
+export async function updatePharmacyMedicine(medicineId: string, branchCode: string, body: unknown) {
+  const res = await authFetch(`/v1/pharmacy/medicines/${medicineId}?${qs(branchCode)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await parseError(res, "Failed to update medicine");
+  return medicineSchema.parse(await res.json());
+}
+
+export async function matchPharmacyMedicines(branchCode: string, query: string) {
+  const params = new URLSearchParams({ branchCode, q: query });
+  const res = await authFetch(`/v1/pharmacy/medicines/match?${params.toString()}`);
+  if (!res.ok) await parseError(res, "Failed to match medicines");
+  return parseArray(medicineMatchSchema, await res.json());
 }
 
 export async function deletePharmacyMedicine(medicineId: string) {
@@ -200,6 +218,12 @@ export async function updatePharmacyPatient(patientId: string, body: unknown) {
   const res = await authFetch(`/v1/pharmacy/patients/${patientId}`, { method: "PATCH", body: JSON.stringify(body) });
   if (!res.ok) await parseError(res, "Failed to update patient");
   return pharmacyPatientSchema.parse(await res.json());
+}
+
+export async function fetchPharmacyPatientHistory(patientId: string) {
+  const res = await authFetch(`/v1/pharmacy/patients/${patientId}/history`);
+  if (!res.ok) await parseError(res, "Failed to load patient history");
+  return pharmacyPatientHistorySchema.parse(await res.json());
 }
 
 const khataStatementSchema = pharmacyKhataStatementSchema;

@@ -13,7 +13,7 @@ import {
   type PharmacySaleUnit,
 } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createPharmacySale,
   fetchPharmacyAlternatives,
@@ -26,11 +26,13 @@ import {
 } from "../api/pharmacy";
 import { MedicineWarningsPanel, PharmacyCheckoutModal } from "../components/PharmacyCheckoutModal";
 import { printPharmacyInvoice } from "../lib/printPharmacyInvoice";
+import { findAllergyConflicts } from "../lib/pharmacySafety";
 import { formatPkr, useInvalidatePharmacy, usePharmacyAccess } from "../hooks/usePharmacy";
 import { PharmacyField, PharmacyInput, PharmacySelect } from "../ui/PharmacyUi";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { Badge } from "../../pops/ui/Badge";
 import { noticeErrorClass, noticeSuccessClass } from "../../pops/lib/themeClasses";
+import { useBarcodeScanner } from "../../store/hooks/useBarcodeScanner";
 
 type CartLine = {
   medicine: Medicine;
@@ -97,6 +99,11 @@ export function PharmacyPosPage(): JSX.Element {
         (!patientId || rx.patientId === patientId),
     );
   }, [prescriptionsQuery.data, patientId]);
+
+  const linkedPrescription = useMemo(
+    () => (prescriptionsQuery.data ?? []).find((rx) => rx.id === prescriptionId),
+    [prescriptionsQuery.data, prescriptionId],
+  );
 
   const saleMutation = useMutation({
     mutationFn: (payload: {
@@ -226,13 +233,26 @@ export function PharmacyPosPage(): JSX.Element {
   }
 
   async function pickMedicine(medicine: Medicine): Promise<void> {
+    if (selectedPatient) {
+      const conflicts = findAllergyConflicts(medicine, selectedPatient.allergies);
+      if (conflicts.length > 0) {
+        const proceed = window.confirm(
+          `Allergy warning: patient is allergic to ${conflicts.join(", ")}. This medicine may contain related ingredients (${medicine.name}). Continue anyway?`,
+        );
+        if (!proceed) return;
+      }
+    }
+
     if (medicine.currentStock <= 0) {
       const alts = await fetchPharmacyAlternatives(branch!.code, medicine.id);
       setAlternatives(alts);
       setError(`${medicine.name} is out of stock — salt/generic alternatives below.`);
       return;
     }
-    setAlternatives([]);
+
+    const alts = await fetchPharmacyAlternatives(branch!.code, medicine.id);
+    setAlternatives(alts.slice(0, 5));
+    setError(null);
     await openAddModal(medicine);
   }
 
@@ -257,6 +277,72 @@ export function PharmacyPosPage(): JSX.Element {
     }
     if (matches[0]) await pickMedicine(matches[0]);
   }
+
+  async function loadPrescriptionToCart(): Promise<void> {
+    if (!linkedPrescription || !branch) return;
+    const catalog = medicinesQuery.data ?? [];
+    let added = 0;
+
+    for (const item of linkedPrescription.items) {
+      const remaining = item.quantity - item.dispensedQty;
+      if (remaining <= 0) continue;
+      const medicine = catalog.find((m) => m.id === item.medicineId);
+      if (!medicine || medicine.currentStock <= 0) continue;
+
+      const unit: PharmacySaleUnit = supportsStripSale(medicine) ? "strip" : "piece";
+      const qty = remaining;
+      const tablets = saleQtyToTablets(medicine, unit, qty);
+      if (tablets > medicine.currentStock) continue;
+
+      const batches = await fetchPharmacyMedicineBatches(branch.code, medicine.id);
+      const batch = batches[0];
+      const lineTotal = computeLinePrice(medicine, unit, qty);
+
+      setCart((prev) => [
+        ...prev,
+        {
+          medicine,
+          qty,
+          saleUnit: unit,
+          tabletsQty: tablets,
+          lineTotal,
+          batchId: batch?.id,
+          batchNumber: batch?.batchNumber,
+        },
+      ]);
+      added += 1;
+    }
+
+    if (added > 0) {
+      setNotice(`Loaded ${added} prescription line(s) into the bill.`);
+      setError(null);
+    } else {
+      setError("No remaining prescription items could be added (out of stock or already dispensed).");
+    }
+  }
+
+  const handleBarcodeScan = useCallback(
+    (code: string) => {
+      setSearch(code);
+      void (async () => {
+        try {
+          const byBarcode = await lookupPharmacyBarcode(branch!.code, code);
+          await pickMedicine(byBarcode);
+        } catch {
+          setError(`Barcode not found: ${code}`);
+        }
+      })();
+    },
+    [branch, medicinesQuery.data, selectedPatient],
+  );
+
+  useBarcodeScanner(handleBarcodeScan, Boolean(branch?.code) && !pendingMedicine && !checkoutOpen);
+
+  useEffect(() => {
+    if (linkedPrescription?.patientId && !patientId) {
+      setPatientId(linkedPrescription.patientId);
+    }
+  }, [linkedPrescription?.patientId, patientId]);
 
   if (medicinesQuery.isLoading) {
     return <p className="text-sm text-slate-500">Loading medicines…</p>;
@@ -365,7 +451,9 @@ export function PharmacyPosPage(): JSX.Element {
 
       {alternatives.length > 0 ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20">
-          <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Generic / salt alternatives</h2>
+          <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+            Salt / generic alternatives {pendingMedicine ? `for ${pendingMedicine.genericName ?? pendingMedicine.name}` : ""}
+          </h2>
           <ul className="mt-2 space-y-1">
             {alternatives.map((m) => (
               <li key={m.id}>
@@ -388,8 +476,9 @@ export function PharmacyPosPage(): JSX.Element {
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="space-y-3 lg:col-span-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
-            <PharmacyField label="Scan barcode or search" hint="Brand, salt/generic name, SKU — Enter to add">
+            <PharmacyField label="Scan barcode or search" hint="USB scanner or type — Enter to add">
               <PharmacyInput
+                data-scan-target="true"
                 placeholder="Scan barcode or type medicine / salt name…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -500,6 +589,45 @@ export function PharmacyPosPage(): JSX.Element {
               {selectedPatient && selectedPatient.allergies.length > 0 ? (
                 <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30">
                   <strong>Allergy alert:</strong> {selectedPatient.allergies.join(", ")}
+                </div>
+              ) : null}
+
+              {selectedPatient &&
+              (selectedPatient.chronicDiseases.length > 0 || selectedPatient.medicalConditions.length > 0) ? (
+                <div className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-800 dark:bg-sky-950/30">
+                  {selectedPatient.chronicDiseases.length > 0 ? (
+                    <div>
+                      <strong>Chronic:</strong> {selectedPatient.chronicDiseases.join(", ")}
+                    </div>
+                  ) : null}
+                  {selectedPatient.medicalConditions.length > 0 ? (
+                    <div className="mt-1">
+                      <strong>Conditions:</strong> {selectedPatient.medicalConditions.join(", ")}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {linkedPrescription ? (
+                <div className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-xs dark:border-violet-800 dark:bg-violet-950/30">
+                  <div className="font-semibold text-violet-900 dark:text-violet-200">
+                    Prescription {linkedPrescription.prescriptionNumber}
+                    {linkedPrescription.hasAttachment ? " · attachment on file" : ""}
+                  </div>
+                  <ul className="mt-1 space-y-0.5 text-violet-800 dark:text-violet-300">
+                    {linkedPrescription.items.map((item) => (
+                      <li key={item.id}>
+                        {item.medicineName} — {item.dispensedQty}/{item.quantity} dispensed
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    className="mt-2 text-xs font-semibold text-violet-700 underline dark:text-violet-400"
+                    onClick={() => void loadPrescriptionToCart()}
+                  >
+                    Load remaining items into bill
+                  </button>
                 </div>
               ) : null}
 

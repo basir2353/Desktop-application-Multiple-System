@@ -89,6 +89,7 @@ import { PharmacyStaffPanelPage } from "./pharmacy/pages/PharmacyStaffPanelPage"
 import { PharmacyAdminPanelPage } from "./pharmacy/pages/PharmacyAdminPanelPage";
 import { PharmacySuppliersPage } from "./pharmacy/pages/PharmacySuppliersPage";
 import { PharmacyStaffPage } from "./pharmacy/pages/PharmacyStaffPage";
+import { PharmacyRackMapPage } from "./pharmacy/pages/PharmacyRackMapPage";
 import {
   PharmacyPurchaseStatementPage,
   PharmacySupplierPaymentsPage,
@@ -261,6 +262,7 @@ export function App(): JSX.Element {
                 <Route path="closing" element={<ClosingPage />} />
                 <Route path="pharmacy/dashboard" element={<PharmacyDashboardPage />} />
                 <Route path="pharmacy/medicines" element={<MedicinesPage />} />
+                <Route path="pharmacy/rack-map" element={<PharmacyRackMapPage />} />
                 <Route path="pharmacy/inventory" element={<PharmacyInventoryPage />} />
                 <Route path="pharmacy/expiry" element={<PharmacyExpiryPage />} />
                 <Route path="pharmacy/pos" element={<PharmacyPosPage />} />

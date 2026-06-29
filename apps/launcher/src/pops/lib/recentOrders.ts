@@ -256,6 +256,35 @@ export function filterPosRecentOrders(
 
 export const POS_RECENT_ORDERS_PREVIEW_LIMIT = 21;
 
+const DISMISSED_ORDERS_KEY = "pops-pos-dismissed-orders";
+
+function dismissedOrdersKey(branchCode: string): string {
+  return `${DISMISSED_ORDERS_KEY}:${branchCode}`;
+}
+
+export function loadDismissedPosOrderIds(branchCode: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(dismissedOrdersKey(branchCode));
+    if (!raw) return new Set();
+    const ids = JSON.parse(raw) as string[];
+    return new Set(ids);
+  } catch {
+    return new Set();
+  }
+}
+
+export function dismissPosOrder(branchCode: string, orderId: string): void {
+  const ids = loadDismissedPosOrderIds(branchCode);
+  ids.add(orderId);
+  localStorage.setItem(dismissedOrdersKey(branchCode), JSON.stringify([...ids]));
+}
+
+export function filterDismissedPosOrders(orders: PosRecentOrder[], branchCode: string): PosRecentOrder[] {
+  const dismissed = loadDismissedPosOrderIds(branchCode);
+  if (dismissed.size === 0) return orders;
+  return orders.filter((order) => !dismissed.has(order.id));
+}
+
 export function formatRecentOrderTime(iso: string): string {
   const d = new Date(iso);
   const diffMs = Date.now() - d.getTime();

@@ -1,14 +1,18 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   canChangePosRecentOrderTable,
   canEditPosRecentOrder,
+  dismissPosOrder,
+  filterDismissedPosOrders,
   filterPosRecentOrders,
   formatRecentOrderTime,
   posRecentOrderTotal,
   POS_RECENT_ORDERS_PREVIEW_LIMIT,
   type PosRecentOrder,
 } from "../lib/recentOrders";
+import { updateKitchenTicket } from "../api/kitchen";
 import { printPosRecentOrder } from "../lib/printTicket";
 import { POS_ORDER_MODES, type PosOrderModeLabel } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
@@ -31,6 +35,7 @@ function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
 }
 
 export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Props): JSX.Element {
+  const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
@@ -41,14 +46,36 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewOrder, setViewOrder] = useState<PosRecentOrder | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<PosRecentOrder | null>(null);
+  const [dismissedRevision, setDismissedRevision] = useState(0);
+
+  const visibleOrders = useMemo(() => {
+    if (!branch?.code) return orders;
+    void dismissedRevision;
+    return filterDismissedPosOrders(orders, branch.code);
+  }, [orders, branch?.code, dismissedRevision]);
 
   const isSearching = search.trim().length > 0;
   const isModeFiltered = modeFilter !== "all";
   const isExpandedList = isSearching || isModeFiltered;
   const displayedOrders = useMemo(() => {
-    const matches = filterPosRecentOrders(orders, search, modeFilter);
+    const matches = filterPosRecentOrders(visibleOrders, search, modeFilter);
     return isExpandedList ? matches : matches.slice(0, POS_RECENT_ORDERS_PREVIEW_LIMIT);
-  }, [orders, search, modeFilter, isExpandedList]);
+  }, [visibleOrders, search, modeFilter, isExpandedList]);
+
+  const closeOrderMutation = useMutation({
+    mutationFn: async (order: PosRecentOrder) => {
+      if (order.kind === "pending" && order.pendingTicket) {
+        await updateKitchenTicket(order.pendingTicket.id, { status: "done" });
+        return;
+      }
+      if (branch?.code) dismissPosOrder(branch.code, order.id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["kitchen", branch?.code] });
+      setDismissedRevision((n) => n + 1);
+      setSelectedId(null);
+    },
+  });
 
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
@@ -58,6 +85,11 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
 
   function toggleSelected(order: PosRecentOrder): void {
     setSelectedId((current) => (current === order.id ? null : order.id));
+  }
+
+  function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
+    event?.stopPropagation();
+    closeOrderMutation.mutate(order);
   }
 
   return (
@@ -133,8 +165,10 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
             <p className="px-1 py-3 text-xs text-slate-500">Loading orders…</p>
           ) : isError ? (
             <p className="px-1 py-3 text-xs text-red-300/80">Could not load orders.</p>
-          ) : orders.length === 0 ? (
-            <p className="px-1 py-3 text-xs text-slate-500">No orders yet. Create one from the ticket panel.</p>
+          ) : visibleOrders.length === 0 ? (
+            <p className="px-1 py-3 text-xs text-slate-500">
+              {orders.length > 0 ? "All orders closed. New orders will appear here." : "No orders yet. Create one from the ticket panel."}
+            </p>
           ) : displayedOrders.length === 0 ? (
             <p className="px-1 py-3 text-xs text-slate-500">
               {isSearching && isModeFiltered
@@ -175,9 +209,21 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
                         <span className="min-w-0 truncate font-mono text-[9px] font-semibold text-white">
                           {order.ref}
                         </span>
-                        <span className="shrink-0 text-[8px] text-slate-500">
-                          {formatRecentOrderTime(order.createdAt)}
-                        </span>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <span className="text-[8px] text-slate-500">
+                            {formatRecentOrderTime(order.createdAt)}
+                          </span>
+                          <button
+                            type="button"
+                            className="rounded px-0.5 text-[10px] leading-none text-slate-500 transition hover:bg-slate-800 hover:text-red-400"
+                            onClick={(e) => closeOrder(order, e)}
+                            disabled={closeOrderMutation.isPending}
+                            aria-label="Close order"
+                            title="Close order"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
 
                       <div className="mt-1">
@@ -202,16 +248,28 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
                         <span className="truncate text-slate-400">{order.orderMode}</span>
                       </div>
 
-                      <p className="mt-0.5 truncate text-[8px] text-slate-500">{order.stationLabel}</p>
+                      <p className="mt-1 truncate text-sm font-semibold leading-tight text-slate-200">
+                        {order.stationLabel}
+                      </p>
 
                       <div className="mt-1.5 border-t border-slate-800/80 pt-1">
-                        <button
-                          type="button"
-                          className="w-full rounded border border-slate-700 py-0.5 text-[9px] font-medium text-amber-400 transition hover:border-amber-500/40 hover:bg-amber-500/10"
-                          onClick={(e) => printOrder(order, e)}
-                        >
-                          Print
-                        </button>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-amber-400 transition hover:border-amber-500/40 hover:bg-amber-500/10"
+                            onClick={(e) => printOrder(order, e)}
+                          >
+                            Print
+                          </button>
+                          <button
+                            type="button"
+                            className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-slate-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
+                            onClick={(e) => closeOrder(order, e)}
+                            disabled={closeOrderMutation.isPending}
+                          >
+                            Close
+                          </button>
+                        </div>
 
                         {isSelected ? (
                           <div className="mt-1 flex gap-1">
@@ -259,7 +317,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
             </ul>
           )}
 
-          {!isExpandedList && orders.length > POS_RECENT_ORDERS_PREVIEW_LIMIT ? (
+          {!isExpandedList && visibleOrders.length > POS_RECENT_ORDERS_PREVIEW_LIMIT ? (
             <p className="mt-2 px-1 text-center text-[10px] text-slate-600">
               Showing latest {POS_RECENT_ORDERS_PREVIEW_LIMIT} · search or filter to find more
             </p>

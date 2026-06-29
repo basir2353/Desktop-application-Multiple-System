@@ -9,6 +9,7 @@ import {
   fetchPharmacyPatients,
   fetchPharmacyPrescriptions,
   fetchPrescriptionAttachment,
+  matchPharmacyMedicines,
   verifyPharmacyPrescription,
 } from "../api/pharmacy";
 import { useInvalidatePharmacy, usePharmacyAccess } from "../hooks/usePharmacy";
@@ -39,6 +40,8 @@ export function PrescriptionsPage(): JSX.Element {
   const [patientId, setPatientId] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [medicineId, setMedicineId] = useState("");
+  const [medicineSearch, setMedicineSearch] = useState("");
+  const [rxItems, setRxItems] = useState<{ medicineId: string; medicineName: string; dosage: string; quantity: number }[]>([]);
   const [dosage, setDosage] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [notes, setNotes] = useState("");
@@ -90,20 +93,33 @@ export function PrescriptionsPage(): JSX.Element {
     queryFn: () => fetchPharmacyMedicines(branch!.code),
   });
 
+  const matchQuery = useQuery({
+    queryKey: ["pharmacy", "medicine-match", branch?.code, medicineSearch],
+    enabled: Boolean(branch?.code) && medicineSearch.trim().length >= 2,
+    queryFn: () => matchPharmacyMedicines(branch!.code, medicineSearch.trim()),
+  });
+
   const createMutation = useMutation({
-    mutationFn: () =>
-      createPharmacyPrescription({
+    mutationFn: () => {
+      const items =
+        rxItems.length > 0
+          ? rxItems.map((i) => ({ medicineId: i.medicineId, dosage: i.dosage || undefined, quantity: i.quantity }))
+          : [{ medicineId, dosage: dosage.trim() || undefined, quantity: Number(quantity) || 1 }];
+      return createPharmacyPrescription({
         branchCode: branch!.code,
         patientId: patientId || undefined,
         doctorId: doctorId || undefined,
         notes: notes.trim() || undefined,
         attachmentName: attachmentName ?? undefined,
         attachmentDataUrl: attachmentDataUrl ?? undefined,
-        items: [{ medicineId, dosage: dosage.trim() || undefined, quantity: Number(quantity) || 1 }],
-      }),
+        items,
+      });
+    },
     onSuccess: () => {
       invalidate();
       setMedicineId("");
+      setMedicineSearch("");
+      setRxItems([]);
       setDosage("");
       setQuantity("1");
       setNotes("");
@@ -113,6 +129,17 @@ export function PrescriptionsPage(): JSX.Element {
     },
     onError: (e: Error) => setError(e.message),
   });
+
+  function addRxItem(id: string, name: string): void {
+    setRxItems((prev) => {
+      if (prev.some((i) => i.medicineId === id)) return prev;
+      return [...prev, { medicineId: id, medicineName: name, dosage: dosage.trim(), quantity: Number(quantity) || 1 }];
+    });
+    setMedicineId(id);
+    setDosage("");
+    setQuantity("1");
+    setMedicineSearch("");
+  }
 
   const verifyMutation = useMutation({
     mutationFn: verifyPharmacyPrescription,
@@ -197,7 +224,7 @@ export function PrescriptionsPage(): JSX.Element {
           className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!medicineId) return;
+            if (!medicineId && rxItems.length === 0) return;
             createMutation.mutate();
           }}
         >
@@ -233,9 +260,39 @@ export function PrescriptionsPage(): JSX.Element {
             </PharmacyField>
           </PharmacyFormSection>
 
-          <PharmacyFormSection title="Medicine details" description="Required fields are marked with *.">
-            <PharmacyField label="Medicine" required>
-              <PharmacySelect value={medicineId} onChange={(e) => setMedicineId(e.target.value)} required>
+          <PharmacyFormSection title="Medicine matching" description="Search by name or salt — system suggests in-stock matches.">
+            <PharmacyField label="Search medicine on prescription" hint="Type medicine name as written on Rx">
+              <PharmacyInput
+                placeholder="e.g. Panadol, Amoxicillin, Metformin…"
+                value={medicineSearch}
+                onChange={(e) => setMedicineSearch(e.target.value)}
+              />
+            </PharmacyField>
+            {(matchQuery.data ?? []).length > 0 ? (
+              <ul className="sm:col-span-2 space-y-1 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+                {(matchQuery.data ?? []).map((m) => (
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                      onClick={() => addRxItem(m.id, m.name)}
+                    >
+                      {m.name}
+                      {m.genericName ? ` (${m.genericName})` : ""} — stock {m.currentStock}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <PharmacyField label="Or select from catalog" required={rxItems.length === 0}>
+              <PharmacySelect
+                value={medicineId}
+                onChange={(e) => {
+                  setMedicineId(e.target.value);
+                  const med = (medicinesQuery.data ?? []).find((m) => m.id === e.target.value);
+                  if (med) addRxItem(med.id, med.name);
+                }}
+              >
                 <option value="">Select medicine…</option>
                 {(medicinesQuery.data ?? []).map((m) => (
                   <option key={m.id} value={m.id}>
@@ -259,6 +316,28 @@ export function PrescriptionsPage(): JSX.Element {
                 onChange={(e) => setQuantity(e.target.value)}
               />
             </PharmacyField>
+            {rxItems.length > 0 ? (
+              <div className="sm:col-span-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-800 dark:bg-emerald-950/20">
+                <p className="text-xs font-semibold uppercase text-emerald-800 dark:text-emerald-300">Matched medicines</p>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {rxItems.map((item) => (
+                    <li key={item.medicineId} className="flex justify-between gap-2">
+                      <span>
+                        {item.medicineName} × {item.quantity}
+                        {item.dosage ? ` — ${item.dosage}` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs text-red-500"
+                        onClick={() => setRxItems((prev) => prev.filter((i) => i.medicineId !== item.medicineId))}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <PharmacyField label="Notes">
               <PharmacyInput
                 placeholder="Special instructions for pharmacist"
@@ -268,11 +347,12 @@ export function PrescriptionsPage(): JSX.Element {
             </PharmacyField>
           </PharmacyFormSection>
 
-          <PharmacyFormSection title="Prescription attachment" description="Upload a photo or scanned PDF of the doctor's prescription.">
+          <PharmacyFormSection title="Prescription attachment" description="Upload or scan the doctor's prescription (camera on mobile).">
             <PharmacyField label="Scan / upload image" hint="JPEG, PNG, or PDF">
               <input
                 type="file"
                 accept="image/*,.pdf"
+                capture="environment"
                 className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                 onChange={(e) => onAttachmentFile(e.target.files?.[0] ?? null)}
               />
@@ -283,7 +363,7 @@ export function PrescriptionsPage(): JSX.Element {
           <div className="flex flex-wrap gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
             <button
               type="submit"
-              disabled={!medicineId || createMutation.isPending}
+              disabled={(rxItems.length === 0 && !medicineId) || createMutation.isPending}
               className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {createMutation.isPending ? "Saving…" : "Save prescription"}

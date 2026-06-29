@@ -8,6 +8,7 @@ import {
   createPrescriptionSchema,
   openPharmacyShiftSchema,
   recordKhataPaymentSchema,
+  updateMedicineSchema,
   updatePatientSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -44,6 +45,16 @@ export class PharmacyController {
     return this.pharmacy.lookupBarcode(user.organizationId, branchCode?.trim() ?? "", barcode);
   }
 
+  @Get("medicines/match")
+  @RequirePermissions("pops.read")
+  matchMedicines(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("q") q: string,
+  ) {
+    return this.pharmacy.matchMedicines(user.organizationId, branchCode?.trim() ?? "", q?.trim() ?? "");
+  }
+
   @Get("medicines/:medicineId/batches")
   @RequirePermissions("pops.read")
   getMedicineBatches(
@@ -68,6 +79,22 @@ export class PharmacyController {
   @RequirePermissions("pops.inventory.manage")
   createMedicine(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.pharmacy.createMedicine(user.organizationId, createMedicineSchema.parse(body));
+  }
+
+  @Patch("medicines/:medicineId")
+  @RequirePermissions("pops.inventory.manage")
+  updateMedicine(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("medicineId") medicineId: string,
+    @Query("branchCode") branchCode: string,
+    @Body() body: unknown,
+  ) {
+    return this.pharmacy.updateMedicine(
+      user.organizationId,
+      medicineId,
+      branchCode?.trim() ?? "",
+      updateMedicineSchema.parse(body),
+    );
   }
 
   @Delete("medicines/:medicineId")
@@ -102,6 +129,12 @@ export class PharmacyController {
     @Body() body: unknown,
   ) {
     return this.pharmacy.updatePatient(user.organizationId, patientId, updatePatientSchema.parse(body));
+  }
+
+  @Get("patients/:patientId/history")
+  @RequirePermissions("pops.read")
+  getPatientHistory(@CurrentUser() user: AccessJwtPayload, @Param("patientId") patientId: string) {
+    return this.pharmacy.getPatientHistory(user.organizationId, patientId);
   }
 
   @Get("patients/:patientId/khata")
