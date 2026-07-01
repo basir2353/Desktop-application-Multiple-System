@@ -37,7 +37,7 @@ import {
 } from "../../lib/posCart";
 import { printReceipt, printKot, type PrintTicketInput } from "../../lib/printTicket";
 import { resolveMenuImageUrl } from "../../lib/menuImageUrl";
-import { buildPosRecentOrders, type PosRecentOrder } from "../../lib/recentOrders";
+import { buildPosRecentOrders, canPayPosRecentOrder, type PosRecentOrder } from "../../lib/recentOrders";
 import {
   cartFromBill,
   cartFromKitchenTicket,
@@ -55,7 +55,6 @@ import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCh
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { cartToBillLines } from "../../lib/posCheckout";
 import { amberPillActiveClass, pillInactiveClass } from "../../lib/themeClasses";
-import { Badge } from "../../ui/Badge";
 import {
   DELIVERY_SETTINGS_CHANGED_EVENT,
   loadDeliverySettings,
@@ -67,6 +66,23 @@ import {
   type PosSettings,
 } from "../../lib/posSettings";
 import { buildMenuItemOrderCounts, sortMenuByPopularity } from "../../lib/posMenuPopularity";
+import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
+import {
+  DEFAULT_HAPPY_HOUR_SETTINGS,
+  formatHappyHourWindow,
+  HAPPY_HOUR_SETTINGS_CHANGED_EVENT,
+  loadHappyHourSettings,
+  type HappyHourSettings,
+} from "../../lib/happyHourSettings";
+import {
+  applyHappyHourBonus,
+  isHappyHourActive,
+  resolveHappyHourBonusItem,
+  stripComplimentaryLines,
+} from "../../lib/posHappyHour";
+
+const TICKET_INPUT_CLASS =
+  "w-full rounded-lg border border-slate-700/80 bg-slate-950/80 px-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none transition focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15";
 
 type PosEditingOrder =
   | { kind: "ticket"; ticketId: string }
@@ -84,6 +100,7 @@ export function PosPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const [mode, setMode] = useState<PosOrderMode>("dine-in");
   const [deliveryCustomer, setDeliveryCustomer] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryRiderId, setDeliveryRiderId] = useState("");
   const [deliveryChargePkr, setDeliveryChargePkr] = useState(0);
@@ -98,7 +115,10 @@ export function PosPage(): JSX.Element {
   const [discountAmountInput, setDiscountAmountInput] = useState(0);
   const [discountEditedAs, setDiscountEditedAs] = useState<"pct" | "amount">("pct");
   const [posSettings, setPosSettings] = useState<PosSettings>(() => loadPosSettings(undefined));
-  const [orderRef, setOrderRef] = useState(() => `ORD-${Date.now().toString().slice(-4)}`);
+  const [happyHourSettings, setHappyHourSettings] = useState<HappyHourSettings>(
+    () => DEFAULT_HAPPY_HOUR_SETTINGS,
+  );
+  const [orderRef, setOrderRef] = useState(() => peekNextOrderRef(undefined));
   const [printNotice, setPrintNotice] = useState<string | null>(null);
   const [checkoutModal, setCheckoutModal] = useState<CheckoutModalMode | null>(null);
   const [splitModalOpen, setSplitModalOpen] = useState(false);
@@ -118,7 +138,23 @@ export function PosPage(): JSX.Element {
 
   useEffect(() => {
     setPosSettings(loadPosSettings(branch?.code));
+    setHappyHourSettings(loadHappyHourSettings(branch?.code));
   }, [branch?.code]);
+
+  useEffect(() => {
+    function onHappyHourChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setHappyHourSettings(loadHappyHourSettings(branch?.code));
+      }
+    }
+    window.addEventListener(HAPPY_HOUR_SETTINGS_CHANGED_EVENT, onHappyHourChanged);
+    return () => window.removeEventListener(HAPPY_HOUR_SETTINGS_CHANGED_EVENT, onHappyHourChanged);
+  }, [branch?.code]);
+
+  useEffect(() => {
+    if (!editingOrder) setOrderRef(peekNextOrderRef(branch?.code));
+  }, [branch?.code, editingOrder]);
 
   useEffect(() => {
     function onPosSettingsChanged(event: Event): void {
@@ -325,7 +361,19 @@ export function PosPage(): JSX.Element {
     });
   }
 
-  const subtotal = cart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
+  const effectiveCart = useMemo(
+    () => applyHappyHourBonus(cart, menuItems, happyHourSettings),
+    [cart, menuItems, happyHourSettings],
+  );
+
+  const happyHourBonus = useMemo(
+    () => resolveHappyHourBonusItem(menuItems, happyHourSettings),
+    [menuItems, happyHourSettings],
+  );
+
+  const happyHourLive = isHappyHourActive(happyHourSettings);
+
+  const subtotal = effectiveCart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
 
   useEffect(() => {
     setDiscountAmountInput((prev) => clampDiscountPkr(prev, subtotal));
@@ -374,7 +422,7 @@ export function PosPage(): JSX.Element {
   }
 
   const modeLabel = posOrderModeLabel(mode);
-  const orderNotes = posDeliveryNotes(deliveryCustomer, deliveryAddress);
+  const orderNotes = posDeliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress);
   const stationLabel = posStationLabel(mode, tableLabel);
   const billTableLabel = posBillTableLabel(mode, tableLabel);
 
@@ -386,7 +434,7 @@ export function PosPage(): JSX.Element {
       modeLabel,
       tableLabel: posPrintTableLabel(mode, tableLabel),
       notes: orderNotes,
-      lines: cart.map((line) => ({
+      lines: effectiveCart.map((line) => ({
         label: line.lineLabel,
         qty: line.qty,
         unitPrice: line.unitPrice,
@@ -404,7 +452,7 @@ export function PosPage(): JSX.Element {
   }
 
   const kitchenLines = () =>
-    cart.map((line) => ({
+    effectiveCart.map((line) => ({
       label: line.lineLabel,
       qty: line.qty,
       unitPrice: line.unitPrice,
@@ -417,9 +465,10 @@ export function PosPage(): JSX.Element {
   }
 
   function resetAfterKitchenOrder(): void {
-    setOrderRef(`ORD-${Date.now().toString().slice(-4)}`);
+    setOrderRef(nextOrderRef(branch?.code));
     setCart([]);
     setDeliveryCustomer("");
+    setDeliveryPhone("");
     setDeliveryAddress("");
     setDeliveryRiderId("");
     setDeliveryChargePkr(loadDeliverySettings(branch?.code).defaultChargePkr);
@@ -450,7 +499,7 @@ export function PosPage(): JSX.Element {
     setEditingOrder({ kind: "ticket", ticketId: ticket.id });
     setOrderRef(ticket.orderRef ?? ticket.ticketRef);
     setMode(inferPosModeFromStation(ticket.stationLabel));
-    setCart(cartFromKitchenTicket(menuItems, ticket));
+    setCart(stripComplimentaryLines(cartFromKitchenTicket(menuItems, ticket)));
     setDiscountPctInput(0);
     setDiscountAmountInput(0);
     setDiscountEditedAs("pct");
@@ -458,6 +507,7 @@ export function PosPage(): JSX.Element {
     setDeliveryChargePkr(ticket.deliveryChargePkr ?? 0);
     const delivery = parseDeliveryFieldsFromNotes(ticket.notes ?? null);
     setDeliveryCustomer(delivery.customer);
+    setDeliveryPhone(delivery.phone);
     setDeliveryAddress(delivery.address);
     applyTableFromStation(ticket.stationLabel);
     setPrintNotice(`Editing ${ticket.orderRef ?? ticket.ticketRef}. Add or remove items, then update.`);
@@ -467,7 +517,7 @@ export function PosPage(): JSX.Element {
     setEditingOrder({ kind: "held-bill", billId: bill.id });
     setOrderRef(bill.orderRef ?? bill.billRef);
     setMode(inferPosModeFromStation(bill.tableLabel));
-    setCart(cartFromBill(menuItems, bill));
+    setCart(stripComplimentaryLines(cartFromBill(menuItems, bill)));
     setTicketServicePct(bill.servicePct);
     setDiscountAmountInput(bill.discount);
     setDiscountPctInput(bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0);
@@ -476,6 +526,7 @@ export function PosPage(): JSX.Element {
     setDeliveryChargePkr(bill.deliveryChargePkr ?? 0);
     const delivery = parseDeliveryFieldsFromNotes(bill.notes);
     setDeliveryCustomer(delivery.customer);
+    setDeliveryPhone(delivery.phone);
     setDeliveryAddress(delivery.address);
     applyTableFromStation(bill.tableLabel);
     setPrintNotice(`Editing held bill ${bill.orderRef ?? bill.billRef}.`);
@@ -488,6 +539,22 @@ export function PosPage(): JSX.Element {
     }
     if (order.bill?.status === "held") {
       applyBillToPos(order.bill);
+    }
+  }
+
+  function loadRecentOrderForPayment(order: PosRecentOrder): void {
+    if (!canPayPosRecentOrder(order)) {
+      setPrintNotice("This order is already paid.");
+      return;
+    }
+    if (order.kind === "pending" && order.kitchenTicket) {
+      applyTicketToPos(order.kitchenTicket);
+      setCheckoutModal("pay");
+      return;
+    }
+    if (order.bill?.status === "held") {
+      applyBillToPos(order.bill);
+      setCheckoutModal("pay");
     }
   }
 
@@ -594,7 +661,7 @@ export function PosPage(): JSX.Element {
       }
       return updateBill(editingOrder.billId, {
         tableLabel: billTableLabel,
-        lines: cartToBillLines(cart),
+        lines: cartToBillLines(effectiveCart),
         notes: orderNotes ?? null,
         discountPkr: discount,
         servicePct: ticketServicePct,
@@ -629,7 +696,7 @@ export function PosPage(): JSX.Element {
       if (editingOrder?.kind === "held-bill") {
         const updated = await updateBill(editingOrder.billId, {
           tableLabel: billTableLabel,
-          lines: cartToBillLines(cart),
+          lines: cartToBillLines(effectiveCart),
           notes: orderNotes ?? null,
           discountPkr: discount,
           servicePct: checkoutServicePct,
@@ -653,7 +720,7 @@ export function PosPage(): JSX.Element {
         tableLabel: billTableLabel,
         waiterName: "POS Counter",
         notes: orderNotes,
-        lines: cartToBillLines(cart),
+        lines: cartToBillLines(effectiveCart),
         discountPct: discount > 0 ? discountPct : undefined,
         discountPkr: discount > 0 ? discount : undefined,
         servicePct: checkoutServicePct,
@@ -927,7 +994,7 @@ export function PosPage(): JSX.Element {
                     : "No items in this category."}
               </p>
             ) : (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
+              <div className="grid grid-cols-3 gap-1 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-6">
                 {filteredMenu.map((item) => {
                   const img = resolveMenuImageUrl(item.imageUrl);
                   const variants = resolvePosSellableVariants(item);
@@ -938,22 +1005,22 @@ export function PosPage(): JSX.Element {
                       key={item.id}
                       type="button"
                       onClick={() => onDishClick(item)}
-                      className="flex flex-col rounded-md border border-slate-800/80 bg-slate-900/40 p-2 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
+                      className="flex flex-col rounded border border-slate-800/80 bg-slate-900/40 p-1 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
                     >
                       {img ? (
                         <img
                           src={img}
                           alt=""
-                          className="mb-1.5 h-14 w-full rounded object-cover"
+                          className="mb-0.5 h-9 w-full rounded-sm object-cover"
                         />
                       ) : (
-                        <div className="mb-1.5 flex h-14 items-center justify-center rounded bg-slate-950/60 text-[10px] text-slate-600">
+                        <div className="mb-0.5 flex h-9 items-center justify-center rounded-sm bg-slate-950/60 text-[8px] text-slate-600">
                           {isSearching || showFeaturedOnly || showAllItems
                             ? categoryById.get(item.categoryId)
                             : "—"}
                         </div>
                       )}
-                      <span className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-100">
+                      <span className="line-clamp-2 text-[10px] font-medium leading-tight text-slate-100">
                         {item.featured ? (
                           <span className="mr-0.5 text-amber-700 dark:text-amber-300" aria-hidden>
                             ★
@@ -961,26 +1028,30 @@ export function PosPage(): JSX.Element {
                         ) : null}
                         {item.name}
                       </span>
-                      <span className="mt-0.5 text-[11px] font-semibold text-amber-200/90">
+                      <span className="mt-px text-[10px] font-semibold text-amber-200/90">
                         {hasPicker ? "From " : ""}Rs {displayPrice.toLocaleString()}
                       </span>
                       {variants.length > 0 ? (
-                        <div className="mt-1 flex flex-wrap gap-0.5">
+                        <div className="mt-0.5 flex flex-wrap gap-px">
                           {variants.slice(0, 3).map((v) => (
-                            <span key={v.id} className="rounded bg-slate-800 px-1 py-0.5 text-[9px] text-slate-400">
+                            <span key={v.id} className="rounded bg-slate-800 px-0.5 py-px text-[8px] text-slate-400">
                               {v.label}
                             </span>
                           ))}
                           {variants.length > 3 ? (
-                            <span className="text-[9px] text-slate-600">+{variants.length - 3}</span>
+                            <span className="text-[8px] text-slate-600">+{variants.length - 3}</span>
                           ) : null}
                         </div>
-                      ) : (item.featured || item.happyHour || item.barcode) ? (
-                        <div className="mt-1 flex flex-wrap gap-0.5">
-                          {item.featured ? <Badge tone="warning">★</Badge> : null}
-                          {item.happyHour ? <Badge tone="warning">HH</Badge> : null}
+                      ) : (item.featured || item.barcode || happyHourSettings.bonusMenuItemId === item.id) ? (
+                        <div className="mt-0.5 flex flex-wrap items-center gap-0.5">
+                          {item.featured ? (
+                            <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">★</span>
+                          ) : null}
+                          {happyHourSettings.bonusMenuItemId === item.id ? (
+                            <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">HH</span>
+                          ) : null}
                           {item.barcode ? (
-                            <span className="truncate text-[9px] text-slate-600">{item.barcode}</span>
+                            <span className="truncate text-[8px] text-slate-600">{item.barcode}</span>
                           ) : null}
                         </div>
                       ) : null}
@@ -993,72 +1064,94 @@ export function PosPage(): JSX.Element {
         </div>
 
         {/* Current ticket */}
-        <div className="col-span-12 flex min-h-0 flex-col rounded-lg border border-slate-800/80 bg-slate-900/50 lg:col-span-3">
-          <div className="shrink-0 border-b border-slate-800 px-2.5 py-2">
+        <div className="col-span-12 flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-900/95 to-slate-950 shadow-xl shadow-black/25 ring-1 ring-white/5 lg:col-span-3">
+          <div className="shrink-0 border-b border-slate-800/80 bg-slate-900/40 px-3 py-3 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] font-semibold text-slate-200">
-                {editingOrder ? "Editing order" : "Current ticket"}
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                  {editingOrder ? "Editing" : "Current ticket"}
+                </div>
+                <div className="mt-0.5 text-sm font-semibold text-white">
+                  {editingOrder ? "Modify order" : "New order"}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 {editingOrder ? (
                   <button
                     type="button"
-                    className="text-[10px] text-slate-400 hover:text-white"
+                    className="rounded-lg px-2 py-1 text-[10px] font-medium text-slate-400 transition hover:bg-slate-800 hover:text-white"
                     onClick={cancelEditing}
                   >
                     Cancel
                   </button>
                 ) : null}
-                <span className="font-mono text-[10px] text-slate-500">{orderRef}</span>
+                <span className="rounded-lg bg-amber-500/10 px-2.5 py-1 font-mono text-sm font-bold tracking-wide text-amber-400 ring-1 ring-amber-500/25">
+                  {orderRef}
+                </span>
               </div>
             </div>
-            <div className="mt-2 flex rounded-md border border-slate-800 p-0.5">
+
+            <div className="mt-3 flex rounded-lg bg-slate-950/80 p-1 ring-1 ring-slate-800/80">
               {POS_ORDER_MODES.map(({ id, label }) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setMode(id)}
-                  className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${
-                    mode === id ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
+                    mode === id
+                      ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
+                      : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
                   {label}
                 </button>
               ))}
             </div>
+
             {mode === "dine-in" && floorSections.length > 0 ? (
               <button
                 type="button"
                 onClick={() => setSeatingModalOpen(true)}
-                className={`mt-2 w-full rounded-md border px-2 py-1.5 text-left text-[10px] transition ${
+                className={`mt-2.5 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition ${
                   selectedTableId
-                    ? `border-amber-600/40 ${amberPillActiveClass}`
-                    : "border-slate-300 text-slate-600 hover:border-slate-400 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-600"
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+                    : "border-slate-700/80 bg-slate-950/60 text-slate-400 hover:border-slate-600 hover:text-slate-200"
                 }`}
               >
-                {seatingLabel ?? "Select table"}
+                <span>{seatingLabel ?? "Select table"}</span>
+                <span className="text-slate-500" aria-hidden>
+                  ›
+                </span>
               </button>
             ) : null}
+
             {mode === "delivery" ? (
-              <div className="mt-2 space-y-1.5">
+              <div className="mt-2.5 space-y-2">
                 <input
                   placeholder="Customer name"
                   value={deliveryCustomer}
                   onChange={(e) => setDeliveryCustomer(e.target.value)}
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] text-white outline-none focus:border-amber-500/40"
+                  className={TICKET_INPUT_CLASS}
+                />
+                <input
+                  placeholder="Phone number"
+                  type="tel"
+                  value={deliveryPhone}
+                  onChange={(e) => setDeliveryPhone(e.target.value)}
+                  className={TICKET_INPUT_CLASS}
                 />
                 <input
                   placeholder="Delivery address"
                   value={deliveryAddress}
                   onChange={(e) => setDeliveryAddress(e.target.value)}
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] text-white outline-none focus:border-amber-500/40"
+                  className={TICKET_INPUT_CLASS}
                 />
                 <select
                   value={deliveryRiderId}
                   onChange={(e) => setDeliveryRiderId(e.target.value)}
                   required
-                  className={`w-full rounded-md border bg-slate-950 px-2 py-1 text-[10px] text-white outline-none focus:border-amber-500/40 ${
-                    !deliveryRiderId ? "border-amber-600/50" : "border-slate-700"
+                  className={`${TICKET_INPUT_CLASS} ${
+                    !deliveryRiderId ? "border-amber-500/40" : ""
                   }`}
                 >
                   <option value="">Select rider *</option>
@@ -1069,7 +1162,7 @@ export function PosPage(): JSX.Element {
                     </option>
                   ))}
                 </select>
-                <label className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
                   <span>Delivery charge</span>
                   <input
                     type="number"
@@ -1077,115 +1170,158 @@ export function PosPage(): JSX.Element {
                     max={50000}
                     value={deliveryChargePkr}
                     onChange={(e) => setDeliveryChargePkr(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-20 rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-right text-[10px] text-white"
+                    className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-right text-xs font-medium text-white outline-none focus:border-amber-500/50"
                   />
                 </label>
+              </div>
+            ) : null}
+
+            {happyHourLive && happyHourBonus ? (
+              <div className="mt-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200">
+                <span className="font-semibold">Happy hour active</span>
+                <span className="text-amber-200/80">
+                  {" "}
+                  · {formatHappyHourWindow(happyHourSettings)} · Free{" "}
+                  {happyHourBonus.item.name} with any order
+                </span>
               </div>
             ) : null}
           </div>
 
           {printNotice ? (
-            <p className="shrink-0 border-b border-slate-800 bg-slate-950/50 px-2.5 py-1 text-[10px] text-amber-200/90">
+            <p className="shrink-0 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-200">
               {printNotice}
             </p>
           ) : null}
 
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-            {cart.length === 0 ? (
-              <p className="text-xs text-slate-500">Tap items to add.</p>
-            ) : (
-              cart.map((line) => (
-                <div
-                  key={line.key}
-                  className="flex items-center justify-between gap-1 rounded-md bg-slate-950/50 px-2 py-1.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] text-slate-100">{line.lineLabel}</div>
-                    <div className="text-[10px] text-slate-500">Rs {line.unitPrice.toLocaleString()}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      className="flex h-5 w-5 items-center justify-center rounded bg-slate-800 text-[10px] text-white"
-                      onClick={() => setQty(line.key, line.qty - 1)}
-                    >
-                      −
-                    </button>
-                    <span className="w-4 text-center text-[11px]">{line.qty}</span>
-                    <button
-                      type="button"
-                      className="flex h-5 w-5 items-center justify-center rounded bg-slate-800 text-[10px] text-white"
-                      onClick={() => setQty(line.key, line.qty + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {effectiveCart.length === 0 ? (
+              <div className="flex h-full min-h-[8rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-700/60 bg-slate-950/30 px-4 py-8 text-center">
+                <div className="mb-2 text-2xl opacity-40" aria-hidden>
+                  🛒
                 </div>
-              ))
+                <p className="text-xs font-medium text-slate-400">No items yet</p>
+                <p className="mt-1 text-[10px] text-slate-600">Tap menu items to add to this ticket</p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {effectiveCart.map((line) => (
+                  <li
+                    key={line.key}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 transition ${
+                      line.isComplimentary
+                        ? "border-amber-500/30 bg-amber-500/5"
+                        : "border-slate-800/80 bg-slate-950/50 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium text-slate-100">{line.lineLabel}</div>
+                      <div className="mt-0.5 text-[11px] tabular-nums text-slate-500">
+                        {line.isComplimentary ? (
+                          <span className="font-medium text-amber-400">Complimentary</span>
+                        ) : (
+                          <>Rs {line.unitPrice.toLocaleString()} each</>
+                        )}
+                      </div>
+                    </div>
+                    {line.isComplimentary ? (
+                      <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-400">
+                        FREE
+                      </span>
+                    ) : (
+                      <div className="flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 p-0.5 ring-1 ring-slate-800">
+                        <button
+                          type="button"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                          onClick={() => setQty(line.key, line.qty - 1)}
+                          aria-label="Decrease quantity"
+                        >
+                          −
+                        </button>
+                        <span className="w-5 text-center text-xs font-semibold tabular-nums text-white">
+                          {line.qty}
+                        </span>
+                        <button
+                          type="button"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                          onClick={() => setQty(line.key, line.qty + 1)}
+                          aria-label="Increase quantity"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
-          <div className="shrink-0 space-y-0.5 border-t border-slate-800 p-2 text-[11px]">
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex items-center justify-between gap-1 text-slate-500">
-                <span>Disc %</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={50}
-                  value={discountEditedAs === "pct" ? discountPctInput : discountPct}
-                  onChange={(e) => onDiscountPctChange(Number(e.target.value) || 0)}
-                  className="w-14 rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-right text-[11px] text-white"
-                />
-              </label>
-              <label className="flex items-center justify-between gap-1 text-slate-500">
-                <span>Disc Rs</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={subtotal}
-                  value={discountEditedAs === "amount" ? discountAmountInput : discount}
-                  onChange={(e) => onDiscountAmountChange(Number(e.target.value) || 0)}
-                  className="w-16 rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-right text-[11px] text-white"
-                />
-              </label>
-            </div>
-            <div className="flex justify-between text-slate-500">
-              <span>Subtotal</span>
-              <span>Rs {subtotal.toLocaleString()}</span>
-            </div>
-            {discount > 0 ? (
-              <div className="flex justify-between text-slate-500">
-                <span>Discount</span>
-                <span>− Rs {discount.toLocaleString()}</span>
+          <div className="shrink-0 border-t border-slate-800/80 bg-slate-950/40 p-3">
+            <div className="rounded-lg bg-slate-950/70 p-3 ring-1 ring-slate-800/80">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Disc %
+                  <input
+                    type="number"
+                    min={0}
+                    max={50}
+                    value={discountEditedAs === "pct" ? discountPctInput : discountPct}
+                    onChange={(e) => onDiscountPctChange(Number(e.target.value) || 0)}
+                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-right text-xs font-medium text-white outline-none focus:border-amber-500/50"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  Disc Rs
+                  <input
+                    type="number"
+                    min={0}
+                    max={subtotal}
+                    value={discountEditedAs === "amount" ? discountAmountInput : discount}
+                    onChange={(e) => onDiscountAmountChange(Number(e.target.value) || 0)}
+                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-right text-xs font-medium text-white outline-none focus:border-amber-500/50"
+                  />
+                </label>
               </div>
-            ) : null}
-            <div className="flex justify-between text-slate-500">
-              <span>Svc {ticketServicePct}%</span>
-              <span>Rs {service.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-slate-500">
-              <span>Tax {taxPct}%</span>
-              <span>Rs {tax.toLocaleString()}</span>
-            </div>
-            {mode === "delivery" && deliveryCharge > 0 ? (
-              <div className="flex justify-between text-slate-500">
-                <span>Delivery</span>
-                <span>Rs {deliveryCharge.toLocaleString()}</span>
+              <div className="mt-3 space-y-1.5 text-xs">
+                <div className="flex justify-between text-slate-400">
+                  <span>Subtotal</span>
+                  <span className="tabular-nums text-slate-300">Rs {subtotal.toLocaleString()}</span>
+                </div>
+                {discount > 0 ? (
+                  <div className="flex justify-between text-emerald-400/90">
+                    <span>Discount</span>
+                    <span className="tabular-nums">− Rs {discount.toLocaleString()}</span>
+                  </div>
+                ) : null}
+                <div className="flex justify-between text-slate-400">
+                  <span>Service {ticketServicePct}%</span>
+                  <span className="tabular-nums text-slate-300">Rs {service.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Tax {taxPct}%</span>
+                  <span className="tabular-nums text-slate-300">Rs {tax.toLocaleString()}</span>
+                </div>
+                {mode === "delivery" && deliveryCharge > 0 ? (
+                  <div className="flex justify-between text-slate-400">
+                    <span>Delivery</span>
+                    <span className="tabular-nums text-slate-300">Rs {deliveryCharge.toLocaleString()}</span>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-            <div className="flex justify-between border-t border-slate-800 pt-1 text-sm font-semibold text-white">
-              <span>Total</span>
-              <span>Rs {total.toLocaleString()}</span>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3">
+                <span className="text-sm font-semibold text-white">Total</span>
+                <span className="text-lg font-bold tabular-nums text-amber-400">
+                  Rs {total.toLocaleString()}
+                </span>
+              </div>
             </div>
-          </div>
 
-          <div className="shrink-0 space-y-1 border-t border-slate-800 p-2">
-            <div className="grid grid-cols-2 gap-1">
+            <div className="mt-3 grid grid-cols-2 gap-2">
               {editingOrder?.kind === "held-bill" ? (
                 <Button
                   type="button"
-                  className="col-span-2 h-8 border-0 bg-amber-500 px-1 text-[10px] font-semibold text-amber-950 hover:bg-amber-400"
+                  className="col-span-2 h-10 rounded-lg border-0 bg-amber-500 text-xs font-semibold text-slate-950 shadow-md shadow-amber-500/20 hover:bg-amber-400"
                   disabled={cart.length === 0 || updateHeldBillMutation.isPending || !branch?.code}
                   onClick={() => updateHeldBillMutation.mutate()}
                 >
@@ -1194,7 +1330,7 @@ export function PosPage(): JSX.Element {
               ) : (
                 <Button
                   type="button"
-                  className="h-8 border-0 bg-amber-500 px-1 text-[10px] font-semibold text-amber-950 hover:bg-amber-400"
+                  className="h-10 rounded-lg border-0 bg-amber-500 text-xs font-semibold text-slate-950 shadow-md shadow-amber-500/20 hover:bg-amber-400"
                   disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                   onClick={() => createOrderMutation.mutate()}
                 >
@@ -1207,38 +1343,20 @@ export function PosPage(): JSX.Element {
               )}
               <Button
                 type="button"
-                className={`h-8 px-1 text-[10px] ${editingOrder?.kind === "held-bill" ? "col-span-2" : ""}`}
+                className={`h-10 rounded-lg border-0 bg-emerald-600 text-xs font-semibold text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-500 ${
+                  editingOrder?.kind === "held-bill" ? "col-span-2" : ""
+                }`}
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => onPay()}
               >
                 {checkoutMutation.isPending ? "…" : "Pay"}
               </Button>
             </div>
-            <div className="grid grid-cols-2 gap-1">
+            <div className="mt-2 grid grid-cols-2 gap-2">
               <Button
                 type="button"
                 variant="ghost"
-                className="h-8 px-1 text-[10px]"
-                disabled={cart.length === 0 || checkoutMutation.isPending}
-                onClick={() => openHoldBill()}
-              >
-                Hold bill
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-8 px-1 text-[10px]"
-                disabled={cart.length === 0 || splitBillMutation.isPending}
-                onClick={() => openSplitBill()}
-              >
-                Split bill
-              </Button>
-            </div>
-            <div className="grid grid-cols-2 gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-8 px-1 text-[10px]"
+                className="h-9 rounded-lg border border-slate-700/80 bg-slate-900/50 text-[11px] font-medium text-slate-300 hover:border-slate-600 hover:bg-slate-800 hover:text-white"
                 disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                 onClick={() => runPrintOrder()}
               >
@@ -1247,7 +1365,7 @@ export function PosPage(): JSX.Element {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-8 px-1 text-[10px]"
+                className="h-9 rounded-lg border border-slate-700/80 bg-slate-900/50 text-[11px] font-medium text-slate-300 hover:border-slate-600 hover:bg-slate-800 hover:text-white"
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => runPrintInvoice()}
               >
@@ -1264,6 +1382,7 @@ export function PosPage(): JSX.Element {
             isLoading={kitchenQuery.isLoading || ordersQuery.isLoading}
             isError={kitchenQuery.isError || ordersQuery.isError}
             onEdit={loadRecentOrderForEdit}
+            onPayOrder={loadRecentOrderForPayment}
           />
         </div>
       </div>

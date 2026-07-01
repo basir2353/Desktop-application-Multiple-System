@@ -24,13 +24,21 @@ import { Badge } from "../../ui/Badge";
 import { MenuImagePicker, MenuImageThumb } from "../../ui/MenuImagePicker";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
+import {
+  DEFAULT_HAPPY_HOUR_SETTINGS,
+  formatHappyHourWindow,
+  loadHappyHourSettings,
+  saveHappyHourSettings,
+  type HappyHourSettings,
+} from "../../lib/happyHourSettings";
+import { isHappyHourActive } from "../../lib/posHappyHour";
 
-type VariantRow = { label: string; price: string; barcode: string; happyHour: boolean };
+type VariantRow = { label: string; price: string; barcode: string };
 
 const VARIANT_PRESETS = ["Full", "Half", "Quarter", "Plate", "Single"] as const;
 
 function emptyVariantRow(): VariantRow {
-  return { label: "", price: "", barcode: "", happyHour: false };
+  return { label: "", price: "", barcode: "" };
 }
 
 export function MenuPage(): JSX.Element {
@@ -52,6 +60,8 @@ export function MenuPage(): JSX.Element {
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
   const [categoryImageUploading, setCategoryImageUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [happyHourDraft, setHappyHourDraft] = useState<HappyHourSettings>(DEFAULT_HAPPY_HOUR_SETTINGS);
+  const [happyHourNotice, setHappyHourNotice] = useState<string | null>(null);
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branch?.code],
@@ -72,6 +82,20 @@ export function MenuPage(): JSX.Element {
       setSelectedCategoryId(categories[0].id);
     }
   }, [categories, selectedCategoryId]);
+
+  useEffect(() => {
+    setHappyHourDraft(loadHappyHourSettings(branch?.code));
+  }, [branch?.code]);
+
+  const bonusItemOptions = useMemo(
+    () => items.filter((i) => i.isActive),
+    [items],
+  );
+
+  const selectedBonusItem = useMemo(
+    () => bonusItemOptions.find((i) => i.id === happyHourDraft.bonusMenuItemId) ?? null,
+    [bonusItemOptions, happyHourDraft.bonusMenuItemId],
+  );
 
   const categoryItems = useMemo(
     () => items.filter((i) => i.categoryId === selectedCategory?.id),
@@ -123,7 +147,6 @@ export function MenuPage(): JSX.Element {
           label: v.label.trim() || "Standard",
           price: Number(v.price),
           barcode: v.barcode.trim() || undefined,
-          happyHour: v.happyHour,
         }));
       if (variants.length === 0) {
         throw new Error("Add at least one sub-category with a price.");
@@ -307,7 +330,147 @@ export function MenuPage(): JSX.Element {
           </div>
         </div>
 
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-8 space-y-4">
+          <div className="rounded-lg border border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-slate-900/40 p-4 ring-1 ring-amber-500/10">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white">Happy hour promotion</div>
+                <p className="mt-1 max-w-xl text-xs text-slate-400">
+                  When active, customers who buy anything during the happy hour window automatically receive a
+                  specific free item on their ticket.
+                </p>
+              </div>
+              {happyHourDraft.enabled && isHappyHourActive(happyHourDraft) ? (
+                <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/25">
+                  Active now
+                </span>
+              ) : happyHourDraft.enabled ? (
+                <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[10px] font-medium text-slate-400">
+                  Scheduled · {formatHappyHourWindow(happyHourDraft)}
+                </span>
+              ) : null}
+            </div>
+
+            <label className="mt-4 flex items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                className="accent-amber-500"
+                checked={happyHourDraft.enabled}
+                onChange={(e) =>
+                  setHappyHourDraft((prev) => ({ ...prev, enabled: e.target.checked }))
+                }
+              />
+              Enable happy hour
+            </label>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="block text-xs text-slate-400">
+                Start hour (0–23)
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={happyHourDraft.startHour}
+                  onChange={(e) =>
+                    setHappyHourDraft((prev) => ({
+                      ...prev,
+                      startHour: Number(e.target.value) || 0,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                />
+              </label>
+              <label className="block text-xs text-slate-400">
+                End hour (0–23)
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={happyHourDraft.endHour}
+                  onChange={(e) =>
+                    setHappyHourDraft((prev) => ({
+                      ...prev,
+                      endHour: Number(e.target.value) || 0,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                />
+              </label>
+              <label className="block text-xs text-slate-400 sm:col-span-2">
+                Free gift item
+                <select
+                  value={happyHourDraft.bonusMenuItemId ?? ""}
+                  onChange={(e) => {
+                    const id = e.target.value || null;
+                    const item = bonusItemOptions.find((i) => i.id === id);
+                    const defaultVariant = item?.variants.find((v) => v.isActive)?.id ?? null;
+                    setHappyHourDraft((prev) => ({
+                      ...prev,
+                      bonusMenuItemId: id,
+                      bonusVariantId: defaultVariant,
+                    }));
+                  }}
+                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Select item to give free…</option>
+                  {bonusItemOptions.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {selectedBonusItem && selectedBonusItem.variants.filter((v) => v.isActive).length > 1 ? (
+              <label className="mt-3 block text-xs text-slate-400">
+                Gift size / variant
+                <select
+                  value={happyHourDraft.bonusVariantId ?? ""}
+                  onChange={(e) =>
+                    setHappyHourDraft((prev) => ({
+                      ...prev,
+                      bonusVariantId: e.target.value || null,
+                    }))
+                  }
+                  className="mt-1 w-full max-w-md rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                >
+                  {selectedBonusItem.variants
+                    .filter((v) => v.isActive)
+                    .map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                className="text-xs"
+                onClick={() => {
+                  if (!branch?.code) return;
+                  if (happyHourDraft.enabled && !happyHourDraft.bonusMenuItemId) {
+                    setHappyHourNotice("Select a free gift item before enabling happy hour.");
+                    return;
+                  }
+                  saveHappyHourSettings(branch.code, happyHourDraft);
+                  setHappyHourNotice("Happy hour settings saved. POS tickets will auto-add the gift item.");
+                }}
+              >
+                Save happy hour
+              </Button>
+              <span className="text-[10px] text-slate-500">
+                Window: {formatHappyHourWindow(happyHourDraft)}
+              </span>
+            </div>
+            {happyHourNotice ? (
+              <p className="mt-2 text-xs text-emerald-400">{happyHourNotice}</p>
+            ) : null}
+          </div>
+
           <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
             <div className="text-sm font-semibold text-white">
               Items {selectedCategory ? `· ${selectedCategory.name}` : ""}
@@ -424,27 +587,11 @@ export function MenuPage(): JSX.Element {
                               }
                             />
                           </label>
-                          <div className="flex items-end gap-2 sm:col-span-4">
-                            <label className="flex items-center gap-1.5 pb-1.5 text-[10px] text-slate-400">
-                              <input
-                                type="checkbox"
-                                className="accent-amber-500"
-                                checked={row.happyHour}
-                                onChange={(e) =>
-                                  setItemForm((f) => ({
-                                    ...f,
-                                    variants: f.variants.map((v, i) =>
-                                      i === index ? { ...v, happyHour: e.target.checked } : v,
-                                    ),
-                                  }))
-                                }
-                              />
-                              Happy hour
-                            </label>
+                          <div className="flex items-end justify-end sm:col-span-4">
                             {itemForm.variants.length > 1 ? (
                               <button
                                 type="button"
-                                className={`ml-auto pb-1.5 text-[10px] ${linkDangerClass}`}
+                                className={`pb-1.5 text-[10px] ${linkDangerClass}`}
                                 onClick={() =>
                                   setItemForm((f) => ({
                                     ...f,
@@ -549,8 +696,8 @@ export function MenuPage(): JSX.Element {
                           render: (r: MenuItem) => (
                             <span className="flex flex-wrap gap-1">
                               {r.featured ? <Badge tone="warning">Featured</Badge> : null}
-                              {r.variants.some((v) => v.happyHour) || r.happyHour ? (
-                                <Badge tone="warning">Happy hour</Badge>
+                              {happyHourDraft.bonusMenuItemId === r.id ? (
+                                <Badge tone="warning">HH gift</Badge>
                               ) : null}
                               {!r.isActive ? <Badge tone="neutral">Off</Badge> : null}
                             </span>

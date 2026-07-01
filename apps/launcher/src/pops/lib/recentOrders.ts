@@ -66,6 +66,12 @@ export function canChangePosRecentOrderTable(order: PosRecentOrder): boolean {
   return order.kind === "pending" && order.orderMode === "Dine-in" && Boolean(order.pendingTicket);
 }
 
+export function canPayPosRecentOrder(order: PosRecentOrder): boolean {
+  if (order.kind === "pending" && order.kitchenTicket) return true;
+  if (order.bill?.status === "held") return true;
+  return false;
+}
+
 export function canEditPosRecentOrder(order: PosRecentOrder): boolean {
   if (order.kind === "pending" && order.kitchenTicket && order.kitchenTicket.status !== "done") {
     return true;

@@ -35,18 +35,36 @@ export function tableNumberFromStation(stationLabel: string): string | null {
 
 export function parseDeliveryFieldsFromNotes(notes: string | null | undefined): {
   customer: string;
+  phone: string;
   address: string;
 } {
-  if (!notes) return { customer: "", address: "" };
+  if (!notes) return { customer: "", phone: "", address: "" };
   const trimmed = notes.trim();
   if (!trimmed.toLowerCase().startsWith("delivery")) {
-    return { customer: "", address: "" };
+    return { customer: "", phone: "", address: "" };
   }
   const body = trimmed.replace(/^Delivery\s*·\s*/i, "");
-  const parts = body.split(" · ").map((p) => p.trim()).filter(Boolean);
+  const parts = body.split(" · ").map((p) => p.trim());
+
+  if (parts.length >= 3) {
+    return {
+      customer: parts[0] ?? "",
+      phone: parts[1] ?? "",
+      address: parts.slice(2).join(" · "),
+    };
+  }
+  if (parts.length === 2) {
+    const second = parts[1] ?? "";
+    const looksLikePhone = /^[\d+\s()-]{7,}$/.test(second);
+    if (looksLikePhone) {
+      return { customer: parts[0] ?? "", phone: second, address: "" };
+    }
+    return { customer: parts[0] ?? "", phone: "", address: second };
+  }
   return {
     customer: parts[0] ?? "",
-    address: parts[1] ?? "",
+    phone: "",
+    address: "",
   };
 }
 

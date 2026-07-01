@@ -28,7 +28,8 @@ import { CompleteHeldBillModal } from "../../components/CompleteHeldBillModal";
 import { OrderDateFiltersBar } from "../../components/OrderDateFiltersBar";
 import { ChangeOrderTableModal } from "../../components/ChangeOrderTableModal";
 import { OrderDetailModal } from "../../components/OrderDetailModal";
-import { printReceipt, type PrintTicketInput } from "../../lib/printTicket";
+import { printBill } from "../../lib/printTicket";
+import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import { linkActionClass, linkSuccessClass, linkWarningClass, tableOrderRefClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
@@ -45,31 +46,6 @@ function formatWhen(iso: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
-}
-
-function billToPrint(branchName: string, branchCode: string, bill: Bill): Omit<PrintTicketInput, "kind"> {
-  return {
-    branchName,
-    branchCode,
-    orderRef: bill.orderRef ?? bill.billRef,
-    billRef: bill.billRef,
-    modeLabel: "Dine-in",
-    tableLabel: bill.tableLabel,
-    waiterName: bill.waiterName,
-    lines: bill.lines.map((line) => ({
-      label: line.label,
-      qty: line.qty,
-      unitPrice: line.unitPrice,
-    })),
-    subtotal: bill.subtotal,
-    discount: bill.discount,
-    service: bill.service,
-    tax: bill.tax,
-    total: bill.total,
-    servicePct: bill.servicePct,
-    taxPct: bill.taxPct,
-    discountPct: bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0,
-  };
 }
 
 function formatBillPayments(bill: Bill): string {
@@ -216,8 +192,15 @@ export function OrdersPage(): JSX.Element {
   );
 
   function reprint(bill: Bill): void {
-    const ok = printReceipt(billToPrint(branch?.name ?? "POPS", branch?.code ?? "—", bill));
-    setNotice(ok ? `Reprinting ${bill.billRef}…` : "Could not open print dialog.");
+    const printerName = getWaiterPrinter(branch?.code, bill.waiterId)?.printerName;
+    const ok = printBill(branch?.name ?? "POPS", branch?.code ?? "—", bill, { printerName });
+    setNotice(
+      ok
+        ? printerName
+          ? `Reprinting ${bill.billRef} to ${printerName}…`
+          : `Reprinting ${bill.billRef}…`
+        : "Could not open print dialog.",
+    );
   }
 
   function openOrder(order: UnifiedOrder): void {

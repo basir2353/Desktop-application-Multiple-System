@@ -8,6 +8,8 @@ export type PosCartLine = {
   qty: number;
   unitPrice: number;
   lineLabel: string;
+  /** Auto-added happy hour gift — not editable from the menu grid. */
+  isComplimentary?: boolean;
 };
 
 export function cartLineKey(itemId: string, variantId?: string | null): string {

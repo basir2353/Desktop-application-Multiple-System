@@ -23,12 +23,22 @@ export function posBillTableLabel(mode: PosOrderMode, tableLabel?: string): stri
   return posStationLabel(mode, tableLabel);
 }
 
-export function posDeliveryNotes(customerName: string, address: string): string | undefined {
+export function posDeliveryNotes(
+  customerName: string,
+  phone: string,
+  address: string,
+): string | undefined {
   const name = customerName.trim();
+  const ph = phone.trim();
   const addr = address.trim();
-  if (!name && !addr) return undefined;
+  if (!name && !ph && !addr) return undefined;
+  if (name && ph && addr) return `Delivery · ${name} · ${ph} · ${addr}`;
+  if (name && ph) return `Delivery · ${name} · ${ph}`;
   if (name && addr) return `Delivery · ${name} · ${addr}`;
-  return name ? `Delivery · ${name}` : `Delivery · ${addr}`;
+  if (ph && addr) return `Delivery · ${ph} · ${addr}`;
+  if (name) return `Delivery · ${name}`;
+  if (ph) return `Delivery · ${ph}`;
+  return `Delivery · ${addr}`;
 }
 
 export function posPrintTableLabel(mode: PosOrderMode, tableLabel?: string): string {

@@ -145,7 +145,7 @@ export function PopsShell(): JSX.Element {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ThemeToggle compact />
-            <PopsAlertCenter />
+            {systemId === "restaurant" ? <PopsAlertCenter /> : null}
             <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
               Switch branch
             </Button>

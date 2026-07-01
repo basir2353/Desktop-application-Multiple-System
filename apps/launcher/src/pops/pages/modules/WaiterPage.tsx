@@ -7,7 +7,14 @@ import { createBill, fetchWaiters } from "../../api/billing";
 import { createKitchenTicket, fetchKitchenTickets } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
 import { tables } from "../../data/fixtures";
-import { printReceipt, type PrintTicketInput } from "../../lib/printTicket";
+import { printReceipt, billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
+import {
+  getWaiterPrinter,
+  loadWaiterPrinterMap,
+  setWaiterPrinter,
+  WAITER_PRINTER_PRESETS,
+  WAITER_PRINTER_SETTINGS_CHANGED_EVENT,
+} from "../../lib/waiterPrinterSettings";
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
 
@@ -78,18 +85,34 @@ function tableStatusTone(status: string): "success" | "warning" | "info" | "neut
 export function WaiterPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
+  const displayRole = usePopsStore((s) => s.displayRole);
+  const canManagePrinters = displayRole === "admin" || displayRole === "manager";
   const [tableId, setTableId] = useState("T1");
   const [showMenu, setShowMenu] = useState(false);
   const [search, setSearch] = useState("");
   const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [printerMap, setPrinterMap] = useState<Record<string, { printerName: string }>>({});
+  const [printerPanelOpen, setPrinterPanelOpen] = useState(false);
 
   const branchCode = branch?.code ?? "";
 
   useEffect(() => {
     if (!branchCode) return;
     setDrafts(loadDrafts(branchCode));
+    setPrinterMap(loadWaiterPrinterMap(branchCode));
+  }, [branchCode]);
+
+  useEffect(() => {
+    function onPrinterSettingsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branchCode || detail?.branchCode === branchCode) {
+        setPrinterMap(loadWaiterPrinterMap(branchCode));
+      }
+    }
+    window.addEventListener(WAITER_PRINTER_SETTINGS_CHANGED_EVENT, onPrinterSettingsChanged);
+    return () => window.removeEventListener(WAITER_PRINTER_SETTINGS_CHANGED_EVENT, onPrinterSettingsChanged);
   }, [branchCode]);
 
   const waitersQuery = useQuery({
@@ -112,6 +135,7 @@ export function WaiterPage(): JSX.Element {
   const orderRef = currentDraft.orderRef;
   const waiterId = currentDraft.waiterId ?? waiters[0]?.id ?? null;
   const selectedWaiter = waiters.find((w) => w.id === waiterId) ?? null;
+  const assignedPrinter = getWaiterPrinter(branchCode, waiterId);
 
   function updateDraft(patch: Partial<TableDraft>): void {
     if (!branchCode) return;
@@ -238,31 +262,19 @@ export function WaiterPage(): JSX.Element {
     }
     try {
       const bill = await createBillMutation.mutateAsync();
+      const printerName = getWaiterPrinter(branchCode, waiterId)?.printerName;
       const payload: Omit<PrintTicketInput, "kind"> = {
-        branchName: branch?.name ?? "POPS",
-        branchCode: branchCode || "—",
-        orderRef: bill.orderRef ?? orderRef,
-        billRef: bill.billRef,
-        modeLabel: "Dine-in",
-        tableLabel: bill.tableLabel,
-        waiterName: bill.waiterName,
-        lines: bill.lines.map((line) => ({
-          label: line.label,
-          qty: line.qty,
-          unitPrice: line.unitPrice,
-        })),
-        subtotal: bill.subtotal,
-        discount: bill.discount,
-        service: bill.service,
-        tax: bill.tax,
-        total: bill.total,
-        servicePct: SERVICE_PCT,
-        discountPct: 0,
+        ...billToPrintInput(branch?.name ?? "POPS", branchCode || "—", bill),
+        printerName,
       };
       const ok = printReceipt(payload);
       if (ok) {
         updateDraft({ cart: [], notes: "" });
-        setNotice(`Bill ${bill.billRef} created for ${bill.waiterName} — sent to printer.`);
+        setNotice(
+          printerName
+            ? `Bill ${bill.billRef} created for ${bill.waiterName} — printing to ${printerName}.`
+            : `Bill ${bill.billRef} created for ${bill.waiterName} — sent to printer.`,
+        );
       } else {
         setNotice(`Bill ${bill.billRef} created but print dialog failed.`);
       }
@@ -320,6 +332,51 @@ export function WaiterPage(): JSX.Element {
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{notice}</p>
       ) : null}
 
+      {canManagePrinters && waiters.length > 0 ? (
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left"
+            onClick={() => setPrinterPanelOpen((v) => !v)}
+          >
+            <span className="text-sm font-semibold text-white">Waiter printer assignments</span>
+            <span className="text-xs text-slate-500">{printerPanelOpen ? "Hide" : "Show"}</span>
+          </button>
+          {printerPanelOpen ? (
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-slate-400">
+                Assign a dedicated receipt printer to each waiter. Bills print to that waiter&apos;s printer when
+                they create or reprint orders.
+              </p>
+              <datalist id="waiter-printer-presets">
+                {WAITER_PRINTER_PRESETS.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              {waiters.map((w) => (
+                <label key={w.id} className="block text-xs text-slate-400">
+                  {w.name}
+                  <input
+                    list="waiter-printer-presets"
+                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+                    placeholder="e.g. Waiter station 2"
+                    value={printerMap[w.id]?.printerName ?? ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setPrinterMap((prev) => ({ ...prev, [w.id]: { printerName: value } }));
+                    }}
+                    onBlur={(e) => {
+                      if (!branchCode) return;
+                      setWaiterPrinter(branchCode, w.id, e.target.value);
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {transferOpen ? (
         <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
           <p className="text-xs text-slate-400">Move {tableId} order to:</p>
@@ -357,7 +414,16 @@ export function WaiterPage(): JSX.Element {
             ))}
           </select>
         )}
-        {selectedWaiter ? <p className="mt-1 text-xs text-slate-500">Serving: {selectedWaiter.name}</p> : null}
+        {selectedWaiter ? (
+          <p className="mt-1 text-xs text-slate-500">
+            Serving: {selectedWaiter.name}
+            {assignedPrinter ? (
+              <span className="text-amber-400"> · Printer: {assignedPrinter.printerName}</span>
+            ) : (
+              <span className="text-slate-600"> · No printer assigned</span>
+            )}
+          </p>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">

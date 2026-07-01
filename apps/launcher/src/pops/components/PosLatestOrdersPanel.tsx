@@ -14,6 +14,7 @@ import {
 } from "../lib/recentOrders";
 import { updateKitchenTicket } from "../api/kitchen";
 import { printPosRecentOrder } from "../lib/printTicket";
+import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { POS_ORDER_MODES, type PosOrderModeLabel } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { loadPosSettings } from "../lib/posSettings";
@@ -25,6 +26,7 @@ type Props = {
   isLoading: boolean;
   isError: boolean;
   onEdit?: (order: PosRecentOrder) => void;
+  onPayOrder?: (order: PosRecentOrder) => void;
 };
 
 function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
@@ -34,7 +36,7 @@ function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
   return "bg-slate-500";
 }
 
-export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Props): JSX.Element {
+export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPayOrder }: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
@@ -80,7 +82,11 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
     if (!branch) return;
-    printPosRecentOrder(branch.name, branch.code, order);
+    const printerName =
+      order.bill?.waiterId != null
+        ? getWaiterPrinter(branch.code, order.bill.waiterId)?.printerName
+        : undefined;
+    printPosRecentOrder(branch.name, branch.code, order, { printerName });
   }
 
   function toggleSelected(order: PosRecentOrder): void {
@@ -92,6 +98,12 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
     closeOrderMutation.mutate(order);
   }
 
+  function handleOrderDoubleClick(order: PosRecentOrder, event: MouseEvent): void {
+    event.stopPropagation();
+    event.preventDefault();
+    onPayOrder?.(order);
+  }
+
   return (
     <>
       <aside className="flex h-full min-h-0 flex-col rounded-lg border border-slate-800/80 bg-slate-900/50">
@@ -99,7 +111,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
           <div className="flex items-center justify-between gap-2">
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
-              <div className="mt-0.5 text-[10px] text-slate-500">Tap for actions · print anytime</div>
+              <div className="mt-0.5 text-[10px] text-slate-500">Tap for actions · double-click to pay</div>
             </div>
             <Link
               to="../orders"
@@ -192,6 +204,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit }: Pro
                       role="button"
                       tabIndex={0}
                       onClick={() => toggleSelected(order)}
+                      onDoubleClick={(e) => handleOrderDoubleClick(order, e)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();

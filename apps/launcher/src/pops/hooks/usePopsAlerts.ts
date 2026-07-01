@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { usePopsStore } from "../../stores/popsStore";
 import { fetchInventoryDashboard } from "../api/inventory";
 import { fetchKitchenTickets } from "../api/kitchen";
@@ -26,6 +27,8 @@ export function usePopsAlerts(): {
   isLoading: boolean;
 } {
   const branch = usePopsStore((s) => s.branch);
+  const systemId = useActiveSystemId();
+  const restaurantAlerts = systemId === "restaurant";
   const [toasts, setToasts] = useState<PopsToast[]>([]);
 
   const prevTicketIdsRef = useRef<Set<string>>(new Set());
@@ -36,16 +39,16 @@ export function usePopsAlerts(): {
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branch?.code],
-    enabled: Boolean(branch?.code),
+    enabled: restaurantAlerts && Boolean(branch?.code),
     queryFn: () => fetchKitchenTickets(branch!.code),
-    refetchInterval: 5_000,
+    refetchInterval: restaurantAlerts ? 5_000 : false,
   });
 
   const inventoryQuery = useQuery({
     queryKey: ["inventory-dashboard", branch?.code],
-    enabled: Boolean(branch?.code),
+    enabled: restaurantAlerts && Boolean(branch?.code),
     queryFn: () => fetchInventoryDashboard(branch!.code),
-    refetchInterval: 30_000,
+    refetchInterval: restaurantAlerts ? 30_000 : false,
   });
 
   const tickets = kitchenQuery.data ?? [];
@@ -71,7 +74,10 @@ export function usePopsAlerts(): {
   }
 
   useEffect(() => {
-    if (!branch?.code) return;
+    if (!branch?.code || !restaurantAlerts) {
+      setToasts([]);
+      return;
+    }
 
     prevTicketIdsRef.current = new Set();
     prevStockAlertIdsRef.current = new Set();
@@ -79,10 +85,10 @@ export function usePopsAlerts(): {
     kitchenInitializedRef.current = false;
     stockInitializedRef.current = false;
     setToasts([]);
-  }, [branch?.code]);
+  }, [branch?.code, restaurantAlerts]);
 
   useEffect(() => {
-    if (!kitchenQuery.data) return;
+    if (!restaurantAlerts || !kitchenQuery.data) return;
 
     const currentIds = new Set(kitchenQuery.data.map((t) => t.id));
 
@@ -131,10 +137,10 @@ export function usePopsAlerts(): {
     }
 
     prevTicketIdsRef.current = currentIds;
-  }, [kitchenQuery.data, branch?.code]);
+  }, [kitchenQuery.data, branch?.code, restaurantAlerts]);
 
   useEffect(() => {
-    if (!inventoryQuery.data) return;
+    if (!restaurantAlerts || !inventoryQuery.data) return;
 
     const stockAlerts = inventoryAlertsFromDashboard(inventoryQuery.data);
     const currentIds = new Set(stockAlerts.map((a) => a.id));
@@ -152,7 +158,7 @@ export function usePopsAlerts(): {
     }
 
     prevStockAlertIdsRef.current = currentIds;
-  }, [inventoryQuery.data, branch?.code]);
+  }, [inventoryQuery.data, branch?.code, restaurantAlerts]);
 
   function dismissToast(toastId: string): void {
     setToasts((prev) => prev.filter((t) => t.toastId !== toastId));

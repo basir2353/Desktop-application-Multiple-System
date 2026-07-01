@@ -17,6 +17,8 @@ export type PrintTicketInput = {
   modeLabel: string;
   tableLabel?: string;
   waiterName?: string;
+  /** Assigned waiter printer — shown on ticket and print job title. */
+  printerName?: string;
   notes?: string;
   lines: PrintLine[];
   subtotal: number;
@@ -82,7 +84,7 @@ function buildTicketHtml(input: PrintTicketInput): string {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(title)} — ${escapeHtml(input.orderRef)}</title>
+  <title>${escapeHtml(title)} — ${escapeHtml(input.orderRef)}${input.printerName ? ` · ${escapeHtml(input.printerName)}` : ""}</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -121,6 +123,7 @@ function buildTicketHtml(input: PrintTicketInput): string {
     ${input.notes ? `<p>${escapeHtml(input.notes)}</p>` : ""}
     ${input.billRef ? `<p>Bill ${escapeHtml(input.billRef)}</p>` : ""}
     ${input.waiterName ? `<p>Waiter: ${escapeHtml(input.waiterName)}</p>` : ""}
+    ${input.printerName ? `<p>Printer: ${escapeHtml(input.printerName)}</p>` : ""}
     <p>${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</p>
   </div>
   <table>
@@ -156,6 +159,10 @@ export function printTicket(input: PrintTicketInput): boolean {
   doc.open();
   doc.write(html);
   doc.close();
+
+  if (input.printerName) {
+    doc.title = `${input.kind === "receipt" ? "Receipt" : "KOT"} · ${input.printerName}`;
+  }
 
   const cleanup = (): void => {
     setTimeout(() => iframe.remove(), 500);
@@ -212,8 +219,12 @@ export function printBill(
   branchName: string,
   branchCode: string,
   bill: Bill,
+  options?: { printerName?: string },
 ): boolean {
-  return printReceipt(billToPrintInput(branchName, branchCode, bill));
+  return printReceipt({
+    ...billToPrintInput(branchName, branchCode, bill),
+    printerName: options?.printerName,
+  });
 }
 
 export function kitchenTicketToKotPrint(
@@ -248,9 +259,10 @@ export function printPosRecentOrder(
   branchName: string,
   branchCode: string,
   order: PosRecentOrder,
+  options?: { printerName?: string },
 ): boolean {
   if (order.kind === "paid" && order.bill) {
-    return printBill(branchName, branchCode, order.bill);
+    return printBill(branchName, branchCode, order.bill, { printerName: options?.printerName });
   }
   if (order.kitchenTicket) {
     return printKot(kitchenTicketToKotPrint(order.kitchenTicket, branchName, branchCode));
