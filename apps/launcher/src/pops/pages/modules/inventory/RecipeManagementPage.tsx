@@ -1,9 +1,15 @@
+import { Button } from "@platform/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { createRecipe, deleteRecipe, fetchBranchInventory } from "../../../api/inventory";
+import { useMemo, useRef, useState } from "react";
+import { createRecipe, deleteRecipe, fetchBranchInventory, updateRecipe } from "../../../api/inventory";
 import { fetchBranchMenuAdmin } from "../../../api/menu";
 import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
-import { linkDangerClass, linkWarningClass } from "../../../lib/themeClasses";
+import { linkDangerClass, linkWarningClass, noticeSuccessClass } from "../../../lib/themeClasses";
+import {
+  exportRecipesExcel,
+  importRecipeRows,
+  parseRecipeImportFile,
+} from "../../../lib/recipeImportExport";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
@@ -23,6 +29,9 @@ export function RecipeManagementPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
   const [error, setError] = useState<string | null>(null);
+  const [transferNotice, setTransferNotice] = useState<string | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     name: "",
     menuItemId: "",
@@ -130,15 +139,105 @@ export function RecipeManagementPage(): JSX.Element {
     }));
   }
 
+  function handleExportRecipesExcel(): void {
+    if (!branch?.code) return;
+    exportRecipesExcel(recipes, branch.code);
+    setTransferNotice("Recipes exported to Excel.");
+  }
+
+  async function handleImportRecipesFile(file: File): Promise<void> {
+    if (!branch?.code) return;
+    setTransferBusy(true);
+    setTransferNotice(null);
+    setError(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const rows = parseRecipeImportFile(buffer, file.name);
+      if (rows.length === 0) {
+        throw new Error("No recipe rows found. Use the Recipe Lines sheet from export.");
+      }
+
+      const summary = await importRecipeRows(rows, {
+        branchCode: branch.code,
+        recipes,
+        menuItems,
+        ingredients,
+        createRecipe: (input) =>
+          createRecipe({
+            branchCode: branch.code,
+            name: input.name,
+            menuItemId: input.menuItemId,
+            version: input.version,
+            portionSize: input.portionSize,
+            active: input.active,
+            lines: input.lines,
+          }),
+        updateRecipe: (recipeId, input) =>
+          updateRecipe(recipeId, {
+            name: input.name,
+            menuItemId: input.menuItemId,
+            version: input.version,
+            portionSize: input.portionSize,
+            active: input.active,
+            lines: input.lines,
+          }),
+      });
+
+      invalidate();
+      setTransferNotice(
+        `Import complete — ${summary.recipesCreated} new recipe${summary.recipesCreated === 1 ? "" : "s"}, ${summary.recipesUpdated} updated${summary.skipped > 0 ? `, ${summary.skipped} skipped` : ""}.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Recipe import failed");
+    } finally {
+      setTransferBusy(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  }
+
   if (query.isLoading) return <InventoryLoading />;
   if (query.isError) return <InventoryError message={(query.error as Error).message} />;
 
   return (
     <div className="space-y-4">
+      <input
+        ref={importFileRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleImportRecipesFile(file);
+        }}
+      />
+
       <PageHeader
         title="Recipe management"
         subtitle="Link menu dishes to ingredients — each sale deducts the quantities below from stock."
+        actions={
+          canManage ? (
+            <>
+              <Button
+                variant="ghost"
+                className="text-xs"
+                disabled={transferBusy || query.isLoading || recipes.length === 0}
+                onClick={handleExportRecipesExcel}
+              >
+                Export Excel
+              </Button>
+              <Button
+                className="text-xs"
+                disabled={transferBusy || query.isLoading || menuQuery.isLoading}
+                onClick={() => importFileRef.current?.click()}
+              >
+                {transferBusy ? "Importing…" : "Import Excel"}
+              </Button>
+            </>
+          ) : undefined
+        }
       />
+
+      {transferNotice ? <p className={noticeSuccessClass}>{transferNotice}</p> : null}
       {error ? <InventoryError message={error} /> : null}
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">

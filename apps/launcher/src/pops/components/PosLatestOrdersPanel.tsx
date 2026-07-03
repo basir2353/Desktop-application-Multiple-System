@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   canChangePosRecentOrderTable,
@@ -11,11 +11,12 @@ import {
   posRecentOrderTotal,
   POS_RECENT_ORDERS_PREVIEW_LIMIT,
   type PosRecentOrder,
+  type PosRecentOrderModeFilter,
 } from "../lib/recentOrders";
 import { updateKitchenTicket } from "../api/kitchen";
 import { printPosRecentOrder } from "../lib/printTicket";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
-import { POS_ORDER_MODES, type PosOrderModeLabel } from "../lib/posOrderMode";
+import { POS_ORDER_MODES } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { loadPosSettings } from "../lib/posSettings";
 import { PosOrderDetailModal } from "./PosOrderDetailModal";
@@ -44,11 +45,17 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   const canManageTables = displayRole === "admin" || displayRole === "manager";
 
   const [search, setSearch] = useState("");
-  const [modeFilter, setModeFilter] = useState<PosOrderModeLabel | "all">("all");
+  const [modeFilter, setModeFilter] = useState<PosRecentOrderModeFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewOrder, setViewOrder] = useState<PosRecentOrder | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<PosRecentOrder | null>(null);
   const [dismissedRevision, setDismissedRevision] = useState(0);
+  const [, setTimeTick] = useState(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTimeTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const visibleOrders = useMemo(() => {
     if (!branch?.code) return orders;
@@ -147,7 +154,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
             ) : null}
           </div>
 
-          <div className="mt-2 flex rounded-md border border-slate-800 p-0.5">
+          <div className="mt-2 flex flex-wrap rounded-md border border-slate-800 p-0.5">
             <button
               type="button"
               onClick={() => setModeFilter("all")}
@@ -169,6 +176,15 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                 {label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setModeFilter("Paid")}
+              className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${
+                modeFilter === "Paid" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Paid
+            </button>
           </div>
         </div>
 
@@ -242,7 +258,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                       <div className="mt-1">
                         {orderTotal != null ? (
                           <p className="text-[11px] font-bold tabular-nums leading-none text-emerald-400">
-                            Rs {orderTotal.toLocaleString()}
+                            {orderTotal.toLocaleString()}
                           </p>
                         ) : (
                           <p className="text-[10px] font-medium text-slate-600">—</p>

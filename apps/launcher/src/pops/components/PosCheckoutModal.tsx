@@ -8,7 +8,6 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import {
   computeCheckoutTotals,
-  defaultPaymentRow,
   paymentSummary,
   paymentsCoverTotal,
 } from "../lib/posCheckout";
@@ -60,10 +59,12 @@ export function PosCheckoutModal({
   );
 
   useEffect(() => {
-    if (payments.length === 1 && payments[0].amount === initialTotal) {
-      setPayments([{ method: payments[0].method, amount: totals.total }]);
-    }
-  }, [totals.total, initialTotal, payments]);
+    setPayments((prev) => {
+      if (prev.length !== 1) return prev;
+      if (prev[0].amount === totals.total) return prev;
+      return [{ ...prev[0], amount: totals.total }];
+    });
+  }, [totals.total]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -81,7 +82,18 @@ export function PosCheckoutModal({
   }
 
   function addPaymentRow(): void {
-    setPayments((prev) => [...prev, defaultPaymentRow("card")]);
+    setPayments((prev) => {
+      const usedMethods = new Set(prev.map((row) => row.method));
+      const nextMethod = PAYMENT_METHOD_VALUES.find((method) => !usedMethods.has(method)) ?? "card";
+      const paid = prev.reduce((sum, row) => sum + row.amount, 0);
+      const remaining = Math.max(0, totals.total - paid);
+
+      if (prev.length === 1 && prev[0].amount >= totals.total) {
+        return [prev[0], { method: nextMethod, amount: remaining }];
+      }
+
+      return [...prev, { method: nextMethod, amount: remaining }];
+    });
   }
 
   function handleConfirm(): void {

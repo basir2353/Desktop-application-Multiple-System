@@ -6,7 +6,7 @@ import {
   type MenuItem,
 } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { usePopsStore } from "../../../stores/popsStore";
 import {
@@ -19,7 +19,7 @@ import {
   updateMenuItem,
   uploadMenuImage,
 } from "../../api/menu";
-import { accentValueClass, amberPillActiveClass, linkDangerClass, linkWarningClass, mutedClass, pillInactiveClass } from "../../lib/themeClasses";
+import { accentValueClass, amberPillActiveClass, linkDangerClass, linkWarningClass, mutedClass, noticeSuccessClass, pillInactiveClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import { MenuImagePicker, MenuImageThumb } from "../../ui/MenuImagePicker";
 import { PageHeader } from "../../ui/PageHeader";
@@ -32,6 +32,11 @@ import {
   type HappyHourSettings,
 } from "../../lib/happyHourSettings";
 import { isHappyHourActive } from "../../lib/posHappyHour";
+import {
+  exportMenuExcel,
+  importMenuRows,
+  parseMenuImportFile,
+} from "../../lib/menuImportExport";
 
 type VariantRow = { label: string; price: string; barcode: string };
 
@@ -62,6 +67,9 @@ export function MenuPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [happyHourDraft, setHappyHourDraft] = useState<HappyHourSettings>(DEFAULT_HAPPY_HOUR_SETTINGS);
   const [happyHourNotice, setHappyHourNotice] = useState<string | null>(null);
+  const [menuTransferNotice, setMenuTransferNotice] = useState<string | null>(null);
+  const [menuTransferBusy, setMenuTransferBusy] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branch?.code],
@@ -209,6 +217,54 @@ export function MenuPage(): JSX.Element {
     }
   }
 
+  function handleExportMenuExcel(): void {
+    if (!menuQuery.data || !branch?.code) return;
+    exportMenuExcel(menuQuery.data, branch.code);
+    setMenuTransferNotice("Menu exported to Excel.");
+  }
+
+  async function handleImportMenuFile(file: File): Promise<void> {
+    if (!branch?.code) return;
+    setMenuTransferBusy(true);
+    setMenuTransferNotice(null);
+    setError(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const rows = parseMenuImportFile(buffer, file.name);
+      if (rows.length === 0) {
+        throw new Error("No menu rows found. Use the Menu Items sheet from export.");
+      }
+
+      const summary = await importMenuRows(rows, {
+        branchCode: branch.code,
+        categories,
+        items,
+        createCategory: ({ name, sortOrder }) =>
+          createMenuCategory({ branchCode: branch.code, name, sortOrder }),
+        createItem: ({ categoryId, name, featured, sortOrder, variants }) =>
+          createMenuItem({
+            branchCode: branch.code,
+            categoryId,
+            name,
+            featured,
+            sortOrder,
+            variants,
+          }),
+        updateItem: (itemId, input) => updateMenuItem(itemId, input),
+      });
+
+      invalidate();
+      setMenuTransferNotice(
+        `Import complete — ${summary.itemsCreated} new item${summary.itemsCreated === 1 ? "" : "s"}, ${summary.itemsUpdated} updated, ${summary.categoriesCreated} new categor${summary.categoriesCreated === 1 ? "y" : "ies"}.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Menu import failed");
+    } finally {
+      setMenuTransferBusy(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  }
+
   if (!canManage) {
     return (
       <PageHeader
@@ -224,10 +280,44 @@ export function MenuPage(): JSX.Element {
 
   return (
     <div className="space-y-6">
+      <input
+        ref={importFileRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleImportMenuFile(file);
+        }}
+      />
+
       <PageHeader
         title="Menu"
         subtitle={`Categories and items for ${branch.name} (${branch.code}). Changes appear immediately on POS.`}
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              disabled={menuTransferBusy || menuQuery.isLoading || items.length === 0}
+              onClick={handleExportMenuExcel}
+            >
+              Export Excel
+            </Button>
+            <Button
+              className="text-xs"
+              disabled={menuTransferBusy || menuQuery.isLoading}
+              onClick={() => importFileRef.current?.click()}
+            >
+              {menuTransferBusy ? "Importing…" : "Import Excel"}
+            </Button>
+          </>
+        }
       />
+
+      {menuTransferNotice ? (
+        <p className={noticeSuccessClass}>{menuTransferNotice}</p>
+      ) : null}
 
       {menuQuery.isLoading ? <p className="text-sm text-slate-400">Loading menu…</p> : null}
       {menuQuery.isError ? (

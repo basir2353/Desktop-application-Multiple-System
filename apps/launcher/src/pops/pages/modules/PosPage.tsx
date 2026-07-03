@@ -54,7 +54,7 @@ import {
 import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCheckoutModal";
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { cartToBillLines } from "../../lib/posCheckout";
-import { amberPillActiveClass, pillInactiveClass } from "../../lib/themeClasses";
+import { amberPillActiveClass, fieldInputClass, pillInactiveClass } from "../../lib/themeClasses";
 import {
   DELIVERY_SETTINGS_CHANGED_EVENT,
   loadDeliverySettings,
@@ -81,8 +81,8 @@ import {
   stripComplimentaryLines,
 } from "../../lib/posHappyHour";
 
-const TICKET_INPUT_CLASS =
-  "w-full rounded-lg border border-slate-700/80 bg-slate-950/80 px-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none transition focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15";
+const TICKET_INPUT_CLASS = `${fieldInputClass} w-full min-w-0 text-xs`;
+const TICKET_NUMBER_INPUT_CLASS = `${fieldInputClass} w-full min-w-0 py-1.5 text-right text-xs`;
 
 type PosEditingOrder =
   | { kind: "ticket"; ticketId: string }
@@ -104,6 +104,7 @@ export function PosPage(): JSX.Element {
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryRiderId, setDeliveryRiderId] = useState("");
   const [deliveryChargePkr, setDeliveryChargePkr] = useState(0);
+  const [deliveryDetailsOpen, setDeliveryDetailsOpen] = useState(false);
   const [selectedFloorSectionId, setSelectedFloorSectionId] = useState<string | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -198,6 +199,30 @@ export function PosPage(): JSX.Element {
     () => (ridersQuery.data ?? []).filter((r) => r.active),
     [ridersQuery.data],
   );
+
+  useEffect(() => {
+    if (mode !== "delivery") setDeliveryDetailsOpen(false);
+  }, [mode]);
+
+  const deliveryDetailsSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (deliveryCustomer.trim()) parts.push(deliveryCustomer.trim());
+    if (deliveryPhone.trim()) parts.push(deliveryPhone.trim());
+    if (deliveryAddress.trim()) parts.push(deliveryAddress.trim());
+    if (deliveryRiderId) {
+      const rider = activeRiders.find((r) => r.id === deliveryRiderId);
+      parts.push(rider?.name ?? "Rider");
+    }
+    if (deliveryChargePkr > 0) parts.push(String(deliveryChargePkr));
+    return parts.length > 0 ? parts.join(" · ") : "Tap to enter delivery details";
+  }, [
+    deliveryCustomer,
+    deliveryPhone,
+    deliveryAddress,
+    deliveryRiderId,
+    deliveryChargePkr,
+    activeRiders,
+  ]);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branch?.code],
@@ -472,6 +497,7 @@ export function PosPage(): JSX.Element {
     setDeliveryAddress("");
     setDeliveryRiderId("");
     setDeliveryChargePkr(loadDeliverySettings(branch?.code).defaultChargePkr);
+    setDeliveryDetailsOpen(false);
   }
 
   function resetAfterBill(): void {
@@ -510,6 +536,9 @@ export function PosPage(): JSX.Element {
     setDeliveryPhone(delivery.phone);
     setDeliveryAddress(delivery.address);
     applyTableFromStation(ticket.stationLabel);
+    if (inferPosModeFromStation(ticket.stationLabel) === "delivery") {
+      setDeliveryDetailsOpen(true);
+    }
     setPrintNotice(`Editing ${ticket.orderRef ?? ticket.ticketRef}. Add or remove items, then update.`);
   }
 
@@ -529,6 +558,9 @@ export function PosPage(): JSX.Element {
     setDeliveryPhone(delivery.phone);
     setDeliveryAddress(delivery.address);
     applyTableFromStation(bill.tableLabel);
+    if (inferPosModeFromStation(bill.tableLabel) === "delivery") {
+      setDeliveryDetailsOpen(true);
+    }
     setPrintNotice(`Editing held bill ${bill.orderRef ?? bill.billRef}.`);
   }
 
@@ -1029,20 +1061,9 @@ export function PosPage(): JSX.Element {
                         {item.name}
                       </span>
                       <span className="mt-px text-[10px] font-semibold text-amber-200/90">
-                        {hasPicker ? "From " : ""}Rs {displayPrice.toLocaleString()}
+                        {hasPicker ? "From " : ""}{displayPrice.toLocaleString()}
                       </span>
-                      {variants.length > 0 ? (
-                        <div className="mt-0.5 flex flex-wrap gap-px">
-                          {variants.slice(0, 3).map((v) => (
-                            <span key={v.id} className="rounded bg-slate-800 px-0.5 py-px text-[8px] text-slate-400">
-                              {v.label}
-                            </span>
-                          ))}
-                          {variants.length > 3 ? (
-                            <span className="text-[8px] text-slate-600">+{variants.length - 3}</span>
-                          ) : null}
-                        </div>
-                      ) : (item.featured || item.barcode || happyHourSettings.bonusMenuItemId === item.id) ? (
+                      {item.featured || item.barcode || happyHourSettings.bonusMenuItemId === item.id ? (
                         <div className="mt-0.5 flex flex-wrap items-center gap-0.5">
                           {item.featured ? (
                             <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">★</span>
@@ -1064,14 +1085,14 @@ export function PosPage(): JSX.Element {
         </div>
 
         {/* Current ticket */}
-        <div className="col-span-12 flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-900/95 to-slate-950 shadow-xl shadow-black/25 ring-1 ring-white/5 lg:col-span-3">
-          <div className="shrink-0 border-b border-slate-800/80 bg-slate-900/40 px-3 py-3 backdrop-blur-sm">
+        <div className="col-span-12 flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:col-span-3 dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
+          <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
                   {editingOrder ? "Editing" : "Current ticket"}
                 </div>
-                <div className="mt-0.5 text-sm font-semibold text-white">
+                <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
                   {editingOrder ? "Modify order" : "New order"}
                 </div>
               </div>
@@ -1079,19 +1100,19 @@ export function PosPage(): JSX.Element {
                 {editingOrder ? (
                   <button
                     type="button"
-                    className="rounded-lg px-2 py-1 text-[10px] font-medium text-slate-400 transition hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg px-2 py-1 text-[10px] font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
                     onClick={cancelEditing}
                   >
                     Cancel
                   </button>
                 ) : null}
-                <span className="rounded-lg bg-amber-500/10 px-2.5 py-1 font-mono text-sm font-bold tracking-wide text-amber-400 ring-1 ring-amber-500/25">
+                <span className="rounded-lg bg-amber-100 px-2.5 py-1 font-mono text-sm font-bold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
                   {orderRef}
                 </span>
               </div>
             </div>
 
-            <div className="mt-3 flex rounded-lg bg-slate-950/80 p-1 ring-1 ring-slate-800/80">
+            <div className="mt-3 flex rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80">
               {POS_ORDER_MODES.map(({ id, label }) => (
                 <button
                   key={id}
@@ -1100,7 +1121,7 @@ export function PosPage(): JSX.Element {
                   className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
                     mode === id
                       ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
-                      : "text-slate-400 hover:text-slate-200"
+                      : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
                   }`}
                 >
                   {label}
@@ -1114,72 +1135,99 @@ export function PosPage(): JSX.Element {
                 onClick={() => setSeatingModalOpen(true)}
                 className={`mt-2.5 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition ${
                   selectedTableId
-                    ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
-                    : "border-slate-700/80 bg-slate-950/60 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                    ? "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                 }`}
               >
                 <span>{seatingLabel ?? "Select table"}</span>
-                <span className="text-slate-500" aria-hidden>
+                <span className="text-slate-400 dark:text-slate-500" aria-hidden>
                   ›
                 </span>
               </button>
             ) : null}
 
             {mode === "delivery" ? (
-              <div className="mt-2.5 space-y-2">
-                <input
-                  placeholder="Customer name"
-                  value={deliveryCustomer}
-                  onChange={(e) => setDeliveryCustomer(e.target.value)}
-                  className={TICKET_INPUT_CLASS}
-                />
-                <input
-                  placeholder="Phone number"
-                  type="tel"
-                  value={deliveryPhone}
-                  onChange={(e) => setDeliveryPhone(e.target.value)}
-                  className={TICKET_INPUT_CLASS}
-                />
-                <input
-                  placeholder="Delivery address"
-                  value={deliveryAddress}
-                  onChange={(e) => setDeliveryAddress(e.target.value)}
-                  className={TICKET_INPUT_CLASS}
-                />
-                <select
-                  value={deliveryRiderId}
-                  onChange={(e) => setDeliveryRiderId(e.target.value)}
-                  required
-                  className={`${TICKET_INPUT_CLASS} ${
-                    !deliveryRiderId ? "border-amber-500/40" : ""
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeliveryDetailsOpen((open) => !open)}
+                  aria-expanded={deliveryDetailsOpen}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
+                    deliveryDetailsOpen
+                      ? "border-amber-400/60 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
                   }`}
                 >
-                  <option value="">Select rider *</option>
-                  {activeRiders.map((rider) => (
-                    <option key={rider.id} value={rider.id}>
-                      {rider.name}
-                      {rider.phone ? ` · ${rider.phone}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
-                  <span>Delivery charge</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={50000}
-                    value={deliveryChargePkr}
-                    onChange={(e) => setDeliveryChargePkr(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-right text-xs font-medium text-white outline-none focus:border-amber-500/50"
-                  />
-                </label>
+                  <span className="min-w-0 truncate font-medium">{deliveryDetailsSummary}</span>
+                  <span
+                    className={`shrink-0 text-[10px] text-slate-400 transition-transform dark:text-slate-500 ${
+                      deliveryDetailsOpen ? "rotate-180" : ""
+                    }`}
+                    aria-hidden
+                  >
+                    ▼
+                  </span>
+                </button>
+                {deliveryDetailsOpen ? (
+                  <div className="mt-1.5 grid grid-cols-1 gap-1.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700/60 dark:bg-slate-950/40">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input
+                        placeholder="Customer"
+                        value={deliveryCustomer}
+                        onChange={(e) => setDeliveryCustomer(e.target.value)}
+                        className={`${TICKET_INPUT_CLASS} py-1.5`}
+                      />
+                      <input
+                        placeholder="Phone"
+                        type="tel"
+                        value={deliveryPhone}
+                        onChange={(e) => setDeliveryPhone(e.target.value)}
+                        className={`${TICKET_INPUT_CLASS} py-1.5`}
+                      />
+                    </div>
+                    <input
+                      placeholder="Delivery address"
+                      value={deliveryAddress}
+                      onChange={(e) => setDeliveryAddress(e.target.value)}
+                      className={`${TICKET_INPUT_CLASS} py-1.5`}
+                    />
+                    <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-1.5">
+                      <select
+                        value={deliveryRiderId}
+                        onChange={(e) => setDeliveryRiderId(e.target.value)}
+                        required
+                        className={`${TICKET_INPUT_CLASS} py-1.5 ${
+                          !deliveryRiderId ? "border-amber-400 dark:border-amber-500/40" : ""
+                        }`}
+                      >
+                        <option value="">Rider *</option>
+                        {activeRiders.map((rider) => (
+                          <option key={rider.id} value={rider.id}>
+                            {rider.name}
+                            {rider.phone ? ` · ${rider.phone}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50000}
+                        placeholder="Charge"
+                        title="Delivery charge"
+                        value={deliveryChargePkr}
+                        onChange={(e) => setDeliveryChargePkr(Math.max(0, Number(e.target.value) || 0))}
+                        className={`${TICKET_INPUT_CLASS} py-1.5 text-right tabular-nums`}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
             {happyHourLive && happyHourBonus ? (
-              <div className="mt-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200">
+              <div className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
                 <span className="font-semibold">Happy hour active</span>
-                <span className="text-amber-200/80">
+                <span className="text-amber-800/80 dark:text-amber-200/80">
                   {" "}
                   · {formatHappyHourWindow(happyHourSettings)} · Free{" "}
                   {happyHourBonus.item.name} with any order
@@ -1189,61 +1237,65 @@ export function PosPage(): JSX.Element {
           </div>
 
           {printNotice ? (
-            <p className="shrink-0 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-200">
+            <p className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
               {printNotice}
             </p>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {effectiveCart.length === 0 ? (
-              <div className="flex h-full min-h-[8rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-700/60 bg-slate-950/30 px-4 py-8 text-center">
-                <div className="mb-2 text-2xl opacity-40" aria-hidden>
+              <div className="flex h-full min-h-[6rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-6 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
+                <div className="mb-1.5 text-xl opacity-40" aria-hidden>
                   🛒
                 </div>
-                <p className="text-xs font-medium text-slate-400">No items yet</p>
-                <p className="mt-1 text-[10px] text-slate-600">Tap menu items to add to this ticket</p>
+                <p className="text-[11px] font-medium text-slate-600 dark:text-slate-400">No items yet</p>
+                <p className="mt-0.5 text-[9px] text-slate-500 dark:text-slate-600">
+                  Tap menu items to add to this ticket
+                </p>
               </div>
             ) : (
-              <ul className="space-y-2">
+              <ul className="grid grid-cols-2 gap-1">
                 {effectiveCart.map((line) => (
                   <li
                     key={line.key}
-                    className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 transition ${
+                    className={`flex min-w-0 flex-col gap-1 rounded-md border px-1.5 py-1 transition ${
                       line.isComplimentary
-                        ? "border-amber-500/30 bg-amber-500/5"
-                        : "border-slate-800/80 bg-slate-950/50 hover:border-slate-700"
+                        ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
+                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
                     }`}
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs font-medium text-slate-100">{line.lineLabel}</div>
-                      <div className="mt-0.5 text-[11px] tabular-nums text-slate-500">
+                    <div className="min-w-0 leading-tight">
+                      <div className="line-clamp-2 text-[10px] font-medium text-slate-900 dark:text-slate-100">
+                        {line.lineLabel}
+                      </div>
+                      <div className="mt-0.5 text-[9px] tabular-nums text-slate-500">
                         {line.isComplimentary ? (
-                          <span className="font-medium text-amber-400">Complimentary</span>
+                          <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
                         ) : (
-                          <>Rs {line.unitPrice.toLocaleString()} each</>
+                          <>{line.unitPrice.toLocaleString()}</>
                         )}
                       </div>
                     </div>
                     {line.isComplimentary ? (
-                      <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-400">
+                      <span className="self-start rounded bg-amber-100 px-1 py-px text-[8px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
                         FREE
                       </span>
                     ) : (
-                      <div className="flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 p-0.5 ring-1 ring-slate-800">
+                      <div className="flex items-center justify-between gap-0.5 rounded bg-slate-100 p-px ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                          className="flex h-5 flex-1 items-center justify-center rounded text-[11px] leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setQty(line.key, line.qty - 1)}
                           aria-label="Decrease quantity"
                         >
                           −
                         </button>
-                        <span className="w-5 text-center text-xs font-semibold tabular-nums text-white">
+                        <span className="w-4 shrink-0 text-center text-[10px] font-semibold tabular-nums text-slate-900 dark:text-white">
                           {line.qty}
                         </span>
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                          className="flex h-5 flex-1 items-center justify-center rounded text-[11px] leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setQty(line.key, line.qty + 1)}
                           aria-label="Increase quantity"
                         >
@@ -1257,8 +1309,8 @@ export function PosPage(): JSX.Element {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-slate-800/80 bg-slate-950/40 p-3">
-            <div className="rounded-lg bg-slate-950/70 p-3 ring-1 ring-slate-800/80">
+          <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-3 dark:border-slate-800/80 dark:bg-slate-950/40">
+            <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
               <div className="grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                   Disc %
@@ -1268,7 +1320,7 @@ export function PosPage(): JSX.Element {
                     max={50}
                     value={discountEditedAs === "pct" ? discountPctInput : discountPct}
                     onChange={(e) => onDiscountPctChange(Number(e.target.value) || 0)}
-                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-right text-xs font-medium text-white outline-none focus:border-amber-500/50"
+                    className={TICKET_NUMBER_INPUT_CLASS}
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
@@ -1279,40 +1331,48 @@ export function PosPage(): JSX.Element {
                     max={subtotal}
                     value={discountEditedAs === "amount" ? discountAmountInput : discount}
                     onChange={(e) => onDiscountAmountChange(Number(e.target.value) || 0)}
-                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-right text-xs font-medium text-white outline-none focus:border-amber-500/50"
+                    className={TICKET_NUMBER_INPUT_CLASS}
                   />
                 </label>
               </div>
               <div className="mt-3 space-y-1.5 text-xs">
-                <div className="flex justify-between text-slate-400">
+                <div className="flex justify-between text-slate-600 dark:text-slate-400">
                   <span>Subtotal</span>
-                  <span className="tabular-nums text-slate-300">Rs {subtotal.toLocaleString()}</span>
+                  <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                    {subtotal.toLocaleString()}
+                  </span>
                 </div>
                 {discount > 0 ? (
-                  <div className="flex justify-between text-emerald-400/90">
+                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400/90">
                     <span>Discount</span>
-                    <span className="tabular-nums">− Rs {discount.toLocaleString()}</span>
+                    <span className="tabular-nums">− {discount.toLocaleString()}</span>
                   </div>
                 ) : null}
-                <div className="flex justify-between text-slate-400">
+                <div className="flex justify-between text-slate-600 dark:text-slate-400">
                   <span>Service {ticketServicePct}%</span>
-                  <span className="tabular-nums text-slate-300">Rs {service.toLocaleString()}</span>
+                  <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                    {service.toLocaleString()}
+                  </span>
                 </div>
-                <div className="flex justify-between text-slate-400">
+                <div className="flex justify-between text-slate-600 dark:text-slate-400">
                   <span>Tax {taxPct}%</span>
-                  <span className="tabular-nums text-slate-300">Rs {tax.toLocaleString()}</span>
+                  <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                    {tax.toLocaleString()}
+                  </span>
                 </div>
                 {mode === "delivery" && deliveryCharge > 0 ? (
-                  <div className="flex justify-between text-slate-400">
+                  <div className="flex justify-between text-slate-600 dark:text-slate-400">
                     <span>Delivery</span>
-                    <span className="tabular-nums text-slate-300">Rs {deliveryCharge.toLocaleString()}</span>
+                    <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                      {deliveryCharge.toLocaleString()}
+                    </span>
                   </div>
                 ) : null}
               </div>
-              <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3">
-                <span className="text-sm font-semibold text-white">Total</span>
-                <span className="text-lg font-bold tabular-nums text-amber-400">
-                  Rs {total.toLocaleString()}
+              <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 dark:border-slate-800">
+                <span className="text-sm font-semibold text-slate-900 dark:text-white">Total</span>
+                <span className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                  {total.toLocaleString()}
                 </span>
               </div>
             </div>
@@ -1356,7 +1416,7 @@ export function PosPage(): JSX.Element {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-9 rounded-lg border border-slate-700/80 bg-slate-900/50 text-[11px] font-medium text-slate-300 hover:border-slate-600 hover:bg-slate-800 hover:text-white"
+                className="h-9 rounded-lg border border-slate-200 bg-white text-[11px] font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
                 disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                 onClick={() => runPrintOrder()}
               >
@@ -1365,7 +1425,7 @@ export function PosPage(): JSX.Element {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-9 rounded-lg border border-slate-700/80 bg-slate-900/50 text-[11px] font-medium text-slate-300 hover:border-slate-600 hover:bg-slate-800 hover:text-white"
+                className="h-9 rounded-lg border border-slate-200 bg-white text-[11px] font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => runPrintInvoice()}
               >
