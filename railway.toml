@@ -4,7 +4,7 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 # Run schema push using the compiled drizzle-kit binary directly (avoids pnpm workspace issues in Docker).
-preDeployCommand = "cd /app && npx drizzle-kit push --config /app/packages/database-pg/drizzle.config.ts --force"
+preDeployCommand = "cd /app && pnpm exec drizzle-kit push --config /app/packages/database-pg/drizzle.config.ts --force"
 startCommand = "node /app/backend/api/dist/main.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
