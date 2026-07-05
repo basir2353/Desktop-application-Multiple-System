@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "preDeployCommand": "cd /app && npx drizzle-kit push --config /app/packages/database-pg/drizzle.config.ts --force",
+    "preDeployCommand": "cd /app && pnpm exec drizzle-kit push --config /app/packages/database-pg/drizzle.config.ts --force",
     "startCommand": "node /app/backend/api/dist/main.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
