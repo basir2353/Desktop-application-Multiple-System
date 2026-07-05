@@ -21,6 +21,7 @@ import { AccountsPayablePage } from "./pops/pages/modules/accounting/AccountsPay
 import { AccountsReceivablePage } from "./pops/pages/modules/accounting/AccountsReceivablePage";
 import { BankAccountsPage } from "./pops/pages/modules/accounting/BankAccountsPage";
 import { CashManagementPage } from "./pops/pages/modules/accounting/CashManagementPage";
+import { CashDrawerPage } from "./pops/pages/modules/CashDrawerPage";
 import { ChartOfAccountsPage } from "./pops/pages/modules/accounting/ChartOfAccountsPage";
 import { CustomersPage } from "./pops/pages/modules/accounting/CustomersPage";
 import { ExpensesPage } from "./pops/pages/modules/accounting/ExpensesPage";
@@ -203,6 +204,7 @@ export function App(): JSX.Element {
                 <Route path="menu" element={<MenuPage />} />
                 <Route path="staff-food" element={<StaffFoodPage />} />
                 <Route path="pos" element={<PosPage />} />
+                <Route path="pos/cash-drawer" element={<CashDrawerPage />} />
                 <Route path="tables" element={<TablesPage />} />
                 <Route path="orders" element={<OrdersPage />} />
                 <Route path="kitchen" element={<KitchenPage />} />

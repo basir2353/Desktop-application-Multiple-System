@@ -31,6 +31,7 @@ import {
   waiterDisplayName,
 } from "../src/lib/orderDisplay";
 import { buildUnifiedOrders } from "../src/lib/orderHistory";
+import { resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -46,6 +47,7 @@ type QuickAction = {
 export default function HomeScreen() {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
   const waiterEmail = useSessionStore((s) => s.waiterEmail);
   const clearSession = useSessionStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
@@ -75,6 +77,10 @@ export default function HomeScreen() {
 
   if (!accessToken) {
     return <Redirect href="/" />;
+  }
+
+  if (resolveStaffRole(claims) === "rider") {
+    return <Redirect href="/rider-home" />;
   }
 
   if (!branch) {

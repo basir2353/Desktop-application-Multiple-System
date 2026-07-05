@@ -234,17 +234,14 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                           : "border-slate-800/70 hover:border-slate-700",
                       ].join(" ")}
                     >
-                      <div className="flex items-start justify-between gap-0.5">
-                        <span className="min-w-0 truncate font-mono text-[9px] font-semibold text-white">
-                          {order.ref}
-                        </span>
-                        <div className="flex shrink-0 items-center gap-0.5">
-                          <span className="text-[8px] text-slate-500">
-                            {formatRecentOrderTime(order.createdAt)}
+                      <div className="space-y-0.5">
+                        <div className="flex items-start justify-between gap-1">
+                          <span className="font-mono text-sm font-bold leading-tight text-white">
+                            {order.ref}
                           </span>
                           <button
                             type="button"
-                            className="rounded px-0.5 text-[10px] leading-none text-slate-500 transition hover:bg-slate-800 hover:text-red-400"
+                            className="shrink-0 rounded px-0.5 text-[10px] leading-none text-slate-500 transition hover:bg-slate-800 hover:text-red-400"
                             onClick={(e) => closeOrder(order, e)}
                             disabled={closeOrderMutation.isPending}
                             aria-label="Close order"
@@ -253,6 +250,9 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                             ✕
                           </button>
                         </div>
+                        <span className="block text-[8px] text-slate-500">
+                          {formatRecentOrderTime(order.createdAt)}
+                        </span>
                       </div>
 
                       <div className="mt-1">

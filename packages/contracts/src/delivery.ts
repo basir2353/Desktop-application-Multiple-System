@@ -20,6 +20,9 @@ export const deliveryStatusSchema = z.enum(DELIVERY_STATUS_VALUES);
 
 export const riderSchema = z.object({
   id: z.string().uuid(),
+  userId: z.string().uuid().nullable(),
+  branchCode: z.string(),
+  email: z.string().nullable(),
   name: z.string(),
   phone: z.string().nullable(),
   cnic: z.string().nullable(),
@@ -37,6 +40,8 @@ export const riderListSchema = z.object({
 export const createRiderSchema = z.object({
   branchCode: z.string().min(1),
   name: z.string().min(1).max(80),
+  email: z.string().email().min(3).max(320),
+  password: z.string().min(8).max(128),
   phone: z.string().max(32).optional(),
   cnic: z.string().max(20).optional(),
   salaryPkr: z.number().int().min(0).optional(),
@@ -52,6 +57,8 @@ export const updateRiderSchema = z.object({
   fromArea: z.string().max(120).nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
   active: z.boolean().optional(),
+  email: z.string().email().min(3).max(320).optional(),
+  password: z.string().min(8).max(128).optional(),
 });
 
 export const updateDeliveryOrderSchema = z.object({
@@ -60,7 +67,38 @@ export const updateDeliveryOrderSchema = z.object({
   deliveryStatus: deliveryStatusSchema.optional(),
 });
 
+export const deliveryOrderSchema = z.object({
+  id: z.string().uuid(),
+  ticketRef: z.string(),
+  orderRef: z.string().nullable(),
+  stationLabel: z.string(),
+  itemsSummary: z.string(),
+  notes: z.string().nullable(),
+  priority: z.enum(["normal", "priority"]),
+  status: z.enum(["new", "cooking", "ready", "done"]),
+  mins: z.number().int().nonnegative(),
+  startedAt: z.string().nullable(),
+  createdAt: z.string(),
+  riderId: z.string().uuid().nullable(),
+  riderName: z.string().nullable(),
+  deliveryChargePkr: z.number(),
+  deliveryStatus: deliveryStatusSchema.nullable(),
+  customerName: z.string(),
+  customerAddress: z.string(),
+});
+
+export const deliveryOrderListSchema = z.object({
+  branchCode: z.string(),
+  orders: z.array(deliveryOrderSchema),
+});
+
+export const riderDeliveryStatusUpdateSchema = z.object({
+  deliveryStatus: z.enum(["out_for_delivery", "delivered"]),
+});
+
 export type Rider = z.infer<typeof riderSchema>;
 export type CreateRider = z.infer<typeof createRiderSchema>;
 export type UpdateRider = z.infer<typeof updateRiderSchema>;
 export type UpdateDeliveryOrder = z.infer<typeof updateDeliveryOrderSchema>;
+export type DeliveryOrder = z.infer<typeof deliveryOrderSchema>;
+export type RiderDeliveryStatusUpdate = z.infer<typeof riderDeliveryStatusUpdateSchema>;

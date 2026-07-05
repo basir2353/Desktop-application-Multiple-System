@@ -16,6 +16,7 @@ import {
   createExpenseSchema,
   createJournalEntrySchema,
   createPayrollRunSchema,
+  createPopsCashMovementSchema,
   openCashSessionSchema,
   recordPaymentSchema,
   updateTaxSettingsSchema,
@@ -181,8 +182,14 @@ export class AccountingController {
     return this.accounting.listCashSessions(user.organizationId, branchCode?.trim() ?? "");
   }
 
+  @Get("cash-sessions/open")
+  @RequirePermissions("pops.read")
+  getOpenCashSession(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.accounting.getOpenCashSession(user.organizationId, branchCode?.trim() ?? "");
+  }
+
   @Post("cash-sessions/open")
-  @RequirePermissions("pops.accounting.manage")
+  @RequirePermissions("pops.closing.report", "pops.accounting.manage")
   openCashSession(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     const input = openCashSessionSchema.parse(body);
     return this.accounting.openCashSession(
@@ -194,7 +201,7 @@ export class AccountingController {
   }
 
   @Post("cash-sessions/:sessionId/close")
-  @RequirePermissions("pops.accounting.manage")
+  @RequirePermissions("pops.closing.report", "pops.accounting.manage")
   closeCashSession(
     @CurrentUser() user: AccessJwtPayload,
     @Param("sessionId") sessionId: string,
@@ -206,6 +213,22 @@ export class AccountingController {
       sessionId,
       closeCashSessionSchema.parse(body),
     );
+  }
+
+  @Post("cash-movements")
+  @RequirePermissions("pops.read")
+  recordCashMovement(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.accounting.recordCashMovement(
+      user.organizationId,
+      user.sub,
+      createPopsCashMovementSchema.parse(body),
+    );
+  }
+
+  @Get("cash-movements")
+  @RequirePermissions("pops.read")
+  listCashMovements(@CurrentUser() user: AccessJwtPayload, @Query("sessionId") sessionId: string) {
+    return this.accounting.listCashMovements(user.organizationId, sessionId?.trim() ?? "");
   }
 
   @Get("bank-accounts")

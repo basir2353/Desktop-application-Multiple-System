@@ -12,7 +12,7 @@ import { SimpleTable } from "../../../ui/SimpleTable";
 import { AccountingError, AccountingFormPanel, AccountingLoading } from "./AccountingUi";
 
 export function CashManagementPage(): JSX.Element {
-  const { branch, canManage } = useAccountingAccess();
+  const { branch, canOperateDrawer } = useAccountingAccess();
   const queryClient = useQueryClient();
   const [openingFloat, setOpeningFloat] = useState("0");
   const [countedCash, setCountedCash] = useState("");
@@ -46,7 +46,7 @@ export function CashManagementPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader title="Cash management" subtitle="Cash drawer opening, closing, and variance reports." />
 
-      {canManage && !openSession ? (
+      {canOperateDrawer && !openSession ? (
         <AccountingFormPanel
           title="Open cash drawer"
           submitLabel="Open shift"
@@ -60,7 +60,7 @@ export function CashManagementPage(): JSX.Element {
         </AccountingFormPanel>
       ) : null}
 
-      {canManage && openSession ? (
+      {canOperateDrawer && openSession ? (
         <AccountingFormPanel
           title={`Close session ${openSession.sessionRef}`}
           submitLabel="Close shift"

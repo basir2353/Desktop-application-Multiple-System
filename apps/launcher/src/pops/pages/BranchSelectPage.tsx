@@ -8,6 +8,7 @@ import { getBusinessSystem, getErpEntryPath } from "../../lib/businessSystems";
 import { PHARMACY_ROLE_LABELS } from "../../pharmacy/spec/nav";
 import { STORE_ROLE_LABELS } from "../../store/spec/nav";
 import { createPopsBranch, fetchPopsBranches } from "../api/operations";
+import { isMonitoringBranch } from "../lib/branchScope";
 import { usePopsStore, type PopsBranch, type PopsRole } from "../../stores/popsStore";
 
 const restaurantRoles: { id: PopsRole; label: string }[] = [
@@ -68,7 +69,9 @@ export function BranchSelectPage(): JSX.Element {
 
   const allBranches = apiBranches;
 
-  const [selected, setSelected] = useState<PopsBranch | null>(allBranches[0] ?? null);
+  const [selected, setSelected] = useState<PopsBranch | null>(
+    allBranches.find((b) => !isMonitoringBranch(b.code)) ?? allBranches[0] ?? null,
+  );
   const [newName, setNewName] = useState("");
   const [newCity, setNewCity] = useState("");
   const [newCode, setNewCode] = useState("");
@@ -82,7 +85,7 @@ export function BranchSelectPage(): JSX.Element {
 
   useEffect(() => {
     if (selected && !allBranches.some((b) => b.id === selected.id)) {
-      setSelected(allBranches[0] ?? null);
+      setSelected(allBranches.find((b) => !isMonitoringBranch(b.code)) ?? allBranches[0] ?? null);
     }
   }, [allBranches, selected]);
 

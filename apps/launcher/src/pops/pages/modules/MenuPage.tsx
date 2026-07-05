@@ -25,11 +25,15 @@ import { MenuImagePicker, MenuImageThumb } from "../../ui/MenuImagePicker";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
 import {
+  createHappyHourSlotId,
   DEFAULT_HAPPY_HOUR_SETTINGS,
-  formatHappyHourWindow,
+  formatHappyHourSlot,
+  formatHappyHourSlots,
   loadHappyHourSettings,
+  normalizeHappyHourSlot,
   saveHappyHourSettings,
   type HappyHourSettings,
+  type HappyHourTimeSlot,
 } from "../../lib/happyHourSettings";
 import { isHappyHourActive } from "../../lib/posHappyHour";
 import {
@@ -100,10 +104,41 @@ export function MenuPage(): JSX.Element {
     [items],
   );
 
-  const selectedBonusItem = useMemo(
-    () => bonusItemOptions.find((i) => i.id === happyHourDraft.bonusMenuItemId) ?? null,
-    [bonusItemOptions, happyHourDraft.bonusMenuItemId],
+  const giftItemIds = useMemo(
+    () => new Set(happyHourDraft.slots.map((s) => s.bonusMenuItemId).filter(Boolean)),
+    [happyHourDraft.slots],
   );
+
+  function updateSlot(index: number, patch: Partial<HappyHourTimeSlot>): void {
+    setHappyHourDraft((prev) => ({
+      ...prev,
+      slots: prev.slots.map((slot, i) =>
+        i === index ? normalizeHappyHourSlot({ ...slot, ...patch }) : slot,
+      ),
+    }));
+  }
+
+  function addSlot(): void {
+    setHappyHourDraft((prev) => ({
+      ...prev,
+      slots: [
+        ...prev.slots,
+        normalizeHappyHourSlot({
+          id: createHappyHourSlotId(),
+          startHour: 19,
+          endHour: 21,
+          percentOff: 10,
+        }),
+      ],
+    }));
+  }
+
+  function removeSlot(index: number): void {
+    setHappyHourDraft((prev) => ({
+      ...prev,
+      slots: prev.slots.length > 1 ? prev.slots.filter((_, i) => i !== index) : prev.slots,
+    }));
+  }
 
   const categoryItems = useMemo(
     () => items.filter((i) => i.categoryId === selectedCategory?.id),
@@ -426,8 +461,8 @@ export function MenuPage(): JSX.Element {
               <div>
                 <div className="text-sm font-semibold text-white">Happy hour promotion</div>
                 <p className="mt-1 max-w-xl text-xs text-slate-400">
-                  When active, customers who buy anything during the happy hour window automatically receive a
-                  specific free item on their ticket.
+                  Configure time slots with different discounts and optional free gifts. POS applies the
+                  matching slot automatically.
                 </p>
               </div>
               {happyHourDraft.enabled && isHappyHourActive(happyHourDraft) ? (
@@ -436,7 +471,7 @@ export function MenuPage(): JSX.Element {
                 </span>
               ) : happyHourDraft.enabled ? (
                 <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[10px] font-medium text-slate-400">
-                  Scheduled · {formatHappyHourWindow(happyHourDraft)}
+                  Scheduled · {formatHappyHourSlots(happyHourDraft)}
                 </span>
               ) : null}
             </div>
@@ -453,88 +488,134 @@ export function MenuPage(): JSX.Element {
               Enable happy hour
             </label>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="block text-xs text-slate-400">
-                Start hour (0–23)
-                <input
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={happyHourDraft.startHour}
-                  onChange={(e) =>
-                    setHappyHourDraft((prev) => ({
-                      ...prev,
-                      startHour: Number(e.target.value) || 0,
-                    }))
-                  }
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-                />
-              </label>
-              <label className="block text-xs text-slate-400">
-                End hour (0–23)
-                <input
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={happyHourDraft.endHour}
-                  onChange={(e) =>
-                    setHappyHourDraft((prev) => ({
-                      ...prev,
-                      endHour: Number(e.target.value) || 0,
-                    }))
-                  }
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-                />
-              </label>
-              <label className="block text-xs text-slate-400 sm:col-span-2">
-                Free gift item
-                <select
-                  value={happyHourDraft.bonusMenuItemId ?? ""}
-                  onChange={(e) => {
-                    const id = e.target.value || null;
-                    const item = bonusItemOptions.find((i) => i.id === id);
-                    const defaultVariant = item?.variants.find((v) => v.isActive)?.id ?? null;
-                    setHappyHourDraft((prev) => ({
-                      ...prev,
-                      bonusMenuItemId: id,
-                      bonusVariantId: defaultVariant,
-                    }));
-                  }}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-                >
-                  <option value="">Select item to give free…</option>
-                  {bonusItemOptions.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <div className="mt-4 space-y-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/90">
+                Time slots & pricing
+              </div>
 
-            {selectedBonusItem && selectedBonusItem.variants.filter((v) => v.isActive).length > 1 ? (
-              <label className="mt-3 block text-xs text-slate-400">
-                Gift size / variant
-                <select
-                  value={happyHourDraft.bonusVariantId ?? ""}
-                  onChange={(e) =>
-                    setHappyHourDraft((prev) => ({
-                      ...prev,
-                      bonusVariantId: e.target.value || null,
-                    }))
-                  }
-                  className="mt-1 w-full max-w-md rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+              {happyHourDraft.slots.map((slot, index) => (
+                <div
+                  key={slot.id}
+                  className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
                 >
-                  {selectedBonusItem.variants
-                    .filter((v) => v.isActive)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            ) : null}
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-300">
+                      Slot {index + 1} · {formatHappyHourSlot(slot)}
+                    </span>
+                    <button
+                      type="button"
+                      className={`text-xs ${linkDangerClass} disabled:opacity-40`}
+                      onClick={() => removeSlot(index)}
+                      disabled={happyHourDraft.slots.length === 1}
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="block text-xs text-slate-400">
+                      Start hour (0–23)
+                      <input
+                        type="number"
+                        min={0}
+                        max={23}
+                        value={slot.startHour}
+                        onChange={(e) =>
+                          updateSlot(index, { startHour: Number(e.target.value) || 0 })
+                        }
+                        className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      />
+                    </label>
+                    <label className="block text-xs text-slate-400">
+                      End hour (0–23)
+                      <input
+                        type="number"
+                        min={0}
+                        max={23}
+                        value={slot.endHour}
+                        onChange={(e) =>
+                          updateSlot(index, { endHour: Number(e.target.value) || 0 })
+                        }
+                        className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      />
+                    </label>
+                    <label className="block text-xs text-slate-400">
+                      Discount (% off menu prices)
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={slot.percentOff}
+                        onChange={(e) =>
+                          updateSlot(index, { percentOff: Number(e.target.value) || 0 })
+                        }
+                        className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      />
+                    </label>
+                    <label className="block text-xs text-slate-400">
+                      Free gift item (optional)
+                      <select
+                        value={slot.bonusMenuItemId ?? ""}
+                        onChange={(e) => {
+                          const id = e.target.value || null;
+                          const item = bonusItemOptions.find((i) => i.id === id);
+                          const defaultVariant = item?.variants.find((v) => v.isActive)?.id ?? null;
+                          updateSlot(index, {
+                            bonusMenuItemId: id,
+                            bonusVariantId: defaultVariant,
+                          });
+                        }}
+                        className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      >
+                        <option value="">No free gift</option>
+                        {bonusItemOptions.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {slot.bonusMenuItemId ? (() => {
+                    const giftItem = bonusItemOptions.find((i) => i.id === slot.bonusMenuItemId);
+                    const activeVariants = giftItem?.variants.filter((v) => v.isActive) ?? [];
+                    if (activeVariants.length <= 1) return null;
+                    return (
+                      <label className="mt-3 block text-xs text-slate-400">
+                        Gift size / variant
+                        <select
+                          value={slot.bonusVariantId ?? ""}
+                          onChange={(e) =>
+                            updateSlot(index, { bonusVariantId: e.target.value || null })
+                          }
+                          className="mt-1 w-full max-w-md rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                        >
+                          {activeVariants.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })() : null}
+
+                  <p className="mt-2 text-[10px] text-slate-500">
+                    {slot.percentOff > 0 ? `${slot.percentOff}% off all menu prices` : "Regular menu prices"}
+                    {slot.bonusMenuItemId ? " · includes free gift" : ""}
+                  </p>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={addSlot}
+                className="inline-flex items-center rounded-md border border-dashed border-amber-500/40 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:border-amber-400 hover:bg-amber-500/10"
+              >
+                + Add time slot
+              </button>
+            </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Button
@@ -542,18 +623,25 @@ export function MenuPage(): JSX.Element {
                 className="text-xs"
                 onClick={() => {
                   if (!branch?.code) return;
-                  if (happyHourDraft.enabled && !happyHourDraft.bonusMenuItemId) {
-                    setHappyHourNotice("Select a free gift item before enabling happy hour.");
+                  if (happyHourDraft.enabled && happyHourDraft.slots.length === 0) {
+                    setHappyHourNotice("Add at least one time slot before enabling happy hour.");
+                    return;
+                  }
+                  const invalid = happyHourDraft.slots.find(
+                    (s) => s.percentOff <= 0 && !s.bonusMenuItemId,
+                  );
+                  if (happyHourDraft.enabled && invalid) {
+                    setHappyHourNotice("Each slot needs a discount % or a free gift item.");
                     return;
                   }
                   saveHappyHourSettings(branch.code, happyHourDraft);
-                  setHappyHourNotice("Happy hour settings saved. POS tickets will auto-add the gift item.");
+                  setHappyHourNotice("Happy hour settings saved. POS will apply slot pricing automatically.");
                 }}
               >
                 Save happy hour
               </Button>
               <span className="text-[10px] text-slate-500">
-                Window: {formatHappyHourWindow(happyHourDraft)}
+                {happyHourDraft.slots.length} slot{happyHourDraft.slots.length === 1 ? "" : "s"} configured
               </span>
             </div>
             {happyHourNotice ? (
@@ -786,7 +874,7 @@ export function MenuPage(): JSX.Element {
                           render: (r: MenuItem) => (
                             <span className="flex flex-wrap gap-1">
                               {r.featured ? <Badge tone="warning">Featured</Badge> : null}
-                              {happyHourDraft.bonusMenuItemId === r.id ? (
+                              {giftItemIds.has(r.id) ? (
                                 <Badge tone="warning">HH gift</Badge>
                               ) : null}
                               {!r.isActive ? <Badge tone="neutral">Off</Badge> : null}

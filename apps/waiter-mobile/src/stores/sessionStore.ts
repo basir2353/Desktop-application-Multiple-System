@@ -1,6 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
-import type { AccessTokenClaims } from "../lib/jwt";
+import { decodeAccessToken, type AccessTokenClaims } from "../lib/jwt";
 
 const ACCESS_KEY = "pops-waiter-access";
 const REFRESH_KEY = "pops-waiter-refresh";
@@ -44,10 +44,18 @@ export const useSessionStore = create<SessionState>((set) => ({
       SecureStore.getItemAsync(REFRESH_KEY),
       SecureStore.getItemAsync(EMAIL_KEY),
     ]);
+    let claims: AccessTokenClaims | null = null;
+    if (access) {
+      try {
+        claims = decodeAccessToken(access);
+      } catch {
+        claims = null;
+      }
+    }
     set({
       accessToken: access,
       refreshToken: refresh,
-      claims: null,
+      claims,
       waiterEmail: email,
       hydrated: true,
     });

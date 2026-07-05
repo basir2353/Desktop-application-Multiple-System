@@ -37,7 +37,7 @@ import {
 } from "../../lib/posCart";
 import { printReceipt, printKot, type PrintTicketInput } from "../../lib/printTicket";
 import { resolveMenuImageUrl } from "../../lib/menuImageUrl";
-import { buildPosRecentOrders, canPayPosRecentOrder, type PosRecentOrder } from "../../lib/recentOrders";
+import { buildPosRecentOrders, canChangePosRecentOrderTable, canPayPosRecentOrder, type PosRecentOrder } from "../../lib/recentOrders";
 import {
   cartFromBill,
   cartFromKitchenTicket,
@@ -53,6 +53,9 @@ import {
 } from "../../lib/posDiscount";
 import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCheckoutModal";
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
+import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/ChangeOrderTableModal";
+import { PosPayOutModal } from "../../components/PosPayOutModal";
+import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
 import { amberPillActiveClass, fieldInputClass, pillInactiveClass } from "../../lib/themeClasses";
 import {
@@ -66,16 +69,19 @@ import {
   type PosSettings,
 } from "../../lib/posSettings";
 import { buildMenuItemOrderCounts, sortMenuByPopularity } from "../../lib/posMenuPopularity";
+import { isMonitoringBranch } from "../../lib/branchScope";
 import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
-  formatHappyHourWindow,
+  formatHappyHourSlotSummary,
   HAPPY_HOUR_SETTINGS_CHANGED_EVENT,
   loadHappyHourSettings,
   type HappyHourSettings,
 } from "../../lib/happyHourSettings";
 import {
   applyHappyHourBonus,
+  applyHappyHourDiscountPrice,
+  getActiveHappyHourSlot,
   isHappyHourActive,
   resolveHappyHourBonusItem,
   stripComplimentaryLines,
@@ -126,6 +132,9 @@ export function PosPage(): JSX.Element {
   const [ticketServicePct, setTicketServicePct] = useState(10);
   const [seatingModalOpen, setSeatingModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<PosEditingOrder>(null);
+  const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
+  const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
+  const [payOutModalOpen, setPayOutModalOpen] = useState(false);
   const seatingAutoOpened = useRef(false);
   const pendingEditRef = useRef<PosEditLocationState | null>(
     (location.state as PosEditLocationState | null) ?? null,
@@ -255,6 +264,11 @@ export function PosPage(): JSX.Element {
         settings: posSettings,
       }),
     [kitchenQuery.data, ordersQuery.data, posSettings],
+  );
+
+  const transferableOrders = useMemo(
+    () => recentOrders.filter(canChangePosRecentOrderTable),
+    [recentOrders],
   );
 
   const selectedTable = useMemo(
@@ -394,6 +408,16 @@ export function PosPage(): JSX.Element {
   const happyHourBonus = useMemo(
     () => resolveHappyHourBonusItem(menuItems, happyHourSettings),
     [menuItems, happyHourSettings],
+  );
+
+  const happyHourActiveSlot = useMemo(
+    () => getActiveHappyHourSlot(happyHourSettings),
+    [happyHourSettings],
+  );
+
+  const happyHourGiftItemIds = useMemo(
+    () => new Set(happyHourSettings.slots.map((s) => s.bonusMenuItemId).filter(Boolean)),
+    [happyHourSettings.slots],
   );
 
   const happyHourLive = isHappyHourActive(happyHourSettings);
@@ -593,6 +617,32 @@ export function PosPage(): JSX.Element {
   function cancelEditing(): void {
     resetAfterBill();
     setPrintNotice("Edit cancelled.");
+  }
+
+  function openTableTransfer(): void {
+    if (editingOrder?.kind === "ticket" && mode === "dine-in") {
+      const ticket = (kitchenQuery.data ?? []).find((row) => row.id === editingOrder.ticketId);
+      if (ticket && ticket.status !== "done") {
+        setTableTransferTicket({
+          id: ticket.id,
+          stationLabel: ticket.stationLabel,
+          orderRef: ticket.orderRef,
+          ticketRef: ticket.ticketRef,
+          createdAt: ticket.createdAt,
+        });
+        return;
+      }
+    }
+
+    if (transferableOrders.length === 0) {
+      setPrintNotice("No active dine-in orders available for table transfer.");
+      return;
+    }
+    if (transferableOrders.length === 1 && transferableOrders[0]!.pendingTicket) {
+      setTableTransferTicket(transferableOrders[0]!.pendingTicket!);
+      return;
+    }
+    setTableTransferPickerOpen(true);
   }
 
   useEffect(() => {
@@ -892,14 +942,11 @@ export function PosPage(): JSX.Element {
           className="min-w-[10rem] flex-1 rounded-md border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/40 sm:max-w-md"
         />
         <div className="ml-auto flex gap-1">
-          <Button variant="ghost" className="h-7 px-2 text-[10px]">
-            Barcode
+          <Button variant="ghost" className="h-7 px-2 text-[10px]" onClick={openTableTransfer}>
+            Table transfer
           </Button>
-          <Button variant="ghost" className="hidden h-7 px-2 text-[10px] sm:inline-flex">
-            Merge / split
-          </Button>
-          <Button variant="ghost" className="h-7 px-2 text-[10px]">
-            Drawer
+          <Button variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => setPayOutModalOpen(true)}>
+            Paying out
           </Button>
         </div>
       </div>
@@ -1030,7 +1077,13 @@ export function PosPage(): JSX.Element {
                 {filteredMenu.map((item) => {
                   const img = resolveMenuImageUrl(item.imageUrl);
                   const variants = resolvePosSellableVariants(item);
-                  const displayPrice = menuItemDisplayPrice(item);
+                  const displayPrice = happyHourActiveSlot?.percentOff
+                    ? applyHappyHourDiscountPrice(menuItemDisplayPrice(item), happyHourActiveSlot.percentOff)
+                    : menuItemDisplayPrice(item);
+                  const showHappyHourPrice =
+                    happyHourActiveSlot != null &&
+                    happyHourActiveSlot.percentOff > 0 &&
+                    displayPrice !== menuItemDisplayPrice(item);
                   const hasPicker = variants.length > 1;
                   return (
                     <button
@@ -1062,13 +1115,18 @@ export function PosPage(): JSX.Element {
                       </span>
                       <span className="mt-px text-[10px] font-semibold text-amber-200/90">
                         {hasPicker ? "From " : ""}{displayPrice.toLocaleString()}
+                        {showHappyHourPrice ? (
+                          <span className="ml-1 font-normal text-slate-500 line-through">
+                            {menuItemDisplayPrice(item).toLocaleString()}
+                          </span>
+                        ) : null}
                       </span>
-                      {item.featured || item.barcode || happyHourSettings.bonusMenuItemId === item.id ? (
+                      {item.featured || item.barcode || happyHourGiftItemIds.has(item.id) ? (
                         <div className="mt-0.5 flex flex-wrap items-center gap-0.5">
                           {item.featured ? (
                             <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">★</span>
                           ) : null}
-                          {happyHourSettings.bonusMenuItemId === item.id ? (
+                          {happyHourGiftItemIds.has(item.id) ? (
                             <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">HH</span>
                           ) : null}
                           {item.barcode ? (
@@ -1113,21 +1171,40 @@ export function PosPage(): JSX.Element {
             </div>
 
             <div className="mt-3 flex rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80">
-              {POS_ORDER_MODES.map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setMode(id)}
-                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
-                    mode === id
-                      ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
-                      : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+              {POS_ORDER_MODES.map(({ id, label }) => {
+                const deliveryBlocked = id === "delivery" && isMonitoringBranch(branch?.code);
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={deliveryBlocked}
+                    title={
+                      deliveryBlocked
+                        ? "Switch to a store branch (e.g. POPS Blue Area) for delivery orders"
+                        : undefined
+                    }
+                    onClick={() => {
+                      if (deliveryBlocked) return;
+                      setMode(id);
+                    }}
+                    className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
+                      mode === id
+                        ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
+                        : deliveryBlocked
+                          ? "cursor-not-allowed text-slate-400 opacity-50 dark:text-slate-600"
+                          : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
+            {isMonitoringBranch(branch?.code) ? (
+              <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300/90">
+                Delivery orders must be created on a store branch (e.g. POPS Blue Area) so riders can see them in the mobile app.
+              </p>
+            ) : null}
 
             {mode === "dine-in" && floorSections.length > 0 ? (
               <button
@@ -1224,13 +1301,13 @@ export function PosPage(): JSX.Element {
               </div>
             ) : null}
 
-            {happyHourLive && happyHourBonus ? (
+            {happyHourLive && happyHourActiveSlot ? (
               <div className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
                 <span className="font-semibold">Happy hour active</span>
                 <span className="text-amber-800/80 dark:text-amber-200/80">
                   {" "}
-                  · {formatHappyHourWindow(happyHourSettings)} · Free{" "}
-                  {happyHourBonus.item.name} with any order
+                  · {formatHappyHourSlotSummary(happyHourActiveSlot)}
+                  {happyHourBonus ? ` · Free ${happyHourBonus.item.name} with any order` : ""}
                 </span>
               </div>
             ) : null}
@@ -1487,6 +1564,38 @@ export function PosPage(): JSX.Element {
           isSubmitting={splitBillMutation.isPending}
           onClose={() => setSplitModalOpen(false)}
           onConfirm={(splits) => splitBillMutation.mutate(splits)}
+        />
+      ) : null}
+
+      {tableTransferPickerOpen ? (
+        <PosTableTransferPickerModal
+          orders={transferableOrders}
+          onClose={() => setTableTransferPickerOpen(false)}
+          onPick={(ticket) => {
+            setTableTransferPickerOpen(false);
+            setTableTransferTicket(ticket);
+          }}
+        />
+      ) : null}
+
+      {tableTransferTicket && branch?.code ? (
+        <ChangeOrderTableModal
+          ticket={tableTransferTicket}
+          branchCode={branch.code}
+          onClose={() => setTableTransferTicket(null)}
+          onSuccess={(message) => {
+            setPrintNotice(message);
+            if (editingOrder?.kind === "ticket" && editingOrder.ticketId === tableTransferTicket.id) {
+              void queryClient.invalidateQueries({ queryKey: ["kitchen", branch.code] });
+            }
+          }}
+        />
+      ) : null}
+
+      {payOutModalOpen ? (
+        <PosPayOutModal
+          onClose={() => setPayOutModalOpen(false)}
+          onSuccess={(message) => setPrintNotice(message)}
         />
       ) : null}
     </div>

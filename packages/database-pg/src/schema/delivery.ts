@@ -1,6 +1,7 @@
 import { boolean, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
+import { users } from "./users";
 
 export const popsRiders = pgTable("pops_riders", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -10,6 +11,7 @@ export const popsRiders = pgTable("pops_riders", {
   branchId: uuid("branch_id")
     .notNull()
     .references(() => popsBranches.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   phone: text("phone"),
   cnic: text("cnic"),

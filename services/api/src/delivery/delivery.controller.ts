@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   createRiderSchema,
+  riderDeliveryStatusUpdateSchema,
   updateDeliveryOrderSchema,
   updateRiderSchema,
 } from "@platform/contracts";
@@ -15,6 +16,32 @@ import { DeliveryService } from "./delivery.service";
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class DeliveryController {
   constructor(private readonly delivery: DeliveryService) {}
+
+  @Get("orders")
+  @RequirePermissions("pops.read")
+  listOrders(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.delivery.listDeliveryOrders(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Get("my-orders")
+  @RequirePermissions("pops.delivery.manage")
+  listMyOrders(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.delivery.listMyDeliveries(user, branchCode?.trim() ?? "");
+  }
+
+  @Patch("my-orders/:ticketId/status")
+  @RequirePermissions("pops.delivery.manage")
+  updateMyOrderStatus(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("ticketId") ticketId: string,
+    @Body() body: unknown,
+  ) {
+    return this.delivery.updateRiderDeliveryStatus(
+      user,
+      ticketId,
+      riderDeliveryStatusUpdateSchema.parse(body),
+    );
+  }
 
   @Get("riders")
   @RequirePermissions("pops.read")

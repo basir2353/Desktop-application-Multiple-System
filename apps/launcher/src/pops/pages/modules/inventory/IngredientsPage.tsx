@@ -20,23 +20,39 @@ function stockStatus(i: Ingredient): { label: string; tone: "success" | "warning
   return { label: "OK", tone: "success" };
 }
 
+type IngredientRow = {
+  sku: string;
+  name: string;
+  categoryId: string;
+  unit: (typeof INGREDIENT_UNITS)[number];
+  currentStock: string;
+  minStock: string;
+  reorderLevel: string;
+  maxStock: string;
+  unitCost: string;
+};
+
+function emptyRow(): IngredientRow {
+  return {
+    sku: "",
+    name: "",
+    categoryId: "",
+    unit: "Kg",
+    currentStock: "0",
+    minStock: "0",
+    reorderLevel: "0",
+    maxStock: "0",
+    unitCost: "0",
+  };
+}
+
 export function IngredientsPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    sku: "",
-    name: "",
-    categoryId: "",
-    unit: "Kg" as (typeof INGREDIENT_UNITS)[number],
-    currentStock: "0",
-    minStock: "0",
-    reorderLevel: "0",
-    maxStock: "0",
-    unitCost: "0",
-  });
+  const [rows, setRows] = useState<IngredientRow[]>([emptyRow()]);
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
@@ -44,23 +60,40 @@ export function IngredientsPage(): JSX.Element {
     queryFn: () => fetchBranchInventory(branch!.code),
   });
 
+  function updateRow(index: number, patch: Partial<IngredientRow>): void {
+    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function addRow(): void {
+    setRows((prev) => [...prev, emptyRow()]);
+  }
+
+  function removeRow(index: number): void {
+    setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
+
+  const validRows = rows.filter((r) => r.sku.trim() && r.name.trim());
+
   const createMutation = useMutation({
-    mutationFn: () =>
-      createIngredient({
-        branchCode: branch!.code,
-        sku: form.sku.trim(),
-        name: form.name.trim(),
-        categoryId: form.categoryId || undefined,
-        unit: form.unit,
-        currentStock: Number(form.currentStock),
-        minStock: Number(form.minStock),
-        reorderLevel: Number(form.reorderLevel),
-        maxStock: Number(form.maxStock),
-        unitCost: Number(form.unitCost),
-      }),
+    mutationFn: async () => {
+      for (const row of validRows) {
+        await createIngredient({
+          branchCode: branch!.code,
+          sku: row.sku.trim(),
+          name: row.name.trim(),
+          categoryId: row.categoryId || undefined,
+          unit: row.unit,
+          currentStock: Number(row.currentStock),
+          minStock: Number(row.minStock),
+          reorderLevel: Number(row.reorderLevel),
+          maxStock: Number(row.maxStock),
+          unitCost: Number(row.unitCost),
+        });
+      }
+    },
     onSuccess: () => {
       invalidate();
-      setForm({ sku: "", name: "", categoryId: "", unit: "Kg", currentStock: "0", minStock: "0", reorderLevel: "0", maxStock: "0", unitCost: "0" });
+      setRows([emptyRow()]);
       setError(null);
     },
     onError: (e: Error) => setError(e.message),
@@ -89,21 +122,49 @@ export function IngredientsPage(): JSX.Element {
       {error ? <InventoryError message={error} /> : null}
 
       {canManage ? (
-        <InventoryFormPanel title="Add ingredient" submitLabel="Save ingredient" onSubmit={() => createMutation.mutate()} disabled={!form.sku.trim() || !form.name.trim() || createMutation.isPending}>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <input className={inputClass} placeholder="SKU" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
-            <input className={inputClass} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <select className={selectClass} value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
-              <option value="">Category</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <select className={selectClass} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value as typeof form.unit })}>
-              {INGREDIENT_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
-            <input className={inputClass} placeholder="Current stock" type="number" value={form.currentStock} onChange={(e) => setForm({ ...form, currentStock: e.target.value })} />
-            <input className={inputClass} placeholder="Min stock" type="number" value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} />
-            <input className={inputClass} placeholder="Reorder level" type="number" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })} />
-            <input className={inputClass} placeholder="Unit cost (Rs)" type="number" value={form.unitCost} onChange={(e) => setForm({ ...form, unitCost: e.target.value })} />
+        <InventoryFormPanel
+          title="Add ingredients"
+          submitLabel={createMutation.isPending ? "Saving…" : `Save ${validRows.length} ingredient${validRows.length === 1 ? "" : "s"}`}
+          onSubmit={() => createMutation.mutate()}
+          disabled={validRows.length === 0 || createMutation.isPending}
+        >
+          <div className="space-y-2">
+            {rows.map((row, index) => (
+              <div key={index} className="grid gap-2 rounded-md border border-slate-200 p-2 dark:border-slate-800 sm:grid-cols-2 lg:grid-cols-4">
+                <input className={inputClass} placeholder="SKU" value={row.sku} onChange={(e) => updateRow(index, { sku: e.target.value })} />
+                <input className={inputClass} placeholder="Name" value={row.name} onChange={(e) => updateRow(index, { name: e.target.value })} />
+                <select className={selectClass} value={row.categoryId} onChange={(e) => updateRow(index, { categoryId: e.target.value })}>
+                  <option value="">Category</option>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <select className={selectClass} value={row.unit} onChange={(e) => updateRow(index, { unit: e.target.value as IngredientRow["unit"] })}>
+                  {INGREDIENT_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <input className={inputClass} placeholder="Current stock" type="number" value={row.currentStock} onChange={(e) => updateRow(index, { currentStock: e.target.value })} />
+                <input className={inputClass} placeholder="Min stock" type="number" value={row.minStock} onChange={(e) => updateRow(index, { minStock: e.target.value })} />
+                <input className={inputClass} placeholder="Reorder level" type="number" value={row.reorderLevel} onChange={(e) => updateRow(index, { reorderLevel: e.target.value })} />
+                <div className="flex items-center gap-2">
+                  <input className={`flex-1 ${inputClass}`} placeholder="Unit cost (Rs)" type="number" value={row.unitCost} onChange={(e) => updateRow(index, { unitCost: e.target.value })} />
+                  <button
+                    type="button"
+                    className={`text-xs ${linkDangerClass} disabled:opacity-40`}
+                    onClick={() => removeRow(index)}
+                    disabled={rows.length === 1}
+                    aria-label="Remove row"
+                    title="Remove row"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addRow}
+              className="inline-flex items-center rounded-md border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:border-indigo-500 dark:hover:text-indigo-300"
+            >
+              + Add another ingredient
+            </button>
           </div>
         </InventoryFormPanel>
       ) : null}

@@ -1,48 +1,230 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
 } from "@nestjs/common";
-import { and, asc, eq } from "drizzle-orm";
-import type { CreateRider, UpdateDeliveryOrder, UpdateRider } from "@platform/contracts";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { permissionsForPopsRole, type CreateRider, type RiderDeliveryStatusUpdate, type UpdateDeliveryOrder, type UpdateRider } from "@platform/contracts";
 import {
+  organizationMemberships,
   popsBranches,
   popsKitchenTickets,
   popsRiders,
+  organizations,
+  users,
   type PlatformPgDb,
 } from "@platform/database-pg";
+import * as bcrypt from "bcryptjs";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { NotificationsService } from "../notifications/notifications.service";
+import type { AccessJwtPayload } from "../auth/jwt.types";
+
+const RIDER_SEED_EMAIL = "rider1@platform.local";
 
 @Injectable()
-export class DeliveryService {
+export class DeliveryService implements OnModuleInit {
+  private readonly logger = new Logger(DeliveryService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly notifications: NotificationsService,
   ) {}
 
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.seedRiderProfileIfMissing();
+    } catch (err) {
+      this.logger.warn(
+        `Delivery rider bootstrap skipped — run pnpm db:push if the schema changed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  async seedRiderProfileIfMissing(): Promise<void> {
+    const org = await this.db.select({ id: organizations.id }).from(organizations).limit(1);
+    const organizationId = org[0]?.id;
+    if (!organizationId) return;
+
+    const userRows = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, RIDER_SEED_EMAIL))
+      .limit(1);
+    const userId = userRows[0]?.id;
+    if (!userId) return;
+
+    const branchRows = await this.db
+      .select()
+      .from(popsBranches)
+      .where(and(eq(popsBranches.organizationId, organizationId), eq(popsBranches.code, "ISB-GT")))
+      .limit(1);
+    const branch = branchRows[0];
+    if (!branch) return;
+
+    const existing = await this.db
+      .select({ id: popsRiders.id })
+      .from(popsRiders)
+      .where(eq(popsRiders.userId, userId))
+      .limit(1);
+    if (existing.length > 0) return;
+
+    const byName = await this.db
+      .select({ id: popsRiders.id })
+      .from(popsRiders)
+      .where(
+        and(
+          eq(popsRiders.organizationId, organizationId),
+          eq(popsRiders.branchId, branch.id),
+          eq(popsRiders.name, "Rider One"),
+        ),
+      )
+      .limit(1);
+
+    if (byName[0]) {
+      await this.db.update(popsRiders).set({ userId }).where(eq(popsRiders.id, byName[0].id));
+      return;
+    }
+
+    await this.db.insert(popsRiders).values({
+      organizationId,
+      branchId: branch.id,
+      userId,
+      name: "Rider One",
+      phone: "+92 300 0000001",
+      fromArea: "Islamabad",
+      active: true,
+    });
+  }
+
+  async listDeliveryOrders(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const rows = await this.fetchDeliveryTickets(organizationId, branch.id);
+    return {
+      branchCode: branch.code,
+      orders: await Promise.all(rows.map((row) => this.mapDeliveryOrder(row))),
+    };
+  }
+
+  async listMyDeliveries(user: AccessJwtPayload, branchCode: string) {
+    if (!user.riderId) {
+      throw new ForbiddenException("No delivery rider profile linked to this account");
+    }
+    const rider = await this.getRider(user.organizationId, user.riderId);
+
+    const branchRows = await this.db
+      .select()
+      .from(popsBranches)
+      .where(eq(popsBranches.id, rider.branchId))
+      .limit(1);
+    const riderBranch = branchRows[0];
+    if (!riderBranch) throw new NotFoundException("Rider branch not found");
+
+    const requestedCode = branchCode.trim();
+    if (requestedCode && requestedCode !== riderBranch.code) {
+      throw new ForbiddenException(
+        `Your deliveries are for ${riderBranch.name} (${riderBranch.code}). Switch branch in the app.`,
+      );
+    }
+
+    const rows = await this.fetchDeliveryTickets(user.organizationId, riderBranch.id, {
+      riderId: user.riderId,
+      activeOnly: true,
+    });
+    return {
+      branchCode: riderBranch.code,
+      orders: await Promise.all(rows.map((row) => this.mapDeliveryOrder(row))),
+    };
+  }
+
+  async updateRiderDeliveryStatus(
+    user: AccessJwtPayload,
+    ticketId: string,
+    input: RiderDeliveryStatusUpdate,
+  ) {
+    if (!user.riderId) {
+      throw new ForbiddenException("No delivery rider profile linked to this account");
+    }
+
+    const ticket = await this.getTicket(user.organizationId, ticketId);
+    if (!ticket.stationLabel.toLowerCase().includes("delivery")) {
+      throw new BadRequestException("Not a delivery order");
+    }
+    if (ticket.riderId !== user.riderId) {
+      throw new ForbiddenException("This delivery is not assigned to you");
+    }
+    if (ticket.status === "done") {
+      throw new BadRequestException("Cannot update a completed delivery order");
+    }
+
+    const current = ticket.deliveryStatus ?? "unassigned";
+    if (input.deliveryStatus === "out_for_delivery" && current !== "assigned") {
+      throw new BadRequestException("Delivery must be assigned before starting");
+    }
+    if (input.deliveryStatus === "delivered" && current !== "out_for_delivery") {
+      throw new BadRequestException("Delivery must be out for delivery before completing");
+    }
+
+    await this.updateDeliveryOrder(user.organizationId, ticketId, {
+      deliveryStatus: input.deliveryStatus,
+    });
+    const updated = await this.getTicket(user.organizationId, ticketId);
+    return this.mapDeliveryOrder(updated);
+  }
+
   async listRiders(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     const rows = await this.db
-      .select()
+      .select({
+        rider: popsRiders,
+        email: users.email,
+        branchCode: popsBranches.code,
+      })
       .from(popsRiders)
+      .leftJoin(users, eq(popsRiders.userId, users.id))
+      .innerJoin(popsBranches, eq(popsRiders.branchId, popsBranches.id))
       .where(eq(popsRiders.branchId, branch.id))
       .orderBy(asc(popsRiders.name));
 
     return {
       branchCode: branch.code,
-      riders: rows.map((r) => this.mapRider(r)),
+      riders: rows.map((row) => this.mapRider(row.rider, row.email, row.branchCode)),
     };
   }
 
   async createRider(organizationId: string, input: CreateRider) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const email = input.email.trim().toLowerCase();
+
+    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing.length > 0) {
+      throw new ConflictException(`Login email already in use: ${email}`);
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+    if (!user) throw new BadRequestException("Failed to create rider login");
+
+    await this.db.insert(organizationMemberships).values({
+      organizationId,
+      userId: user.id,
+      role: "rider",
+      permissions: permissionsForPopsRole("rider"),
+      branchScope: branch.code,
+      pinRequired: false,
+      lastActivityAt: null,
+    });
+
     const [row] = await this.db
       .insert(popsRiders)
       .values({
         organizationId,
         branchId: branch.id,
+        userId: user.id,
         name: input.name.trim(),
         phone: input.phone?.trim() || null,
         cnic: input.cnic?.trim() || null,
@@ -53,11 +235,47 @@ export class DeliveryService {
       })
       .returning();
     if (!row) throw new BadRequestException("Failed to create rider");
-    return this.mapRider(row);
+    return this.mapRider(row, user.email, branch.code);
   }
 
   async updateRider(organizationId: string, riderId: string, input: UpdateRider) {
     const rider = await this.getRider(organizationId, riderId);
+
+    let linkedUserId = rider.userId;
+    if (input.email && input.password) {
+      if (rider.userId) {
+        throw new BadRequestException("This rider already has a login account");
+      }
+      const email = input.email.trim().toLowerCase();
+      const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+      if (existing.length > 0) {
+        throw new ConflictException(`Login email already in use: ${email}`);
+      }
+
+      const branchRows = await this.db
+        .select({ code: popsBranches.code })
+        .from(popsBranches)
+        .where(eq(popsBranches.id, rider.branchId))
+        .limit(1);
+      const branchCode = branchRows[0]?.code;
+      if (!branchCode) throw new NotFoundException("Rider branch not found");
+
+      const passwordHash = await bcrypt.hash(input.password, 12);
+      const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+      if (!user) throw new BadRequestException("Failed to create rider login");
+
+      await this.db.insert(organizationMemberships).values({
+        organizationId,
+        userId: user.id,
+        role: "rider",
+        permissions: permissionsForPopsRole("rider"),
+        branchScope: branchCode,
+        pinRequired: false,
+        lastActivityAt: null,
+      });
+      linkedUserId = user.id;
+    }
+
     const [row] = await this.db
       .update(popsRiders)
       .set({
@@ -68,11 +286,26 @@ export class DeliveryService {
         ...(input.fromArea !== undefined ? { fromArea: input.fromArea } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
         ...(input.active !== undefined ? { active: input.active } : {}),
+        ...(linkedUserId && !rider.userId ? { userId: linkedUserId } : {}),
       })
       .where(eq(popsRiders.id, riderId))
       .returning();
     if (!row) throw new NotFoundException("Rider not found");
-    return this.mapRider(row);
+    const branch = await this.db
+      .select({ code: popsBranches.code })
+      .from(popsBranches)
+      .where(eq(popsBranches.id, row.branchId))
+      .limit(1);
+    let email: string | null = null;
+    if (row.userId) {
+      const userRows = await this.db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, row.userId))
+        .limit(1);
+      email = userRows[0]?.email ?? null;
+    }
+    return this.mapRider(row, email, branch[0]?.code ?? "");
   }
 
   async updateDeliveryOrder(
@@ -175,9 +408,16 @@ export class DeliveryService {
     };
   }
 
-  private mapRider(row: typeof popsRiders.$inferSelect) {
+  private mapRider(
+    row: typeof popsRiders.$inferSelect,
+    email: string | null = null,
+    branchCode = "",
+  ) {
     return {
       id: row.id,
+      userId: row.userId,
+      branchCode,
+      email,
       name: row.name,
       phone: row.phone,
       cnic: row.cnic,
@@ -186,6 +426,55 @@ export class DeliveryService {
       notes: row.notes,
       active: row.active,
     };
+  }
+
+  private async mapDeliveryOrder(row: typeof popsKitchenTickets.$inferSelect) {
+    const ticket = await this.mapTicketWithRider(row);
+    const contact = this.parseDeliveryContact(row.itemsSummary);
+    return {
+      ...ticket,
+      customerName: contact.customer,
+      customerAddress: contact.address,
+    };
+  }
+
+  private parseDeliveryContact(text: string | null | undefined): { customer: string; address: string } {
+    if (!text?.trim()) return { customer: "—", address: "—" };
+
+    const parts = text.split("·").map((p) => p.trim());
+    const deliveryIdx = parts.findIndex((p) => p.toLowerCase() === "delivery");
+    if (deliveryIdx >= 0) {
+      return {
+        customer: parts[deliveryIdx + 1]?.trim() || "—",
+        address: parts[deliveryIdx + 2]?.trim() || "—",
+      };
+    }
+
+    return { customer: "—", address: "—" };
+  }
+
+  private async fetchDeliveryTickets(
+    organizationId: string,
+    branchId: string,
+    opts?: { riderId?: string; activeOnly?: boolean },
+  ) {
+    const conditions = [
+      eq(popsKitchenTickets.organizationId, organizationId),
+      eq(popsKitchenTickets.branchId, branchId),
+      sql`lower(${popsKitchenTickets.stationLabel}) like '%delivery%'`,
+    ];
+    if (opts?.riderId) {
+      conditions.push(eq(popsKitchenTickets.riderId, opts.riderId));
+    }
+    if (opts?.activeOnly) {
+      conditions.push(ne(popsKitchenTickets.status, "done"));
+    }
+
+    return this.db
+      .select()
+      .from(popsKitchenTickets)
+      .where(and(...conditions))
+      .orderBy(asc(popsKitchenTickets.createdAt));
   }
 
   private async getRider(organizationId: string, riderId: string) {

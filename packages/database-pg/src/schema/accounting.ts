@@ -135,6 +135,24 @@ export const popsCashSessions = pgTable("pops_cash_sessions", {
   notes: text("notes"),
 });
 
+export const popsCashMovements = pgTable("pops_cash_movements", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => popsBranches.id, { onDelete: "cascade" }),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => popsCashSessions.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // paid_in | paid_out
+  amountPkr: integer("amount_pkr").notNull(),
+  reason: text("reason").notNull(),
+  recordedBy: text("recorded_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const popsVendorBills = pgTable("pops_vendor_bills", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id")

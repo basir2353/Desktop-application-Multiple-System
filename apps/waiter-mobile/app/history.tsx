@@ -37,6 +37,7 @@ import {
   type UnifiedOrder,
 } from "../src/lib/orderHistory";
 import { useBranchStore } from "../src/stores/branchStore";
+import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 type HistoryFilter = "today" | "all" | "held";
@@ -44,6 +45,7 @@ type HistoryFilter = "today" | "all" | "held";
 export default function HistoryScreen() {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
   const branch = useBranchStore((s) => s.branch);
   const branchCode = branch?.code ?? "";
   const [filter, setFilter] = useState<HistoryFilter>("today");
@@ -93,6 +95,10 @@ export default function HistoryScreen() {
 
   if (!accessToken) {
     return <Redirect href="/" />;
+  }
+
+  if (resolveStaffRole(claims) === "rider") {
+    return <Redirect href="/rider-home" />;
   }
 
   if (!branch) {

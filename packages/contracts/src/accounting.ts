@@ -107,6 +107,9 @@ export const bankTransactionSchema = z.object({
   createdAt: z.string(),
 });
 
+export const POPS_CASH_MOVEMENT_TYPES = ["paid_in", "paid_out"] as const;
+export const popsCashMovementTypeSchema = z.enum(POPS_CASH_MOVEMENT_TYPES);
+
 export const cashSessionSchema = z.object({
   id: z.string().uuid(),
   sessionRef: z.string(),
@@ -120,6 +123,31 @@ export const cashSessionSchema = z.object({
   variance: z.number().nullable(),
   status: z.enum(["open", "closed"]),
   notes: z.string().nullable(),
+});
+
+export const cashSessionLiveSchema = cashSessionSchema.extend({
+  cashSales: z.number(),
+  cashAdjustments: z.number(),
+  liveExpectedCash: z.number(),
+});
+
+export const popsCashMovementSchema = z.object({
+  id: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  type: popsCashMovementTypeSchema,
+  amountPkr: z.number(),
+  reason: z.string(),
+  recordedBy: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const createPopsCashMovementSchema = z.object({
+  branchCode: z.string().min(1),
+  sessionId: z.string().uuid(),
+  type: popsCashMovementTypeSchema,
+  amountPkr: z.number().min(1),
+  reason: z.string().min(1),
+  recordedBy: z.string().optional(),
 });
 
 export const vendorBillSchema = z.object({
@@ -326,6 +354,9 @@ export type Expense = z.infer<typeof expenseSchema>;
 export type BankAccount = z.infer<typeof bankAccountSchema>;
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 export type CashSession = z.infer<typeof cashSessionSchema>;
+export type CashSessionLive = z.infer<typeof cashSessionLiveSchema>;
+export type PopsCashMovement = z.infer<typeof popsCashMovementSchema>;
+export type CreatePopsCashMovement = z.infer<typeof createPopsCashMovementSchema>;
 export type VendorBill = z.infer<typeof vendorBillSchema>;
 export type CustomerInvoice = z.infer<typeof customerInvoiceSchema>;
 export type TaxSettings = z.infer<typeof taxSettingsSchema>;

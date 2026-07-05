@@ -1,6 +1,11 @@
-# Waiter mobile
+# POPS Staff mobile
 
-Expo React Native app for waiters: sign in, pick a branch, select a table, build orders, and send them to the kitchen.
+Expo React Native app for restaurant staff with two roles:
+
+- **Waiter** — sign in, pick a branch, select a table, build orders, and send them to the kitchen.
+- **Delivery rider** — sign in, view assigned deliveries, update delivery status, and complete deliveries.
+
+Both roles use separate credentials and are routed to role-specific dashboards after login.
 
 ## Prerequisites
 
@@ -23,6 +28,8 @@ Set `EXPO_PUBLIC_API_BASE_URL`:
 | Android emulator | `http://10.0.2.2:3000` |
 | Physical device | `http://<your-lan-ip>:3000` |
 
+After schema changes, run `pnpm db:push` from the repo root and restart the API so rider accounts and delivery endpoints are seeded.
+
 ## Development
 
 ```bash
@@ -33,14 +40,21 @@ pnpm dev:waiter-mobile
 pnpm --filter @platform/waiter-mobile android
 ```
 
-Default waiter login: `waiter1@platform.local` / `changeme-please-01`
+### Default logins
 
-Orders appear on the desktop launcher **Orders** page within ~10 seconds (kitchen tickets) or immediately when a bill is created.
+| Role | Email | Password |
+| --- | --- | --- |
+| Waiter | `waiter1@platform.local` | `changeme-please-01` |
+| Delivery rider | `rider1@platform.local` | `changeme-please-01` |
+
+Waiter orders appear on the desktop launcher **Orders** page within ~10 seconds (kitchen tickets) or immediately when a bill is created.
+
+Delivery assignments and status updates sync in real time with the desktop **Delivery** module.
 
 ## Structure
 
 ```
-app/           Expo Router screens
+app/           Expo Router screens (waiter + rider flows)
 src/           API clients, stores, shared UI
 scripts/       Platform launch helpers
 ```

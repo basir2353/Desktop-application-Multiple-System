@@ -7,6 +7,7 @@ import {
   modules,
   organizationMemberships,
   organizations,
+  popsRiders,
   refreshTokens,
   users,
   type PlatformPgDb,
@@ -143,7 +144,7 @@ export class AuthService implements OnModuleInit {
       detail: "Session started",
     });
 
-    return this.issueTokens(user.id, m.organizationId, m.permissions);
+    return this.issueTokens(user.id, m.organizationId, m.permissions, m.role, m.branchScope ?? "all");
   }
 
   async refresh(refreshToken: string) {
@@ -168,14 +169,33 @@ export class AuthService implements OnModuleInit {
     if (!m) throw new UnauthorizedException("No organization membership");
 
     await this.db.delete(refreshTokens).where(eq(refreshTokens.id, rt.id));
-    return this.issueTokens(rt.userId, m.organizationId, m.permissions);
+    return this.issueTokens(rt.userId, m.organizationId, m.permissions, m.role, m.branchScope ?? "all");
   }
 
-  private async issueTokens(userId: string, organizationId: string, permissions: string[]) {
+  private async issueTokens(
+    userId: string,
+    organizationId: string,
+    permissions: string[],
+    role: string,
+    branchScope: string,
+  ) {
+    let riderId: string | undefined;
+    if (role === "rider") {
+      const riders = await this.db
+        .select({ id: popsRiders.id })
+        .from(popsRiders)
+        .where(eq(popsRiders.userId, userId))
+        .limit(1);
+      riderId = riders[0]?.id;
+    }
+
     const accessPayload: AccessJwtPayload = {
       sub: userId,
       organizationId,
       permissions,
+      role,
+      branchScope,
+      ...(riderId ? { riderId } : {}),
     };
 
     const accessTtl = this.config.get<string>("JWT_ACCESS_TTL") ?? "15m";

@@ -12,6 +12,7 @@ import {
   updateRider,
 } from "../../api/delivery";
 import { fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
+import { fetchPopsBranches } from "../../api/operations";
 import {
   buildDeliveryOrders,
   deliveryOrderCharge,
@@ -35,6 +36,7 @@ import {
   type UnifiedOrder,
 } from "../../lib/orderHistory";
 import { printKot, printReceipt, type PrintTicketInput } from "../../lib/printTicket";
+import { isMonitoringBranch } from "../../lib/branchScope";
 import {
   cardClass,
   emptyStateBoxClass,
@@ -161,11 +163,19 @@ export function DeliveryPage(): JSX.Element {
   const [completingId, setCompletingId] = useState<string | null>(null);
 
   const [riderName, setRiderName] = useState("");
+  const [riderEmail, setRiderEmail] = useState("");
+  const [riderPassword, setRiderPassword] = useState("");
+  const [riderBranchCode, setRiderBranchCode] = useState("");
+  const [ridersBranchCode, setRidersBranchCode] = useState("");
   const [riderPhone, setRiderPhone] = useState("");
   const [riderCnic, setRiderCnic] = useState("");
   const [riderSalary, setRiderSalary] = useState("");
   const [riderFromArea, setRiderFromArea] = useState("");
   const [riderNotes, setRiderNotes] = useState("");
+
+  const [linkRiderId, setLinkRiderId] = useState<string | null>(null);
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linkPassword, setLinkPassword] = useState("");
 
   const [savedCharges, setSavedCharges] = useState<DeliverySettings>(DEFAULT_DELIVERY_SETTINGS);
   const [draftCharges, setDraftCharges] = useState<DeliverySettings>(DEFAULT_DELIVERY_SETTINGS);
@@ -178,6 +188,12 @@ export function DeliveryPage(): JSX.Element {
     const loaded = loadDeliverySettings(branch?.code);
     setSavedCharges(loaded);
     setDraftCharges(loaded);
+  }, [branch?.code]);
+
+  useEffect(() => {
+    if (!branch?.code) return;
+    setRiderBranchCode((prev) => prev || branch.code);
+    setRidersBranchCode((prev) => prev || branch.code);
   }, [branch?.code]);
 
   useEffect(() => {
@@ -201,7 +217,18 @@ export function DeliveryPage(): JSX.Element {
     refetchInterval: 5_000,
   });
 
+  const branchesQuery = useQuery({
+    queryKey: ["branches"],
+    queryFn: fetchPopsBranches,
+  });
+
   const ridersQuery = useQuery({
+    queryKey: ["delivery-riders", ridersBranchCode],
+    enabled: Boolean(ridersBranchCode),
+    queryFn: () => fetchRiders(ridersBranchCode),
+  });
+
+  const branchRidersQuery = useQuery({
     queryKey: ["delivery-riders", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchRiders(branch!.code),
@@ -289,28 +316,34 @@ export function DeliveryPage(): JSX.Element {
 
   function resetRiderForm(): void {
     setRiderName("");
+    setRiderEmail("");
+    setRiderPassword("");
     setRiderPhone("");
     setRiderCnic("");
     setRiderSalary("");
     setRiderFromArea("");
     setRiderNotes("");
+    if (branch?.code) setRiderBranchCode(branch.code);
   }
 
   const createRiderMutation = useMutation({
     mutationFn: () =>
       createRider({
-        branchCode: branch!.code,
+        branchCode: riderBranchCode,
         name: riderName.trim(),
+        email: riderEmail.trim(),
+        password: riderPassword,
         phone: riderPhone.trim() || undefined,
         cnic: riderCnic.trim() || undefined,
         salaryPkr: riderSalary.trim() ? Number(riderSalary) : undefined,
         fromArea: riderFromArea.trim() || undefined,
         notes: riderNotes.trim() || undefined,
       }),
-    onSuccess: () => {
+    onSuccess: (created) => {
       resetRiderForm();
+      setRidersBranchCode(created.branchCode);
       invalidate();
-      setNotice("Rider added.");
+      setNotice(`Rider added. They can sign in on the mobile app with ${created.email ?? "their email"}.`);
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -325,10 +358,25 @@ export function DeliveryPage(): JSX.Element {
     onError: (err: Error) => setNotice(err.message),
   });
 
+  const linkLoginMutation = useMutation({
+    mutationFn: ({ riderId, email, password }: { riderId: string; email: string; password: string }) =>
+      updateRider(riderId, { email, password }),
+    onSuccess: (rider) => {
+      setLinkRiderId(null);
+      setLinkEmail("");
+      setLinkPassword("");
+      invalidate();
+      setNotice(`Mobile login created for ${rider.name}. They can sign in with ${rider.email}.`);
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
   const isLoading = ordersQuery.isLoading || ticketsQuery.isLoading;
   const isError = ordersQuery.isError || ticketsQuery.isError;
   const errorMessage = (ordersQuery.error ?? ticketsQuery.error) as Error | null;
   const riders = ridersQuery.data ?? [];
+  const branchRiders = branchRidersQuery.data ?? [];
+  const branches = branchesQuery.data ?? [];
 
   if (!branch?.code) {
     return <p className="text-sm text-slate-500">Select a branch to view delivery orders.</p>;
@@ -347,6 +395,7 @@ export function DeliveryPage(): JSX.Element {
               void ordersQuery.refetch();
               void ticketsQuery.refetch();
               void ridersQuery.refetch();
+              void branchRidersQuery.refetch();
             }}
           >
             Refresh
@@ -360,7 +409,7 @@ export function DeliveryPage(): JSX.Element {
           onChange={setTab}
           options={[
             { id: "orders", label: "Orders" },
-            { id: "riders", label: `Riders (${riders.length})` },
+            { id: "riders", label: `Riders (${branchRiders.length})` },
             { id: "charges", label: "Charges" },
           ]}
         />
@@ -422,10 +471,35 @@ export function DeliveryPage(): JSX.Element {
 
       {tab === "riders" ? (
         <div className="space-y-4">
-          <div className={`max-w-2xl ${cardClass} p-4`}>
+          {isMonitoringBranch(branch.code) ? (
+            <p className={noticeWarningClass}>
+              Head Office is for monitoring only. Add riders and delivery orders on a store branch (e.g. POPS Blue Area / ISB-GT) so they appear in the rider mobile app.
+            </p>
+          ) : null}
+          <div className={`max-w-3xl ${cardClass} p-4`}>
             <div className={panelTitleClass}>Add rider</div>
-            <p className={`mt-1 text-xs ${mutedClass}`}>Name is required. Other fields help with payroll and records.</p>
+            <p className={`mt-1 text-xs ${mutedClass}`}>
+              Assign a branch and mobile login. The rider will only see deliveries for that branch assigned to them in the POPS Staff app.
+            </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <label className={`block text-xs ${mutedClass} sm:col-span-2`}>
+                Branch *
+                <select
+                  value={riderBranchCode}
+                  onChange={(e) => setRiderBranchCode(e.target.value)}
+                  className={`mt-1.5 w-full ${fieldInputClass}`}
+                >
+                  {branches.length === 0 ? (
+                    <option value="">No branches</option>
+                  ) : (
+                    branches.map((b) => (
+                      <option key={b.id} value={b.code}>
+                        {b.name} ({b.code})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
               <input
                 placeholder="Name *"
                 value={riderName}
@@ -436,6 +510,20 @@ export function DeliveryPage(): JSX.Element {
                 placeholder="Phone"
                 value={riderPhone}
                 onChange={(e) => setRiderPhone(e.target.value)}
+                className={fieldInputClass}
+              />
+              <input
+                type="email"
+                placeholder="Login email *"
+                value={riderEmail}
+                onChange={(e) => setRiderEmail(e.target.value)}
+                className={fieldInputClass}
+              />
+              <input
+                type="password"
+                placeholder="Login password * (min 8 chars)"
+                value={riderPassword}
+                onChange={(e) => setRiderPassword(e.target.value)}
                 className={fieldInputClass}
               />
               <input
@@ -468,23 +556,56 @@ export function DeliveryPage(): JSX.Element {
             <Button
               type="button"
               className="mt-3 h-8 text-xs"
-              disabled={!riderName.trim() || createRiderMutation.isPending}
+              disabled={
+                !riderName.trim() ||
+                !riderEmail.trim() ||
+                riderPassword.length < 8 ||
+                !riderBranchCode ||
+                createRiderMutation.isPending
+              }
               onClick={() => createRiderMutation.mutate()}
             >
               {createRiderMutation.isPending ? "…" : "Add rider"}
             </Button>
           </div>
 
+          <ModuleFilterBar>
+            <label className={`flex items-center gap-2 text-xs ${mutedClass}`}>
+              Branch
+              <select
+                value={ridersBranchCode}
+                onChange={(e) => setRidersBranchCode(e.target.value)}
+                className={`h-8 min-w-[10rem] ${fieldInputClass}`}
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.code}>
+                    {b.name} ({b.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+          </ModuleFilterBar>
+
           {ridersQuery.isLoading ? (
             <p className="text-xs text-slate-500">Loading riders…</p>
           ) : riders.length === 0 ? (
-            <p className={emptyStateBoxClass}>No riders yet. Add riders to assign delivery orders.</p>
+            <p className={emptyStateBoxClass}>No riders for this branch yet. Add a rider with branch login above.</p>
           ) : (
             <SimpleTable
               rowKey={(r) => r.id}
               rows={riders}
               columns={[
                 { key: "name", header: "Name", render: (r) => <span className={tableCellPrimaryClass}>{r.name}</span> },
+                {
+                  key: "email",
+                  header: "Login",
+                  render: (r) => (
+                    <span className={mutedClass} title={r.email ?? undefined}>
+                      {r.email ?? "—"}
+                    </span>
+                  ),
+                },
+                { key: "branchCode", header: "Branch", render: (r) => <span className={mutedClass}>{r.branchCode}</span> },
                 { key: "phone", header: "Phone", render: (r) => <span className={mutedClass}>{r.phone ?? "—"}</span> },
                 { key: "cnic", header: "CNIC", render: (r) => <span className={mutedClass}>{r.cnic ?? "—"}</span> },
                 {
@@ -518,27 +639,101 @@ export function DeliveryPage(): JSX.Element {
                   header: "",
                   id: "actions",
                   render: (r) => (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-7 px-2 text-[11px]"
-                      disabled={toggleRiderMutation.isPending}
-                      onClick={() =>
-                        toggleRiderMutation.mutate({ riderId: r.id, active: !r.active })
-                      }
-                    >
-                      {r.active ? "Deactivate" : "Activate"}
-                    </Button>
+                    <span className="flex items-center gap-2">
+                      {!r.email ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-7 px-2 text-[11px]"
+                          onClick={() => {
+                            setLinkRiderId(r.id);
+                            setLinkEmail("");
+                            setLinkPassword("");
+                          }}
+                        >
+                          Add login
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={toggleRiderMutation.isPending}
+                        onClick={() =>
+                          toggleRiderMutation.mutate({ riderId: r.id, active: !r.active })
+                        }
+                      >
+                        {r.active ? "Deactivate" : "Activate"}
+                      </Button>
+                    </span>
                   ),
                 },
               ]}
             />
           )}
+
+          {linkRiderId ? (
+            <div className={`max-w-md ${cardClass} p-4`}>
+              <div className={panelTitleClass}>Add mobile login</div>
+              <p className={`mt-1 text-xs ${mutedClass}`}>
+                Create sign-in credentials for this rider on branch {ridersBranchCode}.
+              </p>
+              <div className="mt-3 grid gap-2">
+                <input
+                  type="email"
+                  placeholder="Login email *"
+                  value={linkEmail}
+                  onChange={(e) => setLinkEmail(e.target.value)}
+                  className={fieldInputClass}
+                />
+                <input
+                  type="password"
+                  placeholder="Password * (min 8 chars)"
+                  value={linkPassword}
+                  onChange={(e) => setLinkPassword(e.target.value)}
+                  className={fieldInputClass}
+                />
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  type="button"
+                  className="h-8 text-xs"
+                  disabled={
+                    !linkEmail.trim() ||
+                    linkPassword.length < 8 ||
+                    linkLoginMutation.isPending
+                  }
+                  onClick={() =>
+                    linkLoginMutation.mutate({
+                      riderId: linkRiderId,
+                      email: linkEmail.trim(),
+                      password: linkPassword,
+                    })
+                  }
+                >
+                  {linkLoginMutation.isPending ? "…" : "Save login"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  onClick={() => setLinkRiderId(null)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {tab === "orders" ? (
         <>
+          {isMonitoringBranch(branch.code) ? (
+            <p className={noticeWarningClass}>
+              Delivery orders on Head Office will not reach store riders. Switch to POPS Blue Area (ISB-GT) and assign orders to the rider who has the mobile login.
+            </p>
+          ) : null}
           <ModuleFilterBar>
             <ModuleSegmentedControl
               value={view}
@@ -730,7 +925,7 @@ export function DeliveryPage(): JSX.Element {
                             className={`mt-1 w-full ${fieldInputClass}`}
                           >
                             <option value="">Unassigned</option>
-                            {riders
+                            {branchRiders
                               .filter((r) => r.active)
                               .map((rider) => (
                                 <option key={rider.id} value={rider.id}>

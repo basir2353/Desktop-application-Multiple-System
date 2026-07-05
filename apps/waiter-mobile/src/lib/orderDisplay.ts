@@ -21,7 +21,7 @@ export function formatTimeAgo(iso: string): string {
   return formatWhen(iso);
 }
 
-export function orderRefFromTicket(ticket: KitchenTicket): string {
+export function orderRefFromTicket(ticket: Pick<KitchenTicket, "orderRef" | "ticketRef">): string {
   return ticket.orderRef ?? ticket.ticketRef;
 }
 

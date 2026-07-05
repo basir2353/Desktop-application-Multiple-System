@@ -15,6 +15,7 @@ import type {
   CreateExpense,
   CreateJournalEntry,
   CreatePayrollRun,
+  CreatePopsCashMovement,
   RecordPayment,
   UpdateTaxSettings,
 } from "@platform/contracts";
@@ -24,6 +25,7 @@ import {
   popsBankAccounts,
   popsBankTransactions,
   popsBills,
+  popsCashMovements,
   popsCashSessions,
   popsCustomerInvoices,
   popsCustomerPayments,
@@ -715,7 +717,108 @@ export class AccountingService implements OnApplicationBootstrap {
       .orderBy(desc(popsCashSessions.openedAt))
       .limit(30);
 
-    return rows.map((s) => ({
+    return rows.map((s) => this.mapCashSession(s));
+  }
+
+  async getOpenCashSession(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const [row] = await this.db
+      .select()
+      .from(popsCashSessions)
+      .where(
+        and(
+          eq(popsCashSessions.organizationId, organizationId),
+          eq(popsCashSessions.branchId, branch.id),
+          eq(popsCashSessions.status, "open"),
+        ),
+      )
+      .orderBy(desc(popsCashSessions.openedAt))
+      .limit(1);
+    if (!row) return null;
+
+    const cashSales = await this.sumSessionCashSales(row.branchId, row.openedAt);
+    const cashAdjustments = await this.computeSessionCashAdjustments(row.id);
+    const liveExpectedCash = row.openingFloatPkr + cashSales + cashAdjustments;
+
+    return {
+      ...this.mapCashSession(row),
+      cashSales,
+      cashAdjustments,
+      liveExpectedCash,
+    };
+  }
+
+  async recordCashMovement(organizationId: string, userEmail: string, input: CreatePopsCashMovement) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const [session] = await this.db
+      .select()
+      .from(popsCashSessions)
+      .where(eq(popsCashSessions.id, input.sessionId))
+      .limit(1);
+    if (!session || session.organizationId !== organizationId || session.branchId !== branch.id) {
+      throw new NotFoundException("Cash session not found");
+    }
+    if (session.status !== "open") throw new BadRequestException("Cash session is closed");
+
+    const [row] = await this.db
+      .insert(popsCashMovements)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        sessionId: input.sessionId,
+        type: input.type,
+        amountPkr: input.amountPkr,
+        reason: input.reason.trim(),
+        recordedBy: input.recordedBy?.trim() || userEmail,
+      })
+      .returning();
+    if (!row) throw new BadRequestException("Failed to record cash movement");
+
+    return {
+      id: row.id,
+      sessionId: row.sessionId,
+      type: row.type as "paid_in" | "paid_out",
+      amountPkr: row.amountPkr,
+      reason: row.reason,
+      recordedBy: row.recordedBy,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  async listCashMovements(organizationId: string, sessionId: string) {
+    const [session] = await this.db
+      .select()
+      .from(popsCashSessions)
+      .where(eq(popsCashSessions.id, sessionId))
+      .limit(1);
+    if (!session || session.organizationId !== organizationId) {
+      throw new NotFoundException("Cash session not found");
+    }
+
+    const rows = await this.db
+      .select()
+      .from(popsCashMovements)
+      .where(
+        and(
+          eq(popsCashMovements.organizationId, organizationId),
+          eq(popsCashMovements.sessionId, sessionId),
+        ),
+      )
+      .orderBy(desc(popsCashMovements.createdAt));
+
+    return rows.map((r) => ({
+      id: r.id,
+      sessionId: r.sessionId,
+      type: r.type as "paid_in" | "paid_out",
+      amountPkr: r.amountPkr,
+      reason: r.reason,
+      recordedBy: r.recordedBy,
+      createdAt: r.createdAt.toISOString(),
+    }));
+  }
+
+  private mapCashSession(s: typeof popsCashSessions.$inferSelect) {
+    return {
       id: s.id,
       sessionRef: s.sessionRef,
       openedBy: s.openedBy,
@@ -728,7 +831,53 @@ export class AccountingService implements OnApplicationBootstrap {
       variance: s.variancePkr,
       status: s.status as "open" | "closed",
       notes: s.notes,
-    }));
+    };
+  }
+
+  private async computeSessionCashAdjustments(sessionId: string): Promise<number> {
+    const rows = await this.db
+      .select()
+      .from(popsCashMovements)
+      .where(eq(popsCashMovements.sessionId, sessionId));
+    return rows.reduce((s, r) => s + (r.type === "paid_in" ? r.amountPkr : -r.amountPkr), 0);
+  }
+
+  private async sumSessionCashSales(branchId: string, openedAt: Date): Promise<number> {
+    const rows = await this.db
+      .select({
+        paymentsJson: popsBills.paymentsJson,
+        totalPkr: popsBills.totalPkr,
+      })
+      .from(popsBills)
+      .where(
+        and(
+          eq(popsBills.branchId, branchId),
+          eq(popsBills.status, "completed"),
+          gte(popsBills.createdAt, openedAt),
+        ),
+      );
+
+    let cashSales = 0;
+    for (const bill of rows) {
+      const payments = this.parseBillPayments(bill.paymentsJson, bill.totalPkr);
+      for (const p of payments) {
+        if (p.method.toLowerCase().includes("cash")) cashSales += p.amount;
+      }
+      if (payments.length === 0) cashSales += bill.totalPkr;
+    }
+    return cashSales;
+  }
+
+  private parseBillPayments(
+    paymentsJson: string | null,
+    totalPkr: number,
+  ): { method: string; amount: number }[] {
+    if (!paymentsJson) return [];
+    try {
+      return JSON.parse(paymentsJson) as { method: string; amount: number }[];
+    } catch {
+      return [{ method: "cash", amount: totalPkr }];
+    }
   }
 
   async openCashSession(organizationId: string, userEmail: string, branchCode: string, openingFloat: number) {
@@ -792,8 +941,9 @@ export class AccountingService implements OnApplicationBootstrap {
     }
     if (session.status !== "open") throw new BadRequestException("Session already closed");
 
-    const cashBalance = await this.getAccountBalance(session.branchId, "1101");
-    const expected = session.openingFloatPkr + cashBalance;
+    const cashSales = await this.sumSessionCashSales(session.branchId, session.openedAt);
+    const cashAdjustments = await this.computeSessionCashAdjustments(sessionId);
+    const expected = session.openingFloatPkr + cashSales + cashAdjustments;
     const variance = input.countedCash - expected;
 
     const [updated] = await this.db

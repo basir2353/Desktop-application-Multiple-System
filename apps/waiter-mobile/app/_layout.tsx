@@ -49,6 +49,9 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="branch" options={{ title: "Select branch" }} />
         <Stack.Screen name="home" options={{ headerShown: false }} />
+        <Stack.Screen name="rider-home" options={{ headerShown: false }} />
+        <Stack.Screen name="rider-deliveries" options={{ title: "My deliveries" }} />
+        <Stack.Screen name="rider-delivery" options={{ title: "Delivery detail" }} />
         <Stack.Screen name="order" options={{ title: "Take order" }} />
         <Stack.Screen name="orders" options={{ title: "View orders" }} />
         <Stack.Screen name="history" options={{ title: "Order history" }} />

@@ -42,6 +42,7 @@ import {
   type EditingOrder,
 } from "../src/lib/loadOrder";
 import { useBranchStore } from "../src/stores/branchStore";
+import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 const SERVICE_PCT = 10;
@@ -387,6 +388,10 @@ export default function OrderScreen() {
 
   if (!accessToken) {
     return <Redirect href="/" />;
+  }
+
+  if (resolveStaffRole(claims) === "rider") {
+    return <Redirect href="/rider-home" />;
   }
 
   if (!branch) {

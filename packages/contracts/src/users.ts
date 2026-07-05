@@ -219,7 +219,7 @@ export const POPS_ROLE_TEMPLATES: RoleTemplate[] = [
   {
     id: "rider",
     label: "Rider",
-    permissions: ["pops.read"],
+    permissions: ["pops.read", "pops.delivery.manage"],
     capabilities: Object.fromEntries(CAP_KEYS.map((k) => [k, "deny" as const])) as Record<string, "deny">,
   },
 ];

@@ -6,11 +6,13 @@ import {
   bankAccountSchema,
   bankTransactionSchema,
   cashSessionSchema,
+  cashSessionLiveSchema,
   customerInvoiceSchema,
   expenseSchema,
   inventoryAccountingSchema,
   journalEntrySchema,
   payrollRunSchema,
+  popsCashMovementSchema,
   salesAccountingSchema,
   taxSettingsSchema,
   vendorBillSchema,
@@ -21,6 +23,7 @@ import {
   type BankAccount,
   type BankTransaction,
   type CashSession,
+  type CashSessionLive,
   type CloseCashSession,
   type CreateBankAccount,
   type CreateBankTransaction,
@@ -28,12 +31,14 @@ import {
   type CreateExpense,
   type CreateJournalEntry,
   type CreatePayrollRun,
+  type CreatePopsCashMovement,
   type CustomerInvoice,
   type Expense,
   type InventoryAccounting,
   type JournalEntry,
   type OpenCashSession,
   type PayrollRun,
+  type PopsCashMovement,
   type RecordPayment,
   type SalesAccounting,
   type TaxSettings,
@@ -162,6 +167,14 @@ export async function fetchInventoryAccounting(branchCode: string): Promise<Inve
   return inventoryAccountingSchema.parse(await res.json());
 }
 
+export async function fetchOpenCashSession(branchCode: string): Promise<CashSessionLive | null> {
+  const res = await authFetch(`/v1/accounting/cash-sessions/open?${branchParams(branchCode)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) await parseError(res, "Open cash session failed");
+  const json = await res.json();
+  return json ? cashSessionLiveSchema.parse(json) : null;
+}
+
 export async function fetchCashSessions(branchCode: string): Promise<CashSession[]> {
   const res = await authFetch(`/v1/accounting/cash-sessions?${branchParams(branchCode)}`);
   if (!res.ok) await parseError(res, "Cash sessions failed");
@@ -186,6 +199,22 @@ export async function closeCashSession(sessionId: string, input: CloseCashSessio
   });
   if (!res.ok) await parseError(res, "Close cash session failed");
   return res.json();
+}
+
+export async function fetchCashMovements(sessionId: string): Promise<PopsCashMovement[]> {
+  const res = await authFetch(`/v1/accounting/cash-movements?${new URLSearchParams({ sessionId })}`);
+  if (!res.ok) await parseError(res, "Cash movements failed");
+  return popsCashMovementSchema.array().parse(await res.json());
+}
+
+export async function recordCashMovement(input: CreatePopsCashMovement): Promise<PopsCashMovement> {
+  const res = await authFetch("/v1/accounting/cash-movements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await parseError(res, "Record cash movement failed");
+  return popsCashMovementSchema.parse(await res.json());
 }
 
 export async function fetchBankAccounts(branchCode: string): Promise<BankAccount[]> {

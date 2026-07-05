@@ -74,6 +74,13 @@ const STAFF_SEEDS = [
     pinRequired: false,
   },
   {
+    email: "rider1@platform.local",
+    password: "changeme-please-01",
+    role: "rider",
+    branchScope: "ISB-GT",
+    pinRequired: false,
+  },
+  {
     email: "hr1@platform.local",
     password: "changeme-please-01",
     role: "hr",
@@ -95,6 +102,7 @@ export class UsersService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     try {
       await this.upgradeOwnerPermissions();
+      await this.upgradeRiderPermissions();
       await this.seedStaffIfMissing();
     } catch (err) {
       this.logger.warn(
@@ -120,6 +128,27 @@ export class UsersService implements OnModuleInit {
           permissions: [...perms],
           branchScope: row.branchScope ?? "all",
         })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, row.organizationId),
+            eq(organizationMemberships.userId, row.userId),
+          ),
+        );
+    }
+  }
+
+  async upgradeRiderPermissions(): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(organizationMemberships)
+      .where(eq(organizationMemberships.role, "rider"));
+
+    for (const row of rows) {
+      const perms = new Set(row.permissions);
+      perms.add("pops.delivery.manage");
+      await this.db
+        .update(organizationMemberships)
+        .set({ permissions: [...perms] })
         .where(
           and(
             eq(organizationMemberships.organizationId, row.organizationId),

@@ -20,11 +20,13 @@ import {
   orderRefFromTicket,
 } from "../src/lib/orderDisplay";
 import { useBranchStore } from "../src/stores/branchStore";
+import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 export default function OrdersScreen() {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
   const branch = useBranchStore((s) => s.branch);
   const branchCode = branch?.code ?? "";
 
@@ -37,6 +39,10 @@ export default function OrdersScreen() {
 
   if (!accessToken) {
     return <Redirect href="/" />;
+  }
+
+  if (resolveStaffRole(claims) === "rider") {
+    return <Redirect href="/rider-home" />;
   }
 
   if (!branch) {

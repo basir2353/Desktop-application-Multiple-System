@@ -2,6 +2,9 @@ export type AccessTokenClaims = {
   sub: string;
   organizationId: string;
   permissions: string[];
+  role?: string;
+  branchScope?: string;
+  riderId?: string;
   exp?: number;
 };
 

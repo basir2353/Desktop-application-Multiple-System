@@ -1,29 +1,47 @@
 import type { MenuItem } from "@platform/contracts";
 import { pickDefaultVariant, type PosCartLine, buildCartLine } from "./posCart";
-import type { HappyHourSettings } from "./happyHourSettings";
+import type { HappyHourSettings, HappyHourTimeSlot } from "./happyHourSettings";
 
-export function isHappyHourActive(settings: HappyHourSettings, now = new Date()): boolean {
-  if (!settings.enabled || !settings.bonusMenuItemId) return false;
-  const hour = now.getHours();
-  const { startHour, endHour } = settings;
+function isHourInWindow(hour: number, startHour: number, endHour: number): boolean {
   if (startHour === endHour) return true;
   if (startHour < endHour) return hour >= startHour && hour < endHour;
   return hour >= startHour || hour < endHour;
 }
 
+export function getActiveHappyHourSlot(
+  settings: HappyHourSettings,
+  now = new Date(),
+): HappyHourTimeSlot | null {
+  if (!settings.enabled || settings.slots.length === 0) return null;
+  const hour = now.getHours();
+  return settings.slots.find((slot) => isHourInWindow(hour, slot.startHour, slot.endHour)) ?? null;
+}
+
+export function isHappyHourActive(settings: HappyHourSettings, now = new Date()): boolean {
+  return getActiveHappyHourSlot(settings, now) != null;
+}
+
+export function applyHappyHourDiscountPrice(basePrice: number, percentOff: number): number {
+  if (percentOff <= 0) return basePrice;
+  const pct = Math.min(100, Math.max(0, percentOff));
+  return Math.round(basePrice * (1 - pct / 100));
+}
+
 export function resolveHappyHourBonusItem(
   menuItems: MenuItem[],
   settings: HappyHourSettings,
-): { item: MenuItem; variant: ReturnType<typeof pickDefaultVariant> } | null {
-  if (!settings.bonusMenuItemId) return null;
-  const item = menuItems.find((m) => m.id === settings.bonusMenuItemId && m.isActive);
+  now = new Date(),
+): { item: MenuItem; variant: ReturnType<typeof pickDefaultVariant>; slot: HappyHourTimeSlot } | null {
+  const slot = getActiveHappyHourSlot(settings, now);
+  if (!slot?.bonusMenuItemId) return null;
+  const item = menuItems.find((m) => m.id === slot.bonusMenuItemId && m.isActive);
   if (!item) return null;
   const variant =
-    settings.bonusVariantId != null
-      ? item.variants.find((v) => v.id === settings.bonusVariantId && v.isActive) ??
+    slot.bonusVariantId != null
+      ? item.variants.find((v) => v.id === slot.bonusVariantId && v.isActive) ??
         pickDefaultVariant(item)
       : pickDefaultVariant(item);
-  return { item, variant };
+  return { item, variant, slot };
 }
 
 export function buildHappyHourBonusLine(
@@ -40,24 +58,39 @@ export function buildHappyHourBonusLine(
   };
 }
 
-/** Adds a free bonus line when happy hour is active and the cart has paid items. */
+/** Apply time-slot discount pricing to paid cart lines. */
+export function applyHappyHourCartPricing(
+  paidCart: PosCartLine[],
+  settings: HappyHourSettings,
+  now = new Date(),
+): PosCartLine[] {
+  const slot = getActiveHappyHourSlot(settings, now);
+  if (!slot || slot.percentOff <= 0) return paidCart;
+  return paidCart.map((line) => {
+    if (line.isComplimentary || line.key.startsWith("hh-bonus:")) return line;
+    return {
+      ...line,
+      unitPrice: applyHappyHourDiscountPrice(line.unitPrice, slot.percentOff),
+    };
+  });
+}
+
+/** Adds a free bonus line when the active slot includes a gift and the cart has paid items. */
 export function applyHappyHourBonus(
   paidCart: PosCartLine[],
   menuItems: MenuItem[],
   settings: HappyHourSettings,
   now = new Date(),
 ): PosCartLine[] {
-  if (!isHappyHourActive(settings, now) || paidCart.length === 0) {
-    return paidCart;
-  }
-  const bonus = resolveHappyHourBonusItem(menuItems, settings);
-  if (!bonus) return paidCart;
+  const pricedCart = applyHappyHourCartPricing(paidCart, settings, now);
+  const bonus = resolveHappyHourBonusItem(menuItems, settings, now);
+  if (!bonus || pricedCart.length === 0) return pricedCart;
 
   const bonusLine = buildHappyHourBonusLine(bonus.item, bonus.variant);
-  const alreadyHasBonus = paidCart.some((l) => l.key === bonusLine.key);
-  if (alreadyHasBonus) return paidCart;
+  const alreadyHasBonus = pricedCart.some((l) => l.key === bonusLine.key);
+  if (alreadyHasBonus) return pricedCart;
 
-  return [...paidCart, bonusLine];
+  return [...pricedCart, bonusLine];
 }
 
 export function stripComplimentaryLines(cart: PosCartLine[]): PosCartLine[] {
