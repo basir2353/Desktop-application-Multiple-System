@@ -18,8 +18,10 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/backend/api ./backend/api
+# Ensure drizzle-kit binary is executable for preDeployCommand
+RUN chmod +x /app/node_modules/.bin/drizzle-kit 2>/dev/null || true
 WORKDIR /app/backend/api
 EXPOSE 3000
 ENV HOST=0.0.0.0
-# Railway overrides with startCommand from railway.toml; this is the fallback.
+# Railway overrides CMD with startCommand from railway.toml.
 CMD ["node", "dist/main.js"]

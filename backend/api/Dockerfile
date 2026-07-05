@@ -21,4 +21,4 @@ COPY --from=build /app/backend/api ./backend/api
 WORKDIR /app/backend/api
 EXPOSE 3000
 ENV HOST=0.0.0.0
-CMD ["node", "scripts/start-railway.mjs"]
+CMD ["node", "dist/main.js"]

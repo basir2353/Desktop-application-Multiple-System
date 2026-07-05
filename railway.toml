@@ -3,9 +3,9 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Schema push can take 1–2 min on first deploy; run before the container serves traffic.
-preDeployCommand = "cd /app && pnpm --filter @platform/database-pg push"
-startCommand = "node dist/main.js"
+# Run schema push using the compiled drizzle-kit binary directly (avoids pnpm workspace issues in Docker).
+preDeployCommand = "node /app/node_modules/.bin/drizzle-kit push --config /app/packages/database-pg/drizzle.config.ts --force"
+startCommand = "node /app/backend/api/dist/main.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
