@@ -4,18 +4,35 @@ import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 
+function parseCorsOrigins(): boolean | (string | RegExp)[] {
+  const raw = process.env.CORS_ORIGINS?.trim();
+  if (!raw) {
+    const isProd = process.env.NODE_ENV === "production";
+    if (!isProd) return true;
+    return [
+      /^https?:\/\/localhost(:\d+)?$/,
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+      /^tauri:\/\/.+/,
+      /^https?:\/\/tauri\.localhost(:\d+)?$/,
+    ];
+  }
+  if (raw === "*") return true;
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
-  const isProd = process.env.NODE_ENV === "production";
   app.enableCors({
-    // Dev: reflect any origin (Tauri/Vite ports and schemes) so the desktop shell can always call the API.
-    origin: isProd ? [/http:\/\/localhost:\d+/, /http:\/\/127\.0\.0\.1:\d+/] : true,
+    origin: parseCorsOrigins(),
     credentials: true,
   });
   app.useStaticAssets(join(process.cwd(), "data", "uploads"), { prefix: "/uploads/" });
-  // Validation is done with Zod in controllers / services — avoid global ValidationPipe (requires class-validator).
   const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port);
+  const host = process.env.HOST ?? "0.0.0.0";
+  await app.listen(port, host);
 }
 
 bootstrap().catch((err) => {

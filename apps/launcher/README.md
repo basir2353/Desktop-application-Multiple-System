@@ -1,40 +1,30 @@
 # Launcher
 
-Tauri + React desktop application. Hosts federated modules, runs the POPS restaurant/retail UI, and bootstraps local WASM SQLite for offline-first behavior.
-
-## Prerequisites
-
-- Node 20+, pnpm
-- Rust toolchain (for `tauri dev` / `tauri build`)
-- Running API (`pnpm dev:api` from repo root)
+Unified **frontend** (browser) and **desktop** (Tauri) client. Connects to the single backend at `backend/api/` — works online and offline.
 
 ## Development
 
 ```bash
-# From repository root
-pnpm dev:launcher
-
-# Web-only (no Tauri shell)
-pnpm --filter @platform/launcher dev:web
+pnpm dev:web        # Browser frontend (from repo root)
+pnpm dev:launcher   # Desktop app (Tauri)
 ```
 
-Environment variables are loaded from the root `.env` (see `.env.example`):
+Set `VITE_API_BASE_URL` in root `.env` to your hosted API.
 
-- `VITE_API_BASE_URL` — API base URL (defaults to `http://127.0.0.1:3000` in dev)
-- `VITE_SAMPLE_REMOTE_URL` — Federated sample module entry
+## Offline
 
-## Structure
-
-```
-src/           React app (pages, POPS modules, stores)
-src-tauri/     Rust backend, Tauri config, icons
-public/        Static assets including sql-wasm
-scripts/       Postinstall helpers
-```
+- **Web** — store POS queue (localStorage), sync outbox on reconnect
+- **Desktop** — WASM SQLite + sync engine + POS queue
 
 ## Build
 
 ```bash
-pnpm --filter @platform/launcher build        # Tauri release
-pnpm --filter @platform/launcher build:web    # Vite bundle only
+pnpm build:web              # Static web bundle → dist/
+pnpm installer:restaurant   # Restaurant .exe
+pnpm installer:pharmacy     # Pharmacy .exe
+pnpm installer:general-store # Store .exe
 ```
+
+Web Docker image: `docker build -f apps/launcher/Dockerfile.web -t platform-web .`
+
+See [INSTALLER.md](./INSTALLER.md) for modular desktop installers.

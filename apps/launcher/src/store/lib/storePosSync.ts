@@ -1,8 +1,10 @@
-import type { StoreProduct, StoreSale } from "@platform/contracts";
-import type { CreateStoreSale } from "@platform/contracts";
+import type { StoreProduct, StoreSale, CreateStoreSale } from "@platform/contracts";
+import { createOfflineQueue, type OfflineQueueEntry } from "@platform/connectivity";
 
 const DISPLAY_CHANNEL = "store-pos-customer-display";
 const OFFLINE_QUEUE_KEY = "store-pos-offline-queue";
+
+const offlineSales = createOfflineQueue<CreateStoreSale>(OFFLINE_QUEUE_KEY);
 
 export type CustomerDisplayState = {
   branchCode: string;
@@ -16,12 +18,7 @@ export type CustomerDisplayState = {
   promoMessage?: string;
 };
 
-export type OfflineSaleEntry = {
-  id: string;
-  payload: CreateStoreSale;
-  createdAt: string;
-  attempts: number;
-};
+export type OfflineSaleEntry = OfflineQueueEntry<CreateStoreSale>;
 
 function getChannel(): BroadcastChannel | null {
   if (typeof BroadcastChannel === "undefined") return null;
@@ -66,36 +63,19 @@ export function subscribeCustomerDisplay(branchCode: string, onUpdate: (state: C
 }
 
 export function enqueueOfflineSale(payload: CreateStoreSale): OfflineSaleEntry {
-  const queue = loadOfflineQueue();
-  const entry: OfflineSaleEntry = {
-    id: crypto.randomUUID(),
-    payload,
-    createdAt: new Date().toISOString(),
-    attempts: 0,
-  };
-  queue.push(entry);
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-  return entry;
+  return offlineSales.enqueue(payload);
 }
 
 export function loadOfflineQueue(): OfflineSaleEntry[] {
-  try {
-    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as OfflineSaleEntry[];
-  } catch {
-    return [];
-  }
+  return offlineSales.load();
 }
 
 export function removeOfflineSale(id: string): void {
-  const queue = loadOfflineQueue().filter((e) => e.id !== id);
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  offlineSales.remove(id);
 }
 
 export function bumpOfflineAttempt(id: string): void {
-  const queue = loadOfflineQueue().map((e) => (e.id === id ? { ...e, attempts: e.attempts + 1 } : e));
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  offlineSales.markAttempt(id);
 }
 
 export type CartLine = {
@@ -157,9 +137,7 @@ export function getTerminalId(): string {
   return id;
 }
 
-export function isOnline(): boolean {
-  return typeof navigator !== "undefined" ? navigator.onLine : true;
-}
+export { isOnline } from "@platform/connectivity";
 
 export type ScaleWeightEvent = { kg: number; at: string };
 

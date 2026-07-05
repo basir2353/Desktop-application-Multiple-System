@@ -1,12 +1,12 @@
 # Build from repository root:
-# docker build -f services/api/Dockerfile .
+# docker build -f backend/api/Dockerfile .
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY pnpm-lock.yaml* ./
 COPY packages ./packages
-COPY services ./services
+COPY backend ./backend
 RUN pnpm install --frozen-lockfile=false
 RUN pnpm turbo run build --filter=@platform/api
 
@@ -17,7 +17,8 @@ RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml* ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
-COPY --from=build /app/services/api ./services/api
-WORKDIR /app/services/api
+COPY --from=build /app/backend/api ./backend/api
+WORKDIR /app/backend/api
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+ENV HOST=0.0.0.0
+CMD ["node", "scripts/start-railway.mjs"]

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "General Store Management System",
+  "identifier": "com.platform.generalstore",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "General Store Management System"
+      }
+    ]
+  },
+  "bundle": {
+    "shortDescription": "Retail POS & ERP",
+    "longDescription": "General Store / Retail Management System — checkout, products, purchases, warehouses, and reports.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

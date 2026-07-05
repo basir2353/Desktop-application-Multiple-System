@@ -1,12 +1,12 @@
 import { Button } from "@platform/ui";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "../components/ThemeToggle";
 import {
-  businessSystemList,
   getErpEntryPath,
   type BusinessSystem,
   type BusinessSystemId,
 } from "../lib/businessSystems";
+import { getAvailableSystems, getLockedSystemId } from "../lib/edition";
 import { mutedClass } from "../pops/lib/themeClasses";
 import { useSessionStore } from "../stores/sessionStore";
 import { usePopsStore } from "../stores/popsStore";
@@ -65,6 +65,18 @@ export function SystemSelectPage(): JSX.Element {
   const accessToken = useSessionStore((s) => s.accessToken);
   const branch = usePopsStore((s) => s.branch);
   const setSystem = useSystemStore((s) => s.setSystem);
+  const lockedSystemId = getLockedSystemId();
+  const availableSystems = getAvailableSystems();
+
+  // Single-system installers skip the picker entirely and boot into the system.
+  if (lockedSystemId) {
+    return (
+      <Navigate
+        to={accessToken ? getErpEntryPath(lockedSystemId, Boolean(branch)) : "/login"}
+        replace
+      />
+    );
+  }
 
   function onSelect(id: BusinessSystemId): void {
     setSystem(id);
@@ -104,7 +116,7 @@ export function SystemSelectPage(): JSX.Element {
       </header>
 
       <div className="mt-10 grid gap-5 md:grid-cols-3">
-        {businessSystemList.map((system) => (
+        {availableSystems.map((system) => (
           <SystemCard key={system.id} system={system} onSelect={onSelect} />
         ))}
       </div>

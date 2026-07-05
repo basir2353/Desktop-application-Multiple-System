@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pharmacy Management System",
+  "identifier": "com.platform.pharmacy",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Pharmacy Management System"
+      }
+    ]
+  },
+  "bundle": {
+    "shortDescription": "Pharmacy POS & ERP",
+    "longDescription": "Pharmacy Management System — counter POS, medicines, batches/expiry, prescriptions, and suppliers.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

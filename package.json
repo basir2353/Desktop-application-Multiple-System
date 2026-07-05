@@ -1,6 +1,6 @@
 {
   "name": "platform",
-  "description": "Multi-system desktop ERP — Restaurant (POPS), Pharmacy, and General Store with NestJS API and Tauri launcher",
+  "description": "Multi-system ERP — single backend, unified frontend (web + desktop), mobile apps",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "engines": {
@@ -9,10 +9,16 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
-    "dev:stack": "turbo run dev --parallel --filter=@platform/api --filter=@platform/module-sample --filter=@platform/launcher",
+    "dev:stack": "turbo run dev --parallel --filter=@platform/api --filter=@platform/launcher",
     "dev:launcher": "pnpm --filter @platform/launcher dev",
+    "dev:web": "pnpm --filter @platform/launcher dev:web",
     "dev:api": "pnpm --filter @platform/api dev",
-    "dev:module:sample": "pnpm --filter @platform/module-sample dev",
+    "build:web": "pnpm --filter @platform/launcher build:web",
+    "build:api": "pnpm --filter @platform/api build",
+    "installer:restaurant": "pnpm --filter @platform/launcher build:restaurant",
+    "installer:general-store": "pnpm --filter @platform/launcher build:general-store",
+    "installer:pharmacy": "pnpm --filter @platform/launcher build:pharmacy",
+    "installer:all": "pnpm --filter @platform/launcher build:all-editions",
     "dev:waiter-mobile": "pnpm --filter @platform/waiter-mobile dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",

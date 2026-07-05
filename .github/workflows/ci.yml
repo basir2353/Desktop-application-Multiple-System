@@ -36,4 +36,4 @@ jobs:
         run: pnpm typecheck
 
       - name: Build packages and API
-        run: pnpm turbo run build --filter=@platform/api --filter=@platform/contracts --filter=@platform/auth-client --filter=@platform/database-pg --filter=@platform/database-sqlite --filter=@platform/sync-engine --filter=@platform/shell-sdk --filter=@platform/ui --filter=@platform/permissions --filter=@platform/shared-types --filter=@platform/module-sample
+        run: pnpm turbo run build --filter=@platform/api --filter=@platform/contracts --filter=@platform/auth-client --filter=@platform/database-pg --filter=@platform/database-sqlite --filter=@platform/sync-engine --filter=@platform/shell-sdk --filter=@platform/ui --filter=@platform/permissions --filter=@platform/shared-types --filter=@platform/connectivity

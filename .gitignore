@@ -36,8 +36,8 @@ Thumbs.db
 .drizzle/
 
 # API runtime uploads (keep directory, ignore files)
-services/api/data/uploads/*
-!services/api/data/uploads/.gitkeep
+backend/api/data/uploads/*
+!backend/api/data/uploads/.gitkeep
 
 # Expo / React Native
 .expo/

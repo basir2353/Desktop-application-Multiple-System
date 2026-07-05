@@ -13,6 +13,7 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
+      "@platform/connectivity": ["../../packages/connectivity/src/index.ts"],
       "@platform/auth-client": ["../../packages/auth-client/src/index.ts"],
       "@platform/contracts": ["../../packages/contracts/src/index.ts"],
       "@platform/database-sqlite": ["../../packages/database-sqlite/src/index.ts"],

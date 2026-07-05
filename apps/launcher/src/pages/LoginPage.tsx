@@ -5,6 +5,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { decodeAccessToken } from "../lib/jwt";
 import { getApiBaseUrl } from "../lib/apiBase";
 import { getBusinessSystem, getErpEntryPath } from "../lib/businessSystems";
+import { getLockedSystemId, isSingleSystemEdition } from "../lib/edition";
 import { useSystemStore } from "../stores/systemStore";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { fieldInputClass, loginCardClass, mutedClass, subtleClass } from "../pops/lib/themeClasses";
@@ -15,7 +16,8 @@ export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
   const setTokens = useSessionStore((s) => s.setTokens);
   const branch = usePopsStore((s) => s.branch);
-  const systemId = useSystemStore((s) => s.systemId);
+  const persistedSystemId = useSystemStore((s) => s.systemId);
+  const systemId = persistedSystemId ?? getLockedSystemId();
   const system = systemId ? getBusinessSystem(systemId) : null;
   const [email, setEmail] = useState("admin@platform.local");
   const [password, setPassword] = useState("changeme-please-01");
@@ -46,13 +48,17 @@ export function LoginPage(): JSX.Element {
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-slate-50 px-6 dark:bg-slate-950">
       <div className="mb-4 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => navigate("/")}
-          className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-        >
-          ← Change system
-        </button>
+        {isSingleSystemEdition() ? (
+          <span />
+        ) : (
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+          >
+            ← Change system
+          </button>
+        )}
         <ThemeToggle />
       </div>
       <div className={loginCardClass}>

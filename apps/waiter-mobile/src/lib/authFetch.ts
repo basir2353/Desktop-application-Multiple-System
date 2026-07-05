@@ -1,6 +1,7 @@
 import { AuthClient } from "@platform/auth-client";
 import { decodeAccessToken, isAccessTokenExpired } from "./jwt";
 import { getApiBaseUrl } from "./apiBase";
+import { markOnline, markOffline } from "../stores/connectivityStore";
 import { useSessionStore } from "../stores/sessionStore";
 
 let refreshInFlight: Promise<string> | null = null;
@@ -64,7 +65,14 @@ export async function authFetch(path: string, init?: RequestInit): Promise<Respo
   async function request(token: string): Promise<Response> {
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    return fetch(url, { ...init, headers });
+    try {
+      const res = await fetch(url, { ...init, headers });
+      markOnline();
+      return res;
+    } catch (err) {
+      markOffline();
+      throw err;
+    }
   }
 
   let token = await getValidAccessToken();

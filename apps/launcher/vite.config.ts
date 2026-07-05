@@ -3,18 +3,30 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
+import { editionExcludePlugin } from "./vite.edition-plugin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.resolve(__dirname, "../..");
+
+const VALID_EDITIONS = new Set(["suite", "restaurant", "pharmacy", "general-store"]);
+
+function resolveEdition(env: Record<string, string>): string {
+  const raw = (process.env.PLATFORM_EDITION ?? env.PLATFORM_EDITION ?? env.VITE_PLATFORM_EDITION ?? "suite").trim();
+  return VALID_EDITIONS.has(raw) ? raw : "suite";
+}
 
 export default defineConfig(({ mode }) => {
   // Keep in sync with `envDir` so VITE_* from repo-root `.env` applies here too.
   const env = loadEnv(mode, monorepoRoot, "");
   const sampleRemote =
     env.VITE_SAMPLE_REMOTE_URL ?? "http://127.0.0.1:5001/assets/remoteEntry.js";
+  const edition = resolveEdition(env);
 
   return {
     clearScreen: false,
+    define: {
+      __PLATFORM_EDITION__: JSON.stringify(edition),
+    },
     server: {
       host: "127.0.0.1",
       port: 1420,
@@ -24,6 +36,7 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         "@platform/auth-client": path.join(monorepoRoot, "packages/auth-client/src/index.ts"),
+        "@platform/connectivity": path.join(monorepoRoot, "packages/connectivity/src/index.ts"),
         "@platform/contracts": path.join(monorepoRoot, "packages/contracts/src/index.ts"),
         "@platform/database-sqlite": path.join(monorepoRoot, "packages/database-sqlite/src/index.ts"),
         "@platform/permissions": path.join(monorepoRoot, "packages/permissions/src/index.ts"),
@@ -34,6 +47,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [
+      editionExcludePlugin(edition),
       react(),
       federation({
         name: "launcher",

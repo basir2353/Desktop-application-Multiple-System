@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Restaurant Management System",
+  "identifier": "com.platform.restaurant",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Restaurant Management System"
+      }
+    ]
+  },
+  "bundle": {
+    "shortDescription": "Restaurant POS & ERP",
+    "longDescription": "Restaurant Management System — POS, kitchen, tables, menu, inventory, HR, and accounting.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

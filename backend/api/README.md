@@ -1,6 +1,8 @@
 # API service
 
-NestJS modular monolith: authentication, catalog, billing, kitchen, inventory, HR, accounting, multi-branch, notifications, and sync stubs.
+NestJS modular monolith: authentication, catalog, billing, kitchen, inventory, HR, accounting, multi-branch, notifications, pharmacy, store, delivery, and sync.
+
+Located at `backend/api/` — **host this service** on your server. Web, desktop, and mobile clients connect via `VITE_API_BASE_URL` / `EXPO_PUBLIC_API_BASE_URL`.
 
 ## Development
 
@@ -20,7 +22,7 @@ Uses the root `.env` file. Key variables:
 | `DATABASE_URL` | PostgreSQL connection string |
 | `PORT` | HTTP port (default 3000) |
 | `JWT_ACCESS_SECRET` | JWT signing secret |
-| `SEED_USER_EMAIL` / `SEED_USER_PASSWORD` | Initial admin seed |
+| `CORS_ORIGINS` | Comma-separated browser origins (required when hosting) |
 
 ## Structure
 

@@ -2,6 +2,7 @@ import { Button } from "@platform/ui";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getBusinessSystem } from "../../lib/businessSystems";
+import { isSingleSystemEdition } from "../../lib/edition";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { SystemRouteGuard } from "../../components/SystemRouteGuard";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -149,9 +150,11 @@ export function PopsShell(): JSX.Element {
             <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
               Switch branch
             </Button>
-            <Button variant="ghost" className="text-xs" onClick={() => navigate("/")}>
-              Switch system
-            </Button>
+            {isSingleSystemEdition() ? null : (
+              <Button variant="ghost" className="text-xs" onClick={() => navigate("/")}>
+                Switch system
+              </Button>
+            )}
             <Button variant="ghost" className="text-xs" onClick={() => navigate("/platform")}>
               Module runtime
             </Button>

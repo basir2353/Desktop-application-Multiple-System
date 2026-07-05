@@ -1,121 +1,87 @@
 # Desktop Application — Multi-System ERP Platform
 
-Offline-first desktop ERP platform with a Tauri launcher, NestJS API, and PostgreSQL. Run **Restaurant (POPS)**, **Pharmacy**, or **General Store** from one codebase — pick a business system at login, then work inside a shared branch-aware shell.
+Single **backend**, one **frontend** (web + desktop), and **mobile apps** — all online and offline capable.
 
 **Repository:** [github.com/basir2353/Desktop-application-Multiple-System](https://github.com/basir2353/Desktop-application-Multiple-System)
 
-## Business systems
+## Structure
 
-| System | Description | Entry route |
+```
+backend/api/       → NestJS API (host this online)
+apps/
+  launcher/        → React frontend + Tauri desktop (.exe installers)
+  waiter-mobile/   → Expo mobile app
+packages/          → Shared contracts, DB, connectivity, sync
+```
+
+| Client | Online | Offline |
 | --- | --- | --- |
-| **Restaurant ERP (POPS)** | POS, kitchen, tables, menu, inventory, HR, accounting | `/pops/dashboard` |
-| **Pharmacy ERP** | Counter POS, medicines, batches/expiry, prescriptions, suppliers | `/pops/pharmacy/dashboard` |
-| **General Store ERP** | Retail POS, products, purchase flow (PR → PO → GRN), warehouses, reports | `/pops/store/dashboard` |
+| **Backend** | Hosted API + PostgreSQL | — |
+| **Web** (`pnpm dev:web`) | Calls hosted API | POS queue, sync outbox |
+| **Desktop** (`pnpm dev:launcher`) | Calls hosted API | SQLite, sync engine, POS queue |
+| **Mobile** | Calls hosted API | Offline banner, retries when back |
 
-Each vertical includes its own database schema, API module (`/v1/pharmacy`, `/v1/store`), contracts, and frontend pages under `apps/launcher/src/`.
-
-## Features
-
-- **Multi-system launcher** — system picker, branch selection, role-based access
-- **Tauri desktop app** — React shell with local SQLite runtime DB
-- **NestJS API** — Auth, inventory, billing, HR, accounting, pharmacy, store modules
-- **Shared packages** — Type-safe contracts, Drizzle PostgreSQL schema, UI kit
-- **Waiter mobile** — Expo companion app for table-side ordering (restaurant)
+All clients point at the same backend via `VITE_API_BASE_URL` / `EXPO_PUBLIC_API_BASE_URL`.
 
 ## Quick start
 
-### Prerequisites
-
-- Node.js 20+
-- pnpm 9.15.4 (`corepack enable && corepack prepare pnpm@9.15.4 --activate`)
-- Docker (for local PostgreSQL)
-- Rust (for Tauri desktop builds)
-
-### Setup
-
 ```bash
-git clone https://github.com/basir2353/Desktop-application-Multiple-System.git
-cd Desktop-application-Multiple-System
-
 cp .env.example .env
 pnpm install
 docker compose up -d
 pnpm db:push
-pnpm dev:stack
+pnpm dev:stack          # API + frontend
 ```
 
-Default admin login (from `.env.example`):
+Default login: `admin@platform.local` / `changeme-please-01`
 
-- **Email:** `admin@platform.local`
-- **Password:** `changeme-please-01`
-
-Change `JWT_ACCESS_SECRET` and seed credentials before any production deployment.
-
-See [docs/getting-started.md](./docs/getting-started.md) for full setup and troubleshooting.
-
-## Development scripts
+## Commands
 
 | Command | Description |
 | --- | --- |
-| `pnpm dev:stack` | API + sample federated module + launcher |
-| `pnpm dev:api` | NestJS API only |
-| `pnpm dev:launcher` | Tauri desktop app |
-| `pnpm dev:waiter-mobile` | Expo waiter app |
-| `pnpm typecheck` | TypeScript check (all packages) |
-| `pnpm build` | Production build via Turbo |
-| `pnpm db:push` | Apply Drizzle schema to PostgreSQL |
-| `pnpm db:studio` | Open Drizzle Studio |
+| `pnpm dev:stack` | API + frontend |
+| `pnpm dev:api` | Backend only |
+| `pnpm dev:web` | Frontend in browser |
+| `pnpm dev:launcher` | Desktop app (Tauri) |
+| `pnpm dev:waiter-mobile` | Mobile app |
+| `pnpm installer:restaurant` | Restaurant `.exe` installer |
+| `pnpm installer:pharmacy` | Pharmacy `.exe` installer |
+| `pnpm installer:general-store` | Store `.exe` installer |
 
-## Repository layout
+## Host backend on Railway
 
-```
-apps/
-  launcher/          → Tauri desktop shell (POPS + Pharmacy + Store UI)
-  waiter-mobile/     → Expo waiter companion
-services/
-  api/               → NestJS control plane (pharmacy, store, inventory, …)
-packages/
-  contracts/         → Shared Zod schemas & TypeScript types
-  database-pg/       → Drizzle PostgreSQL schema
-  ui/                → Shared React UI components
-docs/                → Extended documentation
+1. Deploy on [railway.com](https://railway.com) from this GitHub repo
+2. Add a **PostgreSQL** plugin
+3. Set env vars (see [backend/RAILWAY.md](./backend/RAILWAY.md))
+4. Generate a public domain
+5. Point clients at it:
+
+```bash
+VITE_API_BASE_URL=https://your-api.up.railway.app
+EXPO_PUBLIC_API_BASE_URL=https://your-api.up.railway.app
 ```
 
-Full breakdown: [docs/project-structure.md](./docs/project-structure.md)
+Full guide: **[backend/RAILWAY.md](./backend/RAILWAY.md)**
 
-## Environment variables
+## Host backend (self-hosted Docker)
 
-Copy `.env.example` to `.env` at the repo root. Key variables:
+```bash
+cp deployment/.env.production.example deployment/.env.production
+docker compose -f deployment/docker-compose.prod.yml \
+  --env-file deployment/.env.production up -d --build
+```
+
+See [deployment/README.md](./deployment/README.md).
+
+## Environment
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_ACCESS_SECRET` | JWT signing secret (min 32 chars in production) |
-| `VITE_API_BASE_URL` | API URL for the launcher (default `http://127.0.0.1:3000`) |
-| `SEED_USER_EMAIL` / `SEED_USER_PASSWORD` | Initial admin user on first API boot |
-
-Never commit `.env` — it is listed in `.gitignore`.
-
-## Waiter mobile
-
-```bash
-cp apps/waiter-mobile/.env.example apps/waiter-mobile/.env
-pnpm dev:waiter-mobile
-```
-
-Details: [apps/waiter-mobile/README.md](./apps/waiter-mobile/README.md)
-
-## Tech stack
-
-- **Monorepo:** pnpm workspaces + Turbo
-- **Desktop:** Tauri 2, React 18, Vite, Tailwind
-- **Mobile:** Expo 52, React Native
-- **Backend:** NestJS 11, Drizzle ORM, PostgreSQL 16
-- **Auth:** JWT access + refresh tokens
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+| `DATABASE_URL` | PostgreSQL |
+| `JWT_ACCESS_SECRET` | JWT signing |
+| `VITE_API_BASE_URL` | API URL for web + desktop |
+| `EXPO_PUBLIC_API_BASE_URL` | API URL for mobile |
+| `CORS_ORIGINS` | Allowed web origins (production) |
 
 ## License
 

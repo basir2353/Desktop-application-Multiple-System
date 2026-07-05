@@ -28,7 +28,7 @@ import { UsersModule } from "./users/users.module";
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // pnpm runs this package with cwd `services/api`; repo-root `.env` lives two levels up.
+      // pnpm runs this package with cwd `backend/api`; repo-root `.env` lives two levels up.
       envFilePath: [join(process.cwd(), ".env"), join(process.cwd(), "..", "..", ".env")],
     }),
     DrizzleModule,

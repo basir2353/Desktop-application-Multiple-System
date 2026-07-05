@@ -1,20 +1,28 @@
 # Apps
 
-User-facing applications in the monorepo.
+Client applications — all connect to the single backend at `backend/api/`.
 
 | App | Package | Description |
 | --- | --- | --- |
-| [launcher](./launcher/) | `@platform/launcher` | Tauri desktop shell and POPS UI |
-| [waiter-mobile](./waiter-mobile/) | `@platform/waiter-mobile` | Expo app for waiters |
-| [modules/sample](./modules/sample/) | `@platform/module-sample` | Reference federated remote |
+| [launcher](./launcher/) | `@platform/launcher` | **Frontend** (browser) + **Desktop** (Tauri `.exe`) |
+| [waiter-mobile](./waiter-mobile/) | `@platform/waiter-mobile` | Expo mobile |
 
-## Development
-
-From the repository root:
+## API URL
 
 ```bash
-pnpm dev:launcher          # Desktop shell
-pnpm dev:waiter-mobile     # Mobile app
-pnpm dev:module:sample     # Sample remote on port 5001
-pnpm dev:stack             # API + sample + launcher together
+# Web + Desktop (.env at repo root)
+VITE_API_BASE_URL=https://api.yourdomain.com
+
+# Mobile (apps/waiter-mobile/.env)
+EXPO_PUBLIC_API_BASE_URL=https://api.yourdomain.com
 ```
+
+## Online / offline
+
+| App | Offline support |
+| --- | --- |
+| **launcher (web)** | Store POS localStorage queue, sync outbox on reconnect |
+| **launcher (desktop)** | SQLite + sync engine + POS queue |
+| **waiter-mobile** | Offline banner; requires network for live orders |
+
+Desktop installers: [launcher/INSTALLER.md](./launcher/INSTALLER.md)

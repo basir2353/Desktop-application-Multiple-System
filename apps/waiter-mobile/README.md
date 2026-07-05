@@ -11,7 +11,7 @@ Both roles use separate credentials and are routed to role-specific dashboards a
 
 - Node 20+, pnpm
 - Expo CLI (via project dependencies)
-- Running API (`pnpm dev:api` from repo root)
+- Running API (`pnpm dev:api` from repo root, or your hosted backend URL in `.env`)
 - Android Studio / Xcode for device simulators
 
 ## Setup
@@ -27,6 +27,7 @@ Set `EXPO_PUBLIC_API_BASE_URL`:
 | iOS simulator | `http://127.0.0.1:3000` |
 | Android emulator | `http://10.0.2.2:3000` |
 | Physical device | `http://<your-lan-ip>:3000` |
+| **Hosted production** | `https://api.yourdomain.com` |
 
 After schema changes, run `pnpm db:push` from the repo root and restart the API so rider accounts and delivery endpoints are seeded.
 
