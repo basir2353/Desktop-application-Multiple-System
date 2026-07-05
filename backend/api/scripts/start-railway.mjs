@@ -1,18 +1,28 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 const appRoot = "/app";
 const apiRoot = `${appRoot}/backend/api`;
+const dbPkgRoot = `${appRoot}/packages/database-pg`;
 
-function runSchemaPush(): boolean {
+function runSchemaPush() {
   console.log("[railway] Applying database schema…");
-  const push = spawnSync("pnpm", ["--filter", "@platform/database-pg", "push"], {
-    cwd: appRoot,
-    stdio: "inherit",
-    env: process.env,
-  });
 
-  if (push.status !== 0) {
-    console.error("[railway] Schema push failed — check DATABASE_URL and Postgres is running.");
+  // pnpm exec resolves the drizzle-kit binary from the local workspace —
+  // more reliable than searching for the binary path after a Docker multi-stage copy.
+  const result = spawnSync(
+    "pnpm",
+    ["exec", "drizzle-kit", "push", "--force"],
+    {
+      cwd: dbPkgRoot,
+      stdio: "inherit",
+      env: process.env,
+    }
+  );
+
+  if (result.status !== 0) {
+    console.error(
+      "[railway] Schema push failed — ensure DATABASE_URL is set and Postgres is reachable."
+    );
     return false;
   }
 
@@ -20,31 +30,18 @@ function runSchemaPush(): boolean {
   return true;
 }
 
-function startApi(): void {
-  console.log("[railway] Starting API…");
-  const api = spawn("node", ["dist/main.js"], {
+function startApi() {
+  console.log("[railway] Starting API server…");
+  // spawnSync blocks until the API exits, keeping this script alive as the process host.
+  const api = spawnSync("node", ["dist/main.js"], {
     cwd: apiRoot,
     stdio: "inherit",
     env: process.env,
   });
-
-  api.on("exit", (code, signal) => {
-    if (signal) {
-      console.error(`[railway] API exited via signal ${signal}`);
-      process.exit(1);
-    }
-    process.exit(code ?? 0);
-  });
-
-  const shutdown = (signal: NodeJS.Signals) => {
-    api.kill(signal);
-  };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.exit(api.status ?? 0);
 }
 
-// When Railway runs preDeployCommand, skip the duplicate push here.
-if (process.env.RAILWAY_SKIP_SCHEMA_PUSH !== "true" && !runSchemaPush()) {
+if (!runSchemaPush()) {
   process.exit(1);
 }
 

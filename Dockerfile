@@ -1,5 +1,4 @@
 # Railway — build from repository root (monorepo).
-# Identical to backend/api/Dockerfile; Railway auto-detects this at repo root.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
@@ -18,10 +17,9 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/backend/api ./backend/api
-# Ensure drizzle-kit binary is executable for preDeployCommand
-RUN chmod +x /app/node_modules/.bin/drizzle-kit 2>/dev/null || true
-WORKDIR /app/backend/api
+# Make all .bin scripts executable (pnpm symlinks may lose permissions across COPY)
+RUN find /app/node_modules/.bin -type f -o -type l | xargs chmod +x 2>/dev/null || true
 EXPOSE 3000
 ENV HOST=0.0.0.0
-# Railway overrides CMD with startCommand from railway.toml.
-CMD ["node", "dist/main.js"]
+# start-railway.mjs: runs drizzle-kit push then starts the API
+CMD ["node", "/app/backend/api/scripts/start-railway.mjs"]
