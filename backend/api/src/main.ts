@@ -24,15 +24,18 @@ function parseCorsOrigins(): boolean | (string | RegExp)[] {
 }
 
 async function bootstrap(): Promise<void> {
+  const port = Number(process.env.PORT ?? 3000);
+  const host = process.env.HOST ?? "0.0.0.0";
+  console.log(`[api] Bootstrapping on ${host}:${port} (NODE_ENV=${process.env.NODE_ENV ?? "development"})`);
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   app.enableCors({
     origin: parseCorsOrigins(),
     credentials: true,
   });
   app.useStaticAssets(join(process.cwd(), "data", "uploads"), { prefix: "/uploads/" });
-  const port = Number(process.env.PORT ?? 3000);
-  const host = process.env.HOST ?? "0.0.0.0";
   await app.listen(port, host);
+  console.log(`[api] Listening on http://${host}:${port}`);
 }
 
 bootstrap().catch((err) => {

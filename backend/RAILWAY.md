@@ -6,14 +6,14 @@ Host the NestJS API (`backend/api`) on [Railway](https://railway.com) with a man
 
 | File | Purpose |
 | --- | --- |
-| [`railway.toml`](../../railway.toml) | Dockerfile builder + health check |
-| [`backend/api/Dockerfile`](./api/Dockerfile) | Monorepo Docker build |
-| [`backend/api/scripts/start-railway.mjs`](./api/scripts/start-railway.mjs) | Apply schema, then start API |
+| [`railway.toml`](../../railway.toml) | Dockerfile builder, pre-deploy schema push, health check |
+| [`Dockerfile`](../../Dockerfile) | Monorepo Docker build (repo root) |
+| [`backend/api/scripts/start-railway.mjs`](./api/scripts/start-railway.mjs) | Local/manual: schema push + start API |
 
 On each deploy Railway will:
 
 1. Build the Docker image from the repo root
-2. Run `drizzle-kit push` (apply DB schema)
+2. Run `drizzle-kit push` in **pre-deploy** (before traffic)
 3. Start the API on `PORT` (set automatically by Railway)
 
 ## Step-by-step
@@ -36,13 +36,17 @@ Railway deploys from Git. Commit and push your repo if you haven't already.
 
 ### 4. Configure the API service
 
-Click your **API service** (the one from GitHub) → **Settings**:
+Click your **API service** → **Settings**:
 
 | Setting | Value |
 | --- | --- |
-| **Builder** | Dockerfile (auto from `railway.toml`) |
-| **Root Directory** | `/` (repo root — required for monorepo) |
+| **Root Directory** | **Leave empty** (repo root — **not** `backend/api`) |
+| **Builder** | **Dockerfile** |
+| **Dockerfile path** | `Dockerfile` |
 | **Healthcheck Path** | `/health` |
+| **Healthcheck Timeout** | `300` (seconds — first deploy can be slow) |
+
+> **Important:** If Root Directory is `backend/api`, Railway uses Nixpacks and runs `pnpm --filter @platform/api build` without the monorepo — you get **534 TypeScript errors**. The Dockerfile must build from the **repo root**.
 
 ### 5. Set environment variables
 
@@ -120,11 +124,14 @@ To keep uploads across deploys:
 
 | Issue | Fix |
 | --- | --- |
+| **534 TypeScript errors** / `nest build` fails | Root Directory must be **empty** (repo root). Builder = **Dockerfile**, path = `Dockerfile`. Redeploy. |
+| Build uses Nixpacks / `pnpm --filter @platform/api build` | Switch Builder to **Dockerfile** in Settings |
 | Build fails | Ensure **Root Directory** is `/` (not `backend/api`) |
 | DB connection error | Link `DATABASE_URL` to `${{Postgres.DATABASE_URL}}` |
 | CORS blocked in browser | Add your frontend origin to `CORS_ORIGINS` |
 | Schema push fails | Check Postgres is running; redeploy after DB is ready |
-| 502 on health check | Wait for schema push + boot (~60–120s on first deploy) |
+| **Healthcheck failure** | Open **View logs** on the failed deploy. Common causes: missing `DATABASE_URL`, missing `JWT_ACCESS_SECRET`, or schema push error in pre-deploy. Ensure Postgres service exists and variables are set (see step 5). |
+| 502 on health check | First deploy may take 2–3 min for schema push + seed; healthcheck timeout is 300s |
 
 ## Architecture
 

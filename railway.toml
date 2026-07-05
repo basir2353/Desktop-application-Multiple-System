@@ -1,9 +1,12 @@
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "backend/api/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
+# Schema push can take 1–2 min on first deploy; run before the container serves traffic.
+preDeployCommand = "cd /app && pnpm --filter @platform/database-pg push"
+startCommand = "node dist/main.js"
 healthcheckPath = "/health"
-healthcheckTimeout = 120
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
