@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -7,7 +8,8 @@ import {
   OnApplicationBootstrap,
 } from "@nestjs/common";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
-import type { CompleteBill, CreateBill, UpdateBill } from "@platform/contracts";
+import type { CompleteBill, CreateBill, CreateWaiter, UpdateBill, UpdateWaiter } from "@platform/contracts";
+import { permissionsForPopsRole } from "@platform/contracts";
 import {
   organizationMemberships,
   popsBills,
@@ -16,6 +18,7 @@ import {
   users,
   type PlatformPgDb,
 } from "@platform/database-pg";
+import * as bcrypt from "bcryptjs";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { AccountingHooksService } from "../accounting/accounting-hooks.service";
 import { ClosingService } from "../closing/closing.service";
@@ -92,11 +95,12 @@ export class BillingService implements OnApplicationBootstrap {
     }
   }
 
-  async listWaiters(organizationId: string) {
+  async listWaiters(organizationId: string, branchCode?: string) {
     const rows = await this.db
       .select({
         id: users.id,
         email: users.email,
+        branchScope: organizationMemberships.branchScope,
       })
       .from(organizationMemberships)
       .innerJoin(users, eq(users.id, organizationMemberships.userId))
@@ -108,11 +112,122 @@ export class BillingService implements OnApplicationBootstrap {
       )
       .orderBy(users.email);
 
-    return rows.map((row) => ({
+    const code = branchCode?.trim();
+    const filtered = code
+      ? rows.filter((row) => row.branchScope === code || row.branchScope === "all")
+      : rows;
+
+    return filtered.map((row) => ({
       id: row.id,
       email: row.email,
       name: waiterDisplayName(row.email),
+      branchCode: row.branchScope === "all" ? code ?? row.branchScope : row.branchScope,
     }));
+  }
+
+  async createWaiter(organizationId: string, input: CreateWaiter) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const email = input.email.trim().toLowerCase();
+
+    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing.length > 0) {
+      throw new ConflictException(`Login email already in use: ${email}`);
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+    if (!user) throw new BadRequestException("Failed to create waiter login");
+
+    await this.db.insert(organizationMemberships).values({
+      organizationId,
+      userId: user.id,
+      role: "waiter",
+      permissions: permissionsForPopsRole("waiter"),
+      branchScope: branch.code,
+      pinRequired: false,
+      lastActivityAt: null,
+    });
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: input.name.trim() || waiterDisplayName(user.email),
+      branchCode: branch.code,
+    };
+  }
+
+  async updateWaiter(organizationId: string, waiterId: string, input: UpdateWaiter) {
+    const membership = await this.getWaiterMembership(organizationId, waiterId);
+
+    if (input.email) {
+      const email = input.email.trim().toLowerCase();
+      const existing = await this.db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.email, email), ne(users.id, waiterId)))
+        .limit(1);
+      if (existing.length > 0) {
+        throw new ConflictException(`Login email already in use: ${email}`);
+      }
+      await this.db.update(users).set({ email }).where(eq(users.id, waiterId));
+    }
+
+    if (input.password) {
+      const passwordHash = await bcrypt.hash(input.password, 12);
+      await this.db.update(users).set({ passwordHash }).where(eq(users.id, waiterId));
+    }
+
+    let branchCode = membership.branchScope;
+    if (input.branchCode) {
+      const branch = await this.resolveBranch(organizationId, input.branchCode);
+      branchCode = branch.code;
+      await this.db
+        .update(organizationMemberships)
+        .set({ branchScope: branch.code })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, waiterId),
+          ),
+        );
+    }
+
+    const userRows = await this.db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, waiterId))
+      .limit(1);
+    const email = userRows[0]?.email;
+    if (!email) throw new NotFoundException("Waiter not found");
+
+    return {
+      id: waiterId,
+      email,
+      name: waiterDisplayName(email),
+      branchCode,
+    };
+  }
+
+  private async getWaiterMembership(organizationId: string, waiterId: string) {
+    const rows = await this.db
+      .select({
+        userId: organizationMemberships.userId,
+        branchScope: organizationMemberships.branchScope,
+        role: organizationMemberships.role,
+      })
+      .from(organizationMemberships)
+      .where(
+        and(
+          eq(organizationMemberships.organizationId, organizationId),
+          eq(organizationMemberships.userId, waiterId),
+        ),
+      )
+      .limit(1);
+    const membership = rows[0];
+    if (!membership || membership.role !== "waiter") {
+      throw new NotFoundException("Waiter not found");
+    }
+    return membership;
   }
 
   async listOrders(organizationId: string, branchCode: string) {

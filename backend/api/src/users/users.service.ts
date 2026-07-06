@@ -5,7 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  OnModuleInit,
+  OnApplicationBootstrap,
 } from "@nestjs/common";
 import { and, eq, isNull } from "drizzle-orm";
 import {
@@ -90,7 +90,7 @@ const STAFF_SEEDS = [
 ] as const;
 
 @Injectable()
-export class UsersService implements OnModuleInit {
+export class UsersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(UsersService.name);
 
   constructor(
@@ -99,7 +99,7 @@ export class UsersService implements OnModuleInit {
     private readonly config: ConfigService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
+  async onApplicationBootstrap(): Promise<void> {
     try {
       await this.upgradeOwnerPermissions();
       await this.upgradeRiderPermissions();

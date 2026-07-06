@@ -44,6 +44,7 @@ export default function LoginScreen() {
   function selectRole(role: StaffRole): void {
     setRoleTab(role);
     setEmail(ROLE_DEFAULTS[role].email);
+    setPassword("changeme-please-01");
     setError(null);
   }
 
@@ -64,7 +65,14 @@ export default function LoginScreen() {
       setTokens(tokens.accessToken, tokens.refreshToken, claims, email.trim());
       router.replace("/branch");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      const message = err instanceof Error ? err.message : "Login failed";
+      if (message.toLowerCase().includes("invalid")) {
+        setError(
+          `${message}\n\nUse the demo account for this role:\n${ROLE_DEFAULTS[roleTab].email} / changeme-please-01`,
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -81,8 +89,8 @@ export default function LoginScreen() {
             <Subtitle>Restaurant mobile app for waiters and delivery riders.</Subtitle>
             {Constants.appOwnership === "expo" ? (
               <Subtitle>
-                Use your staff email and password below. Ignore Expo Go’s “Log In” on the home screen — that
-                opens a browser and is not required.
+                Opened in Expo Go — sign in below with your staff email and password. No Expo account
+                or browser login is needed.
               </Subtitle>
             ) : null}
           </View>
@@ -114,7 +122,7 @@ export default function LoginScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
-              placeholder="Email"
+              placeholder={ROLE_DEFAULTS[roleTab].email}
               value={email}
               onChangeText={setEmail}
             />

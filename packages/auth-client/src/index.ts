@@ -60,6 +60,16 @@ export class AuthClient {
     const res = await this.postJson("/v1/auth/login", body);
     if (!res.ok) {
       const text = await res.text();
+      if (res.status === 401) {
+        let message = "Invalid email or password.";
+        try {
+          const parsed = JSON.parse(text) as { message?: string };
+          if (parsed.message) message = parsed.message;
+        } catch {
+          // keep default
+        }
+        throw new Error(message);
+      }
       throw new Error(`Login failed: ${res.status} ${text}`);
     }
     const json: unknown = await res.json();
@@ -71,6 +81,9 @@ export class AuthClient {
     const res = await this.postJson("/v1/auth/refresh", body);
     if (!res.ok) {
       const text = await res.text();
+      if (res.status === 401) {
+        throw new Error("Session expired. Sign in again.");
+      }
       throw new Error(`Refresh failed: ${res.status} ${text}`);
     }
     const json: unknown = await res.json();

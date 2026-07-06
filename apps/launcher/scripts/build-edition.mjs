@@ -42,7 +42,30 @@ if (edition !== "suite") {
 }
 args.push(...extraArgs);
 
-console.log(`[build-edition] Building "${edition}" installer…`);
+const apiUrl = (process.env.VITE_API_BASE_URL ?? "").trim();
+if (!apiUrl) {
+  console.error(
+    "[build-edition] VITE_API_BASE_URL is required.\n" +
+      "Set it in the repo-root .env to your hosted API (e.g. https://your-api.up.railway.app).",
+  );
+  process.exit(1);
+}
+if (/localhost|127\.0\.0\.1/.test(apiUrl)) {
+  console.warn(
+    `[build-edition] Warning: VITE_API_BASE_URL points at local dev (${apiUrl}). ` +
+      "Production installers should use your hosted Railway API.",
+  );
+}
+
+const icons = spawnSync("node", ["./scripts/ensure-icons.mjs"], {
+  cwd: join(__dirname, ".."),
+  stdio: "inherit",
+});
+if (icons.status !== 0) {
+  process.exit(icons.status ?? 1);
+}
+
+console.log(`[build-edition] Building "${edition}" installer (API: ${apiUrl})…`);
 
 // PLATFORM_EDITION flows into the Vite build via tauri's beforeBuildCommand.
 const result = spawnSync("pnpm", args, {

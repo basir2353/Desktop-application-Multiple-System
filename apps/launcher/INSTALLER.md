@@ -96,6 +96,45 @@ Future: an in-installer component picker (NSIS custom pages) can be added on top
 ## Prerequisites for building installers
 
 - Node 20+, pnpm
-- Rust toolchain
+- Rust toolchain ([rustup.rs](https://rustup.rs))
+- **Windows** for `.exe` output (or use GitHub Actions — see below)
 - Windows: WebView2 (usually pre-installed on Windows 10/11)
 - Set `VITE_API_BASE_URL` in `.env` before building so the client points at your hosted API
+
+## Build a Windows `.exe` (hosted API)
+
+### On a Windows PC
+
+```bash
+# 1. Set your Railway API in repo-root .env
+VITE_API_BASE_URL=https://your-api.up.railway.app
+
+# 2. Install deps and build
+pnpm install
+pnpm installer:suite          # all systems
+# pnpm installer:restaurant   # single-system builds
+```
+
+Installer output:
+
+```
+apps/launcher/src-tauri/target/release/bundle/nsis/*-setup.exe
+```
+
+### From macOS / Linux (GitHub Actions)
+
+Windows installers must be compiled on Windows. Use the repo workflow:
+
+1. Push to GitHub
+2. **Actions** → **Build Windows Installer** → **Run workflow**
+3. Edition: `suite` (or `restaurant` / `pharmacy` / `general-store`)
+4. `vite_api_base_url`: your Railway domain
+5. Download the `.exe` artifact when complete
+
+### Railway CORS for desktop
+
+Add `tauri://localhost` to the API service `CORS_ORIGINS` on Railway so the installed app can authenticate:
+
+```
+CORS_ORIGINS=http://127.0.0.1:1420,tauri://localhost
+```

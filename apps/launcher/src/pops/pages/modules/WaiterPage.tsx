@@ -3,8 +3,8 @@ import { formatMenuItemLabel, type MenuItem as ApiMenuItem } from "@platform/con
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
-import { createBill, fetchWaiters } from "../../api/billing";
-import { createKitchenTicket, fetchKitchenTickets } from "../../api/kitchen";
+import { createBill, createWaiter, fetchWaiters, updateWaiter } from "../../api/billing";
+import { fetchKitchenTickets, createKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
 import { tables } from "../../data/fixtures";
 import { printReceipt, billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
@@ -17,6 +17,8 @@ import {
 } from "../../lib/waiterPrinterSettings";
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
+import { SimpleTable } from "../../ui/SimpleTable";
+import { cardClass, fieldInputClass, mutedClass, panelTitleClass } from "../../lib/themeClasses";
 
 type CartLine = { item: ApiMenuItem; qty: number };
 
@@ -95,8 +97,16 @@ export function WaiterPage(): JSX.Element {
   const [transferOpen, setTransferOpen] = useState(false);
   const [printerMap, setPrinterMap] = useState<Record<string, { printerName: string }>>({});
   const [printerPanelOpen, setPrinterPanelOpen] = useState(false);
+  const [waiterLoginsOpen, setWaiterLoginsOpen] = useState(false);
+  const [waiterName, setWaiterName] = useState("");
+  const [waiterEmail, setWaiterEmail] = useState("");
+  const [waiterPassword, setWaiterPassword] = useState("");
+  const [editWaiterId, setEditWaiterId] = useState<string | null>(null);
+  const [editEmail, setEditEmail] = useState("");
+  const [editPassword, setEditPassword] = useState("");
 
   const branchCode = branch?.code ?? "";
+  const canManageWaiters = displayRole === "admin" || displayRole === "manager";
 
   useEffect(() => {
     if (!branchCode) return;
@@ -116,9 +126,43 @@ export function WaiterPage(): JSX.Element {
   }, [branchCode]);
 
   const waitersQuery = useQuery({
-    queryKey: ["billing", "waiters"],
+    queryKey: ["billing", "waiters", branchCode],
     enabled: Boolean(branchCode),
-    queryFn: () => fetchWaiters(),
+    queryFn: () => fetchWaiters(branchCode),
+  });
+
+  const createWaiterMutation = useMutation({
+    mutationFn: () =>
+      createWaiter({
+        branchCode,
+        name: waiterName.trim(),
+        email: waiterEmail.trim(),
+        password: waiterPassword,
+      }),
+    onSuccess: (waiter) => {
+      setWaiterName("");
+      setWaiterEmail("");
+      setWaiterPassword("");
+      void queryClient.invalidateQueries({ queryKey: ["billing", "waiters"] });
+      setNotice(`Mobile login created for ${waiter.name}. They can sign in with ${waiter.email}.`);
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
+  const updateWaiterMutation = useMutation({
+    mutationFn: ({ waiterId, email, password }: { waiterId: string; email: string; password: string }) =>
+      updateWaiter(waiterId, {
+        email: email.trim() || undefined,
+        password: password || undefined,
+      }),
+    onSuccess: (waiter) => {
+      setEditWaiterId(null);
+      setEditEmail("");
+      setEditPassword("");
+      void queryClient.invalidateQueries({ queryKey: ["billing", "waiters"] });
+      setNotice(`Login updated for ${waiter.name}.`);
+    },
+    onError: (err: Error) => setNotice(err.message),
   });
 
   const waiters = waitersQuery.data ?? [];
@@ -332,6 +376,167 @@ export function WaiterPage(): JSX.Element {
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{notice}</p>
       ) : null}
 
+      {canManageWaiters ? (
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left"
+            onClick={() => setWaiterLoginsOpen((v) => !v)}
+          >
+            <span className="text-sm font-semibold text-white">Mobile waiter logins</span>
+            <span className="text-xs text-slate-500">{waiterLoginsOpen ? "Hide" : "Show"}</span>
+          </button>
+          {waiterLoginsOpen ? (
+            <div className="mt-3 space-y-4">
+              <p className="text-xs text-slate-400">
+                Create sign-in credentials for waiters on branch {branchCode}. They use the POPS Staff
+                mobile app (Waiter tab) with the email and password you set here.
+              </p>
+
+              <div className={`${cardClass} p-4`}>
+                <div className={panelTitleClass}>Add waiter login</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <input
+                    placeholder="Display name *"
+                    value={waiterName}
+                    onChange={(e) => setWaiterName(e.target.value)}
+                    className={fieldInputClass}
+                  />
+                  <input
+                    type="email"
+                    placeholder="Login email *"
+                    value={waiterEmail}
+                    onChange={(e) => setWaiterEmail(e.target.value)}
+                    className={fieldInputClass}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Login password * (min 8 chars)"
+                    value={waiterPassword}
+                    onChange={(e) => setWaiterPassword(e.target.value)}
+                    className={fieldInputClass}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  className="mt-3 h-8 text-xs"
+                  disabled={
+                    !waiterName.trim() ||
+                    !waiterEmail.trim() ||
+                    waiterPassword.length < 8 ||
+                    createWaiterMutation.isPending
+                  }
+                  onClick={() => createWaiterMutation.mutate()}
+                >
+                  {createWaiterMutation.isPending ? "…" : "Add waiter login"}
+                </Button>
+              </div>
+
+              {waitersQuery.isLoading ? (
+                <p className="text-xs text-slate-500">Loading waiters…</p>
+              ) : waiters.length === 0 ? (
+                <p className="text-xs text-slate-500">No waiter logins for this branch yet.</p>
+              ) : (
+                <SimpleTable
+                  rowKey={(w) => w.id}
+                  rows={waiters}
+                  columns={[
+                    {
+                      key: "name",
+                      header: "Name",
+                      render: (w) => <span className="text-white">{w.name}</span>,
+                    },
+                    {
+                      key: "email",
+                      header: "Login email",
+                      render: (w) => <span className={mutedClass}>{w.email}</span>,
+                    },
+                    {
+                      key: "branchCode",
+                      header: "Branch",
+                      render: (w) => <span className={mutedClass}>{w.branchCode}</span>,
+                    },
+                    {
+                      key: "actions",
+                      header: "",
+                      id: "actions",
+                      render: (w) => (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-7 px-2 text-[11px]"
+                          onClick={() => {
+                            setEditWaiterId(w.id);
+                            setEditEmail(w.email);
+                            setEditPassword("");
+                          }}
+                        >
+                          Update login
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+
+              {editWaiterId ? (
+                <div className={`max-w-md ${cardClass} p-4`}>
+                  <div className={panelTitleClass}>Update mobile login</div>
+                  <div className="mt-3 grid gap-2">
+                    <input
+                      type="email"
+                      placeholder="Login email"
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      className={fieldInputClass}
+                    />
+                    <input
+                      type="password"
+                      placeholder="New password (min 8 chars, optional)"
+                      value={editPassword}
+                      onChange={(e) => setEditPassword(e.target.value)}
+                      className={fieldInputClass}
+                    />
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <Button
+                      type="button"
+                      className="h-8 text-xs"
+                      disabled={
+                        (!editEmail.trim() && editPassword.length === 0) ||
+                        (editPassword.length > 0 && editPassword.length < 8) ||
+                        updateWaiterMutation.isPending
+                      }
+                      onClick={() =>
+                        updateWaiterMutation.mutate({
+                          waiterId: editWaiterId,
+                          email: editEmail,
+                          password: editPassword,
+                        })
+                      }
+                    >
+                      {updateWaiterMutation.isPending ? "…" : "Save login"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 text-xs"
+                      onClick={() => {
+                        setEditWaiterId(null);
+                        setEditEmail("");
+                        setEditPassword("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {canManagePrinters && waiters.length > 0 ? (
         <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
           <button
@@ -398,7 +603,7 @@ export function WaiterPage(): JSX.Element {
           <p className="mt-2 text-xs text-slate-500">Loading waiters…</p>
         ) : waiters.length === 0 ? (
           <p className="mt-2 text-xs text-amber-200/80">
-            No waiters found. Add users with the Waiter role under Users &amp; access, then restart the API.
+            No waiters for this branch. Admin: open Mobile waiter logins above to create credentials.
           </p>
         ) : (
           <select

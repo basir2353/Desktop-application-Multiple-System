@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
-import { completeBillSchema, createBillSchema, updateBillSchema } from "@platform/contracts";
+import { completeBillSchema, createBillSchema, createWaiterSchema, updateBillSchema, updateWaiterSchema } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
@@ -14,8 +14,24 @@ export class BillingController {
 
   @Get("waiters")
   @RequirePermissions("pops.read")
-  listWaiters(@CurrentUser() user: AccessJwtPayload) {
-    return this.billing.listWaiters(user.organizationId);
+  listWaiters(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode?: string) {
+    return this.billing.listWaiters(user.organizationId, branchCode?.trim());
+  }
+
+  @Post("waiters")
+  @RequirePermissions("pops.users.manage")
+  createWaiter(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.billing.createWaiter(user.organizationId, createWaiterSchema.parse(body));
+  }
+
+  @Patch("waiters/:waiterId")
+  @RequirePermissions("pops.users.manage")
+  updateWaiter(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("waiterId") waiterId: string,
+    @Body() body: unknown,
+  ) {
+    return this.billing.updateWaiter(user.organizationId, waiterId, updateWaiterSchema.parse(body));
   }
 
   @Get("orders")

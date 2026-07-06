@@ -34,12 +34,23 @@ After schema changes, run `pnpm db:push` from the repo root and restart the API 
 ## Development
 
 ```bash
-# From repository root
+# From repository root — opens POPS Waiter directly in Expo Go (Android emulator)
 pnpm dev:waiter-mobile
 
-# Android (uses scripts/launch-android.sh)
-pnpm --filter @platform/waiter-mobile android
+# Metro only (scan QR / press a for Android / i for iOS)
+pnpm dev:waiter-mobile:metro
 ```
+
+### Expo Go: open the app without a browser
+
+When Expo Go shows its **home screen**, do **not** tap **Log In** (that opens an external browser).
+
+Instead:
+
+1. Tap **POPS Waiter** under **Recently opened**, or
+2. Tap **Enter URL manually** and type: `exp://127.0.0.1:8081`
+
+`pnpm dev:waiter-mobile` does this automatically on the Android emulator.
 
 ### Default logins
 

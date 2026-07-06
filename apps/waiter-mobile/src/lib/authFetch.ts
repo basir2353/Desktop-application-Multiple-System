@@ -23,11 +23,16 @@ async function refreshAccessToken(): Promise<string> {
       throw new SessionExpiredError();
     }
 
-    const client = new AuthClient({ baseUrl: getApiBaseUrl() });
-    const tokens = await client.refresh(refreshToken);
-    const claims = decodeAccessToken(tokens.accessToken);
-    setTokens(tokens.accessToken, tokens.refreshToken, claims, waiterEmail ?? undefined);
-    return tokens.accessToken;
+    try {
+      const client = new AuthClient({ baseUrl: getApiBaseUrl() });
+      const tokens = await client.refresh(refreshToken);
+      const claims = decodeAccessToken(tokens.accessToken);
+      setTokens(tokens.accessToken, tokens.refreshToken, claims, waiterEmail ?? undefined);
+      return tokens.accessToken;
+    } catch {
+      clear();
+      throw new SessionExpiredError();
+    }
   })().finally(() => {
     refreshInFlight = null;
   });
@@ -75,7 +80,14 @@ export async function authFetch(path: string, init?: RequestInit): Promise<Respo
     }
   }
 
-  let token = await getValidAccessToken();
+  let token: string;
+  try {
+    token = await getValidAccessToken();
+  } catch (err) {
+    if (err instanceof SessionExpiredError) throw err;
+    throw err;
+  }
+
   let res = await request(token);
 
   if (res.status === 401) {
@@ -84,7 +96,13 @@ export async function authFetch(path: string, init?: RequestInit): Promise<Respo
       clear();
       throw new SessionExpiredError();
     }
-    token = await refreshAccessToken();
+    try {
+      token = await refreshAccessToken();
+    } catch (err) {
+      if (err instanceof SessionExpiredError) throw err;
+      clear();
+      throw new SessionExpiredError();
+    }
     res = await request(token);
     if (res.status === 401) {
       clear();

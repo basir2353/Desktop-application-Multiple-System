@@ -21,6 +21,20 @@ export const waiterOptionSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   email: z.string(),
+  branchCode: z.string(),
+});
+
+export const createWaiterSchema = z.object({
+  branchCode: z.string().min(1),
+  name: z.string().min(1).max(80),
+  email: z.string().email().min(3).max(320),
+  password: z.string().min(8).max(128),
+});
+
+export const updateWaiterSchema = z.object({
+  branchCode: z.string().min(1).optional(),
+  email: z.string().email().min(3).max(320).optional(),
+  password: z.string().min(8).max(128).optional(),
 });
 
 export const billLineSchema = z.object({
@@ -101,6 +115,8 @@ export const updateBillSchema = z.object({
 });
 
 export type WaiterOption = z.infer<typeof waiterOptionSchema>;
+export type CreateWaiter = z.infer<typeof createWaiterSchema>;
+export type UpdateWaiter = z.infer<typeof updateWaiterSchema>;
 export type BillLine = z.infer<typeof billLineSchema>;
 export type BillPayment = z.infer<typeof billPaymentSchema>;
 export type Bill = z.infer<typeof billSchema>;

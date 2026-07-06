@@ -47,8 +47,70 @@ Default login: `admin@platform.local` / `changeme-please-01`
 | `pnpm installer:restaurant` | Restaurant `.exe` installer |
 | `pnpm installer:pharmacy` | Pharmacy `.exe` installer |
 | `pnpm installer:general-store` | Store `.exe` installer |
+| `pnpm installer:suite` | All-systems `.exe` installer |
 
-## Host backend on Railway
+## Windows `.exe` installer (hosted API)
+
+The desktop app is built with **Tauri** and ships as a standard Windows setup file (`.exe`). Each installer connects to your **hosted Railway API**.
+
+### 1. Point the client at Railway
+
+In repo-root `.env`:
+
+```bash
+VITE_API_BASE_URL=https://YOUR-RAILWAY-DOMAIN.up.railway.app
+```
+
+On Railway, add `tauri://localhost` to `CORS_ORIGINS` so the desktop app can call the API:
+
+```bash
+CORS_ORIGINS=http://127.0.0.1:1420,tauri://localhost
+```
+
+### 2. Build on Windows (local)
+
+Requires Node 20+, pnpm, Rust, and WebView2 (pre-installed on Windows 10/11).
+
+```bash
+pnpm install
+pnpm installer:suite          # all systems — system picker at startup
+# or a single business system:
+pnpm installer:restaurant
+pnpm installer:pharmacy
+pnpm installer:general-store
+```
+
+Output:
+
+```
+apps/launcher/src-tauri/target/release/bundle/nsis/
+  Platform-Launcher_0.1.0_x64-setup.exe          # suite
+  Restaurant-Management-System_0.1.0_x64-setup.exe
+  ...
+```
+
+Give users the `*-setup.exe` file. They double-click → Next → Install → desktop shortcut is created.
+
+### 3. Build on macOS/Linux (GitHub Actions)
+
+Windows `.exe` files must be built on Windows. Use the included workflow:
+
+1. Push this repo to GitHub
+2. Go to **Actions** → **Build Windows Installer** → **Run workflow**
+3. Choose edition (`suite`, `restaurant`, etc.)
+4. Enter your Railway API URL as `vite_api_base_url`
+5. Download the `.exe` from **Artifacts** when the job finishes (~10–15 min first run)
+
+### Installers available
+
+| Installer | Command | End-user product |
+| --- | --- | --- |
+| **Suite** (all systems) | `pnpm installer:suite` | Platform Launcher |
+| **Restaurant** | `pnpm installer:restaurant` | Restaurant Management System |
+| **Pharmacy** | `pnpm installer:pharmacy` | Pharmacy Management System |
+| **General Store** | `pnpm installer:general-store` | General Store Management System |
+
+Details: [apps/launcher/INSTALLER.md](./apps/launcher/INSTALLER.md)
 
 1. Deploy on [railway.com](https://railway.com) from this GitHub repo
 2. Add a **PostgreSQL** plugin

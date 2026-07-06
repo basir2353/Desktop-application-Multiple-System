@@ -2,19 +2,24 @@ import {
   billSchema,
   completeBillSchema,
   createBillSchema,
+  createWaiterSchema,
   orderListSchema,
   updateBillSchema,
+  updateWaiterSchema,
   waiterOptionSchema,
   type Bill,
   type CompleteBill,
   type CreateBill,
+  type CreateWaiter,
   type UpdateBill,
+  type UpdateWaiter,
   type WaiterOption,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
 
-export async function fetchWaiters(): Promise<WaiterOption[]> {
-  const res = await authFetch("/v1/billing/waiters");
+export async function fetchWaiters(branchCode?: string): Promise<WaiterOption[]> {
+  const params = branchCode ? `?${new URLSearchParams({ branchCode })}` : "";
+  const res = await authFetch(`/v1/billing/waiters${params}`);
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(err?.message ?? `Waiters failed: ${res.status}`);
@@ -22,6 +27,34 @@ export async function fetchWaiters(): Promise<WaiterOption[]> {
   const json: unknown = await res.json();
   if (!Array.isArray(json)) throw new Error("Invalid waiters response");
   return json.map((row) => waiterOptionSchema.parse(row));
+}
+
+export async function createWaiter(input: CreateWaiter): Promise<WaiterOption> {
+  const body = createWaiterSchema.parse(input);
+  const res = await authFetch("/v1/billing/waiters", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Create waiter failed: ${res.status}`);
+  }
+  return waiterOptionSchema.parse(await res.json());
+}
+
+export async function updateWaiter(waiterId: string, input: UpdateWaiter): Promise<WaiterOption> {
+  const body = updateWaiterSchema.parse(input);
+  const res = await authFetch(`/v1/billing/waiters/${waiterId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Update waiter failed: ${res.status}`);
+  }
+  return waiterOptionSchema.parse(await res.json());
 }
 
 export async function fetchCompletedOrders(branchCode: string): Promise<Bill[]> {

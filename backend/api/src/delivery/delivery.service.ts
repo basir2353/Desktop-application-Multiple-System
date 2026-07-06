@@ -6,7 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  OnModuleInit,
+  OnApplicationBootstrap,
 } from "@nestjs/common";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { permissionsForPopsRole, type CreateRider, type RiderDeliveryStatusUpdate, type UpdateDeliveryOrder, type UpdateRider } from "@platform/contracts";
@@ -27,7 +27,7 @@ import type { AccessJwtPayload } from "../auth/jwt.types";
 const RIDER_SEED_EMAIL = "rider1@platform.local";
 
 @Injectable()
-export class DeliveryService implements OnModuleInit {
+export class DeliveryService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DeliveryService.name);
 
   constructor(
@@ -35,7 +35,7 @@ export class DeliveryService implements OnModuleInit {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
+  async onApplicationBootstrap(): Promise<void> {
     try {
       await this.seedRiderProfileIfMissing();
     } catch (err) {

@@ -1,0 +1,70 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: Desktop edition to package
+        required: true
+        default: suite
+        type: choice
+        options:
+          - suite
+          - restaurant
+          - pharmacy
+          - general-store
+      vite_api_base_url:
+        description: Hosted API URL (e.g. https://your-api.up.railway.app)
+        required: true
+
+concurrency:
+  group: windows-installer-${{ github.ref }}-${{ inputs.edition }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VITE_API_BASE_URL: ${{ inputs.vite_api_base_url }}
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Generate app icons
+        working-directory: apps/launcher
+        run: node ./scripts/ensure-icons.mjs
+
+      - name: Build Windows installer
+        run: |
+          $edition = "${{ inputs.edition }}"
+          if ($edition -eq "suite") {
+            pnpm --filter @platform/launcher build:suite
+          } else {
+            pnpm --filter @platform/launcher build:$edition
+          }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ inputs.edition }}-installer
+          path: apps/launcher/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
