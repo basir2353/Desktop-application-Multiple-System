@@ -19,6 +19,7 @@
     "installer:general-store": "pnpm --filter @platform/launcher build:general-store",
     "installer:pharmacy": "pnpm --filter @platform/launcher build:pharmacy",
     "installer:suite": "pnpm --filter @platform/launcher build:suite",
+    "installer:windows": "node apps/launcher/scripts/build-windows-installer.mjs",
     "installer:all": "pnpm --filter @platform/launcher build:all-editions",
     "dev:waiter-mobile": "pnpm --filter @platform/waiter-mobile android",
     "dev:waiter-mobile:metro": "pnpm --filter @platform/waiter-mobile dev",

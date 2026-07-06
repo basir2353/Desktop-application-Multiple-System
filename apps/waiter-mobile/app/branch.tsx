@@ -15,6 +15,7 @@ export default function BranchScreen() {
   const clearSession = useSessionStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
   const setBranch = useBranchStore((s) => s.setBranch);
+  const clearBranch = useBranchStore((s) => s.clear);
 
   const role = resolveStaffRole(claims);
   const homeRoute = homeRouteForRole(role);
@@ -105,7 +106,13 @@ export default function BranchScreen() {
         )}
       </Card>
 
-      <Pressable onPress={() => clearSession()}>
+      <Pressable
+        onPress={() => {
+          clearSession();
+          clearBranch();
+          router.replace("/");
+        }}
+      >
         <Text style={{ color: colors.muted, textAlign: "center", fontSize: 13 }}>Sign out</Text>
       </Pressable>
     </Screen>

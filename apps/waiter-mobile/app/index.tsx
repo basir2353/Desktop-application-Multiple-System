@@ -1,8 +1,8 @@
 import { AuthClient } from "@platform/auth-client";
 import Constants from "expo-constants";
 import { Redirect, useRouter } from "expo-router";
-import { useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
+import { useEffect, useState } from "react";
+import { BackHandler, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
 import { Button, Card, Input, Notice, Screen, Subtitle, Title, colors } from "../src/components/ui";
 import { getApiBaseUrl } from "../src/lib/apiBase";
 import { decodeAccessToken } from "../src/lib/jwt";
@@ -35,6 +35,12 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("changeme-please-01");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (accessToken || Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => subscription.remove();
+  }, [accessToken]);
 
   if (accessToken) {
     const home = branch ? homeRouteForRole(resolveStaffRole(claims)) : "/branch";

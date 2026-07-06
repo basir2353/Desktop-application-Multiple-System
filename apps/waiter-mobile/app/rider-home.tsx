@@ -81,7 +81,14 @@ export default function RiderHomeScreen() {
             Your account is a delivery rider, but no rider profile is linked. Ask an administrator to
             link your login in the desktop Delivery module.
           </Text>
-          <Button label="Sign out" onPress={() => clearSession()} />
+          <Button
+            label="Sign out"
+            onPress={() => {
+              clearSession();
+              clearBranch();
+              router.replace("/");
+            }}
+          />
         </Card>
       </Screen>
     );
@@ -167,7 +174,13 @@ export default function RiderHomeScreen() {
 
         <View style={styles.footer}>
           <Button label="All deliveries" onPress={() => router.push("/rider-deliveries")} />
-          <Pressable onPress={() => clearSession()}>
+          <Pressable
+            onPress={() => {
+              clearSession();
+              clearBranch();
+              router.replace("/");
+            }}
+          >
             <Text style={styles.signOut}>Sign out</Text>
           </Pressable>
         </View>

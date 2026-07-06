@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Platform Launcher",
+  "productName": "POPS Launcher",
   "version": "0.1.0",
   "identifier": "com.platform.launcher",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Platform Launcher",
+        "title": "POPS Launcher",
         "width": 1280,
         "height": 800
       }
