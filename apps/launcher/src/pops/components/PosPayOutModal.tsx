@@ -79,7 +79,7 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
           <p className="mt-4 text-xs text-slate-500">Loading cash session…</p>
         ) : !openSession ? (
           <p className="mt-4 text-xs text-amber-600 dark:text-amber-300">
-            No cash drawer session is open. Open a shift under Cash drawer first.
+            No cash drawer session is open. Use Cashier in on the POS toolbar first.
           </p>
         ) : (
           <form

@@ -10,10 +10,18 @@ Hosted NestJS API and control plane. Clients (web, desktop, mobile) connect to t
 
 ```bash
 # From repository root
-docker compose up -d    # PostgreSQL
+cp backend/.env.example backend/.env   # or edit backend/.env for Railway DB
+docker compose up -d    # PostgreSQL (if using local DATABASE_URL)
 pnpm db:push            # Apply schema
 pnpm dev:api            # NestJS on :3000
 ```
+
+Environment files (in order of precedence for `backend/api`):
+
+| File | Purpose |
+| --- | --- |
+| [`backend/.env`](./.env) | **Backend-only** — DB, JWT, CORS, seed (recommended) |
+| [`.env`](../.env) | Monorepo root — also includes client `VITE_*` vars |
 
 ## Production (self-hosted)
 
@@ -36,13 +44,14 @@ See **[RAILWAY.md](./RAILWAY.md)** for the full deploy guide.
 
 1. Railway → New Project → GitHub repo
 2. Add **PostgreSQL**
-3. Set variables from [`deployment/railway.env.example`](../deployment/railway.env.example)
-4. Generate domain → use as `VITE_API_BASE_URL` in clients
+3. Set **Dockerfile path** to `backend/Dockerfile` (Root Directory = repo root)
+4. Set variables from [`railway.env.example`](./railway.env.example)
+5. Generate domain → use as `VITE_API_BASE_URL` in clients
 
 ## Docker image only
 
 ```bash
-docker build -f backend/api/Dockerfile -t platform-api .
+docker build -f backend/Dockerfile -t platform-api .
 docker run --rm -p 3000:3000 \
   -e DATABASE_URL=postgresql://user:pass@host:5432/platform \
   -e JWT_ACCESS_SECRET=your-secret-min-32-chars \

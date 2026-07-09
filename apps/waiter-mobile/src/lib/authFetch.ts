@@ -1,4 +1,9 @@
-import { AuthClient } from "@platform/auth-client";
+import {
+  AuthClient,
+  isLikelyNetworkFailure,
+  platformFetch,
+  wrapNetworkError,
+} from "@platform/auth-client";
 import { decodeAccessToken, isAccessTokenExpired } from "./jwt";
 import { getApiBaseUrl } from "./apiBase";
 import { markOnline, markOffline } from "../stores/connectivityStore";
@@ -71,11 +76,14 @@ export async function authFetch(path: string, init?: RequestInit): Promise<Respo
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);
     try {
-      const res = await fetch(url, { ...init, headers });
+      const res = await platformFetch(url, { ...init, headers });
       markOnline();
       return res;
     } catch (err) {
       markOffline();
+      if (isLikelyNetworkFailure(err)) {
+        throw wrapNetworkError(getApiBaseUrl(), err);
+      }
       throw err;
     }
   }

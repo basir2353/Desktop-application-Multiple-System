@@ -10,7 +10,12 @@ export type AuthClientOptions = {
   fetchImpl?: typeof fetch;
 };
 
-function isLikelyNetworkFailure(err: unknown): boolean {
+/** Bound fetch for WebView/Tauri — bare `fetch` throws "Failed to fetch" in WebView2. */
+export function platformFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch(input, init);
+}
+
+export function isLikelyNetworkFailure(err: unknown): boolean {
   if (!(err instanceof Error)) return true;
   const m = err.message;
   return (
@@ -20,10 +25,10 @@ function isLikelyNetworkFailure(err: unknown): boolean {
   );
 }
 
-function wrapNetworkError(baseUrl: string, err: unknown): Error {
+export function wrapNetworkError(baseUrl: string, err: unknown): Error {
   const detail = err instanceof Error ? err.message : String(err);
   return new Error(
-    `Cannot reach the API at ${baseUrl}. Start the control plane with \`pnpm dev:api\` from the repo root, ensure Postgres is running (\`docker compose up -d\`), and apply the schema (\`pnpm db:push\`). (${detail})`,
+    `Cannot reach the API at ${baseUrl}. Check your internet connection and that the server is online. For local dev: run \`pnpm dev:api\`, start Postgres (\`docker compose up -d\`), and apply schema (\`pnpm db:push\`). (${detail})`,
   );
 }
 
@@ -34,9 +39,7 @@ export class AuthClient {
   constructor(opts: AuthClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     // Never assign bare `fetch` — calling it unbound breaks WebView (TypeError: Window.fetch).
-    this.fetchImpl =
-      opts.fetchImpl ??
-      ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
+    this.fetchImpl = opts.fetchImpl ?? platformFetch;
   }
 
   private async postJson(path: string, jsonBody: unknown): Promise<Response> {

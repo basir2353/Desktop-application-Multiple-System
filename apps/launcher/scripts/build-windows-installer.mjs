@@ -21,7 +21,8 @@ function loadEnvApiUrl() {
   if (!existsSync(envPath)) return process.env.VITE_API_BASE_URL?.trim() ?? "";
   const text = readFileSync(envPath, "utf8");
   for (const line of text.split("\n")) {
-    const m = line.match(/^VITE_API_BASE_URL=(.+)$/);
+    const trimmed = line.trim();
+    const m = trimmed.match(/^VITE_API_BASE_URL=(.+)$/);
     if (m) return m[1].trim().replace(/^["']|["']$/g, "");
   }
   return process.env.VITE_API_BASE_URL?.trim() ?? "";

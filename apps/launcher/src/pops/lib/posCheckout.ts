@@ -21,9 +21,10 @@ export function computeCheckoutTotals(
   discountAmount: number,
   servicePct: number,
   taxPct: number,
+  deliveryCharge = 0,
 ): CheckoutTotals {
   const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
-  const totals = computeTicketTotals(subtotal, discountAmount, servicePct, taxPct);
+  const totals = computeTicketTotals(subtotal, discountAmount, servicePct, taxPct, deliveryCharge);
   return { ...totals, servicePct, taxPct };
 }
 
@@ -58,4 +59,10 @@ export function defaultPaymentRow(method: PaymentMethod = "cash"): BillPayment {
 export function paymentsCoverTotal(payments: BillPayment[], total: number): boolean {
   const paid = payments.reduce((s, p) => s + p.amount, 0);
   return paid >= total;
+}
+
+export function paymentsShortfallMessage(payments: BillPayment[], total: number): string | null {
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  if (paid >= total) return null;
+  return `Payments (Rs ${paid.toLocaleString()}) do not cover bill total (Rs ${total.toLocaleString()})`;
 }

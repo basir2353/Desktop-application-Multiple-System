@@ -1,0 +1,33 @@
+# Faster Railway / Docker builds — context is repository root.
+
+.git
+.github
+.turbo
+**/.turbo
+**/node_modules
+**/.gradle
+**/android
+**/target
+**/dist
+**/*.apk
+**/*.exe
+**/*.msi
+coverage
+.env
+.env.*
+!.env.example
+
+# Frontends and mobile — not needed for API image
+apps/
+
+# Local dev / deployment compose (API image only)
+deployment/
+docker-compose.yml
+docker-compose.*.yml
+
+# Docs and editor config
+*.md
+!backend/**/*.md
+.vscode
+.cursor
+agent-transcripts

@@ -28,8 +28,12 @@ import { UsersModule } from "./users/users.module";
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // pnpm runs this package with cwd `backend/api`; repo-root `.env` lives two levels up.
-      envFilePath: [join(process.cwd(), ".env"), join(process.cwd(), "..", "..", ".env")],
+      // Load backend/.env first, then repo-root .env (later files do not override earlier by default in Nest — order matters: last wins in dotenv; Nest merges with last loaded taking precedence for duplicate keys depending on version — we put most specific last).
+      envFilePath: [
+        join(process.cwd(), "..", "..", ".env"),
+        join(process.cwd(), "..", ".env"),
+        join(process.cwd(), ".env"),
+      ],
     }),
     DrizzleModule,
     MailModule,

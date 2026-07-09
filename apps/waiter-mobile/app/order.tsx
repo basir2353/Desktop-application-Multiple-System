@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { createBill, fetchOrders, updateBill } from "../src/api/billing";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
+import { fetchRiders } from "../src/api/delivery";
 import { fetchBranchMenu } from "../src/api/menu";
 import { fetchBranchFloor } from "../src/api/tables";
 import {
@@ -42,6 +43,13 @@ import {
   type EditingOrder,
 } from "../src/lib/loadOrder";
 import { useBranchStore } from "../src/stores/branchStore";
+import {
+  deliveryNotes,
+  inferOrderModeFromStation,
+  MOBILE_ORDER_MODES,
+  stationLabelForMode,
+  type MobileOrderMode,
+} from "../src/lib/orderMode";
 import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -75,6 +83,12 @@ export default function OrderScreen() {
   const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
   const [editingOrder, setEditingOrder] = useState<EditingOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [orderMode, setOrderMode] = useState<MobileOrderMode>("dine-in");
+  const [deliveryCustomer, setDeliveryCustomer] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryRiderId, setDeliveryRiderId] = useState("");
+  const [deliveryCharge, setDeliveryCharge] = useState("0");
   const appliedEditRef = useRef<string | null>(null);
 
   const floorQuery = useQuery({
@@ -102,15 +116,26 @@ export default function OrderScreen() {
     queryFn: () => fetchOrders(branchCode),
   });
 
+  const ridersQuery = useQuery({
+    queryKey: ["delivery-riders", branchCode],
+    enabled: Boolean(branchCode) && orderMode === "delivery",
+    queryFn: () => fetchRiders(branchCode),
+  });
+
   const tables = useMemo(() => {
     return (floorQuery.data?.tables ?? []).filter((t) => t.isActive);
   }, [floorQuery.data]);
 
   const activeTableId = tableId ?? tables[0]?.tableNumber ?? null;
+  const draftKey = orderMode === "dine-in" ? activeTableId : orderMode;
+  const activeRiders = useMemo(
+    () => (ridersQuery.data ?? []).filter((rider) => rider.active),
+    [ridersQuery.data],
+  );
 
   const currentDraft =
-    activeTableId && drafts[activeTableId]
-      ? drafts[activeTableId]
+    draftKey && drafts[draftKey]
+      ? drafts[draftKey]
       : emptyDraft(newOrderRef());
 
   const cart = currentDraft.cart;
@@ -118,11 +143,27 @@ export default function OrderScreen() {
   const orderRef = currentDraft.orderRef;
 
   function updateDraft(patch: Partial<TableDraft>): void {
-    if (!activeTableId) return;
+    if (!draftKey) return;
     setDrafts((prev) => ({
       ...prev,
-      [activeTableId]: { ...(prev[activeTableId] ?? emptyDraft(orderRef)), ...patch },
+      [draftKey]: { ...(prev[draftKey] ?? emptyDraft(orderRef)), ...patch },
     }));
+  }
+
+  function combinedOrderNotes(): string | undefined {
+    const delivery = orderMode === "delivery" ? deliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress) : undefined;
+    const kitchen = notes.trim();
+    if (delivery && kitchen) return `${delivery} · ${kitchen}`;
+    return delivery ?? (kitchen || undefined);
+  }
+
+  function validateOrderTarget(): string | null {
+    if (orderMode === "dine-in" && !activeTableId) return "Select a table first.";
+    if (orderMode === "delivery") {
+      if (activeRiders.length === 0) return "Add an active rider in the desktop Delivery module first.";
+      if (!deliveryRiderId) return "Select a rider for this delivery order.";
+    }
+    return null;
   }
 
   function cartLines() {
@@ -140,10 +181,14 @@ export default function OrderScreen() {
   }
 
   function applyTicketEdit(ticket: KitchenTicket): void {
-    const tableKey = resolveTableKey(ticket.stationLabel);
+    const mode = inferOrderModeFromStation(ticket.stationLabel);
+    const tableKey = mode === "dine-in" ? resolveTableKey(ticket.stationLabel) : mode;
     const loadedCart = cartFromKitchenTicket(menuItems, ticket);
+    setOrderMode(mode);
     setEditingOrder({ kind: "ticket", ticketId: ticket.id });
-    setTableId(tableKey);
+    setTableId(mode === "dine-in" ? tableKey : null);
+    setDeliveryRiderId(ticket.riderId ?? "");
+    setDeliveryCharge(String(ticket.deliveryChargePkr ?? 0));
     setDrafts((prev) => ({
       ...prev,
       [tableKey]: {
@@ -176,10 +221,10 @@ export default function OrderScreen() {
   function cancelEdit(): void {
     setEditingOrder(null);
     appliedEditRef.current = null;
-    if (activeTableId) {
+    if (draftKey) {
       setDrafts((prev) => ({
         ...prev,
-        [activeTableId]: emptyDraft(newOrderRef()),
+        [draftKey]: emptyDraft(newOrderRef()),
       }));
     }
     setShowMenu(false);
@@ -283,21 +328,33 @@ export default function OrderScreen() {
   const sendMutation = useMutation({
     mutationFn: () => {
       if (cart.length === 0) throw new Error("Add at least one item.");
-      if (!activeTableId) throw new Error("Select a table first.");
+      const targetErr = validateOrderTarget();
+      if (targetErr) throw new Error(targetErr);
       const lines = cartLines();
+      const stationLabel = stationLabelForMode(orderMode, activeTableId);
+      const payloadNotes = combinedOrderNotes();
+      const deliveryExtras =
+        orderMode === "delivery"
+          ? {
+              riderId: deliveryRiderId,
+              deliveryChargePkr: Math.max(0, Number(deliveryCharge) || 0),
+            }
+          : {};
       if (editingOrder?.kind === "ticket") {
         return updateKitchenTicket(editingOrder.ticketId, {
-          stationLabel: activeTableId,
+          stationLabel,
           lines,
-          notes: notes.trim() || null,
+          notes: payloadNotes ?? null,
+          ...deliveryExtras,
         });
       }
       return createKitchenTicket({
         branchCode,
         orderRef,
-        stationLabel: activeTableId,
-        notes: notes.trim() || undefined,
+        stationLabel,
+        notes: payloadNotes,
         lines,
+        ...deliveryExtras,
       });
     },
     onSuccess: () => {
@@ -316,24 +373,31 @@ export default function OrderScreen() {
   const billMutation = useMutation({
     mutationFn: () => {
       if (cart.length === 0) throw new Error("Add at least one item.");
-      if (!activeTableId) throw new Error("Select a table first.");
+      const targetErr = validateOrderTarget();
+      if (targetErr) throw new Error(targetErr);
       const lines = cartLines();
+      const tableLabel = stationLabelForMode(orderMode, activeTableId);
+      const payloadNotes = combinedOrderNotes();
       if (editingOrder?.kind === "bill") {
         return updateBill(editingOrder.billId, {
-          tableLabel: `Table ${activeTableId}`,
+          tableLabel,
           lines,
-          notes: notes.trim() || null,
+          notes: payloadNotes ?? null,
           servicePct: SERVICE_PCT,
+          riderId: orderMode === "delivery" ? deliveryRiderId || null : null,
+          deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
         });
       }
       return createBill({
         branchCode,
         orderRef,
-        tableLabel: `Table ${activeTableId}`,
+        tableLabel,
         waiterId: claims?.sub,
         lines,
-        notes: notes.trim() || undefined,
+        notes: payloadNotes,
         servicePct: SERVICE_PCT,
+        riderId: orderMode === "delivery" ? deliveryRiderId || undefined : undefined,
+        deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : undefined,
       });
     },
     onSuccess: (bill) => {
@@ -365,6 +429,19 @@ export default function OrderScreen() {
         ? cart.filter((l) => l.item.id !== itemId)
         : cart.map((l) => (l.item.id === itemId ? { ...l, qty } : l));
     updateDraft({ cart: next });
+  }
+
+  function selectMode(mode: MobileOrderMode): void {
+    if (editingOrder) return;
+    setOrderMode(mode);
+    setNotice(null);
+    if (mode !== "dine-in") {
+      setTableId(null);
+      setDrafts((prev) => ({
+        ...prev,
+        [mode]: prev[mode] ?? emptyDraft(newOrderRef()),
+      }));
+    }
   }
 
   function selectTable(tableNumber: string): void {
@@ -410,7 +487,9 @@ export default function OrderScreen() {
             <Text style={styles.branchName}>{branch.name}</Text>
             <Text style={styles.branchMeta}>
               {branch.code}
-              {activeTableId ? ` · Table ${activeTableId}` : ""}
+              {orderMode === "dine-in" && activeTableId ? ` · Table ${activeTableId}` : ""}
+              {orderMode === "takeaway" ? " · Takeaway" : ""}
+              {orderMode === "delivery" ? " · Delivery" : ""}
             </Text>
           </View>
           <View style={styles.refBadge}>
@@ -448,6 +527,21 @@ export default function OrderScreen() {
         ) : null}
 
         <Card style={styles.sectionCard}>
+          <SectionHeader title="Order type" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableRow}>
+            {MOBILE_ORDER_MODES.map((mode) => (
+              <Chip
+                key={mode.id}
+                label={mode.label}
+                selected={orderMode === mode.id}
+                onPress={() => selectMode(mode.id)}
+              />
+            ))}
+          </ScrollView>
+        </Card>
+
+        {orderMode === "dine-in" ? (
+        <Card style={styles.sectionCard}>
           <SectionHeader title={editingOrder ? "Table (locked)" : "Select table"} />
           {floorQuery.isLoading ? (
             <ActivityIndicator color={colors.accent} />
@@ -473,6 +567,55 @@ export default function OrderScreen() {
             </ScrollView>
           )}
         </Card>
+        ) : null}
+
+        {orderMode === "delivery" ? (
+          <Card style={styles.sectionCard}>
+            <SectionHeader title="Delivery details" />
+            <Input
+              placeholder="Customer name"
+              value={deliveryCustomer}
+              onChangeText={setDeliveryCustomer}
+              style={styles.deliveryInput}
+            />
+            <Input
+              placeholder="Phone"
+              value={deliveryPhone}
+              onChangeText={setDeliveryPhone}
+              keyboardType="phone-pad"
+              style={styles.deliveryInput}
+            />
+            <Input
+              placeholder="Delivery address"
+              value={deliveryAddress}
+              onChangeText={setDeliveryAddress}
+              style={styles.deliveryInput}
+            />
+            {ridersQuery.isLoading ? (
+              <ActivityIndicator color={colors.accent} />
+            ) : activeRiders.length === 0 ? (
+              <Muted>Add active riders in the desktop Delivery module for this branch.</Muted>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableRow}>
+                {activeRiders.map((rider) => (
+                  <Chip
+                    key={rider.id}
+                    label={rider.name}
+                    selected={deliveryRiderId === rider.id}
+                    onPress={() => setDeliveryRiderId(rider.id)}
+                  />
+                ))}
+              </ScrollView>
+            )}
+            <Input
+              placeholder="Delivery charge (PKR)"
+              value={deliveryCharge}
+              onChangeText={setDeliveryCharge}
+              keyboardType="number-pad"
+              style={styles.deliveryInput}
+            />
+          </Card>
+        ) : null}
 
         <Card style={styles.sectionCard}>
           <View style={styles.orderHeader}>
@@ -549,7 +692,7 @@ export default function OrderScreen() {
                       : "Send to kitchen"
                 }
                 onPress={() => sendMutation.mutate()}
-                disabled={cart.length === 0 || !activeTableId}
+                disabled={cart.length === 0 || Boolean(validateOrderTarget())}
                 loading={sendMutation.isPending}
               />
             </View>
@@ -640,6 +783,7 @@ export default function OrderScreen() {
           </Card>
         ) : null}
 
+        {orderMode === "dine-in" ? (
         <Card style={styles.sectionCard}>
           <SectionHeader title="Kitchen status" />
           {kitchenQuery.isLoading ? <Muted>Checking kitchen…</Muted> : null}
@@ -686,6 +830,7 @@ export default function OrderScreen() {
             })
           )}
         </Card>
+        ) : null}
 
         <Card style={styles.billCard}>
           {cart.length > 0 ? (
@@ -720,7 +865,7 @@ export default function OrderScreen() {
                     : "Create bill"
             }
             onPress={() => billMutation.mutate()}
-            disabled={cart.length === 0 || !activeTableId}
+            disabled={cart.length === 0 || Boolean(validateOrderTarget())}
             loading={billMutation.isPending}
           />
         </Card>
@@ -1153,5 +1298,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     marginTop: 4,
+  },
+  deliveryInput: {
+    marginBottom: 10,
   },
 });

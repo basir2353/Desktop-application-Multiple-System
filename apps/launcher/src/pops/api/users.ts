@@ -13,6 +13,7 @@ import {
   type PendingInvite,
   type UpdateOrgUser,
 } from "@platform/contracts";
+import { platformFetch } from "@platform/auth-client";
 import { authFetch } from "../../lib/authFetch";
 import { getApiBaseUrl } from "../../lib/apiBase";
 
@@ -92,14 +93,14 @@ export async function resetOrgUserPassword(userId: string, password: string): Pr
 
 export async function fetchInvitePreview(token: string): Promise<InvitePreview> {
   const params = new URLSearchParams({ token });
-  const res = await fetch(`${getApiBaseUrl()}/v1/auth/invite?${params}`);
+  const res = await platformFetch(`${getApiBaseUrl()}/v1/auth/invite?${params}`);
   if (!res.ok) throw new Error(`Invite not found or expired (${res.status})`);
   const json: unknown = await res.json();
   return invitePreviewSchema.parse(json);
 }
 
 export async function acceptInvite(token: string, password: string): Promise<void> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/auth/accept-invite`, {
+  const res = await platformFetch(`${getApiBaseUrl()}/v1/auth/accept-invite`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, password }),

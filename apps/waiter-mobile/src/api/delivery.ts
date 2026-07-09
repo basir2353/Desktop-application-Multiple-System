@@ -1,11 +1,23 @@
 import {
   deliveryOrderListSchema,
   deliveryOrderSchema,
+  riderListSchema,
   riderDeliveryStatusUpdateSchema,
   type DeliveryOrder,
+  type Rider,
   type RiderDeliveryStatusUpdate,
 } from "@platform/contracts";
 import { authFetch } from "../lib/authFetch";
+
+export async function fetchRiders(branchCode: string): Promise<Rider[]> {
+  const params = new URLSearchParams({ branchCode });
+  const res = await authFetch(`/v1/delivery/riders?${params}`);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Riders failed: ${res.status}`);
+  }
+  return riderListSchema.parse(await res.json()).riders;
+}
 
 export async function fetchMyDeliveries(branchCode: string): Promise<DeliveryOrder[]> {
   const params = new URLSearchParams({ branchCode });

@@ -1,23 +1,34 @@
 import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const appRoot = "/app";
-const apiRoot = `${appRoot}/backend/api`;
-const dbPkgRoot = `${appRoot}/packages/database-pg`;
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const apiRoot = join(scriptDir, "..");
+const appRoot = join(apiRoot, "..", "..");
+const dbPkgRoot = join(appRoot, "packages", "database-pg");
+
+function requireEnv(name) {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    console.error(`[railway] Missing required environment variable: ${name}`);
+    process.exit(1);
+  }
+}
 
 function runSchemaPush() {
   console.log("[railway] Applying database schema…");
 
-  // pnpm exec resolves the drizzle-kit binary from the local workspace —
-  // more reliable than searching for the binary path after a Docker multi-stage copy.
-  const result = spawnSync(
-    "pnpm",
-    ["exec", "drizzle-kit", "push", "--force"],
-    {
-      cwd: dbPkgRoot,
-      stdio: "inherit",
-      env: process.env,
-    }
-  );
+  const pnpm = process.platform === "win32"
+    ? { cmd: "corepack", args: ["pnpm", "exec", "drizzle-kit", "push", "--force"] }
+    : { cmd: "pnpm", args: ["exec", "drizzle-kit", "push", "--force"] };
+
+  const result = spawnSync(pnpm.cmd, pnpm.args, {
+    cwd: dbPkgRoot,
+    stdio: "inherit",
+    env: process.env,
+    shell: process.platform === "win32",
+  });
 
   if (result.status !== 0) {
     console.error(
@@ -31,8 +42,9 @@ function runSchemaPush() {
 }
 
 function startApi() {
+  mkdirSync(join(apiRoot, "data", "uploads"), { recursive: true });
+
   console.log("[railway] Starting API server…");
-  // spawnSync blocks until the API exits, keeping this script alive as the process host.
   const api = spawnSync("node", ["dist/main.js"], {
     cwd: apiRoot,
     stdio: "inherit",
@@ -40,6 +52,9 @@ function startApi() {
   });
   process.exit(api.status ?? 0);
 }
+
+requireEnv("DATABASE_URL");
+requireEnv("JWT_ACCESS_SECRET");
 
 if (!runSchemaPush()) {
   process.exit(1);

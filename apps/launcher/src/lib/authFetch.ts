@@ -1,4 +1,9 @@
-import { AuthClient } from "@platform/auth-client";
+import {
+  AuthClient,
+  isLikelyNetworkFailure,
+  platformFetch,
+  wrapNetworkError,
+} from "@platform/auth-client";
 import { decodeAccessToken, isAccessTokenExpired } from "./jwt";
 import { getApiBaseUrl } from "./apiBase";
 import { useSessionStore } from "../stores/sessionStore";
@@ -69,7 +74,14 @@ export async function authFetch(path: string, init?: RequestInit): Promise<Respo
     if (init?.body != null && !headers.has("Content-Type") && typeof init.body === "string") {
       headers.set("Content-Type", "application/json");
     }
-    return fetch(url, { ...init, headers });
+    try {
+      return await platformFetch(url, { ...init, headers });
+    } catch (err) {
+      if (isLikelyNetworkFailure(err)) {
+        throw wrapNetworkError(getApiBaseUrl(), err);
+      }
+      throw err;
+    }
   }
 
   let token = await getValidAccessToken();

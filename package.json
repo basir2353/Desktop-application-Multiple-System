@@ -23,12 +23,15 @@
     "installer:all": "pnpm --filter @platform/launcher build:all-editions",
     "dev:waiter-mobile": "pnpm --filter @platform/waiter-mobile android",
     "dev:waiter-mobile:metro": "pnpm --filter @platform/waiter-mobile dev",
+    "build:waiter-apk": "pnpm --filter @platform/waiter-mobile build:apk:win",
+    "build:rider-apk": "pnpm --filter @platform/waiter-mobile build:rider-apk:win",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "db:generate": "pnpm --filter @platform/database-pg generate",
     "db:migrate": "pnpm --filter @platform/database-pg migrate",
     "db:push": "dotenv -e .env -- pnpm --filter @platform/database-pg push",
-    "db:studio": "pnpm --filter @platform/database-pg studio"
+    "db:studio": "pnpm --filter @platform/database-pg studio",
+    "seed:live": "node backend/scripts/seed-live.mjs"
   },
   "devDependencies": {
     "dotenv-cli": "^8.0.0",

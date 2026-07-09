@@ -1,4 +1,3 @@
-import { Button } from "@platform/ui";
 import {
   formatMenuItemLabel,
   menuItemDisplayPrice,
@@ -12,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { usePopsStore } from "../../../stores/popsStore";
 import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../../api/billing";
+import { fetchOpenCashSession } from "../../api/accounting";
 import { fetchRiders } from "../../api/delivery";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
@@ -55,6 +55,7 @@ import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCh
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/ChangeOrderTableModal";
 import { PosPayOutModal } from "../../components/PosPayOutModal";
+import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
 import { amberPillActiveClass, fieldInputClass, pillInactiveClass } from "../../lib/themeClasses";
@@ -69,7 +70,6 @@ import {
   type PosSettings,
 } from "../../lib/posSettings";
 import { buildMenuItemOrderCounts, sortMenuByPopularity } from "../../lib/posMenuPopularity";
-import { isMonitoringBranch } from "../../lib/branchScope";
 import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
@@ -89,6 +89,22 @@ import {
 
 const TICKET_INPUT_CLASS = `${fieldInputClass} w-full min-w-0 text-xs`;
 const TICKET_NUMBER_INPUT_CLASS = `${fieldInputClass} w-full min-w-0 py-1.5 text-right text-xs`;
+
+const POS_ACTION_BTN =
+  "inline-flex w-full min-w-0 items-center justify-center rounded-lg px-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
+const POS_PRIMARY_ORDER_BTN = `${POS_ACTION_BTN} h-10 border-0 bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 hover:bg-amber-400`;
+const POS_PRIMARY_PAY_BTN = `${POS_ACTION_BTN} h-10 border-0 bg-emerald-600 text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-500`;
+const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-9 border border-slate-200 bg-white font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white`;
+const POS_TOOLBAR_BTN =
+  "inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
+const POS_MODE_BAR =
+  "flex shrink-0 rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
+const POS_MODE_BTN = (active: boolean) =>
+  `flex-1 rounded-md px-2 py-2 text-xs font-semibold transition ${
+    active
+      ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
+      : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+  }`;
 
 type PosEditingOrder =
   | { kind: "ticket"; ticketId: string }
@@ -135,6 +151,8 @@ export function PosPage(): JSX.Element {
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
   const [payOutModalOpen, setPayOutModalOpen] = useState(false);
+  const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
+  const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
   const pendingEditRef = useRef<PosEditLocationState | null>(
     (location.state as PosEditLocationState | null) ?? null,
@@ -252,6 +270,22 @@ export function PosPage(): JSX.Element {
     queryFn: () => fetchCompletedOrders(branch!.code),
     refetchInterval: 20_000,
   });
+
+  const cashSessionQuery = useQuery({
+    queryKey: ["accounting", "cash-session-open", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchOpenCashSession(branch!.code),
+    refetchInterval: 30_000,
+  });
+
+  useEffect(() => {
+    if (!branch?.code || cashSessionQuery.isLoading || cashierPromptShown.current) return;
+    if (cashSessionQuery.data) return;
+    const skipKey = `pops-cashier-in-dismissed-${branch.code}`;
+    if (sessionStorage.getItem(skipKey)) return;
+    cashierPromptShown.current = true;
+    setCashierModal("in");
+  }, [branch?.code, cashSessionQuery.data, cashSessionQuery.isLoading]);
 
   const categories = menuQuery.data?.categories ?? [];
   const menuItems = menuQuery.data?.items ?? [];
@@ -903,6 +937,7 @@ export function PosPage(): JSX.Element {
   }
 
   function onPay(): void {
+    setPrintNotice(null);
     setCheckoutModal("pay");
   }
 
@@ -931,23 +966,50 @@ export function PosPage(): JSX.Element {
         : null;
 
   return (
-    <div className="flex h-[calc(100vh-4.25rem)] min-h-0 flex-col gap-2">
+    <div className="flex min-h-[calc(100vh-4.25rem)] flex-col gap-2">
       {/* Compact toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900/40 px-2.5 py-2">
-        <div className="mr-1 text-sm font-semibold text-white">POS</div>
+        <div className="shrink-0 text-sm font-semibold text-white">POS</div>
         <input
           placeholder="Search menu or scan SKU…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="min-w-[10rem] flex-1 rounded-md border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/40 sm:max-w-md"
+          className="min-w-0 flex-1 basis-[10rem] rounded-md border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/40 sm:max-w-md"
         />
-        <div className="ml-auto flex gap-1">
-          <Button variant="ghost" className="h-7 px-2 text-[10px]" onClick={openTableTransfer}>
+        <div className="flex w-full shrink-0 flex-wrap items-center gap-1 sm:ml-auto sm:w-auto">
+          {cashSessionQuery.data ? (
+            <span className="rounded-md bg-emerald-500/15 px-2 py-1 text-[10px] font-medium text-emerald-300 ring-1 ring-emerald-500/30">
+              Shift open · {cashSessionQuery.data.sessionRef}
+            </span>
+          ) : (
+            <span className="rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-medium text-amber-300 ring-1 ring-amber-500/30">
+              No shift — Cashier in required
+            </span>
+          )}
+          <button
+            type="button"
+            className={POS_TOOLBAR_BTN}
+            onClick={() => setCashierModal("in")}
+          >
+            Cashier in
+          </button>
+          <button
+            type="button"
+            className={POS_TOOLBAR_BTN}
+            onClick={() => setCashierModal("out")}
+            disabled={!cashSessionQuery.data}
+          >
+            Cashier out
+          </button>
+          <button type="button" className={POS_TOOLBAR_BTN} onClick={openTableTransfer}>
             Table transfer
-          </Button>
-          <Button variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => setPayOutModalOpen(true)}>
+          </button>
+          <button type="button" className={POS_TOOLBAR_BTN} onClick={openSplitBill}>
+            Merge / split
+          </button>
+          <button type="button" className={POS_TOOLBAR_BTN} onClick={() => setPayOutModalOpen(true)}>
             Paying out
-          </Button>
+          </button>
         </div>
       </div>
 
@@ -983,9 +1045,9 @@ export function PosPage(): JSX.Element {
       ) : null}
 
       {/* Main POS grid */}
-      <div className="grid min-h-0 flex-1 grid-cols-12 gap-3">
+      <div className="grid flex-1 grid-cols-12 gap-3 lg:items-start">
         {/* Menu column */}
-        <div className="col-span-12 flex min-h-0 flex-col lg:col-span-5">
+        <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           {/* Category pills */}
           {categories.length > 0 ? (
             <div className="mb-1.5 flex shrink-0 gap-1 overflow-x-auto pb-0.5">
@@ -1142,9 +1204,9 @@ export function PosPage(): JSX.Element {
           </div>
         </div>
 
-        {/* Current ticket */}
-        <div className="col-span-12 flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:col-span-3 dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
-          <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
+        {/* Current ticket — grows with cart items; page scrolls instead of inner cart scroll */}
+        <div className="col-span-12 flex min-h-[36rem] flex-col rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:col-span-4 dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
+          <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
@@ -1169,48 +1231,22 @@ export function PosPage(): JSX.Element {
                 </span>
               </div>
             </div>
+          </div>
 
-            <div className="mt-3 flex rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80">
-              {POS_ORDER_MODES.map(({ id, label }) => {
-                const deliveryBlocked = id === "delivery" && isMonitoringBranch(branch?.code);
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    disabled={deliveryBlocked}
-                    title={
-                      deliveryBlocked
-                        ? "Switch to a store branch (e.g. POPS Blue Area) for delivery orders"
-                        : undefined
-                    }
-                    onClick={() => {
-                      if (deliveryBlocked) return;
-                      setMode(id);
-                    }}
-                    className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
-                      mode === id
-                        ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
-                        : deliveryBlocked
-                          ? "cursor-not-allowed text-slate-400 opacity-50 dark:text-slate-600"
-                          : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+          <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800/80 dark:bg-slate-900/30">
+            <div className={POS_MODE_BAR}>
+              {POS_ORDER_MODES.map(({ id, label }) => (
+                <button key={id} type="button" onClick={() => setMode(id)} className={POS_MODE_BTN(mode === id)}>
+                  {label}
+                </button>
+              ))}
             </div>
-            {isMonitoringBranch(branch?.code) ? (
-              <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300/90">
-                Delivery orders must be created on a store branch (e.g. POPS Blue Area) so riders can see them in the mobile app.
-              </p>
-            ) : null}
 
             {mode === "dine-in" && floorSections.length > 0 ? (
               <button
                 type="button"
                 onClick={() => setSeatingModalOpen(true)}
-                className={`mt-2.5 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition ${
+                className={`mt-2 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition ${
                   selectedTableId
                     ? "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
@@ -1221,6 +1257,12 @@ export function PosPage(): JSX.Element {
                   ›
                 </span>
               </button>
+            ) : null}
+
+            {mode === "takeaway" ? (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
+                Takeaway counter
+              </div>
             ) : null}
 
             {mode === "delivery" ? (
@@ -1302,12 +1344,12 @@ export function PosPage(): JSX.Element {
             ) : null}
 
             {happyHourLive && happyHourActiveSlot ? (
-              <div className="mt-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+              <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
                 <span className="font-semibold">Happy hour active</span>
                 <span className="text-amber-800/80 dark:text-amber-200/80">
                   {" "}
                   · {formatHappyHourSlotSummary(happyHourActiveSlot)}
-                  {happyHourBonus ? ` · Free ${happyHourBonus.item.name} with any order` : ""}
+                  {happyHourBonus ? ` · Free ${happyHourBonus.item.name}` : ""}
                 </span>
               </div>
             ) : null}
@@ -1319,60 +1361,58 @@ export function PosPage(): JSX.Element {
             </p>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <div className="p-3">
             {effectiveCart.length === 0 ? (
-              <div className="flex h-full min-h-[6rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-6 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
-                <div className="mb-1.5 text-xl opacity-40" aria-hidden>
+              <div className="flex min-h-[12rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
+                <div className="mb-2 text-2xl opacity-40" aria-hidden>
                   🛒
                 </div>
-                <p className="text-[11px] font-medium text-slate-600 dark:text-slate-400">No items yet</p>
-                <p className="mt-0.5 text-[9px] text-slate-500 dark:text-slate-600">
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">No items yet</p>
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-600">
                   Tap menu items to add to this ticket
                 </p>
               </div>
             ) : (
-              <ul className="grid grid-cols-2 gap-1">
+              <ul className="flex flex-col gap-2">
                 {effectiveCart.map((line) => (
                   <li
                     key={line.key}
-                    className={`flex min-w-0 flex-col gap-1 rounded-md border px-1.5 py-1 transition ${
+                    className={`flex min-w-0 items-center gap-2.5 rounded-lg border px-2.5 py-2 transition ${
                       line.isComplimentary
                         ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
                         : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
                     }`}
                   >
-                    <div className="min-w-0 leading-tight">
-                      <div className="line-clamp-2 text-[10px] font-medium text-slate-900 dark:text-slate-100">
-                        {line.lineLabel}
-                      </div>
-                      <div className="mt-0.5 text-[9px] tabular-nums text-slate-500">
+                    <div className="min-w-0 flex-1 leading-snug">
+                      <div className="text-xs font-medium text-slate-900 dark:text-slate-100">{line.lineLabel}</div>
+                      <div className="mt-0.5 text-[11px] tabular-nums text-slate-500">
                         {line.isComplimentary ? (
                           <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
                         ) : (
-                          <>{line.unitPrice.toLocaleString()}</>
+                          <>Rs {line.unitPrice.toLocaleString()} each</>
                         )}
                       </div>
                     </div>
                     {line.isComplimentary ? (
-                      <span className="self-start rounded bg-amber-100 px-1 py-px text-[8px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
+                      <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
                         FREE
                       </span>
                     ) : (
-                      <div className="flex items-center justify-between gap-0.5 rounded bg-slate-100 p-px ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
+                      <div className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
                         <button
                           type="button"
-                          className="flex h-5 flex-1 items-center justify-center rounded text-[11px] leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setQty(line.key, line.qty - 1)}
                           aria-label="Decrease quantity"
                         >
                           −
                         </button>
-                        <span className="w-4 shrink-0 text-center text-[10px] font-semibold tabular-nums text-slate-900 dark:text-white">
+                        <span className="min-w-[1.25rem] text-center text-xs font-semibold tabular-nums text-slate-900 dark:text-white">
                           {line.qty}
                         </span>
                         <button
                           type="button"
-                          className="flex h-5 flex-1 items-center justify-center rounded text-[11px] leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setQty(line.key, line.qty + 1)}
                           aria-label="Increase quantity"
                         >
@@ -1386,7 +1426,7 @@ export function PosPage(): JSX.Element {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-3 dark:border-slate-800/80 dark:bg-slate-950/40">
+          <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
               <div className="grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
@@ -1456,18 +1496,18 @@ export function PosPage(): JSX.Element {
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               {editingOrder?.kind === "held-bill" ? (
-                <Button
+                <button
                   type="button"
-                  className="col-span-2 h-10 rounded-lg border-0 bg-amber-500 text-xs font-semibold text-slate-950 shadow-md shadow-amber-500/20 hover:bg-amber-400"
+                  className={`${POS_PRIMARY_ORDER_BTN} col-span-2`}
                   disabled={cart.length === 0 || updateHeldBillMutation.isPending || !branch?.code}
                   onClick={() => updateHeldBillMutation.mutate()}
                 >
                   {updateHeldBillMutation.isPending ? "…" : "Update hold"}
-                </Button>
+                </button>
               ) : (
-                <Button
+                <button
                   type="button"
-                  className="h-10 rounded-lg border-0 bg-amber-500 text-xs font-semibold text-slate-950 shadow-md shadow-amber-500/20 hover:bg-amber-400"
+                  className={POS_PRIMARY_ORDER_BTN}
                   disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                   onClick={() => createOrderMutation.mutate()}
                 >
@@ -1476,44 +1516,40 @@ export function PosPage(): JSX.Element {
                     : editingOrder?.kind === "ticket"
                       ? "Update order"
                       : "Order"}
-                </Button>
+                </button>
               )}
-              <Button
+              <button
                 type="button"
-                className={`h-10 rounded-lg border-0 bg-emerald-600 text-xs font-semibold text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-500 ${
-                  editingOrder?.kind === "held-bill" ? "col-span-2" : ""
-                }`}
+                className={`${POS_PRIMARY_PAY_BTN}${editingOrder?.kind === "held-bill" ? " col-span-2" : ""}`}
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => onPay()}
               >
                 {checkoutMutation.isPending ? "…" : "Pay"}
-              </Button>
+              </button>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
-              <Button
+              <button
                 type="button"
-                variant="ghost"
-                className="h-9 rounded-lg border border-slate-200 bg-white text-[11px] font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
+                className={POS_SECONDARY_BTN}
                 disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                 onClick={() => runPrintOrder()}
               >
                 {createOrderMutation.isPending ? "…" : "Print order"}
-              </Button>
-              <Button
+              </button>
+              <button
                 type="button"
-                variant="ghost"
-                className="h-9 rounded-lg border border-slate-200 bg-white text-[11px] font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
+                className={POS_SECONDARY_BTN}
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => runPrintInvoice()}
               >
                 Print invoice
-              </Button>
+              </button>
             </div>
           </div>
         </div>
 
         {/* Latest orders sidebar */}
-        <div className="col-span-12 flex min-h-[18rem] flex-col lg:col-span-4 lg:min-h-0">
+        <div className="col-span-12 flex min-h-[18rem] flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           <PosLatestOrdersPanel
             orders={recentOrders}
             isLoading={kitchenQuery.isLoading || ordersQuery.isLoading}
@@ -1541,8 +1577,10 @@ export function PosPage(): JSX.Element {
           total={total}
           service={service}
           tax={tax}
+          deliveryCharge={deliveryCharge}
           isSubmitting={checkoutMutation.isPending}
           onClose={() => setCheckoutModal(null)}
+          onValidationError={(message) => setPrintNotice(message)}
           onConfirm={({ servicePct: checkoutServicePct, taxPct: checkoutTaxPct, payments, status }) =>
             checkoutMutation.mutate({
               intent: checkoutModal,
@@ -1596,6 +1634,24 @@ export function PosPage(): JSX.Element {
         <PosPayOutModal
           onClose={() => setPayOutModalOpen(false)}
           onSuccess={(message) => setPrintNotice(message)}
+        />
+      ) : null}
+
+      {cashierModal && branch?.code ? (
+        <PosCashierModal
+          mode={cashierModal}
+          orders={ordersQuery.data ?? []}
+          onClose={() => {
+            if (cashierModal === "in" && branch?.code && !cashSessionQuery.data) {
+              sessionStorage.setItem(`pops-cashier-in-dismissed-${branch.code}`, "1");
+            }
+            setCashierModal(null);
+          }}
+          onSuccess={(message) => {
+            if (branch?.code) sessionStorage.removeItem(`pops-cashier-in-dismissed-${branch.code}`);
+            void cashSessionQuery.refetch();
+            setPrintNotice(message);
+          }}
         />
       ) : null}
     </div>

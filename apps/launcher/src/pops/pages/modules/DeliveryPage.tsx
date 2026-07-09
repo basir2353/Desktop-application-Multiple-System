@@ -36,7 +36,6 @@ import {
   type UnifiedOrder,
 } from "../../lib/orderHistory";
 import { printKot, printReceipt, type PrintTicketInput } from "../../lib/printTicket";
-import { isMonitoringBranch } from "../../lib/branchScope";
 import {
   cardClass,
   emptyStateBoxClass,
@@ -471,11 +470,6 @@ export function DeliveryPage(): JSX.Element {
 
       {tab === "riders" ? (
         <div className="space-y-4">
-          {isMonitoringBranch(branch.code) ? (
-            <p className={noticeWarningClass}>
-              Head Office is for monitoring only. Add riders and delivery orders on a store branch (e.g. POPS Blue Area / ISB-GT) so they appear in the rider mobile app.
-            </p>
-          ) : null}
           <div className={`max-w-3xl ${cardClass} p-4`}>
             <div className={panelTitleClass}>Add rider</div>
             <p className={`mt-1 text-xs ${mutedClass}`}>
@@ -729,11 +723,6 @@ export function DeliveryPage(): JSX.Element {
 
       {tab === "orders" ? (
         <>
-          {isMonitoringBranch(branch.code) ? (
-            <p className={noticeWarningClass}>
-              Delivery orders on Head Office will not reach store riders. Switch to POPS Blue Area (ISB-GT) and assign orders to the rider who has the mobile login.
-            </p>
-          ) : null}
           <ModuleFilterBar>
             <ModuleSegmentedControl
               value={view}

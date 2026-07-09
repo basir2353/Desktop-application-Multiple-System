@@ -11,7 +11,7 @@ export class SyncController {
 
   @Post("push")
   @UseGuards(JwtAuthGuard)
-  push(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+  async push(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     const batch = syncPushBatchSchema.parse(body);
     return this.sync.push(user.organizationId, batch);
   }

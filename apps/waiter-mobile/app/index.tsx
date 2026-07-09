@@ -23,6 +23,9 @@ const ROLE_DEFAULTS: Record<StaffRole, { email: string; title: string; subtitle:
   },
 };
 
+const defaultRole =
+  (Constants.expoConfig?.extra as { defaultRole?: StaffRole } | undefined)?.defaultRole ?? "waiter";
+
 export default function LoginScreen() {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
@@ -30,8 +33,8 @@ export default function LoginScreen() {
   const setTokens = useSessionStore((s) => s.setTokens);
   const branch = useBranchStore((s) => s.branch);
 
-  const [roleTab, setRoleTab] = useState<StaffRole>("waiter");
-  const [email, setEmail] = useState(ROLE_DEFAULTS.waiter.email);
+  const [roleTab, setRoleTab] = useState<StaffRole>(defaultRole);
+  const [email, setEmail] = useState(ROLE_DEFAULTS[defaultRole].email);
   const [password, setPassword] = useState("changeme-please-01");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,8 +94,12 @@ export default function LoginScreen() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24 }}>
           <View>
-            <Title>POPS Staff</Title>
-            <Subtitle>Restaurant mobile app for waiters and delivery riders.</Subtitle>
+            <Title>{defaultRole === "rider" ? "POPS Rider" : "POPS Staff"}</Title>
+            <Subtitle>
+              {defaultRole === "rider"
+                ? "Delivery rider app — view assigned orders and update delivery status."
+                : "Restaurant mobile app for waiters and delivery riders."}
+            </Subtitle>
             {Constants.appOwnership === "expo" ? (
               <Subtitle>
                 Opened in Expo Go — sign in below with your staff email and password. No Expo account
@@ -102,23 +109,25 @@ export default function LoginScreen() {
           </View>
 
           <View style={{ flexDirection: "row", gap: 8 }}>
-            {(["waiter", "rider"] as const).map((role) => (
-              <Pressable
-                key={role}
-                onPress={() => selectRole(role)}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: roleTab === role ? colors.accent : colors.border,
-                  backgroundColor: roleTab === role ? "#1e3a5f" : "#020617",
-                  alignItems: "center",
-                }}
-              >
-                <Subtitle>{role === "waiter" ? "Waiter" : "Delivery rider"}</Subtitle>
-              </Pressable>
-            ))}
+            {defaultRole === "waiter"
+              ? (["waiter", "rider"] as const).map((role) => (
+                  <Pressable
+                    key={role}
+                    onPress={() => selectRole(role)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: roleTab === role ? colors.accent : colors.border,
+                      backgroundColor: roleTab === role ? "#1e3a5f" : "#020617",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Subtitle>{role === "waiter" ? "Waiter" : "Delivery rider"}</Subtitle>
+                  </Pressable>
+                ))
+              : null}
           </View>
 
           <Card>

@@ -38,7 +38,7 @@ import {
   type CartLine,
 } from "../lib/storePosSync";
 import { formatPkr, useInvalidateStore, useStoreAccess } from "../hooks/useStore";
-import { noticeErrorClass, noticeSuccessClass } from "../../pops/lib/themeClasses";
+import { isLocalDataMode, shouldAutoSyncToCloud } from "../../stores/dataModeStore";
 
 function ProductAvatar({ name }: { name: string }): JSX.Element {
   const letter = name.trim().charAt(0).toUpperCase() || "?";
@@ -256,10 +256,10 @@ export function StorePosPage(): JSX.Element {
 
   useEffect(() => {
     function onOnline(): void {
-      void flushOfflineQueue();
+      if (shouldAutoSyncToCloud()) void flushOfflineQueue();
     }
     window.addEventListener("online", onOnline);
-    if (isOnline() && loadOfflineQueue().length > 0) void flushOfflineQueue();
+    if (shouldAutoSyncToCloud() && isOnline() && loadOfflineQueue().length > 0) void flushOfflineQueue();
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
@@ -293,7 +293,7 @@ export function StorePosPage(): JSX.Element {
         })),
       };
 
-      if (!isOnline()) {
+      if (isLocalDataMode() || !isOnline()) {
         enqueueOfflineSale(body);
         setOfflineCount(loadOfflineQueue().length);
         return null;
@@ -312,7 +312,11 @@ export function StorePosPage(): JSX.Element {
         setNotice(`Invoice ${sale.invoiceNumber} — ${formatPkr(sale.total)}`);
         printStoreInvoice(branch?.name ?? "Store", branch?.code ?? "—", sale);
       } else {
-        setNotice("Sale saved offline — will sync when connection returns");
+        setNotice(
+          isLocalDataMode()
+            ? "Sale saved locally — open Sync and push to cloud when ready"
+            : "Sale saved offline — will sync when connection returns",
+        );
       }
       setError(null);
     },

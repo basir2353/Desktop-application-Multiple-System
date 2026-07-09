@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { registerShellHost } from "@platform/shell-sdk";
 import { catalogModuleSchema, type CatalogModule } from "@platform/contracts";
+import { platformFetch } from "@platform/auth-client";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { getApiBaseUrl } from "../lib/apiBase";
 import { headingClass, mutedClass, subtleClass } from "../pops/lib/themeClasses";
@@ -58,7 +59,7 @@ export function DashboardPage(): JSX.Element {
     queryKey: ["catalog", "modules", accessToken],
     enabled: Boolean(accessToken),
     queryFn: async (): Promise<CatalogModule[]> => {
-      const res = await fetch(`${getApiBaseUrl()}/v1/catalog/modules`, {
+      const res = await platformFetch(`${getApiBaseUrl()}/v1/catalog/modules`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!res.ok) throw new Error(`Catalog failed: ${res.status}`);

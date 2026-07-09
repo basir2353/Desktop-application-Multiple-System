@@ -4,23 +4,30 @@ import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 
+function desktopCorsPatterns(): RegExp[] {
+  return [
+    /^https?:\/\/localhost(:\d+)?$/,
+    /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+    /^tauri:\/\/.+/,
+    /^https?:\/\/tauri\.localhost(:\d+)?$/,
+  ];
+}
+
 function parseCorsOrigins(): boolean | (string | RegExp)[] {
   const raw = process.env.CORS_ORIGINS?.trim();
   if (!raw) {
     const isProd = process.env.NODE_ENV === "production";
     if (!isProd) return true;
-    return [
-      /^https?:\/\/localhost(:\d+)?$/,
-      /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
-      /^tauri:\/\/.+/,
-      /^https?:\/\/tauri\.localhost(:\d+)?$/,
-    ];
+    return desktopCorsPatterns();
   }
   if (raw === "*") return true;
-  return raw
+  const explicit = raw
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+  // Installed Tauri apps use https://tauri.localhost — always allow desktop origins
+  // even when CORS_ORIGINS is set on Railway (avoids blocking release .exe builds).
+  return [...explicit, ...desktopCorsPatterns()];
 }
 
 async function bootstrap(): Promise<void> {

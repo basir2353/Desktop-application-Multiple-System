@@ -1,4 +1,9 @@
-# Railway — build from repository root (monorepo).
+# Deprecated — use backend/Dockerfile (canonical Railway image).
+#
+#   docker build -f backend/Dockerfile -t platform-api .
+#
+# This file is kept for backwards compatibility only.
+
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
@@ -17,9 +22,8 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/backend/api ./backend/api
-# Make all .bin scripts executable (pnpm symlinks may lose permissions across COPY)
 RUN find /app/node_modules/.bin -type f -o -type l | xargs chmod +x 2>/dev/null || true
+RUN mkdir -p /app/backend/api/data/uploads
 EXPOSE 3000
 ENV HOST=0.0.0.0
-# start-railway.mjs: runs drizzle-kit push then starts the API
 CMD ["node", "/app/backend/api/scripts/start-railway.mjs"]

@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   computeCheckoutTotals,
   paymentSummary,
-  paymentsCoverTotal,
+  paymentsShortfallMessage,
 } from "../lib/posCheckout";
 
 export type CheckoutModalMode = "pay" | "hold" | "invoice";
@@ -24,8 +24,10 @@ type Props = {
   total: number;
   service: number;
   tax: number;
+  deliveryCharge?: number;
   isSubmitting?: boolean;
   onClose: () => void;
+  onValidationError?: (message: string) => void;
   onConfirm: (payload: {
     servicePct: number;
     taxPct: number;
@@ -44,18 +46,28 @@ export function PosCheckoutModal({
   total: initialTotal,
   service: initialService,
   tax: initialTax,
+  deliveryCharge = 0,
   isSubmitting = false,
   onClose,
+  onValidationError,
   onConfirm,
 }: Props): JSX.Element {
   const [taxPctInput, setTaxPctInput] = useState(initialTaxPct);
   const [payments, setPayments] = useState<BillPayment[]>([
     { method: "cash", amount: initialTotal },
   ]);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   const totals = useMemo(
-    () => computeCheckoutTotals([{ qty: 1, unitPrice: subtotal }], discount, initialServicePct, taxPctInput),
-    [subtotal, discount, initialServicePct, taxPctInput],
+    () =>
+      computeCheckoutTotals(
+        [{ qty: 1, unitPrice: subtotal }],
+        discount,
+        initialServicePct,
+        taxPctInput,
+        deliveryCharge,
+      ),
+    [subtotal, discount, initialServicePct, taxPctInput, deliveryCharge],
   );
 
   useEffect(() => {
@@ -75,9 +87,12 @@ export function PosCheckoutModal({
   }, [onClose]);
 
   const isHold = mode === "hold";
-  const canSubmit = isHold || paymentsCoverTotal(payments, totals.total);
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  const change = paid - totals.total;
+  const shortfallMessage = !isHold ? paymentsShortfallMessage(payments, totals.total) : null;
 
   function updatePayment(index: number, patch: Partial<BillPayment>): void {
+    setPaymentError(null);
     setPayments((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
@@ -97,16 +112,31 @@ export function PosCheckoutModal({
   }
 
   function handleConfirm(): void {
+    if (isHold) {
+      onConfirm({
+        servicePct: initialServicePct,
+        taxPct: taxPctInput,
+        payments: [],
+        status: "held",
+      });
+      return;
+    }
+
+    const err = paymentsShortfallMessage(payments, totals.total);
+    if (err) {
+      setPaymentError(err);
+      onValidationError?.(err);
+      return;
+    }
+
+    setPaymentError(null);
     onConfirm({
       servicePct: initialServicePct,
       taxPct: taxPctInput,
-      payments: isHold ? [] : payments.filter((p) => p.amount > 0),
-      status: isHold ? "held" : "completed",
+      payments: payments.filter((p) => p.amount > 0),
+      status: "completed",
     });
   }
-
-  const paid = payments.reduce((s, p) => s + p.amount, 0);
-  const change = paid - totals.total;
 
   return (
     <div
@@ -169,6 +199,12 @@ export function PosCheckoutModal({
               <span>Tax ({taxPctInput}%)</span>
               <span>Rs {totals.tax.toLocaleString()}</span>
             </div>
+            {deliveryCharge > 0 ? (
+              <div className="flex justify-between text-slate-500">
+                <span>Delivery</span>
+                <span>Rs {deliveryCharge.toLocaleString()}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between border-t border-slate-800 pt-2 text-sm font-semibold text-white">
               <span>Total</span>
               <span>Rs {totals.total.toLocaleString()}</span>
@@ -230,6 +266,11 @@ export function PosCheckoutModal({
                   {change < 0 ? ` · Short Rs ${Math.abs(change).toLocaleString()}` : ""}
                 </p>
               ) : null}
+              {paymentError || shortfallMessage ? (
+                <p className="mt-2 text-[11px] font-medium text-amber-300">
+                  {paymentError ?? shortfallMessage}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -241,7 +282,7 @@ export function PosCheckoutModal({
           <Button
             type="button"
             className="h-9 text-xs"
-            disabled={!canSubmit || isSubmitting}
+            disabled={isSubmitting}
             onClick={handleConfirm}
           >
             {isSubmitting ? "…" : isHold ? "Hold bill" : mode === "invoice" ? "Print invoice" : "Complete payment"}

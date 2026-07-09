@@ -1,0 +1,18 @@
+# Railway config for the API service.
+#
+# IMPORTANT: Railway "Root Directory" must stay EMPTY (repository root).
+# This monorepo needs packages/* at build time — do not set Root Directory to backend/ or backend/api/.
+#
+# In Railway UI: Settings → Builder = Dockerfile → Dockerfile path = backend/Dockerfile
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+watchPatterns = ["backend/**", "packages/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json"]
+
+[deploy]
+startCommand = "node /app/backend/api/scripts/start-railway.mjs"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

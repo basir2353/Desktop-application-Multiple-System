@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -184,8 +185,10 @@ export class AccountingController {
 
   @Get("cash-sessions/open")
   @RequirePermissions("pops.read")
-  getOpenCashSession(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
-    return this.accounting.getOpenCashSession(user.organizationId, branchCode?.trim() ?? "");
+  async getOpenCashSession(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    const session = await this.accounting.getOpenCashSession(user.organizationId, branchCode?.trim() ?? "");
+    if (!session) throw new NotFoundException("No open cash session");
+    return session;
   }
 
   @Post("cash-sessions/open")

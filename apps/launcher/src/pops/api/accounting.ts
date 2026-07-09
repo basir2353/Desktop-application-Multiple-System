@@ -52,6 +52,14 @@ async function parseError(res: Response, fallback: string): Promise<never> {
   throw new Error(err?.message ?? `${fallback}: ${res.status}`);
 }
 
+/** Parse JSON body; returns null for 204 or empty responses (avoids json() parse errors). */
+async function readJsonOrNull<T>(res: Response): Promise<T | null> {
+  if (res.status === 204) return null;
+  const text = await res.text();
+  if (!text.trim()) return null;
+  return JSON.parse(text) as T;
+}
+
 function branchParams(branchCode: string, extra?: Record<string, string>): URLSearchParams {
   return new URLSearchParams({ branchCode, ...extra });
 }
@@ -171,14 +179,15 @@ export async function fetchOpenCashSession(branchCode: string): Promise<CashSess
   const res = await authFetch(`/v1/accounting/cash-sessions/open?${branchParams(branchCode)}`);
   if (res.status === 404) return null;
   if (!res.ok) await parseError(res, "Open cash session failed");
-  const json = await res.json();
+  const json = await readJsonOrNull<unknown>(res);
   return json ? cashSessionLiveSchema.parse(json) : null;
 }
 
 export async function fetchCashSessions(branchCode: string): Promise<CashSession[]> {
   const res = await authFetch(`/v1/accounting/cash-sessions?${branchParams(branchCode)}`);
   if (!res.ok) await parseError(res, "Cash sessions failed");
-  return cashSessionSchema.array().parse(await res.json());
+  const json = await readJsonOrNull<unknown>(res);
+  return json ? cashSessionSchema.array().parse(json) : [];
 }
 
 export async function openCashSession(input: OpenCashSession): Promise<CashSession> {
@@ -198,13 +207,14 @@ export async function closeCashSession(sessionId: string, input: CloseCashSessio
     body: JSON.stringify(input),
   });
   if (!res.ok) await parseError(res, "Close cash session failed");
-  return res.json();
+  return readJsonOrNull(res);
 }
 
 export async function fetchCashMovements(sessionId: string): Promise<PopsCashMovement[]> {
   const res = await authFetch(`/v1/accounting/cash-movements?${new URLSearchParams({ sessionId })}`);
   if (!res.ok) await parseError(res, "Cash movements failed");
-  return popsCashMovementSchema.array().parse(await res.json());
+  const json = await readJsonOrNull<unknown>(res);
+  return json ? popsCashMovementSchema.array().parse(json) : [];
 }
 
 export async function recordCashMovement(input: CreatePopsCashMovement): Promise<PopsCashMovement> {
