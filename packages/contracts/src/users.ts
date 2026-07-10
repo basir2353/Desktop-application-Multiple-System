@@ -41,6 +41,7 @@ export const createOrgUserSchema = z.object({
   role: popsRoleSchema,
   branchScope: z.string().min(1).max(64),
   pinRequired: z.boolean().default(false),
+  staffPin: z.string().regex(/^\d{4}$/).optional(),
 });
 
 export const updateOrgUserSchema = z.object({
@@ -48,6 +49,7 @@ export const updateOrgUserSchema = z.object({
   branchScope: z.string().min(1).max(64).optional(),
   pinRequired: z.boolean().optional(),
   password: z.string().min(8).max(128).optional(),
+  staffPin: z.string().regex(/^\d{4}$/).optional(),
 });
 
 export const resetUserPasswordSchema = z.object({

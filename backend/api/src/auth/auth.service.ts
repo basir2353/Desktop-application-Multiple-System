@@ -1,12 +1,13 @@
 import { Inject, Injectable, OnModuleInit, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import {
   moduleVersions,
   modules,
   organizationMemberships,
   organizations,
+  popsBranches,
   popsRiders,
   refreshTokens,
   users,
@@ -145,6 +146,84 @@ export class AuthService implements OnModuleInit {
     });
 
     return this.issueTokens(user.id, m.organizationId, m.permissions, m.role, m.branchScope ?? "all");
+  }
+
+  async pinLogin(branchCode: string, pin: string) {
+    const code = branchCode.trim().toUpperCase();
+    const branchRows = await this.db
+      .select({ organizationId: popsBranches.organizationId })
+      .from(popsBranches)
+      .where(eq(popsBranches.code, code))
+      .limit(1);
+    const branch = branchRows[0];
+    if (!branch) throw new UnauthorizedException("Branch not found");
+
+    const memberships = await this.db
+      .select({
+        userId: organizationMemberships.userId,
+        organizationId: organizationMemberships.organizationId,
+        permissions: organizationMemberships.permissions,
+        role: organizationMemberships.role,
+        branchScope: organizationMemberships.branchScope,
+        staffPinHash: organizationMemberships.staffPinHash,
+        email: users.email,
+      })
+      .from(organizationMemberships)
+      .innerJoin(users, eq(users.id, organizationMemberships.userId))
+      .where(
+        and(
+          eq(organizationMemberships.organizationId, branch.organizationId),
+          isNotNull(organizationMemberships.staffPinHash),
+        ),
+      );
+
+    const eligible = memberships.filter(
+      (row) =>
+        row.staffPinHash &&
+        (row.branchScope === "all" || row.branchScope.toUpperCase() === code),
+    );
+
+    for (const row of eligible) {
+      if (!row.staffPinHash) continue;
+      const ok = await bcrypt.compare(pin, row.staffPinHash);
+      if (!ok) continue;
+
+      await this.db
+        .update(organizationMemberships)
+        .set({ lastActivityAt: new Date() })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, row.organizationId),
+            eq(organizationMemberships.userId, row.userId),
+          ),
+        );
+
+      await this.security.logEvent({
+        organizationId: row.organizationId,
+        eventType: "login_success",
+        userEmail: row.email,
+        userId: row.userId,
+        action: "PIN login success",
+        detail: `Branch ${code}`,
+      });
+
+      return this.issueTokens(
+        row.userId,
+        row.organizationId,
+        row.permissions,
+        row.role,
+        row.branchScope ?? "all",
+      );
+    }
+
+    await this.security.logEvent({
+      organizationId: branch.organizationId,
+      eventType: "login_failed",
+      userEmail: `pin@${code.toLowerCase()}`,
+      action: "PIN login failed",
+      detail: `Branch ${code}`,
+    });
+    throw new UnauthorizedException("Invalid PIN for this branch");
   }
 
   async refresh(refreshToken: string) {

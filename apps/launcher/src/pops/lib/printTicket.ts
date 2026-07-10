@@ -1,6 +1,11 @@
 import type { Bill, KitchenTicket } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
 import { parseItemsSummary, type PosRecentOrder } from "./recentOrders";
+import {
+  DEFAULT_KOT_PRINT_SETTINGS,
+  loadKotPrintSettings,
+  type KotPrintSettings,
+} from "./kotPrintSettings";
 
 export type PrintLine = {
   label: string;
@@ -30,6 +35,7 @@ export type PrintTicketInput = {
   servicePct: number;
   taxPct?: number;
   discountPct: number;
+  kotSettings?: KotPrintSettings;
 };
 
 function escapeHtml(value: string): string {
@@ -46,23 +52,32 @@ function formatMoney(pkr: number): string {
 
 function buildTicketHtml(input: PrintTicketInput): string {
   const isReceipt = input.kind === "receipt";
-  const title = isReceipt ? "Tax invoice" : "Kitchen order ticket";
+  const kotSettings =
+    input.kotSettings ??
+    (input.branchCode ? loadKotPrintSettings(input.branchCode) : DEFAULT_KOT_PRINT_SETTINGS);
+  const title = isReceipt ? "Tax Invoice" : "Kitchen Order";
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
   });
 
+  const totalItems = input.lines.length;
+  const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
+
   const lineRows = input.lines
     .map((line) => {
       const lineTotal = line.unitPrice * line.qty;
+      const itemBorder = !isReceipt && kotSettings.itemUnderlineSeparator
+        ? ' style="border-bottom: 1px solid #111827"'
+        : "";
       if (!isReceipt) {
-        return `<tr>
-        <td>${escapeHtml(line.label)}</td>
+        return `<tr${itemBorder}>
+        <td class="item-name">${escapeHtml(line.label)}</td>
         <td class="qty">${line.qty}</td>
       </tr>`;
       }
       return `<tr>
-        <td>${escapeHtml(line.label)}</td>
+        <td class="item-name">${escapeHtml(line.label)}</td>
         <td class="qty">${line.qty}</td>
         <td class="amt">${formatMoney(lineTotal)}</td>
       </tr>`;
@@ -71,69 +86,268 @@ function buildTicketHtml(input: PrintTicketInput): string {
 
   const totalsBlock = isReceipt
     ? `<div class="totals">
-        <div class="row"><span>Subtotal</span><span>${formatMoney(input.subtotal)}</span></div>
-        ${input.discount > 0 ? `<div class="row"><span>Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span>− ${formatMoney(input.discount)}</span></div>` : ""}
-        <div class="row"><span>Service (${input.servicePct}%)</span><span>${formatMoney(input.service)}</span></div>
-        <div class="row"><span>Tax (${input.taxPct ?? 15}%)</span><span>${formatMoney(input.tax)}</span></div>
-        ${(input.deliveryCharge ?? 0) > 0 ? `<div class="row"><span>Delivery</span><span>${formatMoney(input.deliveryCharge!)}</span></div>` : ""}
-        <div class="row grand"><span>Total</span><span>${formatMoney(input.total)}</span></div>
+        <div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal)}</span></div>
+        ${input.discount > 0 ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount)}</span></div>` : ""}
+        <div class="row"><span class="label">Service charge (${input.servicePct}%)</span><span class="value">${formatMoney(input.service)}</span></div>
+        <div class="row"><span class="label">Tax (${input.taxPct ?? 15}%)</span><span class="value">${formatMoney(input.tax)}</span></div>
+        ${(input.deliveryCharge ?? 0) > 0 ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!)}</span></div>` : ""}
+        <div class="row grand"><span class="label">Total</span><span class="value">${formatMoney(input.total)}</span></div>
       </div>`
     : "";
+
+  const metaRows = [
+    `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>`,
+    `<span class="meta-chip meta-primary">${escapeHtml(input.modeLabel)}</span>`,
+    input.tableLabel
+      ? `<span class="meta-chip meta-primary">${escapeHtml(input.tableLabel)}</span>`
+      : null,
+    input.billRef ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>` : null,
+    input.waiterName ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>` : null,
+    input.printerName ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>` : null,
+  ]
+    .filter(Boolean)
+    .join("");
+
+  const kotTotalsBlock =
+    !isReceipt && kotSettings.showItemTotals
+      ? `<div class="kot-totals">
+          <div class="row"><span class="label">Total items</span><span class="value">${totalItems}</span></div>
+          <div class="row"><span class="label">Total quantity</span><span class="value">${totalQty}</span></div>
+        </div>`
+      : "";
+
+  const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : 11;
+  const emphasizeMeta = !isReceipt && kotSettings.emphasizeOrderMeta;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>${escapeHtml(title)} — ${escapeHtml(input.orderRef)}${input.printerName ? ` · ${escapeHtml(input.printerName)}` : ""}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: "Courier New", Courier, monospace;
-      font-size: 12px;
-      line-height: 1.35;
-      color: #000;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: ${bodyFontSize}px;
+      font-weight: 400;
+      line-height: 1.5;
+      color: #111827;
       background: #fff;
-      margin: 0;
-      padding: 12px 10px;
+      margin: 0 auto;
+      padding: 16px 14px 20px;
       max-width: 80mm;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
-    h1 { font-size: 14px; margin: 0 0 4px; text-align: center; }
-    .meta { text-align: center; margin-bottom: 10px; font-size: 11px; }
-    .meta p { margin: 2px 0; }
-    table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-    th, td { padding: 3px 0; vertical-align: top; }
-    th { border-bottom: 1px dashed #000; text-align: left; font-size: 10px; }
-    td.qty { width: 28px; text-align: center; }
-    td.amt { text-align: right; white-space: nowrap; }
-    .totals { border-top: 1px dashed #000; padding-top: 6px; margin-top: 6px; }
-    .row { display: flex; justify-content: space-between; margin: 2px 0; }
-    .grand { font-weight: bold; font-size: 13px; margin-top: 4px; padding-top: 4px; border-top: 1px solid #000; }
-    .footer { margin-top: 12px; text-align: center; font-size: 10px; }
+    .header {
+      text-align: center;
+      padding-bottom: 12px;
+      border-bottom: 1.5px solid #111827;
+      margin-bottom: 12px;
+    }
+    .branch-name {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.25;
+      color: #111827;
+    }
+    .doc-type {
+      margin-top: 6px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #4b5563;
+    }
+    .meta {
+      margin: 12px 0 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 6px;
+      justify-content: center;
+    }
+    .meta-chip {
+      display: inline-block;
+      font-size: 9.5px;
+      font-weight: 500;
+      color: #374151;
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 2px 6px;
+      line-height: 1.4;
+    }
+    .meta-chip.bill-ref {
+      font-weight: 600;
+      color: #111827;
+      background: #e5e7eb;
+    }
+    .meta-chip.meta-primary {
+      font-size: ${emphasizeMeta ? "12px" : "9.5px"};
+      font-weight: ${emphasizeMeta ? "700" : "500"};
+      color: #111827;
+      background: ${emphasizeMeta ? "#fde68a" : "#f3f4f6"};
+    }
+    .notes {
+      margin: -6px 0 12px;
+      text-align: center;
+      font-size: 9.5px;
+      font-style: italic;
+      color: #6b7280;
+    }
+    .timestamp {
+      text-align: center;
+      font-size: 9px;
+      font-weight: 500;
+      color: #9ca3af;
+      margin-bottom: 14px;
+      letter-spacing: 0.02em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 10px;
+    }
+    thead th {
+      font-size: 8.5px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6b7280;
+      padding: 0 0 6px;
+      border-bottom: 1px solid #d1d5db;
+      text-align: left;
+    }
+    thead th.qty { width: 32px; text-align: center; }
+    thead th.amt { text-align: right; }
+    tbody td {
+      padding: 5px 0;
+      vertical-align: top;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    td.item-name {
+      font-size: 10.5px;
+      font-weight: 500;
+      color: #111827;
+      padding-right: 6px;
+    }
+    td.qty {
+      width: 32px;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 600;
+      color: #374151;
+      font-variant-numeric: tabular-nums;
+    }
+    td.amt {
+      text-align: right;
+      white-space: nowrap;
+      font-size: 10px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: #111827;
+    }
+    .totals {
+      border-top: 1.5px solid #111827;
+      padding-top: 8px;
+      margin-top: 4px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin: 3px 0;
+      gap: 12px;
+    }
+    .row .label {
+      font-size: 9.5px;
+      font-weight: 500;
+      color: #4b5563;
+    }
+    .row .value {
+      font-size: 10px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: #111827;
+      white-space: nowrap;
+    }
+    .row .value.discount { color: #dc2626; }
+    .row.grand {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #d1d5db;
+    }
+    .row.grand .label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #111827;
+      letter-spacing: -0.01em;
+    }
+    .row.grand .value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111827;
+      letter-spacing: -0.02em;
+    }
+    .footer {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #e5e7eb;
+      text-align: center;
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+    .kot-banner {
+      margin-top: 8px;
+      text-align: center;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #111827;
+      border: 1.5px solid #111827;
+      padding: 6px 8px;
+    }
+    .kot-totals {
+      border-top: 1px dashed #9ca3af;
+      padding-top: 8px;
+      margin: 8px 0 4px;
+    }
     @media print {
       body { padding: 0; }
+      .meta-chip { background: transparent; padding: 0; }
       @page { margin: 4mm; size: 80mm auto; }
     }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(input.branchName)}</h1>
-  <div class="meta">
-    <p><strong>${escapeHtml(title)}</strong></p>
-    <p>${escapeHtml(input.orderRef)} · ${escapeHtml(input.modeLabel)} · ${escapeHtml(input.tableLabel ?? "—")}</p>
-    ${input.notes ? `<p>${escapeHtml(input.notes)}</p>` : ""}
-    ${input.billRef ? `<p>Bill ${escapeHtml(input.billRef)}</p>` : ""}
-    ${input.waiterName ? `<p>Waiter: ${escapeHtml(input.waiterName)}</p>` : ""}
-    ${input.printerName ? `<p>Printer: ${escapeHtml(input.printerName)}</p>` : ""}
-    <p>${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</p>
-  </div>
+  <header class="header">
+    <div class="branch-name">${escapeHtml(input.branchName)}</div>
+    <div class="doc-type">${escapeHtml(title)}</div>
+  </header>
+  <div class="meta">${metaRows}</div>
+  ${input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
+  <div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>
   <table>
     <thead>
-      <tr><th>Item</th><th class="qty">Qty</th>${isReceipt ? '<th class="amt">Amount</th>' : ""}</tr>
+      <tr>
+        <th>Item</th>
+        <th class="qty">Qty</th>
+        ${isReceipt ? '<th class="amt">Amount</th>' : ""}
+      </tr>
     </thead>
     <tbody>${lineRows}</tbody>
   </table>
+  ${kotTotalsBlock}
   ${totalsBlock}
-  <div class="footer">${isReceipt ? "Thank you — visit again" : "*** KITCHEN COPY — ORDER ***"}</div>
+  <div class="footer">${isReceipt ? "Thank you — visit again" : '<div class="kot-banner">Kitchen copy — order</div>'}</div>
 </body>
 </html>`;
 }

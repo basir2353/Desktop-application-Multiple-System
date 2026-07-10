@@ -5,6 +5,11 @@ export const loginRequestSchema = z.object({
   password: z.string().min(8),
 });
 
+export const pinLoginRequestSchema = z.object({
+  branchCode: z.string().min(1).max(64),
+  pin: z.string().regex(/^\d{4}$/, "PIN must be 4 digits"),
+});
+
 export const refreshRequestSchema = z.object({
   refreshToken: z.string().min(10),
 });
@@ -37,6 +42,7 @@ export const syncPushBatchSchema = z.object({
 });
 
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
+export type PinLoginRequest = z.infer<typeof pinLoginRequestSchema>;
 export type RefreshRequest = z.infer<typeof refreshRequestSchema>;
 export type TokenPair = z.infer<typeof tokenPairSchema>;
 export type CatalogModule = z.infer<typeof catalogModuleSchema>;

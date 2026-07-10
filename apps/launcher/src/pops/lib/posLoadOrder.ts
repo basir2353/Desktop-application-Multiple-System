@@ -23,6 +23,8 @@ export type StoredOrderLine = {
 
 export function inferPosModeFromStation(stationLabel: string): PosOrderMode {
   const value = stationLabel.toLowerCase();
+  if (value.includes("foodpanda") || value.startsWith("fp-")) return "foodpanda";
+  if (value.includes("online") || value.startsWith("ol-")) return "online";
   if (value.includes("delivery")) return "delivery";
   if (value.includes("takeaway") || value.includes("counter")) return "takeaway";
   return "dine-in";
@@ -95,11 +97,12 @@ export function cartFromStoredLines(
   lines: StoredOrderLine[],
 ): PosCartLine[] {
   const cart: PosCartLine[] = [];
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     const item = matchMenuItem(menuItems, line);
     if (!item) continue;
     const variant = matchVariant(item, line.label);
-    const cartLine = buildCartLine(item, variant, line.qty);
+    const cartLine = buildCartLine(item, variant, line.qty, index);
     if (line.unitPrice != null && line.unitPrice > 0) {
       cartLine.unitPrice = line.unitPrice;
     }

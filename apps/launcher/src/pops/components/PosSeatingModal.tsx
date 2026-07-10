@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { RestaurantTable, SeatingSection } from "@platform/contracts";
 import { modalBackdropClass } from "../lib/themeClasses";
 
@@ -32,14 +32,26 @@ export function PosSeatingModal({
   }, [onClose]);
 
   const activeSections = sections.filter((s) => s.isActive);
-  const selectedSection = activeSections.find((s) => s.id === selectedSectionId) ?? null;
-  const sectionTables = selectedSectionId
-    ? tables.filter((t) => t.sectionId === selectedSectionId && t.isActive)
-    : [];
+  const [viewAllSections, setViewAllSections] = useState(false);
+  const selectedSection = viewAllSections
+    ? null
+    : (activeSections.find((s) => s.id === selectedSectionId) ?? null);
+  const sectionTables = viewAllSections
+    ? tables.filter((t) => t.isActive)
+    : selectedSectionId
+      ? tables.filter((t) => t.sectionId === selectedSectionId && t.isActive)
+      : [];
+
+  const sectionNameById = new Map(activeSections.map((s) => [s.id, s.name]));
 
   function handleTablePick(tableId: string): void {
     onSelectTable(tableId);
     onClose();
+  }
+
+  function backToSectionList(): void {
+    setViewAllSections(false);
+    onSelectSection(null);
   }
 
   return (
@@ -55,12 +67,16 @@ export function PosSeatingModal({
         <div className="floor-modal-header flex items-start justify-between gap-3 px-4 py-3">
           <div>
             <h2 id="pos-seating-title" className="floor-modal-title">
-              {selectedSection ? selectedSection.name : "Select seating section"}
+              {viewAllSections
+                ? "All sections"
+                : selectedSection
+                  ? selectedSection.name
+                  : "Select seating section"}
             </h2>
             <p className="floor-modal-subtitle">
-              {selectedSection
+              {viewAllSections || selectedSection
                 ? "Choose a table for this dine-in order."
-                : "Pick a section, then select a table."}
+                : "Pick a section, or view all tables at once."}
             </p>
           </div>
           <button type="button" onClick={onClose} className="floor-modal-close shrink-0" aria-label="Close">
@@ -73,8 +89,18 @@ export function PosSeatingModal({
             <p className="floor-modal-body-text">Loading floor plan…</p>
           ) : activeSections.length === 0 ? (
             <p className="floor-modal-body-text">No seating sections yet. Add them under Tables.</p>
-          ) : !selectedSection ? (
+          ) : !selectedSection && !viewAllSections ? (
             <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setViewAllSections(true)}
+                className="floor-modal-section-card border-amber-500/40 bg-amber-500/10"
+              >
+                <div className="floor-modal-section-title">All sections</div>
+                <div className="floor-modal-section-meta">
+                  {tables.filter((t) => t.isActive).length} tables total
+                </div>
+              </button>
               {activeSections.map((section) => {
                 const count = tables.filter((t) => t.sectionId === section.id && t.isActive).length;
                 const empty = count === 0;
@@ -83,7 +109,10 @@ export function PosSeatingModal({
                     key={section.id}
                     type="button"
                     disabled={empty}
-                    onClick={() => onSelectSection(section.id)}
+                    onClick={() => {
+                      setViewAllSections(false);
+                      onSelectSection(section.id);
+                    }}
                     className={`floor-modal-section-card ${empty ? "is-disabled" : ""}`}
                   >
                     <div className="floor-modal-section-title">{section.name}</div>
@@ -96,7 +125,7 @@ export function PosSeatingModal({
             </div>
           ) : (
             <>
-              <button type="button" onClick={() => onSelectSection(null)} className="floor-modal-back">
+              <button type="button" onClick={backToSectionList} className="floor-modal-back">
                 ← All sections
               </button>
               {sectionTables.length === 0 ? (
@@ -113,7 +142,11 @@ export function PosSeatingModal({
                         className={`floor-modal-table-btn ${selected ? "is-selected" : ""}`}
                       >
                         <div className="floor-modal-table-label">{t.tableNumber}</div>
-                        <div className="floor-modal-table-meta">{t.seats} seats</div>
+                        <div className="floor-modal-table-meta">
+                          {viewAllSections
+                            ? (sectionNameById.get(t.sectionId) ?? "")
+                            : `${t.seats} seats`}
+                        </div>
                       </button>
                     );
                   })}

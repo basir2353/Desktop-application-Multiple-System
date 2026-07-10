@@ -19,7 +19,7 @@ import {
   updateMenuItem,
   uploadMenuImage,
 } from "../../api/menu";
-import { accentValueClass, amberPillActiveClass, linkDangerClass, linkWarningClass, mutedClass, noticeSuccessClass, pillInactiveClass } from "../../lib/themeClasses";
+import { accentValueClass, amberPillActiveClass, linkActionClass, linkDangerClass, linkWarningClass, mutedClass, noticeSuccessClass, pillInactiveClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import { MenuImagePicker, MenuImageThumb } from "../../ui/MenuImagePicker";
 import { PageHeader } from "../../ui/PageHeader";
@@ -44,10 +44,235 @@ import {
 
 type VariantRow = { label: string; price: string; barcode: string };
 
-const VARIANT_PRESETS = ["Full", "Half", "Quarter", "Plate", "Single"] as const;
+const VARIANT_PRESETS = ["Small", "Medium", "Large", "Full", "Half", "Quarter", "Plate", "Single"] as const;
 
 function emptyVariantRow(): VariantRow {
   return { label: "", price: "", barcode: "" };
+}
+
+type ItemFormState = {
+  name: string;
+  featured: boolean;
+  variants: VariantRow[];
+};
+
+function menuItemToEditForm(item: MenuItem): ItemFormState {
+  return {
+    name: item.name,
+    featured: item.featured,
+    variants:
+      item.variants.length > 0
+        ? item.variants.map((v) => ({
+            label: v.label,
+            price: String(v.price),
+            barcode: v.barcode ?? "",
+          }))
+        : [{ label: "", price: String(item.price), barcode: item.barcode ?? "" }],
+  };
+}
+
+function MenuItemVariantFields({
+  form,
+  onChange,
+}: {
+  form: ItemFormState;
+  onChange: (next: ItemFormState) => void;
+}): JSX.Element {
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium text-slate-300">Sub-categories (sizes)</div>
+        <div className="flex flex-wrap gap-1">
+          {VARIANT_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className="rounded-md border border-slate-700 px-2 py-0.5 text-[10px] text-slate-400 hover:border-amber-500/40 hover:text-white"
+              onClick={() =>
+                onChange({
+                  ...form,
+                  variants: [...form.variants, { ...emptyVariantRow(), label: preset }],
+                })
+              }
+            >
+              + {preset}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mt-1 text-[10px] text-slate-500">
+        Add Full, Half, Quarter, or custom sizes. POS shows a picker when a dish has more than one.
+      </p>
+      <ul className="mt-2 space-y-2">
+        {form.variants.map((row, index) => (
+          <li
+            key={index}
+            className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
+          >
+            <label className="block text-[10px] text-slate-500 sm:col-span-3">
+              Label
+              <input
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                placeholder="Full"
+                value={row.label}
+                onChange={(e) =>
+                  onChange({
+                    ...form,
+                    variants: form.variants.map((v, i) =>
+                      i === index ? { ...v, label: e.target.value } : v,
+                    ),
+                  })
+                }
+              />
+            </label>
+            <label className="block text-[10px] text-slate-500 sm:col-span-2">
+              Price (PKR)
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                value={row.price}
+                onChange={(e) =>
+                  onChange({
+                    ...form,
+                    variants: form.variants.map((v, i) =>
+                      i === index ? { ...v, price: e.target.value } : v,
+                    ),
+                  })
+                }
+              />
+            </label>
+            <label className="block text-[10px] text-slate-500 sm:col-span-3">
+              Barcode
+              <input
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                value={row.barcode}
+                onChange={(e) =>
+                  onChange({
+                    ...form,
+                    variants: form.variants.map((v, i) =>
+                      i === index ? { ...v, barcode: e.target.value } : v,
+                    ),
+                  })
+                }
+              />
+            </label>
+            <div className="flex items-end justify-end sm:col-span-4">
+              {form.variants.length > 1 ? (
+                <button
+                  type="button"
+                  className={`pb-1.5 text-[10px] ${linkDangerClass}`}
+                  onClick={() =>
+                    onChange({
+                      ...form,
+                      variants: form.variants.filter((_, i) => i !== index),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        className={`mt-2 text-xs ${linkWarningClass}`}
+        onClick={() => onChange({ ...form, variants: [...form.variants, emptyVariantRow()] })}
+      >
+        + Add sub-category
+      </button>
+    </div>
+  );
+}
+
+function MenuItemEditModal({
+  item,
+  loading,
+  error,
+  onClose,
+  onSave,
+}: {
+  item: MenuItem;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSave: (form: ItemFormState, imageFile: File | null, clearImage: boolean) => void;
+}): JSX.Element {
+  const [form, setForm] = useState<ItemFormState>(() => menuItemToEditForm(item));
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [clearImage, setClearImage] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60">
+      <div
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="menu-item-edit-title"
+      >
+        <h2 id="menu-item-edit-title" className="text-lg font-semibold text-white">
+          Edit menu item
+        </h2>
+        <p className="mt-1 text-xs text-slate-400">{item.name}</p>
+        <form
+          className="mt-4 space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!form.name.trim()) return;
+            onSave(form, imageFile, clearImage);
+          }}
+        >
+          <label className="block text-xs text-slate-400">
+            Dish name
+            <input
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              required
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={form.featured}
+              onChange={(e) => setForm((f) => ({ ...f, featured: e.target.checked }))}
+            />
+            <span className="inline-flex items-center gap-1">
+              <span aria-hidden className="text-amber-700 dark:text-amber-300">★</span>
+              Feature this dish on POS
+            </span>
+          </label>
+          <MenuItemVariantFields form={form} onChange={setForm} />
+          <MenuImagePicker
+            label="Dish photo"
+            value={clearImage ? null : item.imageUrl}
+            previewFile={imageFile}
+            onFileSelect={(file) => {
+              setImageFile(file);
+              setClearImage(false);
+            }}
+            onClear={() => {
+              setImageFile(null);
+              setClearImage(true);
+            }}
+            disabled={loading}
+          />
+          {error ? <p className="text-xs text-red-300">{error}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" className="text-xs" disabled={loading}>
+              {loading ? "Saving…" : "Save changes"}
+            </Button>
+            <Button type="button" variant="ghost" className="text-xs" onClick={onClose} disabled={loading}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 export function MenuPage(): JSX.Element {
@@ -61,12 +286,14 @@ export function MenuPage(): JSX.Element {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryImage, setNewCategoryImage] = useState<File | null>(null);
-  const [itemForm, setItemForm] = useState({
+  const [itemForm, setItemForm] = useState<ItemFormState>({
     name: "",
     featured: false,
-    variants: [emptyVariantRow()] as VariantRow[],
+    variants: [emptyVariantRow()],
   });
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [categoryImageUploading, setCategoryImageUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [happyHourDraft, setHappyHourDraft] = useState<HappyHourSettings>(DEFAULT_HAPPY_HOUR_SETTINGS);
@@ -233,6 +460,49 @@ export function MenuPage(): JSX.Element {
     mutationFn: (id: string) => deleteMenuItem(id),
     onSuccess: () => invalidate(),
     onError: (err: Error) => setError(err.message),
+  });
+
+  const updateItemMutation = useMutation({
+    mutationFn: async ({
+      id,
+      form,
+      imageFile,
+      clearImage,
+    }: {
+      id: string;
+      form: ItemFormState;
+      imageFile: File | null;
+      clearImage: boolean;
+    }) => {
+      const variants = form.variants
+        .filter((v) => v.price.trim())
+        .map((v) => ({
+          label: v.label.trim() || "Standard",
+          price: Number(v.price),
+          barcode: v.barcode.trim() || undefined,
+        }));
+      if (variants.length === 0) {
+        throw new Error("Add at least one sub-category with a price.");
+      }
+      let imageUrl: string | null | undefined;
+      if (imageFile) {
+        imageUrl = await uploadMenuImage(imageFile);
+      } else if (clearImage) {
+        imageUrl = null;
+      }
+      return updateMenuItem(id, {
+        name: form.name.trim(),
+        featured: form.featured,
+        variants,
+        ...(imageUrl !== undefined ? { imageUrl } : {}),
+      });
+    },
+    onSuccess: () => {
+      invalidate();
+      setEditingItem(null);
+      setEditError(null);
+    },
+    onError: (err: Error) => setEditError(err.message),
   });
 
   async function updateCategoryImage(file: File | null, clearExisting = false): Promise<void> {
@@ -687,113 +957,7 @@ export function MenuPage(): JSX.Element {
                     </span>
                   </label>
 
-                  <div>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs font-medium text-slate-300">Sub-categories (sizes)</div>
-                      <div className="flex flex-wrap gap-1">
-                        {VARIANT_PRESETS.map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            className="rounded-md border border-slate-700 px-2 py-0.5 text-[10px] text-slate-400 hover:border-amber-500/40 hover:text-white"
-                            onClick={() =>
-                              setItemForm((f) => ({
-                                ...f,
-                                variants: [...f.variants, { ...emptyVariantRow(), label: preset }],
-                              }))
-                            }
-                          >
-                            + {preset}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <p className="mt-1 text-[10px] text-slate-500">
-                      Add Full, Half, Quarter, or custom sizes. POS shows a picker when a dish has more than one.
-                    </p>
-                    <ul className="mt-2 space-y-2">
-                      {itemForm.variants.map((row, index) => (
-                        <li
-                          key={index}
-                          className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
-                        >
-                          <label className="block text-[10px] text-slate-500 sm:col-span-3">
-                            Label
-                            <input
-                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-                              placeholder="Full"
-                              value={row.label}
-                              onChange={(e) =>
-                                setItemForm((f) => ({
-                                  ...f,
-                                  variants: f.variants.map((v, i) =>
-                                    i === index ? { ...v, label: e.target.value } : v,
-                                  ),
-                                }))
-                              }
-                            />
-                          </label>
-                          <label className="block text-[10px] text-slate-500 sm:col-span-2">
-                            Price (PKR)
-                            <input
-                              type="number"
-                              min={1}
-                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-                              value={row.price}
-                              onChange={(e) =>
-                                setItemForm((f) => ({
-                                  ...f,
-                                  variants: f.variants.map((v, i) =>
-                                    i === index ? { ...v, price: e.target.value } : v,
-                                  ),
-                                }))
-                              }
-                            />
-                          </label>
-                          <label className="block text-[10px] text-slate-500 sm:col-span-3">
-                            Barcode
-                            <input
-                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-                              value={row.barcode}
-                              onChange={(e) =>
-                                setItemForm((f) => ({
-                                  ...f,
-                                  variants: f.variants.map((v, i) =>
-                                    i === index ? { ...v, barcode: e.target.value } : v,
-                                  ),
-                                }))
-                              }
-                            />
-                          </label>
-                          <div className="flex items-end justify-end sm:col-span-4">
-                            {itemForm.variants.length > 1 ? (
-                              <button
-                                type="button"
-                                className={`pb-1.5 text-[10px] ${linkDangerClass}`}
-                                onClick={() =>
-                                  setItemForm((f) => ({
-                                    ...f,
-                                    variants: f.variants.filter((_, i) => i !== index),
-                                  }))
-                                }
-                              >
-                                Remove
-                              </button>
-                            ) : null}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      type="button"
-                      className={`mt-2 text-xs ${linkWarningClass}`}
-                      onClick={() =>
-                        setItemForm((f) => ({ ...f, variants: [...f.variants, emptyVariantRow()] }))
-                      }
-                    >
-                      + Add sub-category
-                    </button>
-                  </div>
+                  <MenuItemVariantFields form={itemForm} onChange={setItemForm} />
 
                   <MenuImagePicker
                     label="Dish photo (optional)"
@@ -903,6 +1067,16 @@ export function MenuPage(): JSX.Element {
                               </button>
                               <button
                                 type="button"
+                                className={`text-xs ${linkActionClass}`}
+                                onClick={() => {
+                                  setEditError(null);
+                                  setEditingItem(r);
+                                }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
                                 className="text-xs font-medium text-slate-700 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
                                 onClick={() =>
                                   toggleItemMutation.mutate({ id: r.id, isActive: !r.isActive })
@@ -934,6 +1108,27 @@ export function MenuPage(): JSX.Element {
           </div>
         </div>
       </div>
+
+      {editingItem ? (
+        <MenuItemEditModal
+          key={editingItem.id}
+          item={editingItem}
+          loading={updateItemMutation.isPending}
+          error={editError}
+          onClose={() => {
+            setEditingItem(null);
+            setEditError(null);
+          }}
+          onSave={(form, imageFile, clearImage) => {
+            updateItemMutation.mutate({
+              id: editingItem.id,
+              form,
+              imageFile,
+              clearImage,
+            });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

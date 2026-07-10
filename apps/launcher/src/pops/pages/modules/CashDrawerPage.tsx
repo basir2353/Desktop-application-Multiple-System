@@ -27,6 +27,7 @@ export function CashDrawerPage(): JSX.Element {
   const [paidType, setPaidType] = useState<"paid_in" | "paid_out">("paid_in");
   const [paidAmount, setPaidAmount] = useState("");
   const [paidReason, setPaidReason] = useState("");
+  const [transferTo, setTransferTo] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const openSessionQuery = useQuery({
@@ -87,6 +88,23 @@ export function CashDrawerPage(): JSX.Element {
       invalidate();
       setPaidAmount("");
       setPaidReason("");
+      setError(null);
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const transferMutation = useMutation({
+    mutationFn: async () => {
+      const expected = openSession!.liveExpectedCash;
+      await closeCashSession(openSession!.id, { countedCash: expected });
+      await openCashSession({
+        branchCode: branch!.code,
+        openingFloat: expected,
+      });
+    },
+    onSuccess: () => {
+      invalidate();
+      setTransferTo("");
       setError(null);
     },
     onError: (e: Error) => setError(e.message),
@@ -210,6 +228,26 @@ export function CashDrawerPage(): JSX.Element {
                 </li>
               ))}
             </ul>
+          ) : null}
+
+          {canOperateDrawer ? (
+            <AccountingFormPanel
+              title="Transfer shift"
+              submitLabel="Transfer to next cashier"
+              disabled={transferMutation.isPending || !transferTo.trim()}
+              onSubmit={() => transferMutation.mutate()}
+            >
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Close this session and open a new one with the same expected cash for handover.
+                Expected: {formatPkr(openSession.liveExpectedCash)}.
+              </p>
+              <input
+                className={accountingInputClass}
+                placeholder="Next cashier name"
+                value={transferTo}
+                onChange={(e) => setTransferTo(e.target.value)}
+              />
+            </AccountingFormPanel>
           ) : null}
 
           {canOperateDrawer ? (

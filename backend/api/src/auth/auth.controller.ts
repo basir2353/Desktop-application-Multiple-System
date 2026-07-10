@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Post, Query } from "@nestjs/common";
-import { acceptInviteSchema, loginRequestSchema, refreshRequestSchema } from "@platform/contracts";
+import { acceptInviteSchema, loginRequestSchema, pinLoginRequestSchema, refreshRequestSchema } from "@platform/contracts";
 import { AuthService } from "./auth.service";
 import { UsersService } from "../users/users.service";
 
@@ -14,6 +14,12 @@ export class AuthController {
   async login(@Body() body: unknown) {
     const parsed = loginRequestSchema.parse(body);
     return this.auth.login(parsed.email, parsed.password);
+  }
+
+  @Post("pin-login")
+  async pinLogin(@Body() body: unknown) {
+    const parsed = pinLoginRequestSchema.parse(body);
+    return this.auth.pinLogin(parsed.branchCode, parsed.pin);
   }
 
   @Post("refresh")

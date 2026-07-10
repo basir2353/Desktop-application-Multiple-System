@@ -23,6 +23,7 @@ type Props = {
   onReprint?: (bill: Bill) => void;
   onCompletePayment?: () => void;
   onChangeTable?: (order: UnifiedOrder) => void;
+  onDeleteBill?: () => void;
 };
 
 export function OrderDetailModal({
@@ -33,6 +34,7 @@ export function OrderDetailModal({
   onReprint,
   onCompletePayment,
   onChangeTable,
+  onDeleteBill,
 }: Props): JSX.Element {
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -201,6 +203,19 @@ export function OrderDetailModal({
               onClick={() => onChangeTable(order)}
             >
               Change table
+            </Button>
+          </div>
+        ) : null}
+
+        {order.source === "bill" && onDeleteBill ? (
+          <div className="border-t border-slate-800 px-4 py-3">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 w-full border border-red-500/30 text-xs text-red-400 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300"
+              onClick={onDeleteBill}
+            >
+              Delete order
             </Button>
           </div>
         ) : null}

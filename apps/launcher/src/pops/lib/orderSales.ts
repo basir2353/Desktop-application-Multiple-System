@@ -126,8 +126,17 @@ function sumTotals(orders: Bill[]): number {
   return orders.reduce((sum, o) => sum + o.total, 0);
 }
 
-export function billChannelLabel(tableLabel: string): "Dine-in" | "Takeaway" | "Delivery" {
+export type OrderChannelLabel =
+  | "Dine-in"
+  | "Takeaway"
+  | "Delivery"
+  | "Online Orders"
+  | "Foodpanda Orders";
+
+export function billChannelLabel(tableLabel: string): OrderChannelLabel {
   const label = tableLabel.trim().toLowerCase();
+  if (label.includes("foodpanda") || label.startsWith("fp-")) return "Foodpanda Orders";
+  if (label.includes("online") || label.startsWith("ol-")) return "Online Orders";
   if (label === "delivery" || label.startsWith("dl-")) return "Delivery";
   if (label.includes("takeaway") || label.startsWith("tw-")) return "Takeaway";
   return "Dine-in";
@@ -181,16 +190,26 @@ export type ChartSegment = {
   color: string;
 };
 
-export const CHANNEL_COLORS: Record<"Dine-in" | "Takeaway" | "Delivery", string> = {
+export const CHANNEL_COLORS: Record<OrderChannelLabel, string> = {
   "Dine-in": "rgb(52 211 153)",
   Takeaway: "rgb(56 189 248)",
   Delivery: "rgb(167 139 250)",
+  "Online Orders": "rgb(251 191 36)",
+  "Foodpanda Orders": "rgb(244 114 182)",
 };
+
+const ALL_CHANNELS: OrderChannelLabel[] = [
+  "Dine-in",
+  "Takeaway",
+  "Delivery",
+  "Online Orders",
+  "Foodpanda Orders",
+];
 
 /** Revenue split by service channel (completed orders). */
 export function channelSalesFromOrders(orders: Bill[]): ChartSegment[] {
   const completed = payableCompletedOrders(orders);
-  return (["Dine-in", "Takeaway", "Delivery"] as const).map((label) => ({
+  return ALL_CHANNELS.map((label) => ({
     label,
     value: completed
       .filter((o) => billChannelLabel(o.tableLabel) === label)

@@ -30,12 +30,17 @@ import {
 } from "../../lib/posOrderMode";
 import {
   buildCartLine,
+  nextCartSortOrder,
   pickDefaultVariant,
   resolvePosSellableVariants,
   shouldOpenVariantPicker,
+  sortCartLinesNewestFirst,
   type PosCartLine,
 } from "../../lib/posCart";
 import { printReceipt, printKot, type PrintTicketInput } from "../../lib/printTicket";
+import { noticeFromPrintResult } from "../../lib/printNotify";
+import { isTerminalAuthorized } from "../../lib/terminalAuth";
+import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { resolveMenuImageUrl } from "../../lib/menuImageUrl";
 import { buildPosRecentOrders, canChangePosRecentOrderTable, canPayPosRecentOrder, type PosRecentOrder } from "../../lib/recentOrders";
 import {
@@ -142,7 +147,7 @@ export function PosPage(): JSX.Element {
     () => DEFAULT_HAPPY_HOUR_SETTINGS,
   );
   const [orderRef, setOrderRef] = useState(() => peekNextOrderRef(undefined));
-  const [printNotice, setPrintNotice] = useState<string | null>(null);
+  const [printNotice, setPrintNotice] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [checkoutModal, setCheckoutModal] = useState<CheckoutModalMode | null>(null);
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [ticketServicePct, setTicketServicePct] = useState(10);
@@ -289,6 +294,7 @@ export function PosPage(): JSX.Element {
 
   const categories = menuQuery.data?.categories ?? [];
   const menuItems = menuQuery.data?.items ?? [];
+  const terminalBlocked = Boolean(branch?.code) && !isTerminalAuthorized(branch?.code);
   const floorSections = floorQuery.data?.sections ?? [];
   const floorTables = floorQuery.data?.tables ?? [];
 
@@ -407,15 +413,16 @@ export function PosPage(): JSX.Element {
   ]);
 
   function addVariantToCart(item: ApiMenuItem, variant: MenuItemVariant | null): void {
-    const line = buildCartLine(item, variant);
     setCart((prev) => {
+      const sortOrder = nextCartSortOrder(prev);
+      const line = buildCartLine(item, variant, 1, sortOrder);
       const i = prev.findIndex((l) => l.key === line.key);
       if (i >= 0) {
-        const next = [...prev];
-        next[i] = { ...next[i], qty: next[i].qty + 1 };
-        return next;
+        return prev.map((l) =>
+          l.key === line.key ? { ...l, qty: l.qty + 1, sortOrder } : l,
+        );
       }
-      return [...prev, line];
+      return [line, ...prev];
     });
   }
 
@@ -430,7 +437,10 @@ export function PosPage(): JSX.Element {
   function setQty(lineKey: string, qty: number): void {
     setCart((prev) => {
       if (qty <= 0) return prev.filter((l) => l.key !== lineKey);
-      return prev.map((l) => (l.key === lineKey ? { ...l, qty } : l));
+      const existing = prev.find((l) => l.key === lineKey);
+      const sortOrder =
+        existing && qty > existing.qty ? nextCartSortOrder(prev) : (existing?.sortOrder ?? 0);
+      return prev.map((l) => (l.key === lineKey ? { ...l, qty, sortOrder } : l));
     });
   }
 
@@ -438,6 +448,18 @@ export function PosPage(): JSX.Element {
     () => applyHappyHourBonus(cart, menuItems, happyHourSettings),
     [cart, menuItems, happyHourSettings],
   );
+
+  const displayCart = useMemo(
+    () => sortCartLinesNewestFirst(effectiveCart),
+    [effectiveCart],
+  );
+
+  const cartListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (displayCart.length === 0) return;
+    cartListRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [displayCart[0]?.key, displayCart[0]?.sortOrder, displayCart[0]?.qty]);
 
   const happyHourBonus = useMemo(
     () => resolveHappyHourBonusItem(menuItems, happyHourSettings),
@@ -597,7 +619,7 @@ export function PosPage(): JSX.Element {
     if (inferPosModeFromStation(ticket.stationLabel) === "delivery") {
       setDeliveryDetailsOpen(true);
     }
-    setPrintNotice(`Editing ${ticket.orderRef ?? ticket.ticketRef}. Add or remove items, then update.`);
+    setPrintNotice({ message: `Editing ${ticket.orderRef ?? ticket.ticketRef}. Add or remove items, then update.`, tone: "success" });
   }
 
   function applyBillToPos(bill: Bill): void {
@@ -619,7 +641,7 @@ export function PosPage(): JSX.Element {
     if (inferPosModeFromStation(bill.tableLabel) === "delivery") {
       setDeliveryDetailsOpen(true);
     }
-    setPrintNotice(`Editing held bill ${bill.orderRef ?? bill.billRef}.`);
+    setPrintNotice({ message: `Editing held bill ${bill.orderRef ?? bill.billRef}.`, tone: "success" });
   }
 
   function loadRecentOrderForEdit(order: PosRecentOrder): void {
@@ -634,7 +656,7 @@ export function PosPage(): JSX.Element {
 
   function loadRecentOrderForPayment(order: PosRecentOrder): void {
     if (!canPayPosRecentOrder(order)) {
-      setPrintNotice("This order is already paid.");
+      setPrintNotice({ message: "This order is already paid.", tone: "error" });
       return;
     }
     if (order.kind === "pending" && order.kitchenTicket) {
@@ -650,7 +672,7 @@ export function PosPage(): JSX.Element {
 
   function cancelEditing(): void {
     resetAfterBill();
-    setPrintNotice("Edit cancelled.");
+    setPrintNotice({ message: "Edit cancelled.", tone: "success" });
   }
 
   function openTableTransfer(): void {
@@ -669,7 +691,7 @@ export function PosPage(): JSX.Element {
     }
 
     if (transferableOrders.length === 0) {
-      setPrintNotice("No active dine-in orders available for table transfer.");
+      setPrintNotice({ message: "No active dine-in orders available for table transfer.", tone: "error" });
       return;
     }
     if (transferableOrders.length === 1 && transferableOrders[0]!.pendingTicket) {
@@ -755,17 +777,20 @@ export function PosPage(): JSX.Element {
     },
     onSuccess: () => {
       const wasTicketEdit = editingOrder?.kind === "ticket";
-      printKot(buildKotPrintPayload());
+      const kotOk = printKot(buildKotPrintPayload());
       invalidateOrderFeeds();
       resetAfterKitchenOrder();
       setEditingOrder(null);
       setPrintNotice(
-        wasTicketEdit
-          ? `${modeLabel} order updated and sent to kitchen.`
-          : `${modeLabel} order saved and sent to kitchen.`,
+        noticeFromPrintResult(
+          kotOk,
+          wasTicketEdit
+            ? `${modeLabel} order updated and sent to kitchen.`
+            : `${modeLabel} order saved and sent to kitchen.`,
+        ),
       );
     },
-    onError: (err: Error) => setPrintNotice(err.message),
+    onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
 
   const updateHeldBillMutation = useMutation({
@@ -788,9 +813,9 @@ export function PosPage(): JSX.Element {
     },
     onSuccess: () => {
       invalidateOrderFeeds();
-      setPrintNotice("Held bill updated.");
+      setPrintNotice({ message: "Held bill updated.", tone: "success" });
     },
-    onError: (err: Error) => setPrintNotice(err.message),
+    onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
 
   const checkoutMutation = useMutation({
@@ -853,7 +878,7 @@ export function PosPage(): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
       if (intent === "hold") {
         resetAfterBill();
-        setPrintNotice(`Bill ${bill.billRef} held — complete payment from Orders.`);
+        setPrintNotice({ message: `Bill ${bill.billRef} held — complete payment from Orders.`, tone: "success" });
         return;
       }
       const payload = buildPrintPayload();
@@ -861,13 +886,17 @@ export function PosPage(): JSX.Element {
       resetAfterBill();
       if (intent === "invoice") {
         setPrintNotice(
-          ok ? `Invoice printed — ${bill.billRef} saved to orders.` : `${bill.billRef} saved; print failed.`,
+          noticeFromPrintResult(ok, `Invoice printed — ${bill.billRef} saved to orders.`),
         );
       } else {
-        setPrintNotice(ok ? `${modeLabel} paid — ${bill.billRef}` : `${bill.billRef} saved; print failed.`);
+        setPrintNotice(noticeFromPrintResult(ok, `${modeLabel} paid — ${bill.billRef}`));
+      }
+      const phone = phoneFromBillNotes(bill.notes);
+      if (phone || mode === "delivery") {
+        shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
       }
     },
-    onError: (err: Error) => setPrintNotice(err.message),
+    onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
 
   const splitBillMutation = useMutation({
@@ -914,9 +943,12 @@ export function PosPage(): JSX.Element {
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
       resetAfterBill();
-      setPrintNotice(`${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`);
+      setPrintNotice({
+        message: `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
+        tone: "success",
+      });
     },
-    onError: (err: Error) => setPrintNotice(err.message),
+    onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
 
   function buildKotPrintPayload(): Omit<PrintTicketInput, "kind"> {
@@ -952,7 +984,7 @@ export function PosPage(): JSX.Element {
   function openSplitBill(): void {
     const err = validateBillCheckout();
     if (err) {
-      setPrintNotice(err);
+      setPrintNotice({ message: err, tone: "error" });
       return;
     }
     setSplitModalOpen(true);
@@ -967,6 +999,12 @@ export function PosPage(): JSX.Element {
 
   return (
     <div className="flex min-h-[calc(100vh-4.25rem)] flex-col gap-2">
+      {terminalBlocked ? (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          This terminal is not authorized for POS access. Ask an admin to authorize it under Settings →
+          Authorized terminals.
+        </div>
+      ) : null}
       {/* Compact toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900/40 px-2.5 py-2">
         <div className="shrink-0 text-sm font-semibold text-white">POS</div>
@@ -1053,7 +1091,10 @@ export function PosPage(): JSX.Element {
             <div className="mb-1.5 flex shrink-0 gap-1 overflow-x-auto pb-0.5">
               <button
                 type="button"
-                onClick={() => setMenuView("all")}
+                onClick={() => {
+                  setMenuView("all");
+                  setCategoryId(null);
+                }}
                 className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
                   showAllItems
                     ? "bg-slate-700 text-white"
@@ -1259,6 +1300,12 @@ export function PosPage(): JSX.Element {
               </button>
             ) : null}
 
+            {mode === "online" || mode === "foodpanda" ? (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
+                {mode === "online" ? "Online order channel" : "Foodpanda order channel"}
+              </div>
+            ) : null}
+
             {mode === "takeaway" ? (
               <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
                 Takeaway counter
@@ -1356,13 +1403,19 @@ export function PosPage(): JSX.Element {
           </div>
 
           {printNotice ? (
-            <p className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-              {printNotice}
+            <p
+              className={`shrink-0 border-b px-3 py-2 text-[11px] font-medium ${
+                printNotice.tone === "error"
+                  ? "border-red-300 bg-red-50 text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
+                  : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+              }`}
+            >
+              {printNotice.message}
             </p>
           ) : null}
 
-          <div className="p-3">
-            {effectiveCart.length === 0 ? (
+          <div ref={cartListRef} className="p-3">
+            {displayCart.length === 0 ? (
               <div className="flex min-h-[12rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
                 <div className="mb-2 text-2xl opacity-40" aria-hidden>
                   🛒
@@ -1373,19 +1426,21 @@ export function PosPage(): JSX.Element {
                 </p>
               </div>
             ) : (
-              <ul className="flex flex-col gap-2">
-                {effectiveCart.map((line) => (
+              <ul className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+                {displayCart.map((line) => (
                   <li
                     key={line.key}
-                    className={`flex min-w-0 items-center gap-2.5 rounded-lg border px-2.5 py-2 transition ${
+                    className={`flex min-w-0 flex-col gap-2 rounded-lg border px-2 py-2 transition ${
                       line.isComplimentary
                         ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
                         : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
                     }`}
                   >
                     <div className="min-w-0 flex-1 leading-snug">
-                      <div className="text-xs font-medium text-slate-900 dark:text-slate-100">{line.lineLabel}</div>
-                      <div className="mt-0.5 text-[11px] tabular-nums text-slate-500">
+                      <div className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-900 dark:text-slate-100">
+                        {line.lineLabel}
+                      </div>
+                      <div className="mt-1 text-[10px] tabular-nums text-slate-500">
                         {line.isComplimentary ? (
                           <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
                         ) : (
@@ -1394,25 +1449,25 @@ export function PosPage(): JSX.Element {
                       </div>
                     </div>
                     {line.isComplimentary ? (
-                      <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
+                      <span className="self-start rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
                         FREE
                       </span>
                     ) : (
-                      <div className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
+                      <div className="flex w-full items-center justify-center gap-1 rounded-lg bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                          className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setQty(line.key, line.qty - 1)}
                           aria-label="Decrease quantity"
                         >
                           −
                         </button>
-                        <span className="min-w-[1.25rem] text-center text-xs font-semibold tabular-nums text-slate-900 dark:text-white">
+                        <span className="min-w-[1rem] text-center text-[11px] font-semibold tabular-nums text-slate-900 dark:text-white">
                           {line.qty}
                         </span>
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                          className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setQty(line.key, line.qty + 1)}
                           aria-label="Increase quantity"
                         >
@@ -1428,6 +1483,23 @@ export function PosPage(): JSX.Element {
 
           <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Discount
+                </span>
+                <div className="flex gap-1">
+                  {[5, 10, 15, 20].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 hover:bg-amber-100 hover:text-amber-800 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-200"
+                      onClick={() => onDiscountPctChange(pct)}
+                    >
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                   Disc %
@@ -1580,7 +1652,7 @@ export function PosPage(): JSX.Element {
           deliveryCharge={deliveryCharge}
           isSubmitting={checkoutMutation.isPending}
           onClose={() => setCheckoutModal(null)}
-          onValidationError={(message) => setPrintNotice(message)}
+          onValidationError={(message) => setPrintNotice({ message, tone: "error" })}
           onConfirm={({ servicePct: checkoutServicePct, taxPct: checkoutTaxPct, payments, status }) =>
             checkoutMutation.mutate({
               intent: checkoutModal,
@@ -1622,7 +1694,7 @@ export function PosPage(): JSX.Element {
           branchCode={branch.code}
           onClose={() => setTableTransferTicket(null)}
           onSuccess={(message) => {
-            setPrintNotice(message);
+            setPrintNotice({ message, tone: "success" });
             if (editingOrder?.kind === "ticket" && editingOrder.ticketId === tableTransferTicket.id) {
               void queryClient.invalidateQueries({ queryKey: ["kitchen", branch.code] });
             }
@@ -1633,7 +1705,7 @@ export function PosPage(): JSX.Element {
       {payOutModalOpen ? (
         <PosPayOutModal
           onClose={() => setPayOutModalOpen(false)}
-          onSuccess={(message) => setPrintNotice(message)}
+          onSuccess={(message) => setPrintNotice({ message, tone: "success" })}
         />
       ) : null}
 
@@ -1650,7 +1722,7 @@ export function PosPage(): JSX.Element {
           onSuccess={(message) => {
             if (branch?.code) sessionStorage.removeItem(`pops-cashier-in-dismissed-${branch.code}`);
             void cashSessionQuery.refetch();
-            setPrintNotice(message);
+            setPrintNotice({ message, tone: "success" });
           }}
         />
       ) : null}

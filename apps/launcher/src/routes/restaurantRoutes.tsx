@@ -14,6 +14,9 @@ const CashDrawerPage = lazy(() =>
   import("../pops/pages/modules/CashDrawerPage").then((m) => ({ default: m.CashDrawerPage })),
 );
 const TablesPage = lazy(() => import("../pops/pages/modules/TablesPage").then((m) => ({ default: m.TablesPage })));
+const BillManagementPage = lazy(() =>
+  import("../pops/pages/modules/BillManagementPage").then((m) => ({ default: m.BillManagementPage })),
+);
 const OrdersPage = lazy(() => import("../pops/pages/modules/OrdersPage").then((m) => ({ default: m.OrdersPage })));
 const KitchenPage = lazy(() => import("../pops/pages/modules/KitchenPage").then((m) => ({ default: m.KitchenPage })));
 const WaiterPage = lazy(() => import("../pops/pages/modules/WaiterPage").then((m) => ({ default: m.WaiterPage })));
@@ -163,6 +166,7 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="pos/cash-drawer" element={<CashDrawerPage />} />
       <Route path="tables" element={<TablesPage />} />
       <Route path="orders" element={<OrdersPage />} />
+      <Route path="bills" element={<BillManagementPage />} />
       <Route path="kitchen" element={<KitchenPage />} />
       <Route path="waiter" element={<WaiterPage />} />
       <Route path="inventory" element={<InventoryDashboardPage />} />

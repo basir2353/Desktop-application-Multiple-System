@@ -1,5 +1,5 @@
 import type { Bill, KitchenTicket, KitchenTicketStatus } from "@platform/contracts";
-import { billChannelLabel } from "./orderSales";
+import { billChannelLabel, type OrderChannelLabel } from "./orderSales";
 import { computeTicketTotals } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
 import { DEFAULT_POS_SETTINGS } from "./posSettings";
@@ -39,7 +39,7 @@ export type PosRecentOrderDetail =
 export type PosRecentOrder = {
   id: string;
   ref: string;
-  orderMode: "Dine-in" | "Takeaway" | "Delivery";
+  orderMode: OrderChannelLabel;
   stationLabel: string;
   summary: string;
   total: number | null;

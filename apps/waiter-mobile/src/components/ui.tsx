@@ -117,8 +117,14 @@ export function Button({
   );
 }
 
-export function Input(props: TextInputProps) {
-  return <TextInput placeholderTextColor={colors.muted} style={styles.input} {...props} />;
+export function Input({ style, ...props }: TextInputProps) {
+  return (
+    <TextInput
+      placeholderTextColor={colors.muted}
+      style={[styles.input, style]}
+      {...props}
+    />
+  );
 }
 
 export function StatusBadge({ status }: { status: string }) {
@@ -258,6 +264,64 @@ export function QtyStepper({
       <Pressable onPress={onIncrement} style={[styles.qtyBtn, styles.qtyBtnAccent]} hitSlop={8}>
         <Text style={[styles.qtyBtnText, styles.qtyBtnTextAccent]}>+</Text>
       </Pressable>
+    </View>
+  );
+}
+
+export function PinPad({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+}: {
+  value: string;
+  onChange: (pin: string) => void;
+  onSubmit?: () => void;
+  disabled?: boolean;
+}) {
+  const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"];
+
+  function press(key: string): void {
+    if (disabled) return;
+    if (key === "clear") {
+      onChange("");
+      return;
+    }
+    if (key === "back") {
+      onChange(value.slice(0, -1));
+      return;
+    }
+    if (value.length >= 4) return;
+    const next = value + key;
+    onChange(next);
+    if (next.length === 4) onSubmit?.();
+  }
+
+  return (
+    <View style={styles.pinPad}>
+      <View style={styles.pinDots}>
+        {[0, 1, 2, 3].map((i) => (
+          <View key={i} style={[styles.pinDot, value.length > i && styles.pinDotFilled]} />
+        ))}
+      </View>
+      <View style={styles.pinGrid}>
+        {digits.map((key) => (
+          <Pressable
+            key={key}
+            onPress={() => press(key)}
+            disabled={disabled}
+            style={({ pressed }) => [
+              styles.pinKey,
+              key === "clear" || key === "back" ? styles.pinKeyWide : null,
+              pressed && !disabled && styles.pinKeyPressed,
+            ]}
+          >
+            <Text style={styles.pinKeyText}>
+              {key === "clear" ? "C" : key === "back" ? "⌫" : key}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
     </View>
   );
 }
@@ -576,6 +640,56 @@ const styles = StyleSheet.create({
   categoryCount: {
     color: colors.muted,
     fontSize: 12,
+    fontWeight: "600",
+  },
+  pinPad: {
+    gap: 16,
+    alignItems: "center",
+  },
+  pinDots: {
+    flexDirection: "row",
+    gap: 14,
+    paddingVertical: 8,
+  },
+  pinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: colors.border,
+    backgroundColor: "transparent",
+  },
+  pinDotFilled: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  pinGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "center",
+    maxWidth: 280,
+  },
+  pinKey: {
+    width: 72,
+    height: 52,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#0b1220",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pinKeyWide: {
+    width: 72,
+  },
+  pinKeyPressed: {
+    opacity: 0.85,
+    backgroundColor: "#1e293b",
+  },
+  pinKeyText: {
+    color: colors.text,
+    fontSize: 22,
     fontWeight: "600",
   },
 });

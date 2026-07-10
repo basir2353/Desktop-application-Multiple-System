@@ -24,6 +24,7 @@ export const popsNavItems: PopsNavItem[] = [
       { path: "waiter", label: "Waiter" },
       { path: "tables", label: "Tables" },
       { path: "orders", label: "Orders" },
+      { path: "bills", label: "Bill management" },
       { path: "kitchen", label: "Kitchen" },
       { path: "delivery", label: "Delivery" },
     ],

@@ -109,3 +109,21 @@ export async function updateBill(billId: string, input: UpdateBill): Promise<Bil
   }
   return billSchema.parse(await res.json());
 }
+
+export async function voidBill(billId: string): Promise<Bill> {
+  const res = await authFetch(`/v1/billing/bills/${billId}/void`, { method: "PATCH" });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Void bill failed: ${res.status}`);
+  }
+  return billSchema.parse(await res.json());
+}
+
+export async function deleteBill(billId: string): Promise<{ ok: true; billRef: string }> {
+  const res = await authFetch(`/v1/billing/bills/${billId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Delete bill failed: ${res.status}`);
+  }
+  return (await res.json()) as { ok: true; billRef: string };
+}

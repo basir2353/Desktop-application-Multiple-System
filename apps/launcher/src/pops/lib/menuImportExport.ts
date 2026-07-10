@@ -96,6 +96,7 @@ function menuItemRows(menu: BranchMenu): Record<string, string | number>[] {
         Active: item.isActive ? "Yes" : "No",
         "Sort Order": item.sortOrder,
         "Variant Label": variant.label,
+        Size: variant.label,
         Price: variant.price,
         Barcode: variant.barcode ?? "",
       });

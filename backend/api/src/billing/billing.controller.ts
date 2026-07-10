@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { completeBillSchema, createBillSchema, createWaiterSchema, updateBillSchema, updateWaiterSchema } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -64,5 +64,17 @@ export class BillingController {
     @Body() body: unknown,
   ) {
     return this.billing.updateBill(user.organizationId, billId, updateBillSchema.parse(body));
+  }
+
+  @Patch("bills/:billId/void")
+  @RequirePermissions("pops.read")
+  voidBill(@CurrentUser() user: AccessJwtPayload, @Param("billId") billId: string) {
+    return this.billing.voidBill(user.organizationId, billId);
+  }
+
+  @Delete("bills/:billId")
+  @RequirePermissions("pops.read")
+  deleteBill(@CurrentUser() user: AccessJwtPayload, @Param("billId") billId: string) {
+    return this.billing.deleteBill(user.organizationId, billId);
   }
 }

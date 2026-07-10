@@ -1,5 +1,5 @@
 import type { MenuItem } from "@platform/contracts";
-import { pickDefaultVariant, type PosCartLine, buildCartLine } from "./posCart";
+import { pickDefaultVariant, type PosCartLine, buildCartLine, nextCartSortOrder } from "./posCart";
 import type { HappyHourSettings, HappyHourTimeSlot } from "./happyHourSettings";
 
 function isHourInWindow(hour: number, startHour: number, endHour: number): boolean {
@@ -54,6 +54,7 @@ export function buildHappyHourBonusLine(
     key: `hh-bonus:${base.key}`,
     unitPrice: 0,
     lineLabel: `${base.lineLabel} (Happy hour gift)`,
+    sortOrder: 0,
     isComplimentary: true,
   };
 }
@@ -90,7 +91,8 @@ export function applyHappyHourBonus(
   const alreadyHasBonus = pricedCart.some((l) => l.key === bonusLine.key);
   if (alreadyHasBonus) return pricedCart;
 
-  return [...pricedCart, bonusLine];
+  const sortOrder = nextCartSortOrder(pricedCart);
+  return [{ ...bonusLine, sortOrder }, ...pricedCart];
 }
 
 export function stripComplimentaryLines(cart: PosCartLine[]): PosCartLine[] {

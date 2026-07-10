@@ -25,6 +25,8 @@ import {
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
+import { usePopsStore } from "../../../stores/popsStore";
+import { getUserPin, setUserPin } from "../../lib/posPinAuth";
 
 function formatLastActivity(iso: string | null): string {
   if (!iso) return "—";
@@ -47,6 +49,7 @@ type UserFormState = {
   role: PopsRole;
   branchScope: string;
   pinRequired: boolean;
+  staffPin: string;
 };
 
 const defaultForm = (): UserFormState => ({
@@ -55,6 +58,7 @@ const defaultForm = (): UserFormState => ({
   role: "cashier",
   branchScope: "all",
   pinRequired: true,
+  staffPin: "",
 });
 
 function UserFormModal({
@@ -167,6 +171,20 @@ function UserFormModal({
             />
             Require PIN for sensitive actions
           </label>
+          <label className="block text-xs text-slate-400">
+            POS login PIN (4 digits)
+            <input
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm tracking-[0.4em] text-white outline-none focus:border-amber-500/50"
+              inputMode="numeric"
+              maxLength={4}
+              pattern="\d{4}"
+              value={form.staffPin}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, staffPin: e.target.value.replace(/\D/g, "").slice(0, 4) }))
+              }
+              placeholder="••••"
+            />
+          </label>
           {error ? <p className="text-xs text-red-400">{error}</p> : null}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" className="text-xs" onClick={onClose} disabled={loading}>
@@ -184,6 +202,7 @@ function UserFormModal({
 
 export function AuthPage(): JSX.Element {
   const queryClient = useQueryClient();
+  const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const canManage =
     claims?.permissions.includes("*") || claims?.permissions.includes("pops.users.manage");
@@ -295,6 +314,7 @@ export function AuthPage(): JSX.Element {
       role: roleId === "admin" ? "admin" : roleId,
       branchScope: user.branchScope === "All" ? "all" : user.branchScope,
       pinRequired: user.pinRequired,
+      staffPin: branch?.code ? (getUserPin(branch.code, user.id) ?? "") : "",
     };
   }
 
@@ -495,8 +515,16 @@ export function AuthPage(): JSX.Element {
               role: values.role,
               branchScope: values.branchScope,
               pinRequired: values.pinRequired,
+              ...(values.staffPin ? { staffPin: values.staffPin } : {}),
             };
-            createMutation.mutate(input);
+            void createOrgUser(input).then((user) => {
+              if (branch?.code && values.staffPin) {
+                setUserPin(branch.code, user.id, values.staffPin);
+              }
+              invalidate();
+              setModal(null);
+              setFormError(null);
+            }).catch((err: Error) => setFormError(err.message));
           }}
         />
       ) : null}
@@ -544,6 +572,10 @@ export function AuthPage(): JSX.Element {
               pinRequired: values.pinRequired,
             };
             if (values.password.trim()) input.password = values.password;
+            if (values.staffPin) input.staffPin = values.staffPin;
+            if (branch?.code && values.staffPin) {
+              setUserPin(branch.code, selected.id, values.staffPin);
+            }
             updateMutation.mutate({ id: selected.id, input });
           }}
         />

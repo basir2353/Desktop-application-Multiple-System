@@ -32,7 +32,8 @@ export function computeTicketTotals(
   const discount = clampDiscountPkr(discountAmount, subtotal);
   const afterDisc = subtotal - discount;
   const service = Math.round(afterDisc * (servicePct / 100));
-  const tax = Math.round((afterDisc + service) * (taxPct / 100));
+  const effectiveTaxPct = taxPct > 0 ? taxPct : 0;
+  const tax = Math.round((afterDisc + service) * (effectiveTaxPct / 100));
   const charge = Math.max(0, Math.round(deliveryCharge));
   const total = afterDisc + service + tax + charge;
   return {

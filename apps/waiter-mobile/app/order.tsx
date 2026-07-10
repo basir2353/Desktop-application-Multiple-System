@@ -50,7 +50,8 @@ import {
   stationLabelForMode,
   type MobileOrderMode,
 } from "../src/lib/orderMode";
-import { resolveStaffRole } from "../src/lib/roles";
+import { resolveStaffRole, isCashierRole } from "../src/lib/roles";
+import { printBillReceipt } from "../src/lib/printBill";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 const SERVICE_PCT = 10;
@@ -142,12 +143,16 @@ export default function OrderScreen() {
   const notes = currentDraft.notes;
   const orderRef = currentDraft.orderRef;
 
-  function updateDraft(patch: Partial<TableDraft>): void {
+  function updateDraft(patch: Partial<TableDraft> | ((current: TableDraft) => Partial<TableDraft>)): void {
     if (!draftKey) return;
-    setDrafts((prev) => ({
-      ...prev,
-      [draftKey]: { ...(prev[draftKey] ?? emptyDraft(orderRef)), ...patch },
-    }));
+    setDrafts((prev) => {
+      const current = prev[draftKey] ?? emptyDraft(orderRef);
+      const patchValue = typeof patch === "function" ? patch(current) : patch;
+      return {
+        ...prev,
+        [draftKey]: { ...current, ...patchValue },
+      };
+    });
   }
 
   function combinedOrderNotes(): string | undefined {
@@ -378,6 +383,10 @@ export default function OrderScreen() {
       const lines = cartLines();
       const tableLabel = stationLabelForMode(orderMode, activeTableId);
       const payloadNotes = combinedOrderNotes();
+      const billSubtotal = cart.reduce((s, l) => s + l.item.price * l.qty, 0);
+      const billService = Math.round(billSubtotal * (SERVICE_PCT / 100));
+      const billTax = Math.round((billSubtotal + billService) * 0.15);
+      const billTotal = billSubtotal + billService + billTax;
       if (editingOrder?.kind === "bill") {
         return updateBill(editingOrder.billId, {
           tableLabel,
@@ -396,39 +405,55 @@ export default function OrderScreen() {
         lines,
         notes: payloadNotes,
         servicePct: SERVICE_PCT,
+        status: isCashierRole(claims) ? "completed" : "held",
+        ...(isCashierRole(claims)
+          ? { payments: [{ method: "cash" as const, amount: billTotal }] }
+          : {}),
         riderId: orderMode === "delivery" ? deliveryRiderId || undefined : undefined,
         deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : undefined,
       });
     },
-    onSuccess: (bill) => {
+    onSuccess: async (bill) => {
       const wasEdit = editingOrder?.kind === "bill";
       updateDraft({ cart: [], notes: "" });
       setEditingOrder(null);
       appliedEditRef.current = null;
       invalidateOrderFeeds();
-      setNotice(
-        wasEdit ? `Held bill ${bill.billRef} updated.` : `Bill ${bill.billRef} created successfully.`,
-      );
+      const held = bill.status === "held";
+      let message = wasEdit
+        ? `Held bill ${bill.billRef} updated.`
+        : held
+          ? `Bill ${bill.billRef} saved on hold — cashier can close it.`
+          : `Bill ${bill.billRef} created and paid.`;
+      if (branch) {
+        const printed = await printBillReceipt(branch.name, branch.code, bill);
+        if (printed) message = `${message} Receipt sent to printer.`;
+      }
+      setNotice(message);
       if (wasEdit) router.replace("/order");
     },
     onError: (err: Error) => setNotice(err.message),
   });
 
   function addToCart(item: MenuItem): void {
-    const next = [...cart];
-    const i = next.findIndex((l) => l.item.id === item.id);
-    if (i >= 0) next[i] = { ...next[i], qty: next[i].qty + 1 };
-    else next.push({ item, qty: 1 });
-    updateDraft({ cart: next });
+    updateDraft((current) => {
+      const next = [...current.cart];
+      const i = next.findIndex((l) => l.item.id === item.id);
+      if (i >= 0) next[i] = { ...next[i], qty: next[i].qty + 1 };
+      else next.push({ item, qty: 1 });
+      return { cart: next };
+    });
     setNotice(null);
   }
 
   function setLineQty(itemId: string, qty: number): void {
-    const next =
-      qty <= 0
-        ? cart.filter((l) => l.item.id !== itemId)
-        : cart.map((l) => (l.item.id === itemId ? { ...l, qty } : l));
-    updateDraft({ cart: next });
+    updateDraft((current) => {
+      const next =
+        qty <= 0
+          ? current.cart.filter((l) => l.item.id !== itemId)
+          : current.cart.map((l) => (l.item.id === itemId ? { ...l, qty } : l));
+      return { cart: next };
+    });
   }
 
   function selectMode(mode: MobileOrderMode): void {
@@ -861,7 +886,9 @@ export default function OrderScreen() {
                 : editingOrder?.kind === "bill"
                   ? `Update hold · ${formatPkr(total)}`
                   : cart.length > 0
-                    ? `Create bill · ${formatPkr(total)}`
+                    ? isCashierRole(claims)
+                      ? `Create & print · ${formatPkr(total)}`
+                      : `Save bill (hold) · ${formatPkr(total)}`
                     : "Create bill"
             }
             onPress={() => billMutation.mutate()}
@@ -1060,14 +1087,14 @@ const styles = StyleSheet.create({
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#0b1220",
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: "#cbd5e1",
     borderRadius: 12,
     paddingHorizontal: 12,
   },
   searchIcon: {
-    color: colors.muted,
+    color: "#64748b",
     fontSize: 18,
     marginRight: 8,
   },
@@ -1076,6 +1103,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingHorizontal: 0,
+    color: "#0f172a",
   },
   categoryRow: {
     gap: 8,
@@ -1093,28 +1121,29 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#0b1220",
+    backgroundColor: "#f8fafc",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: "#e2e8f0",
     padding: 14,
   },
   menuItemPressed: {
     opacity: 0.85,
-    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderColor: "rgba(245, 158, 11, 0.55)",
+    backgroundColor: "#fff7ed",
   },
   menuItemCopy: {
     flex: 1,
     gap: 4,
   },
   menuItemName: {
-    color: colors.text,
+    color: "#0f172a",
     fontSize: 15,
     fontWeight: "600",
     lineHeight: 20,
   },
   menuItemPrice: {
-    color: colors.accent,
+    color: "#b45309",
     fontSize: 14,
     fontWeight: "600",
   },

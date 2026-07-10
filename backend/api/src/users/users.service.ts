@@ -89,6 +89,19 @@ const STAFF_SEEDS = [
   },
 ] as const;
 
+const STAFF_DEFAULT_PINS: Record<string, string> = {
+  "cashier1@platform.local": "2222",
+  "manager1@platform.local": "3333",
+  "kitchen1@platform.local": "4444",
+  "waiter1@platform.local": "1111",
+  "waiter2@platform.local": "5555",
+  "rider1@platform.local": "6666",
+};
+
+async function hashStaffPin(pin: string): Promise<string> {
+  return bcrypt.hash(pin, 10);
+}
+
 @Injectable()
 export class UsersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(UsersService.name);
@@ -104,6 +117,7 @@ export class UsersService implements OnApplicationBootstrap {
       await this.upgradeOwnerPermissions();
       await this.upgradeRiderPermissions();
       await this.seedStaffIfMissing();
+      await this.upgradeStaffPins();
     } catch (err) {
       this.logger.warn(
         `User bootstrap skipped — run pnpm db:push if the schema changed: ${err instanceof Error ? err.message : err}`,
@@ -187,6 +201,9 @@ export class UsersService implements OnApplicationBootstrap {
 
       if (membership.length > 0) continue;
 
+      const defaultPin = STAFF_DEFAULT_PINS[seed.email];
+      const staffPinHash = defaultPin ? await hashStaffPin(defaultPin) : null;
+
       await this.db.insert(organizationMemberships).values({
         organizationId,
         userId,
@@ -194,8 +211,38 @@ export class UsersService implements OnApplicationBootstrap {
         permissions: permissionsForPopsRole(seed.role),
         branchScope: seed.branchScope,
         pinRequired: seed.pinRequired,
+        staffPinHash,
         lastActivityAt: new Date(Date.now() - (seed.role === "cashier" ? 9 * 60_000 : 11 * 60_000)),
       });
+    }
+  }
+
+  async upgradeStaffPins(): Promise<void> {
+    for (const [email, pin] of Object.entries(STAFF_DEFAULT_PINS)) {
+      const userRows = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+      const userId = userRows[0]?.id;
+      if (!userId) continue;
+
+      const membershipRows = await this.db
+        .select({
+          organizationId: organizationMemberships.organizationId,
+          staffPinHash: organizationMemberships.staffPinHash,
+        })
+        .from(organizationMemberships)
+        .where(eq(organizationMemberships.userId, userId))
+        .limit(1);
+      const membership = membershipRows[0];
+      if (!membership || membership.staffPinHash) continue;
+
+      await this.db
+        .update(organizationMemberships)
+        .set({ staffPinHash: await hashStaffPin(pin) })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, membership.organizationId),
+            eq(organizationMemberships.userId, userId),
+          ),
+        );
     }
   }
 
@@ -242,6 +289,7 @@ export class UsersService implements OnApplicationBootstrap {
     if (!user) throw new BadRequestException("Failed to create user");
 
     const branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+    const staffPinHash = input.staffPin ? await hashStaffPin(input.staffPin) : null;
 
     await this.db.insert(organizationMemberships).values({
       organizationId,
@@ -250,6 +298,7 @@ export class UsersService implements OnApplicationBootstrap {
       permissions: permissionsForPopsRole(input.role),
       branchScope,
       pinRequired: input.pinRequired,
+      staffPinHash,
       lastActivityAt: null,
     });
 
@@ -277,6 +326,9 @@ export class UsersService implements OnApplicationBootstrap {
       patch.branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
     }
     if (input.pinRequired !== undefined) patch.pinRequired = input.pinRequired;
+    if (input.staffPin !== undefined) {
+      patch.staffPinHash = await hashStaffPin(input.staffPin);
+    }
 
     if (Object.keys(patch).length > 0) {
       await this.db

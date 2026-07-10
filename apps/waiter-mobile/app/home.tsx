@@ -31,7 +31,7 @@ import {
   waiterDisplayName,
 } from "../src/lib/orderDisplay";
 import { buildUnifiedOrders } from "../src/lib/orderHistory";
-import { resolveStaffRole } from "../src/lib/roles";
+import { resolveStaffRole, canCloseOrders } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -42,6 +42,7 @@ type QuickAction = {
   icon: string;
   route: "/order" | "/orders" | "/history";
   primary?: boolean;
+  historyFilter?: "held";
 };
 
 export default function HomeScreen() {
@@ -104,6 +105,9 @@ export default function HomeScreen() {
   const refreshing = kitchenQuery.isFetching || ordersQuery.isFetching;
   const displayName = waiterDisplayName(waiterEmail);
 
+  const heldBills = bills.filter((b) => b.status === "held");
+  const cashierMode = canCloseOrders(claims);
+
   function refreshAll(): void {
     void kitchenQuery.refetch();
     void ordersQuery.refetch();
@@ -133,6 +137,18 @@ export default function HomeScreen() {
       icon: "◷",
       route: "/history",
     },
+    ...(cashierMode
+      ? [
+          {
+            id: "close",
+            title: "Close orders",
+            subtitle: `${heldBills.length} on hold · collect payment`,
+            icon: "₨",
+            route: "/history" as const,
+            historyFilter: "held" as const,
+          },
+        ]
+      : []),
     {
       id: "tables",
       title: "Floor tables",
@@ -196,7 +212,13 @@ export default function HomeScreen() {
             {quickActions.map((action) => (
               <Pressable
                 key={action.id}
-                onPress={() => router.push(action.route)}
+                onPress={() =>
+                  router.push(
+                    action.historyFilter
+                      ? { pathname: "/history", params: { filter: action.historyFilter } }
+                      : action.route,
+                  )
+                }
                 style={({ pressed }) => [
                   styles.actionTile,
                   action.primary && styles.actionTilePrimary,

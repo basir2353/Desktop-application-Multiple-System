@@ -1,11 +1,14 @@
 import type { BillLine, BillPayment, PaymentMethod } from "@platform/contracts";
 import { computeTicketTotals } from "./posDiscount";
 import type { PosCartLine } from "./posCart";
+import { effectiveTaxPct, type PosSettings } from "./posSettings";
 
 export type CheckoutTotals = ReturnType<typeof computeTicketTotals> & {
   servicePct: number;
   taxPct: number;
 };
+
+export type CheckoutMode = "full" | "partial" | "hold";
 
 export function cartToBillLines(cart: PosCartLine[]): BillLine[] {
   return cart.map((line) => ({
@@ -26,6 +29,24 @@ export function computeCheckoutTotals(
   const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
   const totals = computeTicketTotals(subtotal, discountAmount, servicePct, taxPct, deliveryCharge);
   return { ...totals, servicePct, taxPct };
+}
+
+/** Tax % based on dominant payment method when tax-by-payment is enabled. */
+export function taxPctForPayments(settings: PosSettings, payments: BillPayment[]): number {
+  if (!settings.taxEnabled) return 0;
+  if (!settings.taxByPaymentMethod || payments.length === 0) {
+    return effectiveTaxPct(settings);
+  }
+  const dominant = payments.reduce(
+    (best, p) => (p.amount > best.amount ? p : best),
+    payments[0] ?? { method: "cash" as PaymentMethod, amount: 0 },
+  );
+  return effectiveTaxPct(settings, dominant.method);
+}
+
+export function balanceDue(total: number, payments: BillPayment[]): number {
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  return Math.max(0, total - paid);
 }
 
 export function allocateDiscountAcrossSplits(
@@ -61,8 +82,23 @@ export function paymentsCoverTotal(payments: BillPayment[], total: number): bool
   return paid >= total;
 }
 
-export function paymentsShortfallMessage(payments: BillPayment[], total: number): string | null {
+export function paymentsShortfallMessage(
+  payments: BillPayment[],
+  total: number,
+  mode: CheckoutMode = "full",
+): string | null {
   const paid = payments.reduce((s, p) => s + p.amount, 0);
+  if (mode === "hold") return null;
+  if (mode === "partial") {
+    if (paid <= 0) return "Enter at least one partial payment amount.";
+    if (paid >= total) return null;
+    return null;
+  }
   if (paid >= total) return null;
   return `Payments (Rs ${paid.toLocaleString()}) do not cover bill total (Rs ${total.toLocaleString()})`;
+}
+
+export function isPartialPayment(payments: BillPayment[], total: number): boolean {
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  return paid > 0 && paid < total;
 }

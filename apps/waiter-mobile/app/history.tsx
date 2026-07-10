@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import { Redirect, useRouter } from "expo-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Bill, BillPayment } from "@platform/contracts";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,7 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { fetchOrders } from "../src/api/billing";
+import { completeBill, fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets } from "../src/api/kitchen";
 import {
   Card,
@@ -23,7 +24,10 @@ import {
   StatusBadge,
   colors,
 } from "../src/components/ui";
+import { CloseOrderModal } from "../src/components/CloseOrderModal";
 import { formatPkr, formatTimeAgo, formatWhen, isToday } from "../src/lib/orderDisplay";
+import { printBillReceipt } from "../src/lib/printBill";
+import { canCloseOrders } from "../src/lib/roles";
 import {
   buildUnifiedOrders,
   canEditUnifiedOrder,
@@ -40,16 +44,26 @@ import { useBranchStore } from "../src/stores/branchStore";
 import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
+const SERVICE_PCT = 10;
+const TAX_PCT = 15;
+
 type HistoryFilter = "today" | "all" | "held";
 
 export default function HistoryScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ filter?: string }>();
+  const queryClient = useQueryClient();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
   const branch = useBranchStore((s) => s.branch);
   const branchCode = branch?.code ?? "";
-  const [filter, setFilter] = useState<HistoryFilter>("today");
+  const [filter, setFilter] = useState<HistoryFilter>(
+    params.filter === "held" ? "held" : "today",
+  );
   const [search, setSearch] = useState("");
+  const [closeBill, setCloseBill] = useState<Bill | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const cashierCanClose = canCloseOrders(claims);
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
@@ -110,6 +124,32 @@ export default function HistoryScreen() {
     void kitchenQuery.refetch();
   }
 
+  const closeMutation = useMutation({
+    mutationFn: (payload: { billId: string; payments: BillPayment[] }) =>
+      completeBill(payload.billId, {
+        payments: payload.payments,
+        servicePct: SERVICE_PCT,
+        taxPct: TAX_PCT,
+      }),
+    onSuccess: async (bill) => {
+      setCloseBill(null);
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      let message = `Order ${bill.billRef} closed successfully.`;
+      if (branch) {
+        const printed = await printBillReceipt(branch.name, branch.code, bill);
+        if (printed) message = `${message} Receipt printed.`;
+      }
+      setNotice(message);
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
+  async function handlePrint(bill: Bill): Promise<void> {
+    if (!branch) return;
+    const ok = await printBillReceipt(branch.name, branch.code, bill);
+    setNotice(ok ? `Receipt for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
+  }
+
   function openEdit(order: UnifiedOrder): void {
     if (order.source === "kitchen") {
       router.push({ pathname: "/order", params: { editTicketId: order.ticket.id } });
@@ -142,6 +182,11 @@ export default function HistoryScreen() {
         </View>
 
         {queryError ? <Notice tone="warning">{queryError}</Notice> : null}
+        {notice ? (
+          <Notice tone={notice.includes("success") || notice.includes("closed") || notice.includes("printed") ? "success" : "warning"}>
+            {notice}
+          </Notice>
+        ) : null}
 
         <View style={styles.statsRow}>
           <StatCard label="Showing" value={filtered.length} hint={`${kitchenCount} kitchen · ${billCount} bills`} />
@@ -207,11 +252,29 @@ export default function HistoryScreen() {
         ) : (
           <View style={styles.list}>
             {filtered.map((order) => (
-              <OrderHistoryCard key={`${order.source}-${order.id}`} order={order} onEdit={openEdit} />
+              <OrderHistoryCard
+                key={`${order.source}-${order.id}`}
+                order={order}
+                onEdit={openEdit}
+                onClose={cashierCanClose && order.source === "bill" && order.bill.status === "held" ? () => setCloseBill(order.bill) : undefined}
+                onPrint={order.source === "bill" ? () => void handlePrint(order.bill) : undefined}
+              />
             ))}
           </View>
         )}
       </ScrollView>
+
+      {closeBill ? (
+        <CloseOrderModal
+          bill={closeBill}
+          visible
+          loading={closeMutation.isPending}
+          onClose={() => setCloseBill(null)}
+          onConfirm={(payments) =>
+            closeMutation.mutate({ billId: closeBill.id, payments })
+          }
+        />
+      ) : null}
     </Screen>
   );
 }
@@ -219,9 +282,13 @@ export default function HistoryScreen() {
 function OrderHistoryCard({
   order,
   onEdit,
+  onClose,
+  onPrint,
 }: {
   order: UnifiedOrder;
   onEdit: (order: UnifiedOrder) => void;
+  onClose?: () => void;
+  onPrint?: () => void;
 }) {
   const total = unifiedOrderTotal(order);
   const accent = orderStatusAccent(order);
@@ -253,7 +320,7 @@ function OrderHistoryCard({
       </Text>
 
       <View style={styles.orderFooter}>
-        <View>
+        <View style={styles.orderFooterLeft}>
           {total != null ? (
             <Text style={styles.orderTotal}>{formatPkr(total)}</Text>
           ) : (
@@ -262,11 +329,23 @@ function OrderHistoryCard({
           <Text style={styles.orderWhen}>{formatTimeAgo(order.createdAt)}</Text>
           <Text style={styles.orderWhenExact}>{formatWhen(order.createdAt)}</Text>
         </View>
+        <View style={styles.orderActions}>
         {editable ? (
           <Pressable onPress={() => onEdit(order)} style={styles.editBtn}>
             <Text style={styles.editBtnText}>Edit</Text>
           </Pressable>
         ) : null}
+        {onPrint ? (
+          <Pressable onPress={onPrint} style={styles.printBtn}>
+            <Text style={styles.printBtnText}>Print</Text>
+          </Pressable>
+        ) : null}
+        {onClose ? (
+          <Pressable onPress={onClose} style={styles.closeBtn}>
+            <Text style={styles.closeBtnText}>Close</Text>
+          </Pressable>
+        ) : null}
+        </View>
       </View>
 
       <Text style={styles.orderMeta}>{meta}</Text>
@@ -304,14 +383,14 @@ const styles = StyleSheet.create({
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#0b1220",
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: "#cbd5e1",
     borderRadius: 12,
     paddingHorizontal: 12,
   },
   searchIcon: {
-    color: colors.muted,
+    color: "#64748b",
     fontSize: 18,
     marginRight: 8,
   },
@@ -320,6 +399,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingHorizontal: 0,
+    color: "#0f172a",
   },
   clearSearch: {
     color: colors.accent,
@@ -409,6 +489,17 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingTop: 4,
   },
+  orderFooterLeft: {
+    flex: 1,
+    minWidth: 0,
+  },
+  orderActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "flex-end",
+    maxWidth: "55%",
+  },
   orderTotal: {
     color: colors.accent,
     fontSize: 18,
@@ -442,6 +533,36 @@ const styles = StyleSheet.create({
   },
   editBtnText: {
     color: colors.accent,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  printBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#0b1220",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minWidth: 72,
+    alignItems: "center",
+  },
+  printBtnText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  closeBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(34, 197, 94, 0.45)",
+    backgroundColor: "rgba(34, 197, 94, 0.12)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minWidth: 72,
+    alignItems: "center",
+  },
+  closeBtnText: {
+    color: colors.success,
     fontSize: 14,
     fontWeight: "700",
   },

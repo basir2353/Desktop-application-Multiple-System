@@ -32,7 +32,15 @@ import {
   subtleClass,
 } from "../../lib/themeClasses";
 
-type CartLine = { item: ApiMenuItem; qty: number };
+type CartLine = { item: ApiMenuItem; qty: number; sortOrder: number };
+
+function sortWaiterCart(cart: CartLine[]): CartLine[] {
+  return [...cart].sort((a, b) => b.sortOrder - a.sortOrder);
+}
+
+function nextWaiterCartSortOrder(cart: CartLine[]): number {
+  return cart.reduce((max, line) => Math.max(max, line.sortOrder), 0) + 1;
+}
 
 type TableDraft = {
   cart: CartLine[];
@@ -167,6 +175,7 @@ export function WaiterPage(): JSX.Element {
   const [waiterName, setWaiterName] = useState("");
   const [waiterEmail, setWaiterEmail] = useState("");
   const [waiterPassword, setWaiterPassword] = useState("");
+  const [waiterPin, setWaiterPin] = useState("");
   const [editWaiterId, setEditWaiterId] = useState<string | null>(null);
   const [editEmail, setEditEmail] = useState("");
   const [editPassword, setEditPassword] = useState("");
@@ -204,11 +213,13 @@ export function WaiterPage(): JSX.Element {
         name: waiterName.trim(),
         email: waiterEmail.trim(),
         password: waiterPassword,
+        ...( /^\d{4}$/.test(waiterPin) ? { pin: waiterPin } : {} ),
       }),
     onSuccess: (waiter) => {
       setWaiterName("");
       setWaiterEmail("");
       setWaiterPassword("");
+      setWaiterPin("");
       void queryClient.invalidateQueries({ queryKey: ["billing", "waiters"] });
       setNotice(`Mobile login created for ${waiter.name}. They can sign in with ${waiter.email}.`);
     },
@@ -315,17 +326,27 @@ export function WaiterPage(): JSX.Element {
   });
 
   function addToCart(item: ApiMenuItem): void {
-    const next = [...cart];
-    const i = next.findIndex((l) => l.item.id === item.id);
-    if (i >= 0) next[i] = { ...next[i], qty: next[i].qty + 1 };
-    else next.push({ item, qty: 1 });
-    updateDraft({ cart: next });
+    const sortOrder = nextWaiterCartSortOrder(cart);
+    const i = cart.findIndex((l) => l.item.id === item.id);
+    if (i >= 0) {
+      const updated = { ...cart[i], qty: cart[i].qty + 1, sortOrder };
+      updateDraft({ cart: sortWaiterCart(cart.map((l, idx) => (idx === i ? updated : l))) });
+    } else {
+      updateDraft({ cart: sortWaiterCart([{ item, qty: 1, sortOrder }, ...cart]) });
+    }
     setNotice(null);
   }
 
   function setLineQty(itemId: string, qty: number): void {
-    const next = qty <= 0 ? cart.filter((l) => l.item.id !== itemId) : cart.map((l) => (l.item.id === itemId ? { ...l, qty } : l));
-    updateDraft({ cart: next });
+    const next =
+      qty <= 0
+        ? cart.filter((l) => l.item.id !== itemId)
+        : cart.map((l) => {
+            if (l.item.id !== itemId) return l;
+            const sortOrder = qty > l.qty ? nextWaiterCartSortOrder(cart) : l.sortOrder;
+            return { ...l, qty, sortOrder };
+          });
+    updateDraft({ cart: sortWaiterCart(next) });
   }
 
   function reorderLast(): void {
@@ -493,7 +514,7 @@ export function WaiterPage(): JSX.Element {
                   <div className={`${panelClass} space-y-3 p-4`}>
                     <div className={panelTitleClass}>Add waiter login</div>
                     <p className={`text-xs ${mutedClass}`}>
-                      Waiters sign in on the mobile app using this email and password.
+                      Waiters sign in on the mobile app with PIN or email and password.
                     </p>
                     <div className="grid gap-3">
                       <input
@@ -515,6 +536,14 @@ export function WaiterPage(): JSX.Element {
                         value={waiterPassword}
                         onChange={(e) => setWaiterPassword(e.target.value)}
                         className={fieldInputClass}
+                      />
+                      <input
+                        inputMode="numeric"
+                        placeholder="4-digit PIN (optional, for mobile quick login)"
+                        value={waiterPin}
+                        onChange={(e) => setWaiterPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                        className={fieldInputClass}
+                        maxLength={4}
                       />
                     </div>
                     <Button
@@ -806,32 +835,32 @@ export function WaiterPage(): JSX.Element {
               </div>
 
               {cart.length > 0 ? (
-                <ul className="mt-4 space-y-2">
-                  {cart.map((line) => (
+                <ul className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-3">
+                  {sortWaiterCart(cart).map((line) => (
                     <li
                       key={line.item.id}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950/50"
+                      className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 dark:border-slate-700 dark:bg-slate-950/50"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900 dark:text-white">
+                        <p className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-900 dark:text-white">
                           {formatMenuItemLabel(line.item)}
                         </p>
-                        <p className={`text-xs tabular-nums ${mutedClass}`}>
+                        <p className={`mt-1 text-[10px] tabular-nums ${mutedClass}`}>
                           Rs {(line.item.price * line.qty).toLocaleString()}
                         </p>
                       </div>
-                      <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-600 dark:bg-slate-900">
+                      <div className="flex w-full items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-600 dark:bg-slate-900">
                         <button
                           type="button"
-                          className="h-7 w-7 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+                          className="h-6 w-6 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setLineQty(line.item.id, line.qty - 1)}
                         >
                           −
                         </button>
-                        <span className="w-6 text-center text-sm tabular-nums">{line.qty}</span>
+                        <span className="w-5 text-center text-[11px] tabular-nums">{line.qty}</span>
                         <button
                           type="button"
-                          className="h-7 w-7 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+                          className="h-6 w-6 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
                           onClick={() => setLineQty(line.item.id, line.qty + 1)}
                         >
                           +

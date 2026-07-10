@@ -145,6 +145,7 @@ export class BillingService implements OnApplicationBootstrap {
       permissions: permissionsForPopsRole("waiter"),
       branchScope: branch.code,
       pinRequired: false,
+      staffPinHash: input.pin ? await bcrypt.hash(input.pin, 10) : null,
       lastActivityAt: null,
     });
 
@@ -184,6 +185,18 @@ export class BillingService implements OnApplicationBootstrap {
       await this.db
         .update(organizationMemberships)
         .set({ branchScope: branch.code })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, waiterId),
+          ),
+        );
+    }
+
+    if (input.pin) {
+      await this.db
+        .update(organizationMemberships)
+        .set({ staffPinHash: await bcrypt.hash(input.pin, 10) })
         .where(
           and(
             eq(organizationMemberships.organizationId, organizationId),
@@ -392,6 +405,45 @@ export class BillingService implements OnApplicationBootstrap {
 
     if (!row) throw new NotFoundException("Bill not found");
     return this.mapBill(row);
+  }
+
+  async voidBill(organizationId: string, billId: string) {
+    const rows = await this.db
+      .select()
+      .from(popsBills)
+      .where(eq(popsBills.id, billId))
+      .limit(1);
+    const existing = rows[0];
+    if (!existing || existing.organizationId !== organizationId) {
+      throw new NotFoundException("Bill not found");
+    }
+    if (existing.status === "void") {
+      throw new BadRequestException("Bill is already void");
+    }
+
+    const [row] = await this.db
+      .update(popsBills)
+      .set({ status: "void" })
+      .where(eq(popsBills.id, billId))
+      .returning();
+
+    if (!row) throw new NotFoundException("Bill not found");
+    return this.mapBill(row);
+  }
+
+  async deleteBill(organizationId: string, billId: string) {
+    const rows = await this.db
+      .select()
+      .from(popsBills)
+      .where(eq(popsBills.id, billId))
+      .limit(1);
+    const existing = rows[0];
+    if (!existing || existing.organizationId !== organizationId) {
+      throw new NotFoundException("Bill not found");
+    }
+
+    await this.db.delete(popsBills).where(eq(popsBills.id, billId));
+    return { ok: true, billRef: existing.billRef };
   }
 
   private parseBillLines(linesJson: string | null): CreateBill["lines"] {

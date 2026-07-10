@@ -1,9 +1,11 @@
 import {
   billSchema,
+  completeBillSchema,
   createBillSchema,
   orderListSchema,
   updateBillSchema,
   type Bill,
+  type CompleteBill,
   type CreateBill,
   type UpdateBill,
 } from "@platform/contracts";
@@ -44,6 +46,20 @@ export async function updateBill(billId: string, input: UpdateBill): Promise<Bil
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(err?.message ?? `Update bill failed: ${res.status}`);
+  }
+  return billSchema.parse(await res.json());
+}
+
+export async function completeBill(billId: string, input: CompleteBill): Promise<Bill> {
+  const body = completeBillSchema.parse(input);
+  const res = await authFetch(`/v1/billing/bills/${billId}/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Complete bill failed: ${res.status}`);
   }
   return billSchema.parse(await res.json());
 }
