@@ -38,6 +38,7 @@ import {
   type CartLine,
 } from "../lib/storePosSync";
 import { formatPkr, useInvalidateStore, useStoreAccess } from "../hooks/useStore";
+import { noticeErrorClass, noticeSuccessClass } from "../../pops/lib/themeClasses";
 import { isLocalDataMode, shouldAutoSyncToCloud } from "../../stores/dataModeStore";
 
 function ProductAvatar({ name }: { name: string }): JSX.Element {

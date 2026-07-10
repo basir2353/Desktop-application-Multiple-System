@@ -33,6 +33,7 @@ import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShar
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import { linkActionClass, linkDangerClass, linkSuccessClass, linkWarningClass, tableOrderRefClass } from "../../lib/themeClasses";
+import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
 import { Badge } from "../../ui/Badge";
 import {
   ModuleCountBadge,
