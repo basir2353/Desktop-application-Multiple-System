@@ -29,12 +29,14 @@ export const createWaiterSchema = z.object({
   name: z.string().min(1).max(80),
   email: z.string().email().min(3).max(320),
   password: z.string().min(8).max(128),
+  pin: z.string().regex(/^\d{4}$/).optional(),
 });
 
 export const updateWaiterSchema = z.object({
   branchCode: z.string().min(1).optional(),
   email: z.string().email().min(3).max(320).optional(),
   password: z.string().min(8).max(128).optional(),
+  pin: z.string().regex(/^\d{4}$/).optional(),
 });
 
 export const billLineSchema = z.object({
@@ -114,6 +116,10 @@ export const updateBillSchema = z.object({
   deliveryChargePkr: z.number().int().min(0).max(50_000).optional(),
 });
 
+export const voidBillSchema = z.object({
+  reason: z.string().max(200).optional(),
+});
+
 export type WaiterOption = z.infer<typeof waiterOptionSchema>;
 export type CreateWaiter = z.infer<typeof createWaiterSchema>;
 export type UpdateWaiter = z.infer<typeof updateWaiterSchema>;
@@ -125,3 +131,4 @@ export type OrderList = z.infer<typeof orderListSchema>;
 export type CreateBill = z.infer<typeof createBillSchema>;
 export type CompleteBill = z.infer<typeof completeBillSchema>;
 export type UpdateBill = z.infer<typeof updateBillSchema>;
+export type VoidBill = z.infer<typeof voidBillSchema>;

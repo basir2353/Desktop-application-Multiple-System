@@ -29,6 +29,9 @@ export const kitchenTicketSchema = z.object({
   riderName: z.string().nullable(),
   deliveryChargePkr: z.number(),
   deliveryStatus: deliveryStatusSchema.nullable(),
+  /** Waiter/user who took the order. Null for legacy tickets or desktop counter orders. */
+  createdById: z.string().uuid().nullable().optional(),
+  createdByName: z.string().nullable().optional(),
 });
 
 export const kitchenTicketListSchema = z.object({

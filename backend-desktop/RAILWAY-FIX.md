@@ -1,31 +1,17 @@
-# Quick Railway fix
+# Railway quick reference
 
-## Error: `couldn't locate the dockerfile at path backend/Dockerfile`
+Use the full guide: **[RAILWAY.md](./RAILWAY.md)**
 
-This happens when **Root Directory** and **Dockerfile path** do not match.
-
-### Option A — Deploy from `backend-desktop` (recommended for `backend-desktop-production` service)
-
-In Railway → your API service → **Settings**:
+## Required Railway settings
 
 | Setting | Value |
 | --- | --- |
-| **Root Directory** | `backend-desktop` |
-| **Builder** | Dockerfile |
-| **Dockerfile path** | `Dockerfile` |
+| Root Directory | `backend-desktop` |
+| Dockerfile path | `Dockerfile` |
+| Healthcheck | `/health` |
 
-Then **commit and push** the `backend-desktop/` folder to GitHub and redeploy.
+## After push to GitHub
 
-### Option B — Deploy full monorepo from repo root
-
-| Setting | Value |
-| --- | --- |
-| **Root Directory** | *(empty — repo root)* |
-| **Builder** | Dockerfile |
-| **Dockerfile path** | `backend/Dockerfile` |
-
-Uses root `railway.toml` and `backend/Dockerfile`.
-
----
-
-**Do not** set Root Directory to `backend` or `backend/api` while Dockerfile path is `backend/Dockerfile` — that path will not exist in the build archive.
+1. Railway → your API service → **Redeploy**
+2. Verify: `curl https://YOUR-DOMAIN.up.railway.app/health/db`
+3. Test login: `admin@platform.local` / `changeme-please-01`

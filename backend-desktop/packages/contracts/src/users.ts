@@ -41,6 +41,7 @@ export const createOrgUserSchema = z.object({
   role: popsRoleSchema,
   branchScope: z.string().min(1).max(64),
   pinRequired: z.boolean().default(false),
+  staffPin: z.string().regex(/^\d{4}$/).optional(),
 });
 
 export const updateOrgUserSchema = z.object({
@@ -48,10 +49,16 @@ export const updateOrgUserSchema = z.object({
   branchScope: z.string().min(1).max(64).optional(),
   pinRequired: z.boolean().optional(),
   password: z.string().min(8).max(128).optional(),
+  staffPin: z.string().regex(/^\d{4}$/).optional(),
 });
 
 export const resetUserPasswordSchema = z.object({
   password: z.string().min(8).max(128),
+});
+
+/** Self-service PIN management — a staff member creating/updating/removing their own PIN. */
+export const setOwnPinSchema = z.object({
+  pin: z.string().regex(/^\d{4}$/).nullable(),
 });
 
 export const inviteOrgUserSchema = z.object({
@@ -100,6 +107,7 @@ export type PopsRole = z.infer<typeof popsRoleSchema>;
 export type OrgUser = z.infer<typeof orgUserSchema>;
 export type CreateOrgUser = z.infer<typeof createOrgUserSchema>;
 export type UpdateOrgUser = z.infer<typeof updateOrgUserSchema>;
+export type SetOwnPin = z.infer<typeof setOwnPinSchema>;
 export type InviteOrgUser = z.infer<typeof inviteOrgUserSchema>;
 export type InviteOrgUserResult = z.infer<typeof inviteOrgUserResultSchema>;
 export type PendingInvite = z.infer<typeof pendingInviteSchema>;

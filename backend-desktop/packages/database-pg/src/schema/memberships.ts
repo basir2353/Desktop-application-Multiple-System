@@ -16,6 +16,8 @@ export const organizationMemberships = pgTable(
     permissions: jsonb("permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     branchScope: text("branch_scope").notNull().default("all"),
     pinRequired: boolean("pin_required").notNull().default(false),
+    /** bcrypt hash of 4-digit staff PIN for mobile / quick login */
+    staffPinHash: text("staff_pin_hash"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

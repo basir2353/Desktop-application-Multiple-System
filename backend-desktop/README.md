@@ -1,60 +1,79 @@
-# Backend
+# Standalone backend for Railway
 
-Hosted NestJS API and control plane. Clients (web, desktop, mobile) connect to this service when online; local offline queues sync back via `/v1/sync/push`.
+Self-contained NestJS API (`api/` + `packages/`). Deploy **only this folder** to Railway — separate from the desktop/mobile apps in the monorepo.
 
-| Service | Package | Path |
-| --- | --- | --- |
-| API | `@platform/api` | [`api/`](./api/) |
+| Piece | Path |
+| --- | --- |
+| API | [`api/`](./api/) (`@platform/api`) |
+| Contracts | [`packages/contracts/`](./packages/contracts/) |
+| Database schema | [`packages/database-pg/`](./packages/database-pg/) |
+
+## Railway deploy (recommended)
+
+See **[RAILWAY.md](./RAILWAY.md)** for the full step-by-step guide.
+
+Quick settings:
+
+| Railway setting | Value |
+| --- | --- |
+| **Root Directory** | `backend-desktop` |
+| **Builder** | Dockerfile |
+| **Dockerfile path** | `Dockerfile` |
+| **Health check** | `/health` |
+
+Copy variables from [`railway.env.example`](./railway.env.example).
 
 ## Local development
 
 ```bash
-# From repository root
-cp backend/.env.example backend/.env   # or edit backend/.env for Railway DB
-docker compose up -d    # PostgreSQL (if using local DATABASE_URL)
-pnpm db:push            # Apply schema
-pnpm dev:api            # NestJS on :3000
+cd backend-desktop
+cp .env.example .env
+pnpm install
+pnpm db:push
+pnpm dev
 ```
 
-Environment files (in order of precedence for `backend/api`):
+API runs on `http://127.0.0.1:3000`.
 
-| File | Purpose |
-| --- | --- |
-| [`backend/.env`](./.env) | **Backend-only** — DB, JWT, CORS, seed (recommended) |
-| [`.env`](../.env) | Monorepo root — also includes client `VITE_*` vars |
-
-## Production (self-hosted)
+## Seed a hosted Postgres (one-off)
 
 ```bash
-# Copy and edit production env
-cp deployment/.env.production.example deployment/.env.production
-
-# Start API + PostgreSQL
-docker compose -f deployment/docker-compose.prod.yml --env-file deployment/.env.production up -d
-
-# Apply schema (first deploy)
-docker compose -f deployment/docker-compose.prod.yml --env-file deployment/.env.production run --rm api-migrate
+cd backend-desktop
+DATABASE_URL="postgresql://..." \
+JWT_ACCESS_SECRET="your-secret-min-32-chars" \
+pnpm seed:live
 ```
 
-Set `CORS_ORIGINS` to your hosted frontend URL(s). Desktop (Tauri) and mobile apps call the API directly and do not need CORS entries.
+## Sync from main monorepo
 
-## Railway (recommended)
-
-See **[RAILWAY.md](./RAILWAY.md)** for the full deploy guide.
-
-1. Railway → New Project → GitHub repo
-2. Add **PostgreSQL**
-3. Set **Dockerfile path** to `backend/Dockerfile` (Root Directory = repo root)
-4. Set variables from [`railway.env.example`](./railway.env.example)
-5. Generate domain → use as `VITE_API_BASE_URL` in clients
-
-## Docker image only
+When you change `backend/api` or root `packages/` in the full repo, refresh this standalone copy:
 
 ```bash
-docker build -f backend/Dockerfile -t platform-api .
+cd backend-desktop
+pnpm sync:from-monorepo
+```
+
+## Docker (local test)
+
+```bash
+cd backend-desktop
+docker build -t platform-api .
 docker run --rm -p 3000:3000 \
   -e DATABASE_URL=postgresql://user:pass@host:5432/platform \
   -e JWT_ACCESS_SECRET=your-secret-min-32-chars \
-  -e CORS_ORIGINS=https://app.yourdomain.com \
   platform-api
 ```
+
+## Clients
+
+Point desktop `.exe` and mobile apps at your Railway domain:
+
+```
+VITE_API_BASE_URL=https://YOUR-SERVICE.up.railway.app
+EXPO_PUBLIC_API_BASE_URL=https://YOUR-SERVICE.up.railway.app
+```
+
+Demo login after seed:
+
+- Email: `admin@platform.local`
+- Password: `changeme-please-01`

@@ -1,11 +1,8 @@
 /**
- * Push schema and seed a hosted Postgres (Railway) database.
+ * Push schema and seed the standalone backend-desktop Postgres (Railway).
  *
- * Usage (from repository root):
- *   DATABASE_URL="postgresql://..." JWT_ACCESS_SECRET="min-32-chars" node backend/scripts/seed-live.mjs
- *
- * Uses the private/internal Railway DATABASE_URL when possible (no egress fees).
- * Public proxy URLs also work for one-off seeding from your machine.
+ * Usage (from backend-desktop/):
+ *   DATABASE_URL="postgresql://..." JWT_ACCESS_SECRET="min-32-chars" pnpm seed:live
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -13,9 +10,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(scriptDir, "..", "..");
-const dbPkgRoot = join(repoRoot, "packages", "database-pg");
-const apiRoot = join(repoRoot, "backend", "api");
+const workspaceRoot = join(scriptDir, "..");
+const dbPkgRoot = join(workspaceRoot, "packages", "database-pg");
+const apiRoot = join(workspaceRoot, "api");
 
 function pnpmCmd() {
   if (process.platform === "win32") {
@@ -60,7 +57,7 @@ function buildApi() {
     return;
   }
   console.log("[seed-live] Building API…");
-  const result = runPnpm(["turbo", "run", "build", "--filter=@platform/api"], repoRoot);
+  const result = runPnpm(["run", "build"], workspaceRoot);
   if (result.status !== 0) {
     console.error("[seed-live] API build failed.");
     process.exit(1);

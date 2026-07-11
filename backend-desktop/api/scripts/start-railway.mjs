@@ -2,10 +2,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(scriptDir, "..");
-const appRoot = join(apiRoot, "..", "..");
+const appRoot = resolveWorkspaceRoot(apiRoot);
 const dbPkgRoot = join(appRoot, "packages", "database-pg");
 
 function requireEnv(name) {
@@ -17,7 +18,7 @@ function requireEnv(name) {
 }
 
 function runSchemaPush() {
-  console.log("[railway] Applying database schema…");
+  console.log(`[railway] Applying database schema from ${dbPkgRoot}…`);
 
   const pnpm = process.platform === "win32"
     ? { cmd: "corepack", args: ["pnpm", "exec", "drizzle-kit", "push", "--force"] }
@@ -32,7 +33,7 @@ function runSchemaPush() {
 
   if (result.status !== 0) {
     console.error(
-      "[railway] Schema push failed — ensure DATABASE_URL is set and Postgres is reachable."
+      "[railway] Schema push failed — ensure DATABASE_URL is set and Postgres is reachable.",
     );
     return false;
   }

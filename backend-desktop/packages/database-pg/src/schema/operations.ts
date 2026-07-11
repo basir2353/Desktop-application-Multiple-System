@@ -58,6 +58,9 @@ export const popsKitchenTickets = pgTable("pops_kitchen_tickets", {
   deliveryStatus: text("delivery_status"),
   priority: text("priority").notNull().default("normal"),
   status: text("status").notNull(),
+  /** Waiter/user who took the order — only they (or managers) may edit it. */
+  createdByUserId: uuid("created_by_user_id"),
+  createdByName: text("created_by_name"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

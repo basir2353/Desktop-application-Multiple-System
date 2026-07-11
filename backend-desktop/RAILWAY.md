@@ -1,182 +1,121 @@
-# Deploy backend to Railway
+# Deploy `backend-desktop` to Railway
 
-Host the NestJS API (`backend/api`) on [Railway](https://railway.com) with a managed PostgreSQL database.
+Standalone API for the POPS desktop `.exe` and mobile apps. This folder is **self-contained** — Railway only needs `backend-desktop/`, not the full monorepo.
 
-## Deployment files (all under `backend/`)
+## 1. Push to GitHub
 
-| File | Purpose |
-| --- | --- |
-| [`Dockerfile`](./Dockerfile) | Production Docker image (build from **repo root**) |
-| [`railway.toml`](./railway.toml) | Railway builder, health check, start command |
-| [`railway.json`](./railway.json) | Same settings (JSON format) |
-| [`railway.env.example`](./railway.env.example) | Required Railway environment variables |
-| [`api/scripts/start-railway.mjs`](./api/scripts/start-railway.mjs) | Schema push + start API on boot |
+Commit and push the repo (including the `backend-desktop/` folder):
 
-Repo root also has [`railway.toml`](../railway.toml) pointing at `backend/Dockerfile` for Railway auto-detection.
+```bash
+git add backend-desktop
+git commit -m "Update standalone backend for Railway"
+git push origin main
+```
 
-## What Railway runs
+## 2. Create Railway project
 
-On each deploy Railway will:
+1. Go to [railway.com](https://railway.com) → **New Project** → **Deploy from GitHub repo**
+2. Select your repository
 
-1. Build the Docker image from the **repository root** using `backend/Dockerfile`
-2. Run `drizzle-kit push` on container start (before the API accepts traffic)
-3. Start the API on `PORT` (set automatically by Railway)
-4. Health-check `GET /health`
+## 3. Add PostgreSQL
 
-## Step-by-step
+1. In the project → **+ New** → **Database** → **PostgreSQL**
+2. Wait until it is running
 
-### 1. Push code to GitHub
+## 4. Configure the API service
 
-Railway deploys from Git. Commit and push your repo if you haven't already.
-
-### 2. Create a Railway project
-
-1. Go to [railway.com](https://railway.com) → **New Project**
-2. Choose **Deploy from GitHub repo**
-3. Select this repository
-
-### 3. Add PostgreSQL
-
-1. In the project, click **+ New** → **Database** → **PostgreSQL**
-2. Wait until the database is running
-3. Open the Postgres service → **Variables** → copy `DATABASE_URL` (or use reference variables below)
-
-### 4. Configure the API service
-
-Click your **API service** → **Settings**:
+Click the **API service** (not Postgres) → **Settings**:
 
 | Setting | Value |
 | --- | --- |
-| **Root Directory** | **Leave empty** (repo root — **not** `backend` or `backend/api`) |
-| **Builder** | **Dockerfile** |
-| **Dockerfile path** | `backend/Dockerfile` |
+| **Service name** | `@platform/api` or `backend-desktop-production` |
+| **Root Directory** | `backend-desktop` |
+| **Builder** | Dockerfile |
+| **Dockerfile path** | `Dockerfile` |
 | **Healthcheck Path** | `/health` |
-| **Healthcheck Timeout** | `300` (seconds — first deploy can be slow) |
+| **Healthcheck Timeout** | `300` |
 
-> **Important:** If Root Directory is `backend/api`, Railway uses Nixpacks and runs `pnpm --filter @platform/api build` without the monorepo — you get **hundreds of TypeScript errors**. The Dockerfile must build from the **repo root**.
+> **Important:** Root Directory must be `backend-desktop`. Do **not** use repo root or `backend/api` — those paths break the Docker build.
 
-### 5. Set environment variables
+## 5. Environment variables
 
-Copy from [`railway.env.example`](./railway.env.example) into the API service → **Variables**:
+API service → **Variables** → paste from [`railway.env.example`](./railway.env.example):
 
-| Variable | Value | Required |
-| --- | --- | --- |
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | Yes — reference your Postgres service |
-| `JWT_ACCESS_SECRET` | Random string, min 32 chars | Yes |
-| `NODE_ENV` | `production` | Yes |
-| `CORS_ORIGINS` | Your frontend URL(s), comma-separated | Yes for browser |
-| `SEED_USER_EMAIL` | `admin@platform.local` | First deploy |
-| `SEED_USER_PASSWORD` | Strong password | First deploy |
-| `APP_PUBLIC_URL` | Your web app URL | Optional (invite links) |
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `JWT_ACCESS_SECRET` | Random string, min 32 chars |
+| `NODE_ENV` | `production` |
+| `SEED_USER_EMAIL` | `admin@platform.local` |
+| `SEED_USER_PASSWORD` | `changeme-please-01` |
+| `CORS_ORIGINS` | `http://127.0.0.1:1420,tauri://localhost,https://tauri.localhost` |
 
-Example `CORS_ORIGINS`:
+Do **not** set `PORT` — Railway injects it.
 
-```
-https://your-app.vercel.app,http://127.0.0.1:1420,tauri://localhost
-```
-
-Include `http://127.0.0.1:1420` for local desktop/web dev against the hosted API.
-Include `tauri://localhost` for the installed Windows desktop app.
-
-**Do not set `PORT`** — Railway injects it automatically.
-
-SSL to Postgres is enabled automatically in production (see `packages/database-pg`).
-
-### 6. Generate a public URL
+## 6. Public domain
 
 1. API service → **Settings** → **Networking** → **Generate Domain**
-2. You get a URL like `https://platform-api-production.up.railway.app`
+2. You get a URL like `https://backend-desktop-production-xxxx.up.railway.app`
+3. Use this URL in:
+   - Root `.env` → `VITE_API_BASE_URL` and `EXPO_PUBLIC_API_BASE_URL`
+   - Rebuild desktop `.exe` and mobile APKs if the URL changed
 
-### 7. Seed the live database (first deploy)
+## 7. Deploy
 
-From your machine (one-off — public Postgres URL is OK here):
+Click **Deploy** → **Redeploy** (or push to GitHub for auto-deploy).
 
-```bash
-DATABASE_URL="postgresql://..." \
-JWT_ACCESS_SECRET="your-production-secret-min-32-chars" \
-SEED_USER_EMAIL=admin@platform.local \
-SEED_USER_PASSWORD="your-strong-password" \
-pnpm seed:live
-```
+On each deploy Railway will:
 
-Or use the internal URL if seeding from another Railway service.
+1. Build Docker image from `backend-desktop/Dockerfile`
+2. Run `drizzle-kit push` (apply DB schema)
+3. Run idempotent seed boot (demo org + admin user)
+4. Start the API on Railway `PORT`
 
-This applies the schema and runs idempotent demo seeds (org, branches, menu, store products, staff).
+First deploy may take 2–3 minutes.
 
-**On the API service**, always use the private reference `${{Postgres.DATABASE_URL}}` — not the public `*.proxy.rlwy.net` URL (avoids egress fees).
-
-### 8. Verify deployment
+## 8. Verify
 
 ```bash
-curl https://YOUR-RAILWAY-DOMAIN.up.railway.app/health
-```
+# Health
+curl https://YOUR-DOMAIN.up.railway.app/health
 
-Expected: `{"status":"ok","ts":"..."}`
+# DB readiness (after latest deploy)
+curl https://YOUR-DOMAIN.up.railway.app/health/db
 
-Login test:
-
-```bash
-curl -X POST https://YOUR-RAILWAY-DOMAIN.up.railway.app/v1/auth/login \
+# Login
+curl -X POST https://YOUR-DOMAIN.up.railway.app/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@platform.local","password":"YOUR-SEED-PASSWORD"}'
+  -d '{"email":"admin@platform.local","password":"changeme-please-01"}'
 ```
 
-### 9. Point your clients at Railway
+Expected login response: JSON with `accessToken`, `refreshToken`, `expiresIn`.
 
-In your local `.env` (repo root):
+## 9. Desktop app login
 
-```bash
-VITE_API_BASE_URL=https://YOUR-RAILWAY-DOMAIN.up.railway.app
-```
+After API works:
 
-Mobile (`apps/waiter-mobile/.env`):
-
-```bash
-EXPO_PUBLIC_API_BASE_URL=https://YOUR-RAILWAY-DOMAIN.up.railway.app
-```
-
-Restart `pnpm dev:web`, `pnpm dev:launcher`, or the mobile app.
-
-## Local Docker test (before Railway)
-
-```bash
-# From repository root
-docker build -f backend/Dockerfile -t platform-api .
-docker run --rm -p 3000:3000 \
-  -e DATABASE_URL=postgresql://platform:platform@host.docker.internal:15432/platform \
-  -e JWT_ACCESS_SECRET=dev-access-secret-change-me-min-32-chars-long \
-  -e NODE_ENV=production \
-  platform-api
-```
-
-## Optional: persistent file uploads
-
-Menu images are stored in `backend/api/data/uploads/`. Railway's filesystem is ephemeral by default.
-
-To keep uploads across deploys:
-
-1. API service → **Volumes** → **Add Volume**
-2. Mount path: `/app/backend/api/data/uploads`
+1. Set `VITE_API_BASE_URL=https://YOUR-DOMAIN.up.railway.app` in repo root `.env`
+2. Rebuild installer: `pnpm installer:windows`
+3. Install the new `.exe`
+4. Sign in: `admin@platform.local` / `changeme-please-01`
 
 ## Troubleshooting
 
-| Issue | Fix |
+| Problem | Fix |
 | --- | --- |
-| **534 TypeScript errors** / `nest build` fails | Root Directory must be **empty** (repo root). Builder = **Dockerfile**, path = `backend/Dockerfile`. Redeploy. |
-| Build uses Nixpacks / `pnpm --filter @platform/api build` | Switch Builder to **Dockerfile** in Settings |
-| Build fails | Ensure **Root Directory** is `/` (not `backend/api`) |
-| DB connection error | Link `DATABASE_URL` to `${{Postgres.DATABASE_URL}}` |
-| CORS blocked in browser | Add your frontend origin to `CORS_ORIGINS` |
-| Schema push fails | Check Postgres is running; redeploy after DB is ready |
-| **Healthcheck failure** | Open **View logs** on the failed deploy. Common causes: missing `DATABASE_URL`, missing `JWT_ACCESS_SECRET`, or schema push error. |
-| 502 on health check | First deploy may take 2–3 min for schema push + seed; healthcheck timeout is 300s |
+| `couldn't locate dockerfile at path backend/Dockerfile` | Set Root Directory = `backend-desktop`, Dockerfile = `Dockerfile` |
+| Login 500 | Redeploy after latest push; check `/health/db` for missing tables |
+| Login 401 | Wrong password, or run `pnpm seed:live` with Railway `DATABASE_URL` |
+| Build fails | Ensure `backend-desktop/pnpm-lock.yaml` is committed |
+| Schema push fails | Check `DATABASE_URL` references Postgres service |
 
-## Architecture
+## Optional: seed from your PC
 
+```bash
+cd backend-desktop
+DATABASE_URL="postgresql://..." \
+JWT_ACCESS_SECRET="same-as-railway" \
+pnpm seed:live
 ```
-Railway Project
-├── PostgreSQL          → DATABASE_URL (auto)
-└── API (Docker)        → https://xxx.up.railway.app
-         ↑
-    Web / Desktop / Mobile clients (VITE_API_BASE_URL)
-```
+
+Use the **public** Postgres URL from Railway → Postgres → Connect (one-off only).
