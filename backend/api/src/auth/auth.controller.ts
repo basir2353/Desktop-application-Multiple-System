@@ -12,20 +12,29 @@ export class AuthController {
 
   @Post("login")
   async login(@Body() body: unknown) {
-    const parsed = loginRequestSchema.parse(body);
-    return this.auth.login(parsed.email, parsed.password);
+    const parsed = loginRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException("Invalid email or password format");
+    }
+    return this.auth.login(parsed.data.email, parsed.data.password);
   }
 
   @Post("pin-login")
   async pinLogin(@Body() body: unknown) {
-    const parsed = pinLoginRequestSchema.parse(body);
-    return this.auth.pinLogin(parsed.branchCode, parsed.pin);
+    const parsed = pinLoginRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException("Invalid branch code or PIN format");
+    }
+    return this.auth.pinLogin(parsed.data.branchCode, parsed.data.pin);
   }
 
   @Post("refresh")
   async refresh(@Body() body: unknown) {
-    const parsed = refreshRequestSchema.parse(body);
-    return this.auth.refresh(parsed.refreshToken);
+    const parsed = refreshRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException("Invalid refresh token");
+    }
+    return this.auth.refresh(parsed.data.refreshToken);
   }
 
   @Get("invite")

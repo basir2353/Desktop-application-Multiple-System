@@ -31,7 +31,8 @@
     "db:migrate": "pnpm --filter @platform/database-pg migrate",
     "db:push": "dotenv -e .env -- pnpm --filter @platform/database-pg push",
     "db:studio": "pnpm --filter @platform/database-pg studio",
-    "seed:live": "node backend/scripts/seed-live.mjs"
+    "seed:live": "node backend/scripts/seed-live.mjs",
+    "fix:live-login": "node backend/scripts/seed-live.mjs"
   },
   "devDependencies": {
     "dotenv-cli": "^8.0.0",

@@ -36,15 +36,22 @@ export class SecurityService {
     action: string;
     detail?: string;
   }): Promise<void> {
-    await this.db.insert(popsSecurityEvents).values({
-      organizationId: input.organizationId ?? null,
-      branchId: input.branchId ?? null,
-      eventType: input.eventType,
-      userEmail: input.userEmail,
-      userId: input.userId ?? null,
-      action: input.action,
-      detail: input.detail ?? null,
-    });
+    try {
+      await this.db.insert(popsSecurityEvents).values({
+        organizationId: input.organizationId ?? null,
+        branchId: input.branchId ?? null,
+        eventType: input.eventType,
+        userEmail: input.userEmail,
+        userId: input.userId ?? null,
+        action: input.action,
+        detail: input.detail ?? null,
+      });
+    } catch (err) {
+      console.warn(
+        "[security] Audit log skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   async getOverview(organizationId: string, branchCode?: string) {

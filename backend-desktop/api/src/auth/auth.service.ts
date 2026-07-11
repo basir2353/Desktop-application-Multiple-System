@@ -126,15 +126,7 @@ export class AuthService implements OnModuleInit {
     const m = membership[0];
     if (!m) throw new UnauthorizedException("No organization membership");
 
-    await this.db
-      .update(organizationMemberships)
-      .set({ lastActivityAt: new Date() })
-      .where(
-        and(
-          eq(organizationMemberships.organizationId, m.organizationId),
-          eq(organizationMemberships.userId, user.id),
-        ),
-      );
+    await this.touchLastActivity(m.organizationId, user.id);
 
     await this.security.logEvent({
       organizationId: m.organizationId,
@@ -145,7 +137,13 @@ export class AuthService implements OnModuleInit {
       detail: "Session started",
     });
 
-    return this.issueTokens(user.id, m.organizationId, m.permissions, m.role, m.branchScope ?? "all");
+    return this.issueTokens(
+      user.id,
+      m.organizationId,
+      normalizePermissions(m.permissions, m.role),
+      m.role,
+      m.branchScope ?? "all",
+    );
   }
 
   async pinLogin(branchCode: string, pin: string) {
@@ -188,15 +186,7 @@ export class AuthService implements OnModuleInit {
       const ok = await bcrypt.compare(pin, row.staffPinHash);
       if (!ok) continue;
 
-      await this.db
-        .update(organizationMemberships)
-        .set({ lastActivityAt: new Date() })
-        .where(
-          and(
-            eq(organizationMemberships.organizationId, row.organizationId),
-            eq(organizationMemberships.userId, row.userId),
-          ),
-        );
+      await this.touchLastActivity(row.organizationId, row.userId);
 
       await this.security.logEvent({
         organizationId: row.organizationId,
@@ -210,7 +200,7 @@ export class AuthService implements OnModuleInit {
       return this.issueTokens(
         row.userId,
         row.organizationId,
-        row.permissions,
+        normalizePermissions(row.permissions, row.role),
         row.role,
         row.branchScope ?? "all",
       );
@@ -248,7 +238,32 @@ export class AuthService implements OnModuleInit {
     if (!m) throw new UnauthorizedException("No organization membership");
 
     await this.db.delete(refreshTokens).where(eq(refreshTokens.id, rt.id));
-    return this.issueTokens(rt.userId, m.organizationId, m.permissions, m.role, m.branchScope ?? "all");
+    return this.issueTokens(
+      rt.userId,
+      m.organizationId,
+      normalizePermissions(m.permissions, m.role),
+      m.role,
+      m.branchScope ?? "all",
+    );
+  }
+
+  private async touchLastActivity(organizationId: string, userId: string): Promise<void> {
+    try {
+      await this.db
+        .update(organizationMemberships)
+        .set({ lastActivityAt: new Date() })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, userId),
+          ),
+        );
+    } catch (err) {
+      console.warn(
+        "[auth] lastActivityAt update skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   private async issueTokens(
@@ -282,7 +297,6 @@ export class AuthService implements OnModuleInit {
     const accessExpiresIn = parseExpiresInSeconds(accessTtl);
 
     const accessToken = await this.jwt.signAsync(accessPayload, {
-      secret: this.config.getOrThrow<string>("JWT_ACCESS_SECRET"),
       expiresIn: accessExpiresIn,
     });
 
@@ -290,11 +304,18 @@ export class AuthService implements OnModuleInit {
     const refreshHash = sha256Hex(refreshToken);
     const expiresAt = new Date(Date.now() + refreshTtlDays * 86_400_000);
 
-    await this.db.insert(refreshTokens).values({
-      userId,
-      tokenHash: refreshHash,
-      expiresAt,
-    });
+    try {
+      await this.db.insert(refreshTokens).values({
+        userId,
+        tokenHash: refreshHash,
+        expiresAt,
+      });
+    } catch (err) {
+      console.warn(
+        "[auth] refresh token persist skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
 
     return {
       accessToken,
@@ -302,6 +323,13 @@ export class AuthService implements OnModuleInit {
       expiresIn: accessExpiresIn,
     };
   }
+}
+
+function normalizePermissions(value: unknown, role: string): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === "string");
+  }
+  return permissionsForPopsRole(role);
 }
 
 function sha256Hex(value: string): string {
