@@ -6,9 +6,9 @@ import {
   type DashboardResponse,
   type PopsBranch,
 } from "@platform/contracts";
-import { authFetch, SessionExpiredError } from "../../lib/authFetch";
+import { authFetch, SessionExpiredError, isSessionExpiredError } from "../../lib/authFetch";
 
-export { SessionExpiredError };
+export { SessionExpiredError, isSessionExpiredError };
 
 export async function fetchPopsBranches(): Promise<PopsBranch[]> {
   const res = await authFetch("/v1/operations/branches");

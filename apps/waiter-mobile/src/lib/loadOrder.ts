@@ -30,6 +30,20 @@ export function canEditHeldBill(bill: Bill): boolean {
   return bill.status === "held";
 }
 
+/** Legacy tickets without a recorded owner stay editable by everyone. */
+export function ownsKitchenTicket(
+  ticket: KitchenTicket,
+  userId: string | null | undefined,
+): boolean {
+  if (!ticket.createdById) return true;
+  return Boolean(userId) && ticket.createdById === userId;
+}
+
+export function ownsHeldBill(bill: Bill, userId: string | null | undefined): boolean {
+  if (!bill.waiterId) return true;
+  return Boolean(userId) && bill.waiterId === userId;
+}
+
 export function extractKitchenNotes(ticket: KitchenTicket): string {
   if (ticket.notes?.trim()) return ticket.notes.trim();
   const parts = ticket.itemsSummary.split(" · ");

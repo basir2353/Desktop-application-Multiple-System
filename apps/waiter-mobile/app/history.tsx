@@ -33,6 +33,7 @@ import {
   canEditUnifiedOrder,
   matchesOrderSearch,
   orderStatusAccent,
+  unifiedOrderOwnerLabel,
   unifiedOrderRef,
   unifiedOrderStatus,
   unifiedOrderSummary,
@@ -255,6 +256,7 @@ export default function HistoryScreen() {
               <OrderHistoryCard
                 key={`${order.source}-${order.id}`}
                 order={order}
+                userId={claims?.sub ?? null}
                 onEdit={openEdit}
                 onClose={cashierCanClose && order.source === "bill" && order.bill.status === "held" ? () => setCloseBill(order.bill) : undefined}
                 onPrint={order.source === "bill" ? () => void handlePrint(order.bill) : undefined}
@@ -281,11 +283,13 @@ export default function HistoryScreen() {
 
 function OrderHistoryCard({
   order,
+  userId,
   onEdit,
   onClose,
   onPrint,
 }: {
   order: UnifiedOrder;
+  userId: string | null;
   onEdit: (order: UnifiedOrder) => void;
   onClose?: () => void;
   onPrint?: () => void;
@@ -296,8 +300,9 @@ function OrderHistoryCard({
   const meta =
     order.source === "bill"
       ? `${order.bill.billRef} · ${order.bill.waiterName}`
-      : `${order.ticket.ticketRef} · Kitchen`;
-  const editable = canEditUnifiedOrder(order);
+      : `${order.ticket.ticketRef} · ${order.ticket.createdByName ?? "Kitchen"}`;
+  const editable = canEditUnifiedOrder(order, userId);
+  const ownerLabel = unifiedOrderOwnerLabel(order, userId);
   const sourceLabel = order.source === "kitchen" ? "Kitchen ticket" : "Bill";
 
   return (
@@ -334,6 +339,8 @@ function OrderHistoryCard({
           <Pressable onPress={() => onEdit(order)} style={styles.editBtn}>
             <Text style={styles.editBtnText}>Edit</Text>
           </Pressable>
+        ) : ownerLabel ? (
+          <Text style={styles.viewOnlyText}>By {ownerLabel} · view only</Text>
         ) : null}
         {onPrint ? (
           <Pressable onPress={onPrint} style={styles.printBtn}>
@@ -535,6 +542,12 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: 14,
     fontWeight: "700",
+  },
+  viewOnlyText: {
+    color: "#f87171",
+    fontSize: 12,
+    fontWeight: "600",
+    alignSelf: "center",
   },
   printBtn: {
     borderRadius: 10,

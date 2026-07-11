@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 
 /** Live Railway API — override with EXPO_PUBLIC_API_BASE_URL for local dev. */
-export const RAILWAY_API_BASE_URL = "https://platformapi-production-39aa.up.railway.app";
+export const RAILWAY_API_BASE_URL = "https://backend-desktop-production-5505.up.railway.app";
 
 function defaultApiBaseUrl(): string {
   return RAILWAY_API_BASE_URL;

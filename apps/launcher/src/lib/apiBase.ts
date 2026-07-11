@@ -1,6 +1,6 @@
 import { useDataModeStore } from "../stores/dataModeStore";
 
-const DEFAULT_API = "https://platformapi-production-39aa.up.railway.app";
+const DEFAULT_API = "https://backend-desktop-production-5505.up.railway.app";
 
 function builtInApiBaseUrl(): string {
   const fromEnv = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();

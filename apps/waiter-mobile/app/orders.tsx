@@ -13,7 +13,7 @@ import {
   Subtitle,
   colors,
 } from "../src/components/ui";
-import { canEditKitchenTicket } from "../src/lib/loadOrder";
+import { canEditKitchenTicket, ownsKitchenTicket } from "../src/lib/loadOrder";
 import {
   formatTimeAgo,
   kitchenStatusLabel,
@@ -105,7 +105,10 @@ export default function OrdersScreen() {
                 </Text>
                 <StatusBadge status={kitchenStatusLabel(ticket.status)} />
               </View>
-              <Label>{ticket.stationLabel}</Label>
+              <Label>
+                {ticket.stationLabel}
+                {ticket.createdByName ? ` · by ${ticket.createdByName}` : ""}
+              </Label>
               <Muted>{ticket.itemsSummary}</Muted>
               <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
                 <Muted>{formatTimeAgo(ticket.createdAt)}</Muted>
@@ -114,7 +117,7 @@ export default function OrdersScreen() {
               {ticket.priority === "priority" ? (
                 <Text style={{ color: colors.warning, fontSize: 13 }}>Priority order</Text>
               ) : null}
-              {canEditKitchenTicket(ticket) ? (
+              {canEditKitchenTicket(ticket) && ownsKitchenTicket(ticket, claims?.sub) ? (
                 <Pressable
                   onPress={() => openEdit(ticket)}
                   style={{
@@ -130,6 +133,10 @@ export default function OrdersScreen() {
                 >
                   <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 13 }}>Edit order</Text>
                 </Pressable>
+              ) : !ownsKitchenTicket(ticket, claims?.sub) ? (
+                <Text style={{ color: "#f87171", fontSize: 12, fontWeight: "600", marginTop: 6 }}>
+                  Taken by {ticket.createdByName ?? "another waiter"} — view only
+                </Text>
               ) : null}
             </Card>
           ))

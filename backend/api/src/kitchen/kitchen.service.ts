@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { and, asc, desc, eq, ne } from "drizzle-orm";
 import type { CreateBill, CreateKitchenTicket, KitchenTicketStatus, UpdateKitchenTicket } from "@platform/contracts";
 import {
@@ -6,6 +12,7 @@ import {
   popsBranches,
   popsKitchenTickets,
   popsMenuItems,
+  users,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { BillingService } from "../billing/billing.service";
@@ -61,7 +68,11 @@ export class KitchenService {
     return { ...ticket, lines };
   }
 
-  async createTicket(organizationId: string, input: CreateKitchenTicket) {
+  async createTicket(
+    organizationId: string,
+    input: CreateKitchenTicket,
+    createdByUserId?: string,
+  ) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     await this.closing.assertOrdersNotPaused(branch.id);
     const enrichedLines = await this.enrichLinesFromMenu(
@@ -88,6 +99,17 @@ export class KitchenService {
       throw new BadRequestException("A rider is required for delivery orders.");
     }
 
+    let createdByName: string | null = null;
+    if (createdByUserId) {
+      const userRows = await this.db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, createdByUserId))
+        .limit(1);
+      const email = userRows[0]?.email;
+      if (email) createdByName = waiterDisplayName(email);
+    }
+
     const [row] = await this.db
       .insert(popsKitchenTickets)
       .values({
@@ -100,6 +122,8 @@ export class KitchenService {
         linesJson: JSON.stringify(storedLines),
         priority: input.priority ?? "normal",
         status: "new",
+        createdByUserId: createdByUserId ?? null,
+        createdByName,
         riderId: input.riderId ?? null,
         deliveryChargePkr: input.deliveryChargePkr ?? 0,
         deliveryStatus: isDelivery
@@ -114,10 +138,33 @@ export class KitchenService {
     return this.mapTicketForResponse(row);
   }
 
-  async updateTicket(organizationId: string, ticketId: string, input: UpdateKitchenTicket) {
+  async updateTicket(
+    organizationId: string,
+    ticketId: string,
+    input: UpdateKitchenTicket,
+    editor?: { userId: string; role: string },
+  ) {
     const existing = await this.getTicket(organizationId, ticketId);
     if (existing.status === "done" && (input.lines !== undefined || input.notes !== undefined)) {
       throw new BadRequestException("Cannot edit items on a completed order");
+    }
+
+    // Only the waiter who took the order may change its contents. Status-only
+    // updates (kitchen marking cooking/ready/done) stay open to everyone, and
+    // managers/admins/cashiers can always edit.
+    const isContentEdit =
+      input.lines !== undefined || input.notes !== undefined || input.stationLabel !== undefined;
+    const editorIsStaff = editor && (editor.role === "waiter" || editor.role === "rider");
+    if (
+      isContentEdit &&
+      editorIsStaff &&
+      existing.createdByUserId &&
+      existing.createdByUserId !== editor.userId
+    ) {
+      const owner = existing.createdByName ?? "another waiter";
+      throw new ForbiddenException(
+        `This order was taken by ${owner}. Only they can edit it — you have view access.`,
+      );
     }
     if (input.stationLabel !== undefined) {
       if (existing.status === "done") {
@@ -380,6 +427,12 @@ export class KitchenService {
 
 function normalizeMenuLabel(label: string): string {
   return label.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function waiterDisplayName(email: string): string {
+  const local = email.split("@")[0] ?? email;
+  const words = local.replace(/[._-]+/g, " ").trim().split(/\s+/);
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
 function formatMenuItemLabel(name: string, portion: string | null): string {

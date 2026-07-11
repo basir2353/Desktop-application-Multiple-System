@@ -18,6 +18,7 @@ import { fetchBranchMenu } from "../../api/menu";
 import { fetchBranchFloor } from "../../api/tables";
 import { PosDishVariantModal } from "../../components/PosDishVariantModal";
 import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
+import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
 import { PosSeatingModal } from "../../components/PosSeatingModal";
 import {
   POS_ORDER_MODES,
@@ -152,6 +153,8 @@ export function PosPage(): JSX.Element {
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [ticketServicePct, setTicketServicePct] = useState(10);
   const [seatingModalOpen, setSeatingModalOpen] = useState(false);
+  const [orderTypeModalOpen, setOrderTypeModalOpen] = useState(true);
+  const [modeConfirmed, setModeConfirmed] = useState(false);
   const [editingOrder, setEditingOrder] = useState<PosEditingOrder>(null);
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
@@ -328,19 +331,66 @@ export function PosPage(): JSX.Element {
     [floorTables, selectedFloorSectionId],
   );
 
+  function switchMode(nextMode: PosOrderMode): void {
+    setMode(nextMode);
+    if (nextMode === "delivery") {
+      setDeliveryDetailsOpen(true);
+    }
+  }
+
+  function beginNextOrderCycle(): void {
+    switchMode("dine-in");
+    setModeConfirmed(false);
+    setSelectedFloorSectionId(null);
+    setSelectedTableId(null);
+    setSeatingModalOpen(false);
+    seatingAutoOpened.current = false;
+    setOrderTypeModalOpen(true);
+  }
+
+  function confirmOrderType(nextMode: PosOrderMode): void {
+    switchMode(nextMode);
+    setModeConfirmed(true);
+    setOrderTypeModalOpen(false);
+    if (nextMode === "dine-in") {
+      if (floorSections.length > 0) {
+        setSeatingModalOpen(true);
+        seatingAutoOpened.current = true;
+      }
+      return;
+    }
+    setSelectedFloorSectionId(null);
+    setSelectedTableId(null);
+    setSeatingModalOpen(false);
+    seatingAutoOpened.current = false;
+  }
+
+  function dismissOrderTypeModal(): void {
+    setOrderTypeModalOpen(false);
+    if (!modeConfirmed) {
+      setModeConfirmed(true);
+      if (mode === "dine-in" && floorSections.length > 0 && !selectedTableId) {
+        setSeatingModalOpen(true);
+        seatingAutoOpened.current = true;
+      }
+    }
+  }
+
   useEffect(() => {
-    if (mode !== "dine-in") {
-      setSelectedFloorSectionId(null);
-      setSelectedTableId(null);
-      setSeatingModalOpen(false);
-      seatingAutoOpened.current = false;
+    if (!modeConfirmed || mode !== "dine-in") {
+      if (mode !== "dine-in") {
+        setSelectedFloorSectionId(null);
+        setSelectedTableId(null);
+        setSeatingModalOpen(false);
+        seatingAutoOpened.current = false;
+      }
       return;
     }
     if (floorSections.length > 0 && !selectedTableId && !seatingAutoOpened.current) {
       setSeatingModalOpen(true);
       seatingAutoOpened.current = true;
     }
-  }, [mode, floorSections.length, selectedTableId]);
+  }, [mode, modeConfirmed, floorSections.length, selectedTableId]);
 
   useEffect(() => {
     if (!selectedTableId) return;
@@ -578,14 +628,15 @@ export function PosPage(): JSX.Element {
     setDeliveryRiderId("");
     setDeliveryChargePkr(loadDeliverySettings(branch?.code).defaultChargePkr);
     setDeliveryDetailsOpen(false);
+    beginNextOrderCycle();
   }
 
   function resetAfterBill(): void {
-    resetAfterKitchenOrder();
+    setEditingOrder(null);
     setDiscountPctInput(0);
     setDiscountAmountInput(0);
     setDiscountEditedAs("pct");
-    setEditingOrder(null);
+    resetAfterKitchenOrder();
   }
 
   function applyTableFromStation(stationLabel: string): void {
@@ -602,6 +653,8 @@ export function PosPage(): JSX.Element {
   }
 
   function applyTicketToPos(ticket: KitchenTicket): void {
+    setOrderTypeModalOpen(false);
+    setModeConfirmed(true);
     setEditingOrder({ kind: "ticket", ticketId: ticket.id });
     setOrderRef(ticket.orderRef ?? ticket.ticketRef);
     setMode(inferPosModeFromStation(ticket.stationLabel));
@@ -623,6 +676,8 @@ export function PosPage(): JSX.Element {
   }
 
   function applyBillToPos(bill: Bill): void {
+    setOrderTypeModalOpen(false);
+    setModeConfirmed(true);
     setEditingOrder({ kind: "held-bill", billId: bill.id });
     setOrderRef(bill.orderRef ?? bill.billRef);
     setMode(inferPosModeFromStation(bill.tableLabel));
@@ -779,8 +834,8 @@ export function PosPage(): JSX.Element {
       const wasTicketEdit = editingOrder?.kind === "ticket";
       const kotOk = printKot(buildKotPrintPayload());
       invalidateOrderFeeds();
-      resetAfterKitchenOrder();
       setEditingOrder(null);
+      resetAfterKitchenOrder();
       setPrintNotice(
         noticeFromPrintResult(
           kotOk,
@@ -1057,7 +1112,15 @@ export function PosPage(): JSX.Element {
         </p>
       ) : null}
 
-      {seatingModalOpen && mode === "dine-in" ? (
+      {orderTypeModalOpen && !editingOrder && !cashierModal ? (
+        <PosOrderTypeModal
+          selectedMode={mode}
+          onSelect={confirmOrderType}
+          onClose={dismissOrderTypeModal}
+        />
+      ) : null}
+
+      {seatingModalOpen && mode === "dine-in" && modeConfirmed ? (
         <PosSeatingModal
           sections={floorSections}
           tables={floorTables}
@@ -1277,7 +1340,7 @@ export function PosPage(): JSX.Element {
           <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800/80 dark:bg-slate-900/30">
             <div className={POS_MODE_BAR}>
               {POS_ORDER_MODES.map(({ id, label }) => (
-                <button key={id} type="button" onClick={() => setMode(id)} className={POS_MODE_BTN(mode === id)}>
+                <button key={id} type="button" onClick={() => switchMode(id)} className={POS_MODE_BTN(mode === id)}>
                   {label}
                 </button>
               ))}

@@ -47,6 +47,9 @@ const ROLE_DEFAULTS: Record<StaffRole, { email: string; title: string; subtitle:
 const defaultRole =
   (Constants.expoConfig?.extra as { defaultRole?: StaffRole } | undefined)?.defaultRole ?? "waiter";
 
+/** Dedicated waiter/rider APKs use PIN-only sign-in for that role. */
+const pinOnlyApp = defaultRole === "waiter" || defaultRole === "rider";
+
 export default function LoginScreen() {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
@@ -153,8 +156,7 @@ export default function LoginScreen() {
   }
 
   const roleCopy = ROLE_DEFAULTS[roleTab];
-  const roleTabs: StaffRole[] =
-    defaultRole === "waiter" ? ["waiter", "cashier", "rider"] : [defaultRole];
+  const roleTabs: StaffRole[] = pinOnlyApp ? [defaultRole] : ["waiter", "cashier", "rider"];
 
   return (
     <Screen safeTop>
@@ -169,56 +171,60 @@ export default function LoginScreen() {
             </Subtitle>
           </View>
 
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {roleTabs.map((role) => (
-              <Pressable
-                key={role}
-                onPress={() => selectRole(role)}
-                style={{
-                  flex: 1,
-                  paddingVertical: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: roleTab === role ? colors.accent : colors.border,
-                  backgroundColor: roleTab === role ? "#1e3a5f" : "#020617",
-                  alignItems: "center",
-                }}
-              >
-                <Subtitle>
-                  {role === "waiter" ? "Waiter" : role === "cashier" ? "Cashier" : "Rider"}
-                </Subtitle>
-              </Pressable>
-            ))}
-          </View>
+          {roleTabs.length > 1 ? (
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {roleTabs.map((role) => (
+                <Pressable
+                  key={role}
+                  onPress={() => selectRole(role)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: roleTab === role ? colors.accent : colors.border,
+                    backgroundColor: roleTab === role ? "#1e3a5f" : "#020617",
+                    alignItems: "center",
+                  }}
+                >
+                  <Subtitle>
+                    {role === "waiter" ? "Waiter" : role === "cashier" ? "Cashier" : "Rider"}
+                  </Subtitle>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
 
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {(["pin", "password"] as const).map((mode) => (
-              <Pressable
-                key={mode}
-                onPress={() => {
-                  setLoginMode(mode);
-                  setError(null);
-                }}
-                style={{
-                  flex: 1,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: loginMode === mode ? colors.accent : colors.border,
-                  backgroundColor: loginMode === mode ? "rgba(245, 158, 11, 0.15)" : "#020617",
-                  alignItems: "center",
-                }}
-              >
-                <Subtitle>{mode === "pin" ? "4-digit PIN" : "Email & password"}</Subtitle>
-              </Pressable>
-            ))}
-          </View>
+          {!pinOnlyApp ? (
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {(["pin", "password"] as const).map((mode) => (
+                <Pressable
+                  key={mode}
+                  onPress={() => {
+                    setLoginMode(mode);
+                    setError(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: loginMode === mode ? colors.accent : colors.border,
+                    backgroundColor: loginMode === mode ? "rgba(245, 158, 11, 0.15)" : "#020617",
+                    alignItems: "center",
+                  }}
+                >
+                  <Subtitle>{mode === "pin" ? "4-digit PIN" : "Email & password"}</Subtitle>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
 
           <Card>
             <Title>{roleCopy.title}</Title>
             <Subtitle>{roleCopy.subtitle}</Subtitle>
 
-            {loginMode === "pin" ? (
+            {loginMode === "pin" || pinOnlyApp ? (
               <View style={{ gap: 14, marginTop: 8 }}>
                 <Input
                   placeholder="Branch code (e.g. ISB-GT)"
@@ -239,6 +245,9 @@ export default function LoginScreen() {
                   loading={loading}
                   disabled={pin.length !== 4}
                 />
+                {roleCopy.demoPin ? (
+                  <Subtitle>Demo PIN: {roleCopy.demoPin} · Branch: {branchCode || "ISB-GT"}</Subtitle>
+                ) : null}
               </View>
             ) : (
               <View style={{ gap: 12, marginTop: 8 }}>
@@ -269,9 +278,13 @@ export default function LoginScreen() {
               {"\n"}
               Branch: ISB-GT
               {"\n"}
-              Waiter PIN: 1111 · Cashier PIN: 2222 · Rider PIN: 6666
+              {defaultRole === "waiter"
+                ? "Waiter PIN: 1111"
+                : defaultRole === "rider"
+                  ? "Rider PIN: 6666"
+                  : "Waiter PIN: 1111 · Rider PIN: 6666"}
               {"\n"}
-              Or email/password: changeme-please-01
+              Admin can set PINs in desktop → Waiters / Delivery.
             </Subtitle>
           </Card>
         </ScrollView>

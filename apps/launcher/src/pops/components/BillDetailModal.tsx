@@ -1,16 +1,22 @@
 import { Button } from "@platform/ui";
 import { PAYMENT_METHOD_LABELS, type Bill } from "@platform/contracts";
 import { useEffect } from "react";
+import { BillReceiptPreview } from "./BillReceiptPreview";
 import { billChannelLabel } from "../lib/orderSales";
+import { billToPrintInput } from "../lib/printTicket";
+import type { BillPrintSettings } from "../lib/billPrintSettings";
 import { Badge } from "../ui/Badge";
 import { linkActionClass, linkDangerClass, linkWarningClass } from "../lib/themeClasses";
 
 type Props = {
   bill: Bill;
   branchName: string;
+  branchCode: string;
+  billPrintSettings: BillPrintSettings;
   onClose: () => void;
   onReprint?: () => void;
   onEdit?: () => void;
+  onAddItem?: () => void;
   onPay?: () => void;
   onVoid?: () => void;
   onDelete?: () => void;
@@ -37,9 +43,12 @@ function formatWhen(iso: string): string {
 export function BillDetailModal({
   bill,
   branchName,
+  branchCode,
+  billPrintSettings,
   onClose,
   onReprint,
   onEdit,
+  onAddItem,
   onPay,
   onVoid,
   onDelete,
@@ -59,7 +68,7 @@ export function BillDetailModal({
       role="presentation"
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
         role="dialog"
         aria-modal="true"
         aria-labelledby="bill-detail-title"
@@ -155,12 +164,26 @@ export function BillDetailModal({
               </ul>
             </div>
           ) : null}
+
+          <div className="mt-5">
+            <BillReceiptPreview
+              input={billToPrintInput(branchName, branchCode, bill)}
+              branchCode={branchCode}
+              printSettings={billPrintSettings}
+              title="Receipt preview"
+            />
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">
           {onReprint ? (
             <Button variant="ghost" className="text-xs" onClick={onReprint}>
               Reprint invoice
+            </Button>
+          ) : null}
+          {onAddItem ? (
+            <Button variant="ghost" className="text-xs" onClick={onAddItem}>
+              Add item
             </Button>
           ) : null}
           {onEdit ? (

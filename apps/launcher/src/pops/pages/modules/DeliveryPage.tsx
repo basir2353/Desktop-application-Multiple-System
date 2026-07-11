@@ -164,6 +164,7 @@ export function DeliveryPage(): JSX.Element {
   const [riderName, setRiderName] = useState("");
   const [riderEmail, setRiderEmail] = useState("");
   const [riderPassword, setRiderPassword] = useState("");
+  const [riderPin, setRiderPin] = useState("");
   const [riderBranchCode, setRiderBranchCode] = useState("");
   const [ridersBranchCode, setRidersBranchCode] = useState("");
   const [riderPhone, setRiderPhone] = useState("");
@@ -317,6 +318,7 @@ export function DeliveryPage(): JSX.Element {
     setRiderName("");
     setRiderEmail("");
     setRiderPassword("");
+    setRiderPin("");
     setRiderPhone("");
     setRiderCnic("");
     setRiderSalary("");
@@ -332,6 +334,7 @@ export function DeliveryPage(): JSX.Element {
         name: riderName.trim(),
         email: riderEmail.trim(),
         password: riderPassword,
+        ...( /^\d{4}$/.test(riderPin) ? { pin: riderPin } : {} ),
         phone: riderPhone.trim() || undefined,
         cnic: riderCnic.trim() || undefined,
         salaryPkr: riderSalary.trim() ? Number(riderSalary) : undefined,
@@ -339,10 +342,11 @@ export function DeliveryPage(): JSX.Element {
         notes: riderNotes.trim() || undefined,
       }),
     onSuccess: (created) => {
+      const pinHint = /^\d{4}$/.test(riderPin) ? ` PIN ${riderPin} or` : "";
       resetRiderForm();
       setRidersBranchCode(created.branchCode);
       invalidate();
-      setNotice(`Rider added. They can sign in on the mobile app with ${created.email ?? "their email"}.`);
+      setNotice(`Rider added. They can sign in on the mobile app with${pinHint} ${created.email ?? "their email"}.`);
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -473,7 +477,7 @@ export function DeliveryPage(): JSX.Element {
           <div className={`max-w-3xl ${cardClass} p-4`}>
             <div className={panelTitleClass}>Add rider</div>
             <p className={`mt-1 text-xs ${mutedClass}`}>
-              Assign a branch and mobile login. The rider will only see deliveries for that branch assigned to them in the POPS Staff app.
+              Assign a branch and mobile login. Riders sign in on the POPS Rider app with their 4-digit PIN (or email and password).
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <label className={`block text-xs ${mutedClass} sm:col-span-2`}>
@@ -519,6 +523,14 @@ export function DeliveryPage(): JSX.Element {
                 value={riderPassword}
                 onChange={(e) => setRiderPassword(e.target.value)}
                 className={fieldInputClass}
+              />
+              <input
+                inputMode="numeric"
+                placeholder="4-digit PIN (for mobile quick login)"
+                value={riderPin}
+                onChange={(e) => setRiderPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                className={fieldInputClass}
+                maxLength={4}
               />
               <input
                 placeholder="CNIC (e.g. 35202-1234567-1)"

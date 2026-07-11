@@ -24,7 +24,11 @@ export class KitchenController {
   @Post("tickets")
   @RequirePermissions("pops.read")
   createTicket(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.kitchen.createTicket(user.organizationId, createKitchenTicketSchema.parse(body));
+    return this.kitchen.createTicket(
+      user.organizationId,
+      createKitchenTicketSchema.parse(body),
+      user.sub,
+    );
   }
 
   @Patch("tickets/:ticketId")
@@ -34,7 +38,12 @@ export class KitchenController {
     @Param("ticketId") ticketId: string,
     @Body() body: unknown,
   ) {
-    return this.kitchen.updateTicket(user.organizationId, ticketId, updateKitchenTicketSchema.parse(body));
+    return this.kitchen.updateTicket(
+      user.organizationId,
+      ticketId,
+      updateKitchenTicketSchema.parse(body),
+      { userId: user.sub, role: user.role },
+    );
   }
 
   @Post("tickets/bump-priority")

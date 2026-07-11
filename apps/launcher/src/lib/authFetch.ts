@@ -27,16 +27,28 @@ async function refreshAccessToken(): Promise<string> {
       throw new SessionExpiredError();
     }
 
-    const client = new AuthClient({ baseUrl: getApiBaseUrl() });
-    const tokens = await client.refresh(refreshToken);
-    const claims = decodeAccessToken(tokens.accessToken);
-    setTokens(tokens.accessToken, tokens.refreshToken, claims);
-    return tokens.accessToken;
+    try {
+      const client = new AuthClient({ baseUrl: getApiBaseUrl() });
+      const tokens = await client.refresh(refreshToken);
+      const claims = decodeAccessToken(tokens.accessToken);
+      setTokens(tokens.accessToken, tokens.refreshToken, claims);
+      return tokens.accessToken;
+    } catch {
+      clear();
+      throw new SessionExpiredError();
+    }
   })().finally(() => {
     refreshInFlight = null;
   });
 
   return refreshInFlight;
+}
+
+export function isSessionExpiredError(err: unknown): boolean {
+  return (
+    err instanceof SessionExpiredError ||
+    (err instanceof Error && err.message === "Session expired. Sign in again.")
+  );
 }
 
 /** Returns a valid access token, refreshing proactively when expired. */

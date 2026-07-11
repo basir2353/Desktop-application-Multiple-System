@@ -12,9 +12,13 @@ import {
   type WaiterOption,
 } from "@platform/contracts";
 import { useMemo, useState } from "react";
+import { BillReceiptPreview } from "./BillReceiptPreview";
 import { computeCheckoutTotals } from "../lib/posCheckout";
 import { discountAmountFromPct } from "../lib/posDiscount";
-import { fieldInputClass, fieldSelectClass, linkDangerClass, linkWarningClass } from "../lib/themeClasses";
+import { billChannelLabel } from "../lib/orderSales";
+import { type PrintTicketInput } from "../lib/printTicket";
+import type { BillPrintSettings } from "../lib/billPrintSettings";
+import { fieldInputClass, fieldSelectClass, linkDangerClass } from "../lib/themeClasses";
 
 export type BillFormValues = {
   tableLabel: string;
@@ -33,10 +37,13 @@ export type BillFormValues = {
 type Props = {
   mode: "create" | "edit";
   bill?: Bill;
+  branchName: string;
+  branchCode: string;
   menuItems: MenuItem[];
   waiters: WaiterOption[];
   defaultServicePct: number;
   defaultTaxPct: number;
+  billPrintSettings: BillPrintSettings;
   loading?: boolean;
   error?: string | null;
   onClose: () => void;
@@ -88,10 +95,13 @@ function defaultForm(defaultServicePct: number, defaultTaxPct: number): BillForm
 export function BillFormModal({
   mode,
   bill,
+  branchName,
+  branchCode,
   menuItems,
   waiters,
   defaultServicePct,
   defaultTaxPct,
+  billPrintSettings,
   loading = false,
   error = null,
   onClose,
@@ -116,6 +126,40 @@ export function BillFormModal({
       form.deliveryChargePkr,
     );
   }, [form]);
+
+  const previewInput = useMemo((): Omit<PrintTicketInput, "kind"> => {
+    const validLines = form.lines.filter((l) => l.label.trim() && l.qty > 0);
+    const discount = discountAmountFromPct(form.discountPct, totals.subtotal);
+    const billRef = mode === "edit" && bill ? bill.billRef : "PREVIEW";
+    return {
+      branchName,
+      branchCode,
+      orderRef: form.orderRef.trim() || billRef,
+      billRef,
+      modeLabel: billChannelLabel(form.tableLabel.trim() || "T1"),
+      tableLabel: form.tableLabel.trim() || "—",
+      waiterName: form.waiterName.trim() || "—",
+      notes: form.notes.trim() || undefined,
+      lines: validLines.map((line) => ({
+        label: line.label,
+        qty: line.qty,
+        unitPrice: line.unitPrice,
+      })),
+      subtotal: totals.subtotal,
+      discount,
+      service: totals.service,
+      tax: totals.tax,
+      deliveryCharge: form.deliveryChargePkr > 0 ? form.deliveryChargePkr : undefined,
+      total: totals.total,
+      servicePct: form.servicePct,
+      taxPct: form.taxPct,
+      discountPct: form.discountPct,
+    };
+  }, [form, totals, mode, bill, branchName, branchCode]);
+
+  function addItemLine(): void {
+    setForm((f) => ({ ...f, lines: [...f.lines.filter((l) => l.label.trim()), emptyLine()] }));
+  }
 
   function addMenuItem(itemId: string): void {
     const item = menuItems.find((i) => i.id === itemId);
@@ -151,7 +195,7 @@ export function BillFormModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/65">
       <div
-        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
         role="dialog"
         aria-modal="true"
         aria-labelledby="bill-form-title"
@@ -168,7 +212,8 @@ export function BillFormModal({
         </div>
 
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="grid min-h-0 flex-1 lg:grid-cols-2">
+            <div className="min-h-0 overflow-y-auto border-b border-slate-200 px-5 py-4 dark:border-slate-800 lg:border-b-0 lg:border-r">
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block text-xs text-slate-500">
                 Table / station
@@ -225,25 +270,30 @@ export function BillFormModal({
             <div className="mt-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Line items</div>
-                {menuItems.length > 0 ? (
-                  <select
-                    className={`text-xs ${fieldSelectClass}`}
-                    value={menuPick}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      if (id) addMenuItem(id);
-                    }}
-                  >
-                    <option value="">+ Add from menu…</option>
-                    {menuItems
-                      .filter((i) => i.isActive)
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} — Rs {menuItemDisplayPrice(item).toLocaleString()}
-                        </option>
-                      ))}
-                  </select>
-                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" className="text-xs" onClick={addItemLine}>
+                    + Add item
+                  </Button>
+                  {menuItems.length > 0 ? (
+                    <select
+                      className={`text-xs ${fieldSelectClass}`}
+                      value={menuPick}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        if (id) addMenuItem(id);
+                      }}
+                    >
+                      <option value="">Add from menu…</option>
+                      {menuItems
+                        .filter((i) => i.isActive)
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} — Rs {menuItemDisplayPrice(item).toLocaleString()}
+                          </option>
+                        ))}
+                    </select>
+                  ) : null}
+                </div>
               </div>
               <ul className="mt-2 space-y-2">
                 {form.lines.map((line, index) => (
@@ -252,11 +302,12 @@ export function BillFormModal({
                     className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-950/40 sm:grid-cols-12"
                   >
                     <label className="block text-[10px] text-slate-500 sm:col-span-5">
-                      Item
+                      Item / charge
                       <input
                         className={`mt-1 w-full ${fieldInputClass}`}
                         value={line.label}
                         onChange={(e) => updateLine(index, { label: e.target.value })}
+                        placeholder="e.g. Extra sauce, corkage fee"
                         required
                       />
                     </label>
@@ -296,13 +347,6 @@ export function BillFormModal({
                   </li>
                 ))}
               </ul>
-              <button
-                type="button"
-                className={`mt-2 text-xs ${linkWarningClass}`}
-                onClick={() => setForm((f) => ({ ...f, lines: [...f.lines, emptyLine()] }))}
-              >
-                + Add line manually
-              </button>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-4">
@@ -412,6 +456,19 @@ export function BillFormModal({
             </div>
 
             {error ? <p className="mt-3 text-xs text-red-500">{error}</p> : null}
+            </div>
+
+            <div className="min-h-0 overflow-y-auto bg-slate-50 px-5 py-4 dark:bg-slate-950/30">
+              <BillReceiptPreview
+                input={previewInput}
+                branchCode={branchCode}
+                printSettings={billPrintSettings}
+                title="Bill preview"
+              />
+              <p className="mt-2 text-[10px] text-slate-500">
+                Preview matches printed and digital receipts ({billChannelLabel(form.tableLabel)}).
+              </p>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">

@@ -2,7 +2,7 @@ import { Button } from "@platform/ui";
 import type { Bill } from "@platform/contracts";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePopsStore } from "../../../stores/popsStore";
 import {
@@ -21,7 +21,13 @@ import { loadPosSettings } from "../../lib/posSettings";
 import { discountAmountFromPct } from "../../lib/posDiscount";
 import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
 import { printBill } from "../../lib/printTicket";
+import {
+  loadBillPrintSettings,
+  saveBillPrintSettings,
+  type BillPrintSettings,
+} from "../../lib/billPrintSettings";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
+import { BillCustomizationPanel } from "../../components/BillCustomizationPanel";
 import { BillDetailModal } from "../../components/BillDetailModal";
 import { BillFormModal, type BillFormValues } from "../../components/BillFormModal";
 import { CompleteHeldBillModal } from "../../components/CompleteHeldBillModal";
@@ -98,6 +104,20 @@ export function BillManagementPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const businessDay = useMemo(() => loadBusinessDaySettings(branch?.code), [branch?.code]);
   const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
+  const [billPrintSettings, setBillPrintSettings] = useState<BillPrintSettings>(() =>
+    loadBillPrintSettings(branch?.code),
+  );
+  const [showCustomization, setShowCustomization] = useState(false);
+
+  useEffect(() => {
+    setBillPrintSettings(loadBillPrintSettings(branch?.code));
+  }, [branch?.code]);
+
+  function persistBillSettings(next: BillPrintSettings): void {
+    if (!branch?.code) return;
+    setBillPrintSettings(next);
+    saveBillPrintSettings(branch.code, next);
+  }
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -224,7 +244,7 @@ export function BillManagementPage(): JSX.Element {
       setFormError(null);
       setNotice(`Bill ${bill.billRef} created${bill.status === "held" ? " (held)" : ""}.`);
       if (bill.status === "completed" && branch) {
-        printBill(branch.name, branch.code, bill);
+        printBill(branch.name, branch.code, bill, { billPrintSettings });
       }
     },
     onError: (err: Error) => setFormError(err.message),
@@ -270,7 +290,7 @@ export function BillManagementPage(): JSX.Element {
       setHeldToPay(null);
       invalidate();
       setNotice(`Payment completed — ${bill.billRef}`);
-      if (branch) printBill(branch.name, branch.code, bill);
+      if (branch) printBill(branch.name, branch.code, bill, { billPrintSettings });
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -298,13 +318,16 @@ export function BillManagementPage(): JSX.Element {
   function reprint(bill: Bill): void {
     if (!branch) return;
     const printerName = getWaiterPrinter(branch.code, bill.waiterId)?.printerName;
-    printBill(branch.name, branch.code, bill, { printerName });
+    printBill(branch.name, branch.code, bill, { printerName, billPrintSettings });
     setNotice(`Invoice reprinted — ${bill.billRef}`);
   }
 
-  function openEdit(bill: Bill): void {
+  function openEdit(bill: Bill, appendItem = false): void {
     if (bill.status !== "held") return;
-    setEditingBill(bill);
+    const nextBill = appendItem
+      ? { ...bill, lines: [...bill.lines, { label: "", qty: 1, unitPrice: 0 }] }
+      : bill;
+    setEditingBill(nextBill);
     setFormMode("edit");
     setFormError(null);
     setDetailBill(null);
@@ -331,9 +354,18 @@ export function BillManagementPage(): JSX.Element {
         subtitle={`Bills, suppliers, and employees for ${branch.name}.`}
         actions={
           activeTab === "bills" ? (
-            <Button className="text-xs" onClick={() => { setFormMode("create"); setFormError(null); }}>
-              Create bill
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="ghost"
+                className="text-xs"
+                onClick={() => setShowCustomization((v) => !v)}
+              >
+                {showCustomization ? "Hide customization" : "Bill customization"}
+              </Button>
+              <Button className="text-xs" onClick={() => { setFormMode("create"); setFormError(null); }}>
+                Create bill
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -373,6 +405,19 @@ export function BillManagementPage(): JSX.Element {
 
       {activeTab === "bills" ? (
       <>
+      {showCustomization ? (
+        <BillCustomizationPanel
+          branchName={branch.name}
+          branchCode={branch.code}
+          settings={billPrintSettings}
+          onChange={setBillPrintSettings}
+          onSave={() => {
+            persistBillSettings(billPrintSettings);
+            setNotice("Bill customization saved for this branch.");
+          }}
+        />
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard
           label="Held bills"
@@ -550,9 +595,12 @@ export function BillManagementPage(): JSX.Element {
         <BillDetailModal
           bill={detailBill}
           branchName={branch.name}
+          branchCode={branch.code}
+          billPrintSettings={billPrintSettings}
           onClose={() => setDetailBill(null)}
           onReprint={detailBill.status === "completed" ? () => reprint(detailBill) : undefined}
           onEdit={detailBill.status === "held" ? () => openEdit(detailBill) : undefined}
+          onAddItem={detailBill.status === "held" ? () => openEdit(detailBill, true) : undefined}
           onPay={detailBill.status === "held" ? () => { setHeldToPay(detailBill); setDetailBill(null); } : undefined}
           onVoid={
             detailBill.status === "held" || detailBill.status === "completed"
@@ -566,10 +614,13 @@ export function BillManagementPage(): JSX.Element {
       {formMode === "create" ? (
         <BillFormModal
           mode="create"
+          branchName={branch.name}
+          branchCode={branch.code}
           menuItems={menuQuery.data?.items ?? []}
           waiters={waitersQuery.data ?? []}
           defaultServicePct={posSettings.servicePct}
           defaultTaxPct={posSettings.taxPct}
+          billPrintSettings={billPrintSettings}
           loading={createMutation.isPending}
           error={formError}
           onClose={() => { setFormMode(null); setFormError(null); }}
@@ -579,12 +630,16 @@ export function BillManagementPage(): JSX.Element {
 
       {formMode === "edit" && editingBill ? (
         <BillFormModal
+          key={`${editingBill.id}-${editingBill.lines.length}`}
           mode="edit"
           bill={editingBill}
+          branchName={branch.name}
+          branchCode={branch.code}
           menuItems={menuQuery.data?.items ?? []}
           waiters={waitersQuery.data ?? []}
           defaultServicePct={posSettings.servicePct}
           defaultTaxPct={posSettings.taxPct}
+          billPrintSettings={billPrintSettings}
           loading={updateMutation.isPending}
           error={formError}
           onClose={() => { setFormMode(null); setEditingBill(null); setFormError(null); }}

@@ -39,7 +39,7 @@ function run(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, {
     cwd: opts.cwd ?? appRoot,
     stdio: "inherit",
-    shell: isWin,
+    shell: opts.shell ?? isWin,
     env: { ...process.env, NODE_ENV: "production", ...opts.env },
   });
   if (result.status !== 0) {
@@ -271,9 +271,13 @@ const gradleEnv = {
 
 const gradlew = join(paths.androidDir, isWin ? "gradlew.bat" : "gradlew");
 if (isWin) {
-  run("cmd.exe", ["/c", gradlew, "assembleRelease"], { cwd: paths.androidDir, env: gradleEnv });
+  run("cmd.exe", ["/c", gradlew, "assembleRelease"], {
+    cwd: paths.androidDir,
+    env: gradleEnv,
+    shell: false,
+  });
 } else {
-  run(gradlew, ["assembleRelease"], { cwd: paths.androidDir, env: gradleEnv });
+  run(gradlew, ["assembleRelease"], { cwd: paths.androidDir, env: gradleEnv, shell: false });
 }
 
 if (!existsSync(paths.apkSrc)) {

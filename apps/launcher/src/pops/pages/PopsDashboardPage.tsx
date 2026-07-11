@@ -6,7 +6,7 @@ import { usePopsStore } from "../../stores/popsStore";
 import { fetchAccountingDashboard } from "../api/accounting";
 import { fetchCompletedOrders } from "../api/billing";
 import { fetchKitchenTickets } from "../api/kitchen";
-import { fetchDashboard, SessionExpiredError } from "../api/operations";
+import { fetchDashboard, SessionExpiredError, isSessionExpiredError } from "../api/operations";
 import { DashboardChartsGrid } from "../components/dashboard/DashboardChartsGrid";
 import { summarizePendingOrders } from "../lib/pendingOrdersMetrics";
 import {
@@ -140,10 +140,12 @@ export function PopsDashboardPage(): JSX.Element {
   );
 
   useEffect(() => {
-    if (dashboardQuery.error instanceof SessionExpiredError) {
+    const expired =
+      isSessionExpiredError(dashboardQuery.error) || isSessionExpiredError(ordersQuery.error);
+    if (expired) {
       navigate("/login", { replace: true });
     }
-  }, [dashboardQuery.error, navigate]);
+  }, [dashboardQuery.error, ordersQuery.error, navigate]);
 
   const metrics = dashboardQuery.data?.metrics;
   const zoom = ZOOM_LEVELS[zoomIndex];
@@ -251,13 +253,13 @@ export function PopsDashboardPage(): JSX.Element {
         </span>
       </div>
 
-      {dashboardQuery.isError && !(dashboardQuery.error instanceof SessionExpiredError) ? (
+      {dashboardQuery.isError && !isSessionExpiredError(dashboardQuery.error) ? (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
           {(dashboardQuery.error as Error).message}
         </div>
       ) : null}
 
-      {ordersQuery.isError ? (
+      {ordersQuery.isError && !isSessionExpiredError(ordersQuery.error) ? (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
           Could not load completed orders for sales: {(ordersQuery.error as Error).message}
         </p>

@@ -39,9 +39,12 @@ import {
   cartFromBill,
   cartFromKitchenTicket,
   extractKitchenNotes,
+  ownsHeldBill,
+  ownsKitchenTicket,
   resolveTableKey,
   type EditingOrder,
 } from "../src/lib/loadOrder";
+import { buildTableOccupancy, occupancyForTable } from "../src/lib/tableStatus";
 import { useBranchStore } from "../src/stores/branchStore";
 import {
   deliveryNotes,
@@ -115,6 +118,7 @@ export default function OrderScreen() {
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
+    refetchInterval: 10_000,
   });
 
   const ridersQuery = useQuery({
@@ -127,7 +131,16 @@ export default function OrderScreen() {
     return (floorQuery.data?.tables ?? []).filter((t) => t.isActive);
   }, [floorQuery.data]);
 
+  const myUserId = claims?.sub ?? null;
+
+  const tableOccupancy = useMemo(
+    () => buildTableOccupancy(kitchenQuery.data ?? [], ordersQuery.data ?? [], myUserId),
+    [kitchenQuery.data, ordersQuery.data, myUserId],
+  );
+
   const activeTableId = tableId ?? tables[0]?.tableNumber ?? null;
+  const activeTableOccupancy = occupancyForTable(tableOccupancy, activeTableId);
+  const activeTableLockedByOther = Boolean(activeTableOccupancy && !activeTableOccupancy.mine);
   const draftKey = orderMode === "dine-in" ? activeTableId : orderMode;
   const activeRiders = useMemo(
     () => (ridersQuery.data ?? []).filter((rider) => rider.active),
@@ -164,6 +177,10 @@ export default function OrderScreen() {
 
   function validateOrderTarget(): string | null {
     if (orderMode === "dine-in" && !activeTableId) return "Select a table first.";
+    if (orderMode === "dine-in" && !editingOrder && activeTableLockedByOther) {
+      const owner = activeTableOccupancy?.ownerName ?? "another waiter";
+      return `Table ${activeTableId} is booked by ${owner}. You can view the order but not edit it.`;
+    }
     if (orderMode === "delivery") {
       if (activeRiders.length === 0) return "Add an active rider in the desktop Delivery module first.";
       if (!deliveryRiderId) return "Select a rider for this delivery order.";
@@ -315,6 +332,13 @@ export default function OrderScreen() {
     if (editTicketId) {
       const ticket = kitchenQuery.data?.find((row) => row.id === editTicketId);
       if (ticket && canEditKitchenTicket(ticket)) {
+        if (!ownsKitchenTicket(ticket, myUserId)) {
+          appliedEditRef.current = key;
+          setNotice(
+            `This order was taken by ${ticket.createdByName ?? "another waiter"} — view only.`,
+          );
+          return;
+        }
         applyTicketEdit(ticket);
         appliedEditRef.current = key;
       }
@@ -324,6 +348,11 @@ export default function OrderScreen() {
     if (editBillId) {
       const bill = ordersQuery.data?.find((row) => row.id === editBillId);
       if (bill && canEditHeldBill(bill)) {
+        if (!ownsHeldBill(bill, myUserId)) {
+          appliedEditRef.current = key;
+          setNotice(`This bill was taken by ${bill.waiterName} — view only.`);
+          return;
+        }
         applyBillEdit(bill);
         appliedEditRef.current = key;
       }
@@ -483,7 +512,7 @@ export default function OrderScreen() {
   }
 
   function startEditTicket(ticket: KitchenTicket): void {
-    if (!canEditKitchenTicket(ticket)) return;
+    if (!canEditKitchenTicket(ticket) || !ownsKitchenTicket(ticket, myUserId)) return;
     applyTicketEdit(ticket);
     appliedEditRef.current = ticket.id;
   }
@@ -581,16 +610,30 @@ export default function OrderScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.tableRow}
             >
-              {tables.map((t) => (
-                <Chip
-                  key={t.id}
-                  label={t.tableNumber}
-                  selected={activeTableId === t.tableNumber}
-                  onPress={() => selectTable(t.tableNumber)}
-                />
-              ))}
+              {tables.map((t) => {
+                const occ = occupancyForTable(tableOccupancy, t.tableNumber);
+                return (
+                  <Chip
+                    key={t.id}
+                    label={t.tableNumber}
+                    selected={activeTableId === t.tableNumber}
+                    tone={occ ? (occ.mine ? "mine" : "locked") : undefined}
+                    sublabel={
+                      occ ? (occ.mine ? "Your order" : occ.ownerName ?? "Booked") : undefined
+                    }
+                    onPress={() => selectTable(t.tableNumber)}
+                  />
+                );
+              })}
             </ScrollView>
           )}
+          {activeTableLockedByOther && !editingOrder ? (
+            <Text style={styles.lockedTableHint}>
+              Table {activeTableId} is booked by{" "}
+              {activeTableOccupancy?.ownerName ?? "another waiter"}. You can view the order below,
+              but only they can edit it. The table frees up when the order is done.
+            </Text>
+          ) : null}
         </Card>
         ) : null}
 
@@ -820,7 +863,8 @@ export default function OrderScreen() {
             tableKots.map((k) => {
               const isEditingThis =
                 editingOrder?.kind === "ticket" && editingOrder.ticketId === k.id;
-              const canEdit = canEditKitchenTicket(k);
+              const isMine = ownsKitchenTicket(k, myUserId);
+              const canEdit = canEditKitchenTicket(k) && isMine;
               return (
               <View
                 key={k.id}
@@ -835,6 +879,7 @@ export default function OrderScreen() {
                     <Text style={styles.kitchenRef}>{k.ticketRef}</Text>
                     <Text style={styles.kitchenMeta}>
                       {kitchenStatusLabel(k.status)} · {formatTimeAgo(k.createdAt)}
+                      {k.createdByName ? ` · by ${k.createdByName}` : ""}
                     </Text>
                   </View>
                   <StatusBadge status={kitchenStatusLabel(k.status)} />
@@ -846,6 +891,11 @@ export default function OrderScreen() {
                   <Pressable onPress={() => startEditTicket(k)} style={styles.editOrderBtn}>
                     <Text style={styles.editOrderBtnText}>Edit order</Text>
                   </Pressable>
+                ) : null}
+                {!isMine ? (
+                  <Text style={styles.viewOnlyLabel}>
+                    Taken by {k.createdByName ?? "another waiter"} — view only
+                  </Text>
                 ) : null}
                 {isEditingThis ? (
                   <Text style={styles.editingLabel}>Currently editing</Text>
@@ -1327,6 +1377,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     marginTop: 4,
+  },
+  viewOnlyLabel: {
+    color: "#f87171",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  lockedTableHint: {
+    color: "#f87171",
+    fontSize: 12,
+    lineHeight: 17,
+    backgroundColor: "rgba(248, 113, 113, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.3)",
+    borderRadius: 10,
+    padding: 10,
   },
   deliveryInput: {
     marginBottom: 10,

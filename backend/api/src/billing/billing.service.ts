@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -333,7 +334,12 @@ export class BillingService implements OnApplicationBootstrap {
     return this.mapBill(row);
   }
 
-  async updateBill(organizationId: string, billId: string, input: UpdateBill) {
+  async updateBill(
+    organizationId: string,
+    billId: string,
+    input: UpdateBill,
+    editor?: { userId: string; role: string },
+  ) {
     const rows = await this.db
       .select()
       .from(popsBills)
@@ -345,6 +351,14 @@ export class BillingService implements OnApplicationBootstrap {
     }
     if (existing.status !== "held") {
       throw new BadRequestException("Only held bills can be edited");
+    }
+    // A held bill belongs to the waiter who created it; other waiters get
+    // view-only access. Managers/admins/cashiers can always edit.
+    const editorIsStaff = editor && (editor.role === "waiter" || editor.role === "rider");
+    if (editorIsStaff && existing.waiterId && existing.waiterId !== editor.userId) {
+      throw new ForbiddenException(
+        `This bill was taken by ${existing.waiterName}. Only they can edit it — you have view access.`,
+      );
     }
 
     const existingLines = this.parseBillLines(existing.linesJson);

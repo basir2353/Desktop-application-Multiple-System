@@ -216,6 +216,7 @@ export class DeliveryService implements OnApplicationBootstrap {
       permissions: permissionsForPopsRole("rider"),
       branchScope: branch.code,
       pinRequired: false,
+      staffPinHash: input.pin ? await bcrypt.hash(input.pin, 10) : null,
       lastActivityAt: null,
     });
 
@@ -271,9 +272,23 @@ export class DeliveryService implements OnApplicationBootstrap {
         permissions: permissionsForPopsRole("rider"),
         branchScope: branchCode,
         pinRequired: false,
+        staffPinHash: input.pin ? await bcrypt.hash(input.pin, 10) : null,
         lastActivityAt: null,
       });
       linkedUserId = user.id;
+    }
+
+    const pinUserId = linkedUserId ?? rider.userId;
+    if (input.pin && pinUserId) {
+      await this.db
+        .update(organizationMemberships)
+        .set({ staffPinHash: await bcrypt.hash(input.pin, 10) })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, pinUserId),
+          ),
+        );
     }
 
     const [row] = await this.db
@@ -405,6 +420,8 @@ export class DeliveryService implements OnApplicationBootstrap {
         | "out_for_delivery"
         | "delivered"
         | null,
+      createdById: row.createdByUserId ?? null,
+      createdByName: row.createdByName ?? null,
     };
   }
 

@@ -1,5 +1,10 @@
 import type { Bill, KitchenTicket } from "@platform/contracts";
-import { canEditHeldBill, canEditKitchenTicket } from "./loadOrder";
+import {
+  canEditHeldBill,
+  canEditKitchenTicket,
+  ownsHeldBill,
+  ownsKitchenTicket,
+} from "./loadOrder";
 import { billStatusLabel, kitchenStatusLabel, orderRefFromBill, orderRefFromTicket } from "./orderDisplay";
 
 export type UnifiedOrder =
@@ -64,9 +69,32 @@ export function unifiedOrderTotal(order: UnifiedOrder): number | null {
   return null;
 }
 
-export function canEditUnifiedOrder(order: UnifiedOrder): boolean {
-  if (order.source === "kitchen") return canEditKitchenTicket(order.ticket);
-  return canEditHeldBill(order.bill);
+export function canEditUnifiedOrder(
+  order: UnifiedOrder,
+  userId?: string | null,
+): boolean {
+  if (order.source === "kitchen") {
+    return (
+      canEditKitchenTicket(order.ticket) &&
+      (userId === undefined || ownsKitchenTicket(order.ticket, userId))
+    );
+  }
+  return (
+    canEditHeldBill(order.bill) && (userId === undefined || ownsHeldBill(order.bill, userId))
+  );
+}
+
+/** Owner display name for an order taken by someone else, else null. */
+export function unifiedOrderOwnerLabel(
+  order: UnifiedOrder,
+  userId: string | null,
+): string | null {
+  if (order.source === "kitchen") {
+    if (ownsKitchenTicket(order.ticket, userId)) return null;
+    return order.ticket.createdByName ?? "another waiter";
+  }
+  if (order.bill.status !== "held" || ownsHeldBill(order.bill, userId)) return null;
+  return order.bill.waiterName;
 }
 
 export function orderStatusAccent(order: UnifiedOrder): string {

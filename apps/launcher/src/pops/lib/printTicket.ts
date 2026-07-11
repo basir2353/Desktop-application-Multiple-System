@@ -2,6 +2,12 @@ import type { Bill, KitchenTicket } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
 import { parseItemsSummary, type PosRecentOrder } from "./recentOrders";
 import {
+  billReceiptFontSizes,
+  DEFAULT_BILL_PRINT_SETTINGS,
+  loadBillPrintSettings,
+  type BillPrintSettings,
+} from "./billPrintSettings";
+import {
   DEFAULT_KOT_PRINT_SETTINGS,
   loadKotPrintSettings,
   type KotPrintSettings,
@@ -36,6 +42,7 @@ export type PrintTicketInput = {
   taxPct?: number;
   discountPct: number;
   kotSettings?: KotPrintSettings;
+  billPrintSettings?: BillPrintSettings;
 };
 
 function escapeHtml(value: string): string {
@@ -50,12 +57,17 @@ function formatMoney(pkr: number): string {
   return `Rs ${pkr.toLocaleString("en-PK")}`;
 }
 
-function buildTicketHtml(input: PrintTicketInput): string {
+export function buildTicketHtml(input: PrintTicketInput): string {
   const isReceipt = input.kind === "receipt";
   const kotSettings =
     input.kotSettings ??
     (input.branchCode ? loadKotPrintSettings(input.branchCode) : DEFAULT_KOT_PRINT_SETTINGS);
-  const title = isReceipt ? "Tax Invoice" : "Kitchen Order";
+  const billSettings =
+    input.billPrintSettings ??
+    (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
+  const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
+  const fields = isReceipt ? billSettings.fields : null;
+  const title = isReceipt ? billSettings.documentTitle : "Kitchen Order";
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -76,37 +88,73 @@ function buildTicketHtml(input: PrintTicketInput): string {
         <td class="qty">${line.qty}</td>
       </tr>`;
       }
+      const showQty = fields!.itemQty;
+      const showAmt = fields!.itemAmount;
       return `<tr>
-        <td class="item-name">${escapeHtml(line.label)}</td>
-        <td class="qty">${line.qty}</td>
-        <td class="amt">${formatMoney(lineTotal)}</td>
+        <td class="item-name" colspan="${showQty || showAmt ? 1 : 3}">${escapeHtml(line.label)}</td>
+        ${showQty ? `<td class="qty">${line.qty}</td>` : ""}
+        ${showAmt ? `<td class="amt">${formatMoney(lineTotal)}</td>` : ""}
       </tr>`;
     })
     .join("");
 
-  const totalsBlock = isReceipt
-    ? `<div class="totals">
-        <div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal)}</span></div>
-        ${input.discount > 0 ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount)}</span></div>` : ""}
-        <div class="row"><span class="label">Service charge (${input.servicePct}%)</span><span class="value">${formatMoney(input.service)}</span></div>
-        <div class="row"><span class="label">Tax (${input.taxPct ?? 15}%)</span><span class="value">${formatMoney(input.tax)}</span></div>
-        ${(input.deliveryCharge ?? 0) > 0 ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!)}</span></div>` : ""}
-        <div class="row grand"><span class="label">Total</span><span class="value">${formatMoney(input.total)}</span></div>
-      </div>`
-    : "";
+  const totalsRows = isReceipt && fields
+    ? [
+        fields.subtotal
+          ? `<div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal)}</span></div>`
+          : "",
+        fields.discount && input.discount > 0
+          ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount)}</span></div>`
+          : "",
+        fields.service
+          ? `<div class="row"><span class="label">Service charge (${input.servicePct}%)</span><span class="value">${formatMoney(input.service)}</span></div>`
+          : "",
+        fields.tax
+          ? `<div class="row"><span class="label">Tax (${input.taxPct ?? 15}%)</span><span class="value">${formatMoney(input.tax)}</span></div>`
+          : "",
+        fields.delivery && (input.deliveryCharge ?? 0) > 0
+          ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!)}</span></div>`
+          : "",
+        fields.total
+          ? `<div class="row grand"><span class="label">Total</span><span class="value">${formatMoney(input.total)}</span></div>`
+          : "",
+      ].filter(Boolean)
+    : [];
 
-  const metaRows = [
-    `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>`,
-    `<span class="meta-chip meta-primary">${escapeHtml(input.modeLabel)}</span>`,
-    input.tableLabel
-      ? `<span class="meta-chip meta-primary">${escapeHtml(input.tableLabel)}</span>`
-      : null,
-    input.billRef ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>` : null,
-    input.waiterName ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>` : null,
-    input.printerName ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>` : null,
-  ]
-    .filter(Boolean)
-    .join("");
+  const totalsBlock =
+    isReceipt && totalsRows.length > 0 ? `<div class="totals">${totalsRows.join("")}</div>` : "";
+
+  const metaRows = isReceipt && fields
+    ? [
+        fields.orderRef ? `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>` : null,
+        fields.orderType ? `<span class="meta-chip meta-primary">${escapeHtml(input.modeLabel)}</span>` : null,
+        fields.tableLabel && input.tableLabel
+          ? `<span class="meta-chip meta-primary">${escapeHtml(input.tableLabel)}</span>`
+          : null,
+        fields.billRef && input.billRef
+          ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>`
+          : null,
+        fields.waiterName && input.waiterName
+          ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>`
+          : null,
+        fields.printerName && input.printerName
+          ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("")
+    : [
+        `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>`,
+        `<span class="meta-chip meta-primary">${escapeHtml(input.modeLabel)}</span>`,
+        input.tableLabel
+          ? `<span class="meta-chip meta-primary">${escapeHtml(input.tableLabel)}</span>`
+          : null,
+        input.billRef ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>` : null,
+        input.waiterName ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>` : null,
+        input.printerName ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>` : null,
+      ]
+        .filter(Boolean)
+        .join("");
 
   const kotTotalsBlock =
     !isReceipt && kotSettings.showItemTotals
@@ -116,8 +164,51 @@ function buildTicketHtml(input: PrintTicketInput): string {
         </div>`
       : "";
 
-  const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : 11;
+  const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : receiptFonts.body;
   const emphasizeMeta = !isReceipt && kotSettings.emphasizeOrderMeta;
+  const compact = isReceipt && billSettings.layout === "compact";
+  const headerAlign = isReceipt && billSettings.headerAlign === "left" ? "left" : "center";
+  const showItemTable = !isReceipt || fields!.itemQty || fields!.itemAmount || input.lines.length > 0;
+  const showQtyCol = !isReceipt || fields!.itemQty;
+  const showAmtCol = !isReceipt || fields!.itemAmount;
+  const showItemHeaders = !isReceipt || fields!.itemHeaders;
+  const displayBusinessName =
+    isReceipt && billSettings.headerBusinessName.trim()
+      ? billSettings.headerBusinessName.trim()
+      : input.branchName;
+  const showHeaderSubtitle =
+    isReceipt && fields!.headerSubtitle && billSettings.headerSubtitle.trim().length > 0;
+  const showFooterPrimary = isReceipt && fields!.footer;
+  const showFooterSecondary =
+    isReceipt && fields!.footerSecondary && billSettings.footerSecondaryText.trim().length > 0;
+  const showHeaderBlock =
+    isReceipt && fields && (fields.branchName || fields.documentTitle || showHeaderSubtitle);
+  const receiptCss = isReceipt
+    ? `
+    body { padding: ${compact ? "8px 10px 12px" : "16px 14px 20px"}; line-height: ${compact ? "1.35" : "1.5"}; }
+    .header { text-align: ${headerAlign}; padding-bottom: ${compact ? "8px" : "12px"}; margin-bottom: ${compact ? "8px" : "12px"}; }
+    .meta { justify-content: ${headerAlign === "left" ? "flex-start" : "center"}; margin: ${compact ? "8px 0 10px" : "12px 0 14px"}; }
+    .notes, .timestamp { text-align: ${headerAlign}; }
+    tbody td { padding: ${compact ? "3px 0" : "5px 0"}; }
+    .branch-name { font-size: ${receiptFonts.branchName}px; }
+    .doc-type { font-size: ${receiptFonts.docType}px; }
+    .meta-chip { font-size: ${receiptFonts.metaChip}px; }
+    .meta-chip.bill-ref { font-size: ${receiptFonts.metaChipBillRef}px; }
+    .notes { font-size: ${receiptFonts.notes}px; }
+    .timestamp { font-size: ${receiptFonts.timestamp}px; }
+    thead th { font-size: ${receiptFonts.th}px; }
+    td.item-name { font-size: ${receiptFonts.itemName}px; }
+    td.qty { font-size: ${receiptFonts.qty}px; }
+    td.amt { font-size: ${receiptFonts.amt}px; }
+    .row .label { font-size: ${receiptFonts.rowLabel}px; }
+    .row .value { font-size: ${receiptFonts.rowValue}px; }
+    .row.grand .label { font-size: ${receiptFonts.grandLabel}px; }
+    .row.grand .value { font-size: ${receiptFonts.grandValue}px; }
+    .footer { font-size: ${receiptFonts.footer}px; }
+    .header-subtitle { font-size: ${receiptFonts.headerSubtitle}px; }
+    .footer-secondary { font-size: ${receiptFonts.footerSecondary}px; }
+    `
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -162,6 +253,13 @@ function buildTicketHtml(input: PrintTicketInput): string {
       letter-spacing: 0.14em;
       text-transform: uppercase;
       color: #4b5563;
+    }
+    .header-subtitle {
+      margin-top: 4px;
+      font-size: 8.5px;
+      font-weight: 500;
+      color: #6b7280;
+      line-height: 1.35;
     }
     .meta {
       margin: 12px 0 14px;
@@ -304,6 +402,15 @@ function buildTicketHtml(input: PrintTicketInput): string {
       text-transform: uppercase;
       color: #9ca3af;
     }
+    .footer-secondary {
+      margin-top: 6px;
+      font-size: 8px;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      text-transform: none;
+      color: #6b7280;
+      line-height: 1.4;
+    }
     .kot-banner {
       margin-top: 8px;
       text-align: center;
@@ -325,29 +432,58 @@ function buildTicketHtml(input: PrintTicketInput): string {
       .meta-chip { background: transparent; padding: 0; }
       @page { margin: 4mm; size: 80mm auto; }
     }
+    ${receiptCss}
   </style>
 </head>
 <body>
-  <header class="header">
+  ${showHeaderBlock
+    ? `<header class="header">
+    ${fields!.branchName ? `<div class="branch-name">${escapeHtml(displayBusinessName)}</div>` : ""}
+    ${showHeaderSubtitle ? `<div class="header-subtitle">${escapeHtml(billSettings.headerSubtitle.trim())}</div>` : ""}
+    ${fields!.documentTitle ? `<div class="doc-type">${escapeHtml(title)}</div>` : ""}
+  </header>`
+    : !isReceipt
+      ? `<header class="header">
     <div class="branch-name">${escapeHtml(input.branchName)}</div>
     <div class="doc-type">${escapeHtml(title)}</div>
-  </header>
-  <div class="meta">${metaRows}</div>
-  ${input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
-  <div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>
-  <table>
-    <thead>
+  </header>`
+      : ""}
+  ${metaRows ? `<div class="meta">${metaRows}</div>` : ""}
+  ${isReceipt && fields?.notes && input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : !isReceipt && input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
+  ${isReceipt && fields && (fields.timestamp || fields.branchCode)
+    ? `<div class="timestamp">${[
+        fields.branchCode ? escapeHtml(input.branchCode) : "",
+        fields.timestamp ? escapeHtml(printedAt) : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")}</div>`
+    : !isReceipt
+      ? `<div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>`
+      : ""}
+  ${showItemTable
+    ? `<table>
+    ${showItemHeaders
+      ? `<thead>
       <tr>
         <th>Item</th>
-        <th class="qty">Qty</th>
-        ${isReceipt ? '<th class="amt">Amount</th>' : ""}
+        ${showQtyCol ? '<th class="qty">Qty</th>' : ""}
+        ${showAmtCol ? '<th class="amt">Amount</th>' : ""}
       </tr>
-    </thead>
+    </thead>`
+      : ""}
     <tbody>${lineRows}</tbody>
-  </table>
+  </table>`
+    : ""}
   ${kotTotalsBlock}
   ${totalsBlock}
-  <div class="footer">${isReceipt ? "Thank you — visit again" : '<div class="kot-banner">Kitchen copy — order</div>'}</div>
+  ${showFooterPrimary || showFooterSecondary
+    ? `<div class="footer">
+    ${showFooterPrimary ? escapeHtml(billSettings.footerText) : ""}
+    ${showFooterSecondary ? `<div class="footer-secondary">${escapeHtml(billSettings.footerSecondaryText.trim())}</div>` : ""}
+  </div>`
+    : !isReceipt
+      ? '<div class="footer"><div class="kot-banner">Kitchen copy — order</div></div>'
+      : ""}
 </body>
 </html>`;
 }
@@ -433,11 +569,12 @@ export function printBill(
   branchName: string,
   branchCode: string,
   bill: Bill,
-  options?: { printerName?: string },
+  options?: { printerName?: string; billPrintSettings?: BillPrintSettings },
 ): boolean {
   return printReceipt({
     ...billToPrintInput(branchName, branchCode, bill),
     printerName: options?.printerName,
+    billPrintSettings: options?.billPrintSettings ?? loadBillPrintSettings(branchCode),
   });
 }
 

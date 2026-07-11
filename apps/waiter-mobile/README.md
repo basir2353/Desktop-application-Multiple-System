@@ -54,10 +54,12 @@ Instead:
 
 ### Default logins
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Waiter | `waiter1@platform.local` | `changeme-please-01` |
-| Delivery rider | `rider1@platform.local` | `changeme-please-01` |
+| Role | Email | Password | PIN (mobile) |
+| --- | --- | --- | --- |
+| Waiter | `waiter1@platform.local` | `changeme-please-01` | `1111` |
+| Delivery rider | `rider1@platform.local` | `changeme-please-01` | `6666` |
+
+On the mobile app, enter **branch code** (e.g. `ISB-GT`) and the **4-digit PIN**. PIN auto-submits after the fourth digit.
 
 Waiter orders appear on the desktop launcher **Orders** page within ~10 seconds (kitchen tickets) or immediately when a bill is created.
 

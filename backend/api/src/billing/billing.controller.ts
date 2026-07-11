@@ -63,7 +63,10 @@ export class BillingController {
     @Param("billId") billId: string,
     @Body() body: unknown,
   ) {
-    return this.billing.updateBill(user.organizationId, billId, updateBillSchema.parse(body));
+    return this.billing.updateBill(user.organizationId, billId, updateBillSchema.parse(body), {
+      userId: user.sub,
+      role: user.role,
+    });
   }
 
   @Patch("bills/:billId/void")

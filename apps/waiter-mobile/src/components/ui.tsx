@@ -227,21 +227,51 @@ export function Chip({
   label,
   selected,
   onPress,
+  tone,
+  sublabel,
 }: {
   label: string;
   selected?: boolean;
   onPress: () => void;
+  /** "mine" = booked by me (green), "locked" = booked by another waiter (red). */
+  tone?: "mine" | "locked";
+  sublabel?: string;
 }) {
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
         styles.chip,
+        tone === "mine" && styles.chipMine,
+        tone === "locked" && styles.chipLocked,
         selected && styles.chipSelected,
+        selected && tone === "locked" && styles.chipSelectedLocked,
         pressed && styles.chipPressed,
       ]}
     >
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
+      <Text
+        style={[
+          styles.chipText,
+          tone === "mine" && !selected && styles.chipTextMine,
+          tone === "locked" && !selected && styles.chipTextLocked,
+          selected && styles.chipTextSelected,
+        ]}
+      >
+        {label}
+      </Text>
+      {sublabel ? (
+        <Text
+          style={[
+            styles.chipSublabel,
+            tone === "mine" && !selected && styles.chipTextMine,
+            tone === "locked" && !selected && styles.chipTextLocked,
+            selected && styles.chipTextSelected,
+          ]}
+          numberOfLines={1}
+        >
+          {sublabel}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -570,6 +600,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderColor: "#d97706",
   },
+  chipSelectedLocked: {
+    backgroundColor: "#dc2626",
+    borderColor: "#b91c1c",
+  },
+  chipMine: {
+    borderColor: "rgba(34, 197, 94, 0.55)",
+    backgroundColor: "rgba(34, 197, 94, 0.12)",
+  },
+  chipLocked: {
+    borderColor: "rgba(248, 113, 113, 0.55)",
+    backgroundColor: "rgba(248, 113, 113, 0.12)",
+  },
   chipPressed: {
     opacity: 0.88,
   },
@@ -580,6 +622,19 @@ const styles = StyleSheet.create({
   },
   chipTextSelected: {
     color: colors.accentText,
+  },
+  chipTextMine: {
+    color: "#4ade80",
+  },
+  chipTextLocked: {
+    color: "#f87171",
+  },
+  chipSublabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: colors.muted,
+    marginTop: 2,
+    maxWidth: 110,
   },
   qtyStepper: {
     flexDirection: "row",

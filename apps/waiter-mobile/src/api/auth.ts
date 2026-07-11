@@ -14,7 +14,7 @@ export async function pinLogin(
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
     const fallback =
       res.status === 404
-        ? "PIN login is not available on this API server. Use email login, or point EXPO_PUBLIC_API_BASE_URL to your local API (pnpm dev:api)."
+        ? "PIN login is not available on this API yet. Ask admin to redeploy the latest backend, or use email login."
         : `PIN login failed: ${res.status}`;
     throw new Error(err?.message ?? fallback);
   }
