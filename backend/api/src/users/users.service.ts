@@ -352,6 +352,22 @@ export class UsersService implements OnApplicationBootstrap {
     return { ok: true };
   }
 
+  /** Self-service — a staff member creating/updating/removing their own PIN (no admin permission needed). */
+  async setOwnPin(organizationId: string, userId: string, pin: string | null) {
+    await this.getMembership(organizationId, userId);
+    const staffPinHash = pin ? await hashStaffPin(pin) : null;
+    await this.db
+      .update(organizationMemberships)
+      .set({ staffPinHash })
+      .where(
+        and(
+          eq(organizationMemberships.organizationId, organizationId),
+          eq(organizationMemberships.userId, userId),
+        ),
+      );
+    return { ok: true, pinSet: staffPinHash !== null };
+  }
+
   async listPendingInvites(organizationId: string) {
     const rows = await this.db
       .select()

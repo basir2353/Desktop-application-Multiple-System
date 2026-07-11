@@ -4,6 +4,7 @@ import {
   createOrgUserSchema,
   inviteOrgUserSchema,
   resetUserPasswordSchema,
+  setOwnPinSchema,
   updateOrgUserSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -48,6 +49,12 @@ export class UsersController {
   invite(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     const parsed = inviteOrgUserSchema.parse(body);
     return this.users.inviteUser(user.organizationId, parsed);
+  }
+
+  @Patch("me/pin")
+  setOwnPin(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    const parsed = setOwnPinSchema.parse(body);
+    return this.users.setOwnPin(user.organizationId, user.sub, parsed.pin);
   }
 
   @Patch(":userId")

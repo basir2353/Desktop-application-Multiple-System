@@ -1,3 +1,9 @@
+# Monorepo API deploy — Railway Root Directory MUST be empty (repo root).
+# Dockerfile path is relative to repo root: backend/Dockerfile
+#
+# If your service uses Root Directory = backend-desktop instead, see
+# backend-desktop/railway.toml (Dockerfile path = Dockerfile).
+
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "backend/Dockerfile"
