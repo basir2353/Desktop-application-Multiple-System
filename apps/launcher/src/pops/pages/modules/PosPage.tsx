@@ -104,9 +104,9 @@ const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-9 border border-slate-200 bg-whit
 const POS_TOOLBAR_BTN =
   "inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
 const POS_MODE_BAR =
-  "flex shrink-0 rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
+  "no-scrollbar flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
 const POS_MODE_BTN = (active: boolean) =>
-  `flex-1 rounded-md px-2 py-2 text-xs font-semibold transition ${
+  `shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition ${
     active
       ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
       : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
@@ -331,6 +331,23 @@ export function PosPage(): JSX.Element {
     [floorTables, selectedFloorSectionId],
   );
 
+  const occupiedTableNumbers = useMemo(() => {
+    const set = new Set<string>();
+    for (const ticket of kitchenQuery.data ?? []) {
+      if (ticket.status === "done") continue;
+      if (editingOrder?.kind === "ticket" && ticket.id === editingOrder.ticketId) continue;
+      const tableNumber = tableNumberFromStation(ticket.stationLabel);
+      if (tableNumber) set.add(tableNumber.trim().toUpperCase());
+    }
+    for (const bill of ordersQuery.data ?? []) {
+      if (bill.status !== "held") continue;
+      if (editingOrder?.kind === "held-bill" && bill.id === editingOrder.billId) continue;
+      const tableNumber = tableNumberFromStation(bill.tableLabel);
+      if (tableNumber) set.add(tableNumber.trim().toUpperCase());
+    }
+    return set;
+  }, [kitchenQuery.data, ordersQuery.data, editingOrder]);
+
   function switchMode(nextMode: PosOrderMode): void {
     setMode(nextMode);
     if (nextMode === "delivery") {
@@ -395,10 +412,9 @@ export function PosPage(): JSX.Element {
   useEffect(() => {
     if (!selectedTableId) return;
     const table = floorTables.find((t) => t.id === selectedTableId);
-    if (table && table.sectionId !== selectedFloorSectionId) {
-      setSelectedFloorSectionId(table.sectionId);
-    }
-  }, [selectedTableId, floorTables, selectedFloorSectionId]);
+    if (!table) return;
+    setSelectedFloorSectionId((prev) => (prev !== table.sectionId ? table.sectionId : prev));
+  }, [selectedTableId, floorTables]);
 
   useEffect(() => {
     if (!selectedFloorSectionId) return;
@@ -925,6 +941,9 @@ export function PosPage(): JSX.Element {
         payments: status === "completed" ? payments : undefined,
         ...deliveryExtras(),
       });
+      if (editingOrder?.kind === "ticket") {
+        await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
+      }
       return { bill, intent };
     },
     onSuccess: ({ bill, intent }) => {
@@ -1127,6 +1146,7 @@ export function PosPage(): JSX.Element {
           selectedSectionId={selectedFloorSectionId}
           selectedTableId={selectedTableId}
           isLoading={floorQuery.isLoading}
+          occupiedTableNumbers={occupiedTableNumbers}
           onSelectSection={setSelectedFloorSectionId}
           onSelectTable={setSelectedTableId}
           onClose={() => setSeatingModalOpen(false)}
@@ -1313,8 +1333,13 @@ export function PosPage(): JSX.Element {
           <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-                  {editingOrder ? "Editing" : "Current ticket"}
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                    {editingOrder ? "Editing" : "Current ticket"}
+                  </div>
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-400">
+                    {posOrderModeLabel(mode)}
+                  </span>
                 </div>
                 <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
                   {editingOrder ? "Modify order" : "New order"}
@@ -1340,7 +1365,15 @@ export function PosPage(): JSX.Element {
           <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800/80 dark:bg-slate-900/30">
             <div className={POS_MODE_BAR}>
               {POS_ORDER_MODES.map(({ id, label }) => (
-                <button key={id} type="button" onClick={() => switchMode(id)} className={POS_MODE_BTN(mode === id)}>
+                <button
+                  key={id}
+                  type="button"
+                  onClick={(e) => {
+                    switchMode(id);
+                    e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+                  }}
+                  className={POS_MODE_BTN(mode === id)}
+                >
                   {label}
                 </button>
               ))}
@@ -1361,18 +1394,6 @@ export function PosPage(): JSX.Element {
                   ›
                 </span>
               </button>
-            ) : null}
-
-            {mode === "online" || mode === "foodpanda" ? (
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
-                {mode === "online" ? "Online order channel" : "Foodpanda order channel"}
-              </div>
-            ) : null}
-
-            {mode === "takeaway" ? (
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
-                Takeaway counter
-              </div>
             ) : null}
 
             {mode === "delivery" ? (

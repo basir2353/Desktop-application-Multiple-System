@@ -330,6 +330,9 @@ export default function HomeScreen() {
         </Card>
 
         <View style={styles.footer}>
+          <Pressable onPress={() => router.push("/manage-pin")} style={styles.footerBtn}>
+            <Text style={styles.footerText}>Manage PIN</Text>
+          </Pressable>
           <Pressable
             onPress={() => {
               clearBranch();

@@ -174,6 +174,7 @@ export default function RiderHomeScreen() {
 
         <View style={styles.footer}>
           <Button label="All deliveries" onPress={() => router.push("/rider-deliveries")} />
+          <Button label="Manage PIN" variant="ghost" onPress={() => router.push("/manage-pin")} />
           <Pressable
             onPress={() => {
               clearSession();

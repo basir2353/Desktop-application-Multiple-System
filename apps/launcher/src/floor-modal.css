@@ -166,12 +166,54 @@ html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-section-meta {
 }
 
 [data-ui="floor-modal"] .floor-modal-table-btn {
+  position: relative;
   border-radius: 0.5rem;
   border: 1px solid #94a3b8;
   background-color: #f8fafc;
   padding: 0.75rem;
   text-align: center;
   transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+
+[data-ui="floor-modal"] .floor-modal-table-btn.is-booked {
+  border-color: rgb(220 38 38 / 0.45);
+  background-color: rgb(254 242 242);
+}
+
+[data-ui="floor-modal"] .floor-modal-table-btn.is-booked:hover:not(:disabled) {
+  border-color: rgb(220 38 38 / 0.6);
+  background-color: rgb(254 226 226);
+}
+
+html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-booked {
+  border-color: rgb(248 113 113 / 0.4);
+  background-color: rgb(127 29 29 / 0.16);
+}
+
+html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-booked:hover:not(:disabled) {
+  border-color: rgb(248 113 113 / 0.55);
+  background-color: rgb(127 29 29 / 0.28);
+}
+
+[data-ui="floor-modal"] .floor-modal-booked-badge {
+  position: absolute;
+  top: -0.55rem;
+  right: -0.55rem;
+  border-radius: 9999px;
+  border: 2px solid #ffffff;
+  background-color: #dc2626;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.3);
+  z-index: 1;
+}
+
+html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-booked-badge {
+  border-color: #0f172a;
 }
 
 [data-ui="floor-modal"] .floor-modal-table-btn:hover:not(:disabled) {
@@ -205,6 +247,10 @@ html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-select
 [data-ui="floor-modal"] .floor-modal-table-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+[data-ui="floor-modal"] .floor-modal-table-btn.is-booked:disabled {
+  opacity: 0.9;
 }
 
 [data-ui="floor-modal"] .floor-modal-table-label {

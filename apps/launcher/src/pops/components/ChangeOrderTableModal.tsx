@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { KitchenTicket } from "@platform/contracts";
 import { fetchBranchFloor } from "../api/tables";
@@ -27,6 +27,7 @@ export function ChangeOrderTableModal({
   const queryClient = useQueryClient();
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
@@ -46,6 +47,12 @@ export function ChangeOrderTableModal({
   const sectionTables = selectedSectionId
     ? tables.filter((t) => t.sectionId === selectedSectionId)
     : [];
+
+  useEffect(() => {
+    if (selectedSection) {
+      scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [selectedSection]);
 
   const currentTableNumber = useMemo(() => {
     const prefix = "table ";
@@ -121,7 +128,7 @@ export function ChangeOrderTableModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
           {floorQuery.isLoading ? (
             <p className="floor-modal-body-text">Loading floor plan…</p>
           ) : floorQuery.isError ? (

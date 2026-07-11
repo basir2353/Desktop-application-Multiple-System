@@ -154,11 +154,14 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
             ) : null}
           </div>
 
-          <div className="mt-2 flex flex-wrap rounded-md border border-slate-800 p-0.5">
+          <div className="no-scrollbar mt-2 flex gap-1 overflow-x-auto rounded-md border border-slate-800 p-0.5">
             <button
               type="button"
-              onClick={() => setModeFilter("all")}
-              className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${
+              onClick={(e) => {
+                setModeFilter("all");
+                e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+              }}
+              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
                 modeFilter === "all" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >
@@ -168,8 +171,11 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
               <button
                 key={label}
                 type="button"
-                onClick={() => setModeFilter(label)}
-                className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${
+                onClick={(e) => {
+                  setModeFilter(label);
+                  e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+                }}
+                className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
                   modeFilter === label ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -178,8 +184,11 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
             ))}
             <button
               type="button"
-              onClick={() => setModeFilter("Paid")}
-              className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${
+              onClick={(e) => {
+                setModeFilter("Paid");
+                e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+              }}
+              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
                 modeFilter === "Paid" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >

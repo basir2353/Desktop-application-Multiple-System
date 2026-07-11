@@ -56,6 +56,11 @@ export const resetUserPasswordSchema = z.object({
   password: z.string().min(8).max(128),
 });
 
+/** Self-service PIN management — a staff member creating/updating/removing their own PIN. */
+export const setOwnPinSchema = z.object({
+  pin: z.string().regex(/^\d{4}$/).nullable(),
+});
+
 export const inviteOrgUserSchema = z.object({
   email: z.string().min(3).max(320),
   role: popsRoleSchema,
@@ -102,6 +107,7 @@ export type PopsRole = z.infer<typeof popsRoleSchema>;
 export type OrgUser = z.infer<typeof orgUserSchema>;
 export type CreateOrgUser = z.infer<typeof createOrgUserSchema>;
 export type UpdateOrgUser = z.infer<typeof updateOrgUserSchema>;
+export type SetOwnPin = z.infer<typeof setOwnPinSchema>;
 export type InviteOrgUser = z.infer<typeof inviteOrgUserSchema>;
 export type InviteOrgUserResult = z.infer<typeof inviteOrgUserResultSchema>;
 export type PendingInvite = z.infer<typeof pendingInviteSchema>;

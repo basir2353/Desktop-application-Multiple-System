@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Input,
+  LoginModeTabs,
   Notice,
   PinPad,
   Screen,
@@ -27,19 +28,19 @@ const ROLE_DEFAULTS: Record<StaffRole, { email: string; title: string; subtitle:
   waiter: {
     email: "waiter1@platform.local",
     title: "Waiter",
-    subtitle: "Sign in to take table orders. Orders sync to the desktop POS in real time.",
+    subtitle: "Take table orders and send them to the kitchen.",
     demoPin: "1111",
   },
   rider: {
     email: "rider1@platform.local",
     title: "Delivery rider",
-    subtitle: "Sign in to view assigned deliveries and update delivery status.",
+    subtitle: "View assigned deliveries and update delivery status.",
     demoPin: "6666",
   },
   cashier: {
     email: "cashier1@platform.local",
     title: "Cashier",
-    subtitle: "Sign in to close held orders and collect payments.",
+    subtitle: "Close held orders and collect payments.",
     demoPin: "2222",
   },
 };
@@ -47,8 +48,10 @@ const ROLE_DEFAULTS: Record<StaffRole, { email: string; title: string; subtitle:
 const defaultRole =
   (Constants.expoConfig?.extra as { defaultRole?: StaffRole } | undefined)?.defaultRole ?? "waiter";
 
-/** Dedicated waiter/rider APKs use PIN-only sign-in for that role. */
-const pinOnlyApp = defaultRole === "waiter" || defaultRole === "rider";
+const appName = Constants.expoConfig?.name ?? (defaultRole === "rider" ? "POPS Rider" : "POPS Waiter");
+
+/** Dedicated waiter/rider APKs lock the role tab to that role (both Sign In and PIN login remain available). */
+const dedicatedApp = defaultRole === "waiter" || defaultRole === "rider";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -57,7 +60,7 @@ export default function LoginScreen() {
   const setTokens = useSessionStore((s) => s.setTokens);
   const branch = useBranchStore((s) => s.branch);
 
-  const [loginMode, setLoginMode] = useState<LoginMode>("pin");
+  const [loginMode, setLoginMode] = useState<LoginMode>("password");
   const [roleTab, setRoleTab] = useState<StaffRole>(defaultRole);
   const [branchCode, setBranchCode] = useState("ISB-GT");
   const [pin, setPin] = useState("");
@@ -83,6 +86,12 @@ export default function LoginScreen() {
     setPassword("changeme-please-01");
     setPin("");
     setError(null);
+  }
+
+  function switchLoginMode(mode: LoginMode): void {
+    setLoginMode(mode);
+    setError(null);
+    setPin("");
   }
 
   async function handlePinLogin(pinValue = pin): Promise<void> {
@@ -131,7 +140,7 @@ export default function LoginScreen() {
       const decoded = decodeAccessToken(tokens.accessToken);
       const resolvedRole = resolveStaffRole(decoded);
       if (roleTab === "rider" && resolvedRole !== "rider") {
-        throw new Error("This account is not a delivery rider. Use waiter credentials or contact admin.");
+        throw new Error("This account is not a delivery rider. Use rider credentials or contact admin.");
       }
       if (roleTab === "cashier" && resolvedRole !== "cashier") {
         throw new Error("This account is not a cashier. Switch to the correct role tab.");
@@ -156,18 +165,20 @@ export default function LoginScreen() {
   }
 
   const roleCopy = ROLE_DEFAULTS[roleTab];
-  const roleTabs: StaffRole[] = pinOnlyApp ? [defaultRole] : ["waiter", "cashier", "rider"];
+  const roleTabs: StaffRole[] = dedicatedApp ? [defaultRole] : ["waiter", "cashier", "rider"];
 
   return (
     <Screen safeTop>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24 }}>
           <View>
-            <Title>{defaultRole === "rider" ? "POPS Rider" : "POPS Staff"}</Title>
+            <Title>{appName}</Title>
             <Subtitle>
               {defaultRole === "rider"
-                ? "Delivery rider app — view assigned orders and update delivery status."
-                : "Restaurant mobile app for waiters, cashiers, and delivery riders."}
+                ? "Sign in with email or your 4-digit PIN to manage deliveries."
+                : defaultRole === "waiter"
+                  ? "Sign in with email or your 4-digit PIN to take table orders."
+                  : "Restaurant mobile app for waiters, cashiers, and delivery riders."}
             </Subtitle>
           </View>
 
@@ -195,36 +206,17 @@ export default function LoginScreen() {
             </View>
           ) : null}
 
-          {!pinOnlyApp ? (
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              {(["pin", "password"] as const).map((mode) => (
-                <Pressable
-                  key={mode}
-                  onPress={() => {
-                    setLoginMode(mode);
-                    setError(null);
-                  }}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 10,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: loginMode === mode ? colors.accent : colors.border,
-                    backgroundColor: loginMode === mode ? "rgba(245, 158, 11, 0.15)" : "#020617",
-                    alignItems: "center",
-                  }}
-                >
-                  <Subtitle>{mode === "pin" ? "4-digit PIN" : "Email & password"}</Subtitle>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
+          <LoginModeTabs mode={loginMode} onChange={switchLoginMode} />
 
           <Card>
             <Title>{roleCopy.title}</Title>
-            <Subtitle>{roleCopy.subtitle}</Subtitle>
+            <Subtitle>
+              {loginMode === "pin"
+                ? "Enter your branch code and 4-digit PIN."
+                : "Enter your email address and password."}
+            </Subtitle>
 
-            {loginMode === "pin" || pinOnlyApp ? (
+            {loginMode === "pin" ? (
               <View style={{ gap: 14, marginTop: 8 }}>
                 <Input
                   placeholder="Branch code (e.g. ISB-GT)"
@@ -240,7 +232,7 @@ export default function LoginScreen() {
                   disabled={loading}
                 />
                 <Button
-                  label={loading ? "Signing in…" : "Sign in with PIN"}
+                  label={loading ? "Signing in…" : "Login with PIN"}
                   onPress={() => void handlePinLogin()}
                   loading={loading}
                   disabled={pin.length !== 4}
@@ -265,7 +257,10 @@ export default function LoginScreen() {
                   value={password}
                   onChangeText={setPassword}
                 />
-                <Button label="Sign in" onPress={() => void handlePasswordLogin()} loading={loading} />
+                <Button label="Sign In" onPress={() => void handlePasswordLogin()} loading={loading} />
+                <Subtitle>
+                  Demo: {ROLE_DEFAULTS[roleTab].email} / changeme-please-01
+                </Subtitle>
               </View>
             )}
 
@@ -284,7 +279,7 @@ export default function LoginScreen() {
                   ? "Rider PIN: 6666"
                   : "Waiter PIN: 1111 · Rider PIN: 6666"}
               {"\n"}
-              Admin can set PINs in desktop → Waiters / Delivery.
+              Set your own PIN after signing in via Home → Manage PIN.
             </Subtitle>
           </Card>
         </ScrollView>

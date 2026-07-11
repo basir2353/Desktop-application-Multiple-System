@@ -405,7 +405,7 @@ export default function OrderScreen() {
   });
 
   const billMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (cart.length === 0) throw new Error("Add at least one item.");
       const targetErr = validateOrderTarget();
       if (targetErr) throw new Error(targetErr);
@@ -426,7 +426,7 @@ export default function OrderScreen() {
           deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
         });
       }
-      return createBill({
+      const bill = await createBill({
         branchCode,
         orderRef,
         tableLabel,
@@ -441,6 +441,10 @@ export default function OrderScreen() {
         riderId: orderMode === "delivery" ? deliveryRiderId || undefined : undefined,
         deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : undefined,
       });
+      if (editingOrder?.kind === "ticket") {
+        await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
+      }
+      return bill;
     },
     onSuccess: async (bill) => {
       const wasEdit = editingOrder?.kind === "bill";
@@ -612,6 +616,7 @@ export default function OrderScreen() {
             >
               {tables.map((t) => {
                 const occ = occupancyForTable(tableOccupancy, t.tableNumber);
+                const lockedByOther = Boolean(occ && !occ.mine);
                 return (
                   <Chip
                     key={t.id}
@@ -621,6 +626,7 @@ export default function OrderScreen() {
                     sublabel={
                       occ ? (occ.mine ? "Your order" : occ.ownerName ?? "Booked") : undefined
                     }
+                    disabled={lockedByOther}
                     onPress={() => selectTable(t.tableNumber)}
                   />
                 );
