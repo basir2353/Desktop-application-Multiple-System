@@ -98,6 +98,9 @@ export default function HomeScreen() {
   const todayBills = bills.filter((b) => isToday(b.createdAt) && b.status === "completed");
   const todaySales = todayBills.reduce((sum, bill) => sum + bill.total, 0);
   const tableCount = (floorQuery.data?.tables ?? []).filter((t) => t.isActive).length;
+  const bookedTableCount = (floorQuery.data?.tables ?? []).filter(
+    (t) => t.isActive && t.bookingStatus === "booked",
+  ).length;
   const recentTickets = [...activeTickets]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 4);
@@ -152,7 +155,7 @@ export default function HomeScreen() {
     {
       id: "tables",
       title: "Floor tables",
-      subtitle: `${tableCount} active tables`,
+      subtitle: `${tableCount} tables · ${bookedTableCount} booked`,
       icon: "▦",
       route: "/order",
     },

@@ -113,10 +113,10 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   return (
     <>
-      <aside className="flex h-full min-h-0 flex-col rounded-lg border border-slate-800/80 bg-slate-900/50">
-        <div className="shrink-0 border-b border-slate-800 px-3 py-2.5">
+      <aside className="flex h-full min-h-0 min-w-0 flex-col rounded-lg border border-slate-800/80 bg-slate-900/50">
+        <div className="min-w-0 shrink-0 border-b border-slate-800 px-3 py-2.5">
           <div className="flex items-center justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
               <div className="mt-0.5 text-[10px] text-slate-500">Tap for actions · double-click to pay</div>
             </div>
@@ -154,6 +154,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
             ) : null}
           </div>
 
+<<<<<<< Updated upstream
           <div className="no-scrollbar mt-2 flex gap-1 overflow-x-auto rounded-md border border-slate-800 p-0.5">
             <button
               type="button"
@@ -162,6 +163,19 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                 e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
               }}
               className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
+=======
+          <div
+            role="tablist"
+            aria-label="Filter by order type"
+            className="mt-2 -mx-0.5 flex min-w-0 w-full gap-0.5 overflow-x-auto overscroll-x-contain scroll-smooth rounded-md border border-slate-800 p-0.5 touch-pan-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={modeFilter === "all"}
+              onClick={() => setModeFilter("all")}
+              className={`shrink-0 whitespace-nowrap rounded px-2.5 py-1.5 text-[10px] font-medium transition ${
+>>>>>>> Stashed changes
                 modeFilter === "all" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >
@@ -171,11 +185,18 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
               <button
                 key={label}
                 type="button"
+<<<<<<< Updated upstream
                 onClick={(e) => {
                   setModeFilter(label);
                   e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
                 }}
                 className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
+=======
+                role="tab"
+                aria-selected={modeFilter === label}
+                onClick={() => setModeFilter(label)}
+                className={`shrink-0 whitespace-nowrap rounded px-2.5 py-1.5 text-[10px] font-medium transition ${
+>>>>>>> Stashed changes
                   modeFilter === label ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -184,11 +205,18 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
             ))}
             <button
               type="button"
+<<<<<<< Updated upstream
               onClick={(e) => {
                 setModeFilter("Paid");
                 e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
               }}
               className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
+=======
+              role="tab"
+              aria-selected={modeFilter === "Paid"}
+              onClick={() => setModeFilter("Paid")}
+              className={`shrink-0 whitespace-nowrap rounded px-2.5 py-1.5 text-[10px] font-medium transition ${
+>>>>>>> Stashed changes
                 modeFilter === "Paid" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >

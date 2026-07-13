@@ -77,6 +77,7 @@ export function ChangeOrderTableModal({
     onSuccess: async (_ticket, tableNumber) => {
       await queryClient.invalidateQueries({ queryKey: ["kitchen"] });
       await queryClient.invalidateQueries({ queryKey: ["orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["tables"] });
       const ref = ticket.orderRef ?? ticket.ticketRef;
       onSuccess?.(`Moved ${ref} to ${tableStationLabel(tableNumber)}.`);
       onClose();
@@ -115,6 +116,7 @@ export function ChangeOrderTableModal({
             </h2>
             <p className="floor-modal-subtitle">
               {orderRef} · currently at <span className="font-medium">{ticket.stationLabel}</span>
+              {" · "}Booked tables cannot be selected until their order is closed.
             </p>
           </div>
           <button
@@ -173,17 +175,33 @@ export function ChangeOrderTableModal({
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {sectionTables.map((t) => {
                     const isCurrent = currentTableNumber != null && t.tableNumber === currentTableNumber;
+                    const booked = t.bookingStatus === "booked" && !isCurrent;
                     return (
                       <button
                         key={t.id}
                         type="button"
-                        disabled={changeMutation.isPending}
+                        disabled={changeMutation.isPending || booked}
                         onClick={() => handleTablePick(t.tableNumber)}
-                        className={`floor-modal-table-btn ${isCurrent ? "is-selected" : ""}`}
+                        className={`floor-modal-table-btn ${isCurrent ? "is-selected" : ""} ${
+                          booked ? "is-booked" : ""
+                        }`}
+                        title={
+                          booked
+                            ? t.bookedOrderRef
+                              ? `Booked · ${t.bookedOrderRef}`
+                              : "Booked"
+                            : undefined
+                        }
                       >
                         <div className="floor-modal-table-label">{t.tableNumber}</div>
                         <div className="floor-modal-table-meta">
-                          {isCurrent ? "Current" : `${t.seats} seats`}
+                          {isCurrent
+                            ? "Current"
+                            : booked
+                              ? t.bookedOrderRef
+                                ? `Booked · ${t.bookedOrderRef}`
+                                : "Booked"
+                              : `${t.seats} seats`}
                         </div>
                       </button>
                     );

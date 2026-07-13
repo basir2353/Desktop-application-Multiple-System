@@ -6,7 +6,7 @@ import { usePopsStore } from "../../../stores/popsStore";
 import { createBill, createWaiter, fetchWaiters, updateWaiter } from "../../api/billing";
 import { fetchKitchenTickets, createKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
-import { tables } from "../../data/fixtures";
+import { fetchBranchFloor } from "../../api/tables";
 import { printReceipt, billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
 import {
   getWaiterPrinter,
@@ -92,16 +92,20 @@ function saveLastOrder(branchCode: string, tableId: string, order: StoredLastOrd
   localStorage.setItem(lastOrderKey(branchCode, tableId), JSON.stringify(order));
 }
 
-function matchesTable(stationLabel: string, tableId: string): boolean {
+function matchesTable(stationLabel: string, tableNumber: string): boolean {
   const label = stationLabel.trim().toLowerCase();
-  const t = tableId.toLowerCase();
+  const t = tableNumber.toLowerCase();
   return label === t || label === `table ${t}` || label.endsWith(` ${t}`);
 }
 
 function tableStatusTone(status: string): "success" | "warning" | "info" | "neutral" {
   if (status === "free") return "success";
-  if (status === "billing") return "warning";
+  if (status === "booked") return "warning";
   return "info";
+}
+
+function newWaiterOrderRef(): string {
+  return `ORD-${Date.now().toString().slice(-4)}`;
 }
 
 function SectionPanel({
@@ -163,7 +167,7 @@ export function WaiterPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const canManagePrinters = displayRole === "admin" || displayRole === "manager";
-  const [tableId, setTableId] = useState("T1");
+  const [tableId, setTableId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [search, setSearch] = useState("");
   const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
@@ -179,6 +183,7 @@ export function WaiterPage(): JSX.Element {
   const [editWaiterId, setEditWaiterId] = useState<string | null>(null);
   const [editEmail, setEditEmail] = useState("");
   const [editPassword, setEditPassword] = useState("");
+  const [editPin, setEditPin] = useState("");
 
   const branchCode = branch?.code ?? "";
   const canManageWaiters = displayRole === "admin" || displayRole === "manager";
@@ -216,26 +221,44 @@ export function WaiterPage(): JSX.Element {
         ...( /^\d{4}$/.test(waiterPin) ? { pin: waiterPin } : {} ),
       }),
     onSuccess: (waiter) => {
+      const usedPin = /^\d{4}$/.test(waiterPin);
+      const pinValue = waiterPin;
       setWaiterName("");
       setWaiterEmail("");
       setWaiterPassword("");
       setWaiterPin("");
       void queryClient.invalidateQueries({ queryKey: ["billing", "waiters"] });
-      setNotice(`Mobile login created for ${waiter.name}. They can sign in with ${waiter.email}.`);
+      setNotice(
+        usedPin
+          ? `Mobile login created for ${waiter.name}. They can sign in with PIN ${pinValue} or ${waiter.email}.`
+          : `Mobile login created for ${waiter.name}. They can sign in with ${waiter.email}. Add a 4-digit PIN for quicker login.`,
+      );
     },
     onError: (err: Error) => setNotice(err.message),
   });
 
   const updateWaiterMutation = useMutation({
-    mutationFn: ({ waiterId, email, password }: { waiterId: string; email: string; password: string }) =>
+    mutationFn: ({
+      waiterId,
+      email,
+      password,
+      pin,
+    }: {
+      waiterId: string;
+      email: string;
+      password: string;
+      pin: string;
+    }) =>
       updateWaiter(waiterId, {
         email: email.trim() || undefined,
         password: password || undefined,
+        ...( /^\d{4}$/.test(pin) ? { pin } : {} ),
       }),
     onSuccess: (waiter) => {
       setEditWaiterId(null);
       setEditEmail("");
       setEditPassword("");
+      setEditPin("");
       void queryClient.invalidateQueries({ queryKey: ["billing", "waiters"] });
       setNotice(`Login updated for ${waiter.name}.`);
     },
@@ -244,12 +267,45 @@ export function WaiterPage(): JSX.Element {
 
   const waiters = waitersQuery.data ?? [];
 
-  const currentDraft = drafts[tableId] ?? {
-    cart: [],
-    notes: "",
-    orderRef: tables.find((t) => t.id === tableId)?.order ?? `ORD-${Date.now().toString().slice(-4)}`,
-    waiterId: null,
-  };
+  const floorQuery = useQuery({
+    queryKey: ["tables", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchBranchFloor(branchCode),
+    refetchInterval: 15_000,
+  });
+
+  const floorTables = useMemo(
+    () => (floorQuery.data?.tables ?? []).filter((t) => t.isActive),
+    [floorQuery.data?.tables],
+  );
+
+  useEffect(() => {
+    if (floorTables.length === 0) return;
+    if (tableId && floorTables.some((t) => t.tableNumber === tableId)) return;
+    const firstFree = floorTables.find((t) => t.bookingStatus !== "booked");
+    setTableId(firstFree?.tableNumber ?? floorTables[0]?.tableNumber ?? null);
+  }, [floorTables, tableId]);
+
+  const selectedFloorTable = useMemo(
+    () => floorTables.find((t) => t.tableNumber === tableId) ?? null,
+    [floorTables, tableId],
+  );
+  const tableBookingStatus = selectedFloorTable?.bookingStatus === "booked" ? "booked" : "free";
+  const tableBookedOrderRef = selectedFloorTable?.bookedOrderRef ?? null;
+
+  const currentDraft = tableId
+    ? (drafts[tableId] ?? {
+        cart: [],
+        notes: "",
+        orderRef: newWaiterOrderRef(),
+        waiterId: null,
+      })
+    : {
+        cart: [] as CartLine[],
+        notes: "",
+        orderRef: newWaiterOrderRef(),
+        waiterId: null as string | null,
+      };
 
   const cart = currentDraft.cart;
   const notes = currentDraft.notes;
@@ -259,7 +315,7 @@ export function WaiterPage(): JSX.Element {
   const assignedPrinter = getWaiterPrinter(branchCode, waiterId);
 
   function updateDraft(patch: Partial<TableDraft>): void {
-    if (!branchCode) return;
+    if (!branchCode || !tableId) return;
     setDrafts((prev) => {
       const base = prev[tableId] ?? currentDraft;
       const next = { ...prev, [tableId]: { ...base, ...patch } };
@@ -293,33 +349,55 @@ export function WaiterPage(): JSX.Element {
     );
   }, [menuItems, search]);
 
-  const tableKots = (kitchenQuery.data ?? []).filter((k) => matchesTable(k.stationLabel, tableId));
+  const tableKots = tableId
+    ? (kitchenQuery.data ?? []).filter((k) => matchesTable(k.stationLabel, tableId))
+    : [];
 
   const subtotal = cart.reduce((s, l) => s + l.item.price * l.qty, 0);
   const service = Math.round(subtotal * (SERVICE_PCT / 100));
   const tax = Math.round((subtotal + service) * 0.15);
   const total = subtotal + service + tax;
 
+  function tableIsBooked(tableNumber: string): boolean {
+    return floorTables.find((t) => t.tableNumber === tableNumber)?.bookingStatus === "booked";
+  }
+
+  /** Booked tables cannot take a new waiter order until closed/completed. */
+  const tableLocked = Boolean(tableId && tableIsBooked(tableId));
+
+  function assertTableAvailableForNewOrder(): string | null {
+    if (!tableId) return "Select a table first.";
+    if (!tableLocked) return null;
+    return tableBookedOrderRef
+      ? `Table ${tableId} is booked by ${tableBookedOrderRef}. Close or complete that order before starting a new one.`
+      : `Table ${tableId} is booked. Close or complete the current order before starting a new one.`;
+  }
+
   const sendMutation = useMutation({
-    mutationFn: () =>
-      createKitchenTicket({
+    mutationFn: () => {
+      const lockErr = assertTableAvailableForNewOrder();
+      if (lockErr) throw new Error(lockErr);
+      if (!tableId) throw new Error("Select a table first.");
+      return createKitchenTicket({
         branchCode: branchCode,
         orderRef,
-        stationLabel: tableId,
+        stationLabel: `Table ${tableId}`,
         notes: notes.trim() || undefined,
         lines: cart.map((line) => ({
           label: formatMenuItemLabel(line.item),
           qty: line.qty,
           menuItemId: line.item.id,
         })),
-      }),
+      });
+    },
     onSuccess: () => {
-      if (branchCode) {
+      if (branchCode && tableId) {
         saveLastOrder(branchCode, tableId, { cart, notes });
       }
       updateDraft({ cart: [], notes: "" });
       setShowMenu(false);
       void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
       setNotice("Order sent to kitchen.");
     },
     onError: (err: Error) => setNotice(err.message),
@@ -350,7 +428,12 @@ export function WaiterPage(): JSX.Element {
   }
 
   function reorderLast(): void {
-    if (!branchCode) return;
+    if (!branchCode || !tableId) return;
+    const lockErr = assertTableAvailableForNewOrder();
+    if (lockErr) {
+      setNotice(lockErr);
+      return;
+    }
     const last = loadLastOrder(branchCode, tableId);
     if (!last || last.cart.length === 0) {
       setNotice("No previous order for this table.");
@@ -361,8 +444,11 @@ export function WaiterPage(): JSX.Element {
   }
 
   const createBillMutation = useMutation({
-    mutationFn: () =>
-      createBill({
+    mutationFn: () => {
+      const lockErr = assertTableAvailableForNewOrder();
+      if (lockErr) throw new Error(lockErr);
+      if (!tableId) throw new Error("Select a table first.");
+      return createBill({
         branchCode,
         orderRef,
         tableLabel: `Table ${tableId}`,
@@ -375,20 +461,31 @@ export function WaiterPage(): JSX.Element {
         })),
         notes: notes.trim() || undefined,
         servicePct: SERVICE_PCT,
-      }),
+      });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
     },
     onError: (err: Error) => setNotice(err.message),
   });
 
   async function createAndPrintBill(): Promise<void> {
+    if (!tableId) {
+      setNotice("Select a table first.");
+      return;
+    }
     if (cart.length === 0) {
       setNotice("Add items before creating a bill.");
       return;
     }
     if (!waiterId) {
       setNotice("Select a waiter for this bill.");
+      return;
+    }
+    const lockErr = assertTableAvailableForNewOrder();
+    if (lockErr) {
+      setNotice(lockErr);
       return;
     }
     try {
@@ -415,18 +512,28 @@ export function WaiterPage(): JSX.Element {
   }
 
   function transferTo(targetId: string): void {
-    if (targetId === tableId) {
+    if (!tableId || targetId === tableId) {
       setTransferOpen(false);
       return;
     }
     if (!branchCode) return;
+    if (tableIsBooked(targetId)) {
+      const target = floorTables.find((t) => t.tableNumber === targetId);
+      setNotice(
+        target?.bookedOrderRef
+          ? `Table ${targetId} is booked by ${target.bookedOrderRef}. Close or complete that order first.`
+          : `Table ${targetId} is booked. Close or complete the current order first.`,
+      );
+      return;
+    }
     setDrafts((prev) => {
       const next = { ...prev };
       const source = next[tableId] ?? currentDraft;
       const dest = next[targetId] ?? {
         cart: [],
         notes: "",
-        orderRef: tables.find((t) => t.id === targetId)?.order ?? `ORD-${Date.now().toString().slice(-4)}`,
+        orderRef: newWaiterOrderRef(),
+        waiterId: null,
       };
       next[targetId] = {
         ...dest,
@@ -440,15 +547,15 @@ export function WaiterPage(): JSX.Element {
     });
     setTableId(targetId);
     setTransferOpen(false);
-    setNotice(`Moved order to ${targetId}.`);
+    setNotice(`Moved order to Table ${targetId}.`);
   }
 
   if (!branchCode) {
     return <PageHeader title="Waiter" subtitle="Select a branch to manage table service." />;
   }
 
-  const currentTable = tables.find((t) => t.id === tableId);
-  const tablesWithOrders = tables.filter((t) => (drafts[t.id]?.cart.length ?? 0) > 0).length;
+  const tablesWithOrders = floorTables.filter((t) => (drafts[t.tableNumber]?.cart.length ?? 0) > 0).length;
+  const bookedCount = floorTables.filter((t) => t.bookingStatus === "booked").length;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-8">
@@ -489,13 +596,23 @@ export function WaiterPage(): JSX.Element {
         />
         <StatTile
           label="Active table"
-          value={tableId}
-          hint={currentTable?.status ?? "free"}
+          value={tableId ?? "—"}
+          hint={
+            tableId
+              ? tableBookedOrderRef
+                ? `${tableBookingStatus} · ${tableBookedOrderRef}`
+                : tableBookingStatus
+              : "Select a table"
+          }
         />
         <StatTile
           label="Order total"
           value={cart.length > 0 ? `Rs ${total.toLocaleString()}` : "—"}
-          hint={cart.length > 0 ? `${cart.length} item${cart.length === 1 ? "" : "s"}` : "No items in cart"}
+          hint={
+            cart.length > 0
+              ? `${cart.length} item${cart.length === 1 ? "" : "s"}`
+              : `${bookedCount} table${bookedCount === 1 ? "" : "s"} booked`
+          }
         />
       </div>
 
@@ -514,7 +631,8 @@ export function WaiterPage(): JSX.Element {
                   <div className={`${panelClass} space-y-3 p-4`}>
                     <div className={panelTitleClass}>Add waiter login</div>
                     <p className={`text-xs ${mutedClass}`}>
-                      Waiters sign in on the mobile app with PIN or email and password.
+                      Waiters sign in on the mobile app with a 4-digit PIN (recommended) or email and
+                      password.
                     </p>
                     <div className="grid gap-3">
                       <input
@@ -539,7 +657,7 @@ export function WaiterPage(): JSX.Element {
                       />
                       <input
                         inputMode="numeric"
-                        placeholder="4-digit PIN (optional, for mobile quick login)"
+                        placeholder="4-digit PIN * (mobile quick login)"
                         value={waiterPin}
                         onChange={(e) => setWaiterPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
                         className={fieldInputClass}
@@ -553,6 +671,7 @@ export function WaiterPage(): JSX.Element {
                         !waiterName.trim() ||
                         !waiterEmail.trim() ||
                         waiterPassword.length < 8 ||
+                        !/^\d{4}$/.test(waiterPin) ||
                         createWaiterMutation.isPending
                       }
                       onClick={() => createWaiterMutation.mutate()}
@@ -595,6 +714,7 @@ export function WaiterPage(): JSX.Element {
                                 setEditWaiterId(w.id);
                                 setEditEmail(w.email);
                                 setEditPassword("");
+                                setEditPin("");
                               }}
                             >
                               Edit
@@ -607,7 +727,10 @@ export function WaiterPage(): JSX.Element {
 
                   {editWaiterId ? (
                     <div className={`${panelClass} space-y-3 p-4`}>
-                      <div className={panelTitleClass}>Update login</div>
+                      <div className={panelTitleClass}>Update login & PIN</div>
+                      <p className={`text-xs ${mutedClass}`}>
+                        Change email, password, or set a new 4-digit PIN for the waiter app.
+                      </p>
                       <input
                         type="email"
                         placeholder="Login email"
@@ -622,13 +745,22 @@ export function WaiterPage(): JSX.Element {
                         onChange={(e) => setEditPassword(e.target.value)}
                         className={fieldInputClass}
                       />
+                      <input
+                        inputMode="numeric"
+                        placeholder="New 4-digit PIN (optional)"
+                        value={editPin}
+                        onChange={(e) => setEditPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                        className={fieldInputClass}
+                        maxLength={4}
+                      />
                       <div className="flex gap-2">
                         <Button
                           type="button"
                           className="h-8 flex-1 text-xs"
                           disabled={
-                            (!editEmail.trim() && editPassword.length === 0) ||
+                            (!editEmail.trim() && editPassword.length === 0 && editPin.length === 0) ||
                             (editPassword.length > 0 && editPassword.length < 8) ||
+                            (editPin.length > 0 && editPin.length !== 4) ||
                             updateWaiterMutation.isPending
                           }
                           onClick={() =>
@@ -636,6 +768,7 @@ export function WaiterPage(): JSX.Element {
                               waiterId: editWaiterId,
                               email: editEmail,
                               password: editPassword,
+                              pin: editPin,
                             })
                           }
                         >
@@ -649,6 +782,7 @@ export function WaiterPage(): JSX.Element {
                             setEditWaiterId(null);
                             setEditEmail("");
                             setEditPassword("");
+                            setEditPin("");
                           }}
                         >
                           Cancel
@@ -707,22 +841,40 @@ export function WaiterPage(): JSX.Element {
           {transferOpen ? (
             <div className={`${cardClass} p-4`}>
               <p className={`text-sm font-medium text-slate-900 dark:text-white`}>
-                Transfer order from {tableId}
+                Transfer order from {tableId ? `Table ${tableId}` : "—"}
               </p>
-              <p className={`mt-1 text-xs ${mutedClass}`}>Select the destination table.</p>
+              <p className={`mt-1 text-xs ${mutedClass}`}>
+                Select a free destination table. Booked tables stay locked until closed.
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {tables
-                  .filter((t) => t.id !== tableId)
-                  .map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => transferTo(t.id)}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${pillInactiveClass}`}
-                    >
-                      {t.id}
-                    </button>
-                  ))}
+                {floorTables
+                  .filter((t) => t.tableNumber !== tableId)
+                  .map((t) => {
+                    const booked = t.bookingStatus === "booked";
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        disabled={booked}
+                        onClick={() => transferTo(t.tableNumber)}
+                        title={
+                          booked
+                            ? t.bookedOrderRef
+                              ? `Booked · ${t.bookedOrderRef}`
+                              : "Booked"
+                            : undefined
+                        }
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                          booked
+                            ? "cursor-not-allowed border-red-300/60 bg-red-50 text-red-700 opacity-60 dark:border-red-500/30 dark:bg-red-950/30 dark:text-red-200"
+                            : pillInactiveClass
+                        }`}
+                      >
+                        {t.tableNumber}
+                        {booked ? " · booked" : ""}
+                      </button>
+                    );
+                  })}
               </div>
             </div>
           ) : null}
@@ -775,56 +927,98 @@ export function WaiterPage(): JSX.Element {
               <div>
                 <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Floor tables</h2>
                 <p className={`mt-1 text-xs ${mutedClass}`}>
-                  {tablesWithOrders} table{tablesWithOrders === 1 ? "" : "s"} with open orders
+                  {bookedCount} booked · {tablesWithOrders} with open drafts
                 </p>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <Badge tone={tableStatusTone(currentTable?.status ?? "free")}>
-                  {currentTable?.status ?? "free"}
-                </Badge>
+                <Badge tone={tableStatusTone(tableBookingStatus)}>{tableBookingStatus}</Badge>
                 <span className={`font-mono ${mutedClass}`}>{orderRef}</span>
               </div>
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {tables.map((t) => {
-                const active = tableId === t.id;
-                const hasDraft = (drafts[t.id]?.cart.length ?? 0) > 0;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => {
-                      setTableId(t.id);
-                      setShowMenu(false);
-                      setNotice(null);
-                    }}
-                    className={[
-                      "relative rounded-xl border px-3 py-3 text-center transition",
-                      active
-                        ? amberPillActiveClass
-                        : "border-slate-200 bg-white hover:border-amber-500/40 dark:border-slate-700 dark:bg-slate-900/60 dark:hover:border-amber-500/30",
-                    ].join(" ")}
-                  >
-                    <span className="text-sm font-semibold">{t.id}</span>
-                    {t.status !== "free" || hasDraft ? (
+            {tableLocked ? (
+              <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                {tableBookedOrderRef
+                  ? `Table ${tableId} is booked by ${tableBookedOrderRef}. Close or complete that order before starting a new one.`
+                  : `Table ${tableId} is booked. Close or complete the current order before starting a new one.`}
+              </p>
+            ) : null}
+            {floorQuery.isLoading ? (
+              <p className={`mt-4 text-xs ${mutedClass}`}>Loading floor plan…</p>
+            ) : floorTables.length === 0 ? (
+              <p className={`mt-4 text-xs ${mutedClass}`}>
+                No tables yet. Add them under Tables.
+              </p>
+            ) : (
+              <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                {floorTables.map((t) => {
+                  const active = tableId === t.tableNumber;
+                  const hasDraft = (drafts[t.tableNumber]?.cart.length ?? 0) > 0;
+                  const booked = t.bookingStatus === "booked";
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        setTableId(t.tableNumber);
+                        setShowMenu(false);
+                        setNotice(
+                          booked && t.bookedOrderRef
+                            ? `Table ${t.tableNumber} is booked by ${t.bookedOrderRef}.`
+                            : booked
+                              ? `Table ${t.tableNumber} is booked.`
+                              : null,
+                        );
+                      }}
+                      title={
+                        booked
+                          ? t.bookedOrderRef
+                            ? `Booked · ${t.bookedOrderRef}`
+                            : "Booked"
+                          : `${t.seats} seats`
+                      }
+                      className={[
+                        "relative rounded-xl border px-3 py-3 text-center transition",
+                        active
+                          ? amberPillActiveClass
+                          : booked
+                            ? "border-red-300/70 bg-red-50 hover:border-red-400 dark:border-red-500/40 dark:bg-red-950/40 dark:hover:border-red-400/60"
+                            : "border-slate-200 bg-white hover:border-amber-500/40 dark:border-slate-700 dark:bg-slate-900/60 dark:hover:border-amber-500/30",
+                      ].join(" ")}
+                    >
+                      <span className="text-sm font-semibold">{t.tableNumber}</span>
                       <span
-                        className={[
-                          "absolute right-2 top-2 h-2 w-2 rounded-full",
-                          hasDraft ? "bg-amber-500" : "bg-sky-500",
-                        ].join(" ")}
-                      />
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
+                        className={`mt-1 block text-[10px] font-medium uppercase tracking-wide ${
+                          booked
+                            ? "text-red-600 dark:text-red-300"
+                            : hasDraft
+                              ? "text-amber-700 dark:text-amber-300"
+                              : mutedClass
+                        }`}
+                      >
+                        {booked ? "Booked" : hasDraft ? "Draft" : "Free"}
+                      </span>
+                      {booked || hasDraft ? (
+                        <span
+                          className={[
+                            "absolute right-2 top-2 h-2 w-2 rounded-full",
+                            booked ? "bg-red-500" : "bg-amber-500",
+                          ].join(" ")}
+                        />
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-2">
             <div className={`${cardClass} p-4`}>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Order · {tableId}</h2>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Order · {tableId ? `Table ${tableId}` : "—"}
+                  </h2>
                   <p className={`mt-1 text-xs ${mutedClass}`}>Build the ticket and send to kitchen</p>
                 </div>
                 {cart.length > 0 ? (
@@ -884,18 +1078,29 @@ export function WaiterPage(): JSX.Element {
               />
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button type="button" className="text-xs" onClick={() => setShowMenu((v) => !v)}>
+                <Button
+                  type="button"
+                  className="text-xs"
+                  disabled={tableLocked}
+                  onClick={() => setShowMenu((v) => !v)}
+                >
                   {showMenu ? "Hide menu" : "Add items"}
                 </Button>
                 <Button
                   type="button"
                   className="text-xs"
-                  disabled={cart.length === 0 || sendMutation.isPending}
+                  disabled={cart.length === 0 || sendMutation.isPending || tableLocked || !tableId}
                   onClick={() => sendMutation.mutate()}
                 >
                   {sendMutation.isPending ? "Sending…" : "Send to kitchen"}
                 </Button>
-                <Button type="button" variant="ghost" className="text-xs" onClick={reorderLast}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-xs"
+                  disabled={tableLocked || !tableId}
+                  onClick={reorderLast}
+                >
                   Reorder last
                 </Button>
               </div>
@@ -931,7 +1136,9 @@ export function WaiterPage(): JSX.Element {
             <div className={`${cardClass} p-4`}>
               <div>
                 <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Kitchen status</h2>
-                <p className={`mt-1 text-xs ${mutedClass}`}>Live tickets for {tableId}</p>
+                <p className={`mt-1 text-xs ${mutedClass}`}>
+                  Live tickets for {tableId ? `Table ${tableId}` : "this table"}
+                </p>
               </div>
 
               {kitchenQuery.isLoading ? (
@@ -990,7 +1197,13 @@ export function WaiterPage(): JSX.Element {
               <Button
                 type="button"
                 className="mt-4 h-10 w-full text-sm"
-                disabled={cart.length === 0 || !waiterId || createBillMutation.isPending}
+                disabled={
+                  cart.length === 0 ||
+                  !waiterId ||
+                  !tableId ||
+                  tableLocked ||
+                  createBillMutation.isPending
+                }
                 onClick={() => void createAndPrintBill()}
               >
                 {createBillMutation.isPending

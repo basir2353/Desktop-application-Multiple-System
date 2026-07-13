@@ -99,6 +99,7 @@ export default function OrderScreen() {
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
+    refetchInterval: 15_000,
   });
 
   const menuQuery = useQuery({
@@ -131,6 +132,7 @@ export default function OrderScreen() {
     return (floorQuery.data?.tables ?? []).filter((t) => t.isActive);
   }, [floorQuery.data]);
 
+<<<<<<< Updated upstream
   const myUserId = claims?.sub ?? null;
 
   const tableOccupancy = useMemo(
@@ -141,6 +143,14 @@ export default function OrderScreen() {
   const activeTableId = tableId ?? tables[0]?.tableNumber ?? null;
   const activeTableOccupancy = occupancyForTable(tableOccupancy, activeTableId);
   const activeTableLockedByOther = Boolean(activeTableOccupancy && !activeTableOccupancy.mine);
+=======
+  const firstFreeTableNumber = useMemo(
+    () => tables.find((t) => t.bookingStatus !== "booked")?.tableNumber ?? null,
+    [tables],
+  );
+
+  const activeTableId = tableId ?? firstFreeTableNumber;
+>>>>>>> Stashed changes
   const draftKey = orderMode === "dine-in" ? activeTableId : orderMode;
   const activeRiders = useMemo(
     () => (ridersQuery.data ?? []).filter((rider) => rider.active),
@@ -177,9 +187,19 @@ export default function OrderScreen() {
 
   function validateOrderTarget(): string | null {
     if (orderMode === "dine-in" && !activeTableId) return "Select a table first.";
+<<<<<<< Updated upstream
     if (orderMode === "dine-in" && !editingOrder && activeTableLockedByOther) {
       const owner = activeTableOccupancy?.ownerName ?? "another waiter";
       return `Table ${activeTableId} is booked by ${owner}. You can view the order but not edit it.`;
+=======
+    if (orderMode === "dine-in" && activeTableId && !editingOrder) {
+      const table = tables.find((t) => t.tableNumber === activeTableId);
+      if (table?.bookingStatus === "booked") {
+        return table.bookedOrderRef
+          ? `Table ${activeTableId} is booked by ${table.bookedOrderRef}. Close or complete that order before starting a new one.`
+          : `Table ${activeTableId} is booked. Close or complete the current order before starting a new one.`;
+      }
+>>>>>>> Stashed changes
     }
     if (orderMode === "delivery") {
       if (activeRiders.length === 0) return "Add an active rider in the desktop Delivery module first.";
@@ -200,6 +220,7 @@ export default function OrderScreen() {
   function invalidateOrderFeeds(): void {
     void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    void queryClient.invalidateQueries({ queryKey: ["tables"] });
   }
 
   function applyTicketEdit(ticket: KitchenTicket): void {
@@ -504,6 +525,15 @@ export default function OrderScreen() {
 
   function selectTable(tableNumber: string): void {
     if (editingOrder) return;
+    const table = tables.find((t) => t.tableNumber === tableNumber);
+    if (table?.bookingStatus === "booked") {
+      setNotice(
+        table.bookedOrderRef
+          ? `Table ${tableNumber} is booked by ${table.bookedOrderRef}. Close or complete that order first.`
+          : `Table ${tableNumber} is booked. Close or complete the current order first.`,
+      );
+      return;
+    }
     setTableId(tableNumber);
     setShowMenu(false);
     setNotice(null);
@@ -615,6 +645,7 @@ export default function OrderScreen() {
               contentContainerStyle={styles.tableRow}
             >
               {tables.map((t) => {
+<<<<<<< Updated upstream
                 const occ = occupancyForTable(tableOccupancy, t.tableNumber);
                 const lockedByOther = Boolean(occ && !occ.mine);
                 return (
@@ -627,6 +658,17 @@ export default function OrderScreen() {
                       occ ? (occ.mine ? "Your order" : occ.ownerName ?? "Booked") : undefined
                     }
                     disabled={lockedByOther}
+=======
+                const booked = t.bookingStatus === "booked";
+                const selected = activeTableId === t.tableNumber;
+                const locked = booked && !editingOrder;
+                return (
+                  <Chip
+                    key={t.id}
+                    label={booked ? `${t.tableNumber} · booked` : t.tableNumber}
+                    selected={selected}
+                    disabled={locked && !selected}
+>>>>>>> Stashed changes
                     onPress={() => selectTable(t.tableNumber)}
                   />
                 );

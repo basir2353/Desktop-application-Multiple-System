@@ -244,6 +244,32 @@ html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-select
   box-shadow: 0 0 0 1px rgb(245 158 11 / 0.25);
 }
 
+[data-ui="floor-modal"] .floor-modal-table-btn.is-booked {
+  border-color: #f87171;
+  background-color: #fef2f2;
+}
+
+html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-booked {
+  border-color: #f87171;
+  background-color: rgb(127 29 29 / 0.35);
+}
+
+[data-ui="floor-modal"] .floor-modal-table-btn.is-booked .floor-modal-table-label {
+  color: #b91c1c;
+}
+
+html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-booked .floor-modal-table-label {
+  color: #fecaca;
+}
+
+[data-ui="floor-modal"] .floor-modal-table-btn.is-booked .floor-modal-table-meta {
+  color: #dc2626;
+}
+
+html[data-theme="dark"] [data-ui="floor-modal"] .floor-modal-table-btn.is-booked .floor-modal-table-meta {
+  color: #fca5a5;
+}
+
 [data-ui="floor-modal"] .floor-modal-table-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

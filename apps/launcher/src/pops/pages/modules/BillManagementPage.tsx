@@ -47,11 +47,12 @@ import {
   ModuleSearchInput,
 } from "../../ui/ModuleToolbar";
 import { SimpleTable } from "../../ui/SimpleTable";
+import { BillManagementCustomizationPanel } from "./bills/BillManagementCustomizationPanel";
 import { BillManagementEmployeesPanel } from "./bills/BillManagementEmployeesPanel";
 import { BillManagementSuppliersPanel } from "./bills/BillManagementSuppliersPanel";
 
 type StatusFilter = "all" | "held" | "completed";
-type BillManagementTab = "bills" | "suppliers" | "employees";
+type BillManagementTab = "bills" | "customization" | "suppliers" | "employees";
 
 function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
@@ -351,7 +352,7 @@ export function BillManagementPage(): JSX.Element {
     <div className="space-y-6">
       <PageHeader
         title="Bill management"
-        subtitle={`Bills, suppliers, and employees for ${branch.name}.`}
+        subtitle={`Bills, print layout, suppliers, and employees for ${branch.name}.`}
         actions={
           activeTab === "bills" ? (
             <div className="flex flex-wrap gap-2">
@@ -374,6 +375,7 @@ export function BillManagementPage(): JSX.Element {
         {(
           [
             { id: "bills" as const, label: "Bills & orders" },
+            { id: "customization" as const, label: "Customization" },
             { id: "suppliers" as const, label: "Suppliers" },
             { id: "employees" as const, label: "Employees" },
           ] as const
@@ -400,6 +402,9 @@ export function BillManagementPage(): JSX.Element {
         </p>
       ) : null}
 
+      {activeTab === "customization" ? (
+        <BillManagementCustomizationPanel onNotice={setNotice} />
+      ) : null}
       {activeTab === "suppliers" ? <BillManagementSuppliersPanel /> : null}
       {activeTab === "employees" ? <BillManagementEmployeesPanel /> : null}
 

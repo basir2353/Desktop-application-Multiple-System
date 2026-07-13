@@ -2,7 +2,10 @@ import type { Bill, KitchenTicket } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
 import { parseItemsSummary, type PosRecentOrder } from "./recentOrders";
 import {
+<<<<<<< Updated upstream
   billReceiptFontSizes,
+=======
+>>>>>>> Stashed changes
   DEFAULT_BILL_PRINT_SETTINGS,
   loadBillPrintSettings,
   type BillPrintSettings,
@@ -42,7 +45,11 @@ export type PrintTicketInput = {
   taxPct?: number;
   discountPct: number;
   kotSettings?: KotPrintSettings;
+<<<<<<< Updated upstream
   billPrintSettings?: BillPrintSettings;
+=======
+  billSettings?: BillPrintSettings;
+>>>>>>> Stashed changes
 };
 
 function escapeHtml(value: string): string {
@@ -63,10 +70,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     input.kotSettings ??
     (input.branchCode ? loadKotPrintSettings(input.branchCode) : DEFAULT_KOT_PRINT_SETTINGS);
   const billSettings =
+<<<<<<< Updated upstream
     input.billPrintSettings ??
     (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
   const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
   const fields = isReceipt ? billSettings.fields : null;
+=======
+    input.billSettings ??
+    (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
+>>>>>>> Stashed changes
   const title = isReceipt ? billSettings.documentTitle : "Kitchen Order";
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
@@ -75,6 +87,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
 
   const totalItems = input.lines.length;
   const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
+  const showAmounts = isReceipt && billSettings.showItemPrices;
 
   const lineRows = input.lines
     .map((line) => {
@@ -91,13 +104,20 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       const showQty = fields!.itemQty;
       const showAmt = fields!.itemAmount;
       return `<tr>
+<<<<<<< Updated upstream
         <td class="item-name" colspan="${showQty || showAmt ? 1 : 3}">${escapeHtml(line.label)}</td>
         ${showQty ? `<td class="qty">${line.qty}</td>` : ""}
         ${showAmt ? `<td class="amt">${formatMoney(lineTotal)}</td>` : ""}
+=======
+        <td class="item-name">${escapeHtml(line.label)}</td>
+        <td class="qty">${line.qty}</td>
+        ${showAmounts ? `<td class="amt">${formatMoney(lineTotal)}</td>` : ""}
+>>>>>>> Stashed changes
       </tr>`;
     })
     .join("");
 
+<<<<<<< Updated upstream
   const totalsRows = isReceipt && fields
     ? [
         fields.subtotal
@@ -155,6 +175,47 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       ]
         .filter(Boolean)
         .join("");
+=======
+  const totalsBlock = isReceipt
+    ? `<div class="totals">
+        <div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal)}</span></div>
+        ${
+          billSettings.showDiscountLine && input.discount > 0
+            ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount)}</span></div>`
+            : ""
+        }
+        ${
+          billSettings.showServiceCharge
+            ? `<div class="row"><span class="label">Service charge (${input.servicePct}%)</span><span class="value">${formatMoney(input.service)}</span></div>`
+            : ""
+        }
+        ${
+          billSettings.showTaxLine
+            ? `<div class="row"><span class="label">Tax (${input.taxPct ?? 15}%)</span><span class="value">${formatMoney(input.tax)}</span></div>`
+            : ""
+        }
+        ${(input.deliveryCharge ?? 0) > 0 ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!)}</span></div>` : ""}
+        <div class="row grand"><span class="label">Total</span><span class="value">${formatMoney(input.total)}</span></div>
+      </div>`
+    : "";
+
+  const metaRows = [
+    `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>`,
+    `<span class="meta-chip meta-primary">${escapeHtml(input.modeLabel)}</span>`,
+    input.tableLabel
+      ? `<span class="meta-chip meta-primary">${escapeHtml(input.tableLabel)}</span>`
+      : null,
+    input.billRef ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>` : null,
+    input.waiterName && (!isReceipt || billSettings.showWaiterName)
+      ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>`
+      : null,
+    input.printerName && (!isReceipt || billSettings.showPrinterName)
+      ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("");
+>>>>>>> Stashed changes
 
   const kotTotalsBlock =
     !isReceipt && kotSettings.showItemTotals
@@ -164,6 +225,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         </div>`
       : "";
 
+<<<<<<< Updated upstream
   const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : receiptFonts.body;
   const emphasizeMeta = !isReceipt && kotSettings.emphasizeOrderMeta;
   const compact = isReceipt && billSettings.layout === "compact";
@@ -209,6 +271,31 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .footer-secondary { font-size: ${receiptFonts.footerSecondary}px; }
     `
     : "";
+=======
+  const bodyFontSize = isReceipt ? billSettings.baseFontSize : kotSettings.baseFontSize;
+  const emphasizeMeta = !isReceipt && kotSettings.emphasizeOrderMeta;
+  const paperWidth = isReceipt ? billSettings.paperWidthMm : 80;
+  const headerSubtitle =
+    isReceipt && billSettings.headerSubtitle.trim()
+      ? `<div class="header-subtitle">${escapeHtml(billSettings.headerSubtitle.trim())}</div>`
+      : "";
+  const notesBlock =
+    input.notes && (!isReceipt || billSettings.showOrderNotes)
+      ? `<p class="notes">${escapeHtml(input.notes)}</p>`
+      : "";
+  const timestampBits = [
+    isReceipt && billSettings.showBranchCode ? escapeHtml(input.branchCode) : null,
+    !isReceipt ? escapeHtml(input.branchCode) : null,
+    (!isReceipt || billSettings.showTimestamp) ? escapeHtml(printedAt) : null,
+  ].filter(Boolean);
+  const timestampBlock =
+    timestampBits.length > 0
+      ? `<div class="timestamp">${timestampBits.join(" · ")}</div>`
+      : "";
+  const footerText = isReceipt
+    ? escapeHtml(billSettings.footerMessage)
+    : '<div class="kot-banner">Kitchen copy — order</div>';
+>>>>>>> Stashed changes
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -229,7 +316,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       background: #fff;
       margin: 0 auto;
       padding: 16px 14px 20px;
-      max-width: 80mm;
+      max-width: ${paperWidth}mm;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -245,6 +332,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       letter-spacing: -0.02em;
       line-height: 1.25;
       color: #111827;
+    }
+    .header-subtitle {
+      margin-top: 4px;
+      font-size: 9px;
+      font-weight: 500;
+      color: #6b7280;
     }
     .doc-type {
       margin-top: 6px;
@@ -430,7 +523,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     @media print {
       body { padding: 0; }
       .meta-chip { background: transparent; padding: 0; }
-      @page { margin: 4mm; size: 80mm auto; }
+      @page { margin: 4mm; size: ${paperWidth}mm auto; }
     }
     ${receiptCss}
   </style>
@@ -445,7 +538,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     : !isReceipt
       ? `<header class="header">
     <div class="branch-name">${escapeHtml(input.branchName)}</div>
+    ${headerSubtitle}
     <div class="doc-type">${escapeHtml(title)}</div>
+<<<<<<< Updated upstream
   </header>`
       : ""}
   ${metaRows ? `<div class="meta">${metaRows}</div>` : ""}
@@ -468,6 +563,18 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         <th>Item</th>
         ${showQtyCol ? '<th class="qty">Qty</th>' : ""}
         ${showAmtCol ? '<th class="amt">Amount</th>' : ""}
+=======
+  </header>
+  <div class="meta">${metaRows}</div>
+  ${notesBlock}
+  ${timestampBlock}
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th class="qty">Qty</th>
+        ${showAmounts ? '<th class="amt">Amount</th>' : ""}
+>>>>>>> Stashed changes
       </tr>
     </thead>`
       : ""}
@@ -476,6 +583,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     : ""}
   ${kotTotalsBlock}
   ${totalsBlock}
+<<<<<<< Updated upstream
   ${showFooterPrimary || showFooterSecondary
     ? `<div class="footer">
     ${showFooterPrimary ? escapeHtml(billSettings.footerText) : ""}
@@ -484,6 +592,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     : !isReceipt
       ? '<div class="footer"><div class="kot-banner">Kitchen copy — order</div></div>'
       : ""}
+=======
+  <div class="footer">${footerText}</div>
+>>>>>>> Stashed changes
 </body>
 </html>`;
 }

@@ -20,6 +20,7 @@ import { PosDishVariantModal } from "../../components/PosDishVariantModal";
 import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
 import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
 import { PosSeatingModal } from "../../components/PosSeatingModal";
+import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
 import {
   POS_ORDER_MODES,
   posBillTableLabel,
@@ -104,7 +105,11 @@ const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-9 border border-slate-200 bg-whit
 const POS_TOOLBAR_BTN =
   "inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
 const POS_MODE_BAR =
+<<<<<<< Updated upstream
   "no-scrollbar flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
+=======
+  "flex w-full shrink-0 gap-0.5 overflow-x-auto overscroll-x-contain scroll-smooth rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 [-ms-overflow-style:none] [scrollbar-width:none] dark:bg-slate-950/80 dark:ring-slate-800/80 [&::-webkit-scrollbar]:hidden";
+>>>>>>> Stashed changes
 const POS_MODE_BTN = (active: boolean) =>
   `shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition ${
     active
@@ -153,8 +158,12 @@ export function PosPage(): JSX.Element {
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [ticketServicePct, setTicketServicePct] = useState(10);
   const [seatingModalOpen, setSeatingModalOpen] = useState(false);
+<<<<<<< Updated upstream
   const [orderTypeModalOpen, setOrderTypeModalOpen] = useState(true);
   const [modeConfirmed, setModeConfirmed] = useState(false);
+=======
+  const [orderTypeConfirmed, setOrderTypeConfirmed] = useState(false);
+>>>>>>> Stashed changes
   const [editingOrder, setEditingOrder] = useState<PosEditingOrder>(null);
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
@@ -263,6 +272,7 @@ export function PosPage(): JSX.Element {
     queryKey: ["tables", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchBranchFloor(branch!.code),
+    refetchInterval: 15_000,
   });
 
   const kitchenQuery = useQuery({
@@ -394,7 +404,11 @@ export function PosPage(): JSX.Element {
   }
 
   useEffect(() => {
+<<<<<<< Updated upstream
     if (!modeConfirmed || mode !== "dine-in") {
+=======
+    if (!orderTypeConfirmed || mode !== "dine-in") {
+>>>>>>> Stashed changes
       if (mode !== "dine-in") {
         setSelectedFloorSectionId(null);
         setSelectedTableId(null);
@@ -407,7 +421,11 @@ export function PosPage(): JSX.Element {
       setSeatingModalOpen(true);
       seatingAutoOpened.current = true;
     }
+<<<<<<< Updated upstream
   }, [mode, modeConfirmed, floorSections.length, selectedTableId]);
+=======
+  }, [orderTypeConfirmed, mode, floorSections.length, selectedTableId]);
+>>>>>>> Stashed changes
 
   useEffect(() => {
     if (!selectedTableId) return;
@@ -423,7 +441,8 @@ export function PosPage(): JSX.Element {
       return;
     }
     if (!selectedTableId || !sectionTables.some((t) => t.id === selectedTableId)) {
-      setSelectedTableId(sectionTables[0].id);
+      const firstFree = sectionTables.find((t) => t.bookingStatus !== "booked");
+      setSelectedTableId(firstFree?.id ?? null);
     }
   }, [selectedFloorSectionId, sectionTables, selectedTableId]);
 
@@ -493,6 +512,7 @@ export function PosPage(): JSX.Element {
   }
 
   function onDishClick(item: ApiMenuItem): void {
+    if (!orderTypeConfirmed) return;
     if (shouldOpenVariantPicker(item)) {
       setVariantPickerItem(item);
       return;
@@ -633,6 +653,7 @@ export function PosPage(): JSX.Element {
   function invalidateOrderFeeds(): void {
     void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    void queryClient.invalidateQueries({ queryKey: ["tables"] });
   }
 
   function resetAfterKitchenOrder(): void {
@@ -644,7 +665,15 @@ export function PosPage(): JSX.Element {
     setDeliveryRiderId("");
     setDeliveryChargePkr(loadDeliverySettings(branch?.code).defaultChargePkr);
     setDeliveryDetailsOpen(false);
+<<<<<<< Updated upstream
     beginNextOrderCycle();
+=======
+    setOrderTypeConfirmed(false);
+    setSelectedFloorSectionId(null);
+    setSelectedTableId(null);
+    setSeatingModalOpen(false);
+    seatingAutoOpened.current = false;
+>>>>>>> Stashed changes
   }
 
   function resetAfterBill(): void {
@@ -672,6 +701,7 @@ export function PosPage(): JSX.Element {
     setOrderTypeModalOpen(false);
     setModeConfirmed(true);
     setEditingOrder({ kind: "ticket", ticketId: ticket.id });
+    setOrderTypeConfirmed(true);
     setOrderRef(ticket.orderRef ?? ticket.ticketRef);
     setMode(inferPosModeFromStation(ticket.stationLabel));
     setCart(stripComplimentaryLines(cartFromKitchenTicket(menuItems, ticket)));
@@ -695,6 +725,7 @@ export function PosPage(): JSX.Element {
     setOrderTypeModalOpen(false);
     setModeConfirmed(true);
     setEditingOrder({ kind: "held-bill", billId: bill.id });
+    setOrderTypeConfirmed(true);
     setOrderRef(bill.orderRef ?? bill.billRef);
     setMode(inferPosModeFromStation(bill.tableLabel));
     setCart(stripComplimentaryLines(cartFromBill(menuItems, bill)));
@@ -808,6 +839,17 @@ export function PosPage(): JSX.Element {
       setSeatingModalOpen(true);
       return "Select a table for dine-in orders.";
     }
+    if (
+      mode === "dine-in" &&
+      selectedTable?.bookingStatus === "booked" &&
+      editingOrder?.kind !== "ticket" &&
+      (!selectedTable.bookedOrderRef || selectedTable.bookedOrderRef !== orderRef)
+    ) {
+      setSeatingModalOpen(true);
+      return selectedTable.bookedOrderRef
+        ? `${tableLabel} is booked by ${selectedTable.bookedOrderRef}. Close or complete that order first.`
+        : `${tableLabel} is booked. Close or complete the current order first.`;
+    }
     const riderErr = validateDeliveryRider();
     if (riderErr) return riderErr;
     return null;
@@ -819,6 +861,18 @@ export function PosPage(): JSX.Element {
     if (mode === "dine-in" && !tableLabel) {
       setSeatingModalOpen(true);
       return "Select a table for dine-in orders.";
+    }
+    if (
+      mode === "dine-in" &&
+      selectedTable?.bookingStatus === "booked" &&
+      editingOrder?.kind !== "held-bill" &&
+      editingOrder?.kind !== "ticket" &&
+      (!selectedTable.bookedOrderRef || selectedTable.bookedOrderRef !== orderRef)
+    ) {
+      setSeatingModalOpen(true);
+      return selectedTable.bookedOrderRef
+        ? `${tableLabel} is booked by ${selectedTable.bookedOrderRef}. Close or complete that order first.`
+        : `${tableLabel} is booked. Close or complete the current order first.`;
     }
     const riderErr = validateDeliveryRider();
     if (riderErr) return riderErr;
@@ -1131,6 +1185,7 @@ export function PosPage(): JSX.Element {
         </p>
       ) : null}
 
+<<<<<<< Updated upstream
       {orderTypeModalOpen && !editingOrder && !cashierModal ? (
         <PosOrderTypeModal
           selectedMode={mode}
@@ -1140,11 +1195,30 @@ export function PosPage(): JSX.Element {
       ) : null}
 
       {seatingModalOpen && mode === "dine-in" && modeConfirmed ? (
+=======
+      {!orderTypeConfirmed && !editingOrder ? (
+        <PosOrderTypeModal
+          onSelect={(nextMode) => {
+            setMode(nextMode);
+            setOrderTypeConfirmed(true);
+            seatingAutoOpened.current = false;
+            if (nextMode !== "dine-in") {
+              setSelectedFloorSectionId(null);
+              setSelectedTableId(null);
+              setSeatingModalOpen(false);
+            }
+          }}
+        />
+      ) : null}
+
+      {seatingModalOpen && mode === "dine-in" && orderTypeConfirmed ? (
+>>>>>>> Stashed changes
         <PosSeatingModal
           sections={floorSections}
           tables={floorTables}
           selectedSectionId={selectedFloorSectionId}
           selectedTableId={selectedTableId}
+          allowBookedTableId={editingOrder ? selectedTableId : null}
           isLoading={floorQuery.isLoading}
           occupiedTableNumbers={occupiedTableNumbers}
           onSelectSection={setSelectedFloorSectionId}
@@ -1368,11 +1442,25 @@ export function PosPage(): JSX.Element {
                 <button
                   key={id}
                   type="button"
+<<<<<<< Updated upstream
                   onClick={(e) => {
                     switchMode(id);
                     e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
                   }}
                   className={POS_MODE_BTN(mode === id)}
+=======
+                  onClick={() => {
+                    setMode(id);
+                    setOrderTypeConfirmed(true);
+                    seatingAutoOpened.current = false;
+                    if (id !== "dine-in") {
+                      setSelectedFloorSectionId(null);
+                      setSelectedTableId(null);
+                      setSeatingModalOpen(false);
+                    }
+                  }}
+                  className={POS_MODE_BTN(orderTypeConfirmed && mode === id)}
+>>>>>>> Stashed changes
                 >
                   {label}
                 </button>
@@ -1705,7 +1793,7 @@ export function PosPage(): JSX.Element {
         </div>
 
         {/* Latest orders sidebar */}
-        <div className="col-span-12 flex min-h-[18rem] flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
+        <div className="col-span-12 flex min-h-[18rem] min-w-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           <PosLatestOrdersPanel
             orders={recentOrders}
             isLoading={kitchenQuery.isLoading || ordersQuery.isLoading}

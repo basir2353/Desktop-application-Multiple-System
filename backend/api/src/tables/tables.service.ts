@@ -19,6 +19,7 @@ import {
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { dineInTableLabel, loadBranchTableBookings, normalizeTableLabel } from "./table-booking";
 
 const DEFAULT_FLOOR: { section: string; tables: { number: string; seats: number }[] }[] = [
   {
@@ -82,10 +83,12 @@ export class TablesService implements OnModuleInit {
       )
       .orderBy(asc(popsTables.sortOrder), asc(popsTables.tableNumber));
 
+    const bookings = await loadBranchTableBookings(this.db, branch.id);
+
     return {
       branchCode: branch.code,
       sections: sections.map((s) => this.mapSection(s)),
-      tables: tables.map((t) => this.mapTable(t)),
+      tables: tables.map((t) => this.mapTable(t, bookings)),
     };
   }
 
@@ -105,10 +108,12 @@ export class TablesService implements OnModuleInit {
       .where(eq(popsTables.branchId, branch.id))
       .orderBy(asc(popsTables.sortOrder), asc(popsTables.tableNumber));
 
+    const bookings = await loadBranchTableBookings(this.db, branch.id);
+
     return {
       branchCode: branch.code,
       sections: sections.map((s) => this.mapSection(s)),
-      tables: tables.map((t) => this.mapTable(t)),
+      tables: tables.map((t) => this.mapTable(t, bookings)),
     };
   }
 
@@ -252,7 +257,11 @@ export class TablesService implements OnModuleInit {
     };
   }
 
-  private mapTable(row: typeof popsTables.$inferSelect) {
+  private mapTable(
+    row: typeof popsTables.$inferSelect,
+    bookings?: Map<string, { orderRef: string | null }>,
+  ) {
+    const booking = bookings?.get(normalizeTableLabel(dineInTableLabel(row.tableNumber)));
     return {
       id: row.id,
       sectionId: row.sectionId,
@@ -260,6 +269,8 @@ export class TablesService implements OnModuleInit {
       seats: row.seats,
       sortOrder: row.sortOrder,
       isActive: row.isActive,
+      bookingStatus: booking ? ("booked" as const) : ("free" as const),
+      bookedOrderRef: booking?.orderRef ?? null,
     };
   }
 

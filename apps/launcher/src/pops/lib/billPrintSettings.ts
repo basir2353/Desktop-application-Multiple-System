@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 export type BillReceiptLayout = "standard" | "compact";
 export type BillHeaderAlign = "center" | "left";
 
@@ -78,10 +79,59 @@ export const DEFAULT_BILL_PRINT_SETTINGS: BillPrintSettings = {
   footerText: "Thank you — visit again",
   footerSecondaryText: "",
   fields: DEFAULT_BILL_RECEIPT_FIELDS,
+=======
+export type BillPrintSettings = {
+  /** Document title under the branch name (e.g. Tax Invoice). */
+  documentTitle: string;
+  /** Optional tagline under the branch name. */
+  headerSubtitle: string;
+  /** Footer message at the bottom of the receipt. */
+  footerMessage: string;
+  /** Show branch code next to the print timestamp. */
+  showBranchCode: boolean;
+  /** Show waiter name on the receipt. */
+  showWaiterName: boolean;
+  /** Show assigned printer name on the receipt. */
+  showPrinterName: boolean;
+  /** Show order notes when present. */
+  showOrderNotes: boolean;
+  /** Show printed-at timestamp. */
+  showTimestamp: boolean;
+  /** Show the amount column for each line item. */
+  showItemPrices: boolean;
+  /** Show the discount line when discount > 0. */
+  showDiscountLine: boolean;
+  /** Show the service charge line. */
+  showServiceCharge: boolean;
+  /** Show the tax line. */
+  showTaxLine: boolean;
+  /** Thermal paper width in millimetres. */
+  paperWidthMm: 58 | 80;
+  /** Base font size (px) for receipt body text. */
+  baseFontSize: number;
+};
+
+export const DEFAULT_BILL_PRINT_SETTINGS: BillPrintSettings = {
+  documentTitle: "Tax Invoice",
+  headerSubtitle: "",
+  footerMessage: "Thank you — visit again",
+  showBranchCode: true,
+  showWaiterName: true,
+  showPrinterName: false,
+  showOrderNotes: true,
+  showTimestamp: true,
+  showItemPrices: true,
+  showDiscountLine: true,
+  showServiceCharge: true,
+  showTaxLine: true,
+  paperWidthMm: 80,
+  baseFontSize: 11,
+>>>>>>> Stashed changes
 };
 
 export const BILL_PRINT_SETTINGS_CHANGED_EVENT = "pops-bill-print-settings-changed";
 
+<<<<<<< Updated upstream
 const STORAGE_KEY = "pops-bill-print-settings-v2";
 
 export const BILL_FONT_SIZE_MIN = 9;
@@ -177,6 +227,41 @@ export function normalizeBillPrintSettings(input: Partial<BillPrintSettings>): B
     footerText: footerText.slice(0, 120),
     footerSecondaryText,
     fields: normalizeFields(input.fields),
+=======
+const STORAGE_KEY = "pops-bill-print-settings-v1";
+
+function clampFontSize(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_BILL_PRINT_SETTINGS.baseFontSize;
+  return Math.max(9, Math.min(14, Math.round(value)));
+}
+
+function clampPaperWidth(value: number): 58 | 80 {
+  return value === 58 ? 58 : 80;
+}
+
+function trimText(value: string | undefined, max: number, fallback: string): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return fallback;
+  return trimmed.slice(0, max);
+}
+
+export function normalizeBillPrintSettings(input: Partial<BillPrintSettings>): BillPrintSettings {
+  return {
+    documentTitle: trimText(input.documentTitle, 48, DEFAULT_BILL_PRINT_SETTINGS.documentTitle),
+    headerSubtitle: (input.headerSubtitle ?? "").trim().slice(0, 80),
+    footerMessage: trimText(input.footerMessage, 80, DEFAULT_BILL_PRINT_SETTINGS.footerMessage),
+    showBranchCode: input.showBranchCode ?? DEFAULT_BILL_PRINT_SETTINGS.showBranchCode,
+    showWaiterName: input.showWaiterName ?? DEFAULT_BILL_PRINT_SETTINGS.showWaiterName,
+    showPrinterName: input.showPrinterName ?? DEFAULT_BILL_PRINT_SETTINGS.showPrinterName,
+    showOrderNotes: input.showOrderNotes ?? DEFAULT_BILL_PRINT_SETTINGS.showOrderNotes,
+    showTimestamp: input.showTimestamp ?? DEFAULT_BILL_PRINT_SETTINGS.showTimestamp,
+    showItemPrices: input.showItemPrices ?? DEFAULT_BILL_PRINT_SETTINGS.showItemPrices,
+    showDiscountLine: input.showDiscountLine ?? DEFAULT_BILL_PRINT_SETTINGS.showDiscountLine,
+    showServiceCharge: input.showServiceCharge ?? DEFAULT_BILL_PRINT_SETTINGS.showServiceCharge,
+    showTaxLine: input.showTaxLine ?? DEFAULT_BILL_PRINT_SETTINGS.showTaxLine,
+    paperWidthMm: clampPaperWidth(input.paperWidthMm ?? DEFAULT_BILL_PRINT_SETTINGS.paperWidthMm),
+    baseFontSize: clampFontSize(input.baseFontSize ?? DEFAULT_BILL_PRINT_SETTINGS.baseFontSize),
+>>>>>>> Stashed changes
   };
 }
 
@@ -184,6 +269,7 @@ export function loadBillPrintSettings(branchCode: string | undefined): BillPrint
   if (!branchCode) return DEFAULT_BILL_PRINT_SETTINGS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
+<<<<<<< Updated upstream
     if (!raw) {
       const legacyRaw = localStorage.getItem("pops-bill-print-settings-v1");
       if (legacyRaw) {
@@ -194,6 +280,11 @@ export function loadBillPrintSettings(branchCode: string | undefined): BillPrint
     }
     const parsed = JSON.parse(raw) as Record<string, Partial<BillPrintSettings>>;
     return normalizeBillPrintSettings(migrateLegacy(parsed[branchCode]));
+=======
+    if (!raw) return DEFAULT_BILL_PRINT_SETTINGS;
+    const parsed = JSON.parse(raw) as Record<string, Partial<BillPrintSettings>>;
+    return normalizeBillPrintSettings(parsed[branchCode] ?? DEFAULT_BILL_PRINT_SETTINGS);
+>>>>>>> Stashed changes
   } catch {
     return DEFAULT_BILL_PRINT_SETTINGS;
   }
@@ -207,12 +298,19 @@ export function saveBillPrintSettings(branchCode: string, settings: BillPrintSet
     parsed[branchCode] = next;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
     window.dispatchEvent(
+<<<<<<< Updated upstream
       new CustomEvent(BILL_PRINT_SETTINGS_CHANGED_EVENT, { detail: { branchCode, settings: next } }),
+=======
+      new CustomEvent(BILL_PRINT_SETTINGS_CHANGED_EVENT, {
+        detail: { branchCode, settings: next },
+      }),
+>>>>>>> Stashed changes
     );
   } catch {
     // ignore storage errors
   }
 }
+<<<<<<< Updated upstream
 
 /** Scale receipt typography relative to the default 11px body size. */
 export function billReceiptFontSizes(baseFontSize: number): {
@@ -258,3 +356,5 @@ export function billReceiptFontSizes(baseFontSize: number): {
     footerSecondary: px(8),
   };
 }
+=======
+>>>>>>> Stashed changes

@@ -7,6 +7,8 @@ type Props = {
   tables: RestaurantTable[];
   selectedSectionId: string | null;
   selectedTableId: string | null;
+  /** When editing an order, keep its current table selectable even if booked. */
+  allowBookedTableId?: string | null;
   isLoading: boolean;
   /** Table numbers (uppercased) that currently have an active order. */
   occupiedTableNumbers?: Set<string>;
@@ -15,11 +17,16 @@ type Props = {
   onClose: () => void;
 };
 
+function isTableBooked(table: RestaurantTable): boolean {
+  return table.bookingStatus === "booked";
+}
+
 export function PosSeatingModal({
   sections,
   tables,
   selectedSectionId,
   selectedTableId,
+  allowBookedTableId = null,
   isLoading,
   occupiedTableNumbers,
   onSelectSection,
@@ -54,8 +61,11 @@ export function PosSeatingModal({
 
   const sectionNameById = new Map(activeSections.map((s) => [s.id, s.name]));
 
-  function handleTablePick(tableId: string): void {
-    onSelectTable(tableId);
+  function handleTablePick(table: RestaurantTable): void {
+    const booked = isTableBooked(table);
+    const allowed = allowBookedTableId === table.id || selectedTableId === table.id;
+    if (booked && !allowed) return;
+    onSelectTable(table.id);
     onClose();
   }
 
@@ -85,7 +95,7 @@ export function PosSeatingModal({
             </h2>
             <p className="floor-modal-subtitle">
               {viewAllSections || selectedSection
-                ? "Choose a table for this dine-in order."
+                ? "Choose a free table. Booked tables stay locked until the order is closed or completed."
                 : "Pick a section, or view all tables at once."}
             </p>
           </div>
@@ -108,11 +118,14 @@ export function PosSeatingModal({
               >
                 <div className="floor-modal-section-title">All sections</div>
                 <div className="floor-modal-section-meta">
-                  {tables.filter((t) => t.isActive).length} tables total
+                  {tables.filter((t) => t.isActive).length} tables total ·{" "}
+                  {tables.filter((t) => t.isActive && isTableBooked(t)).length} booked
                 </div>
               </button>
               {activeSections.map((section) => {
-                const count = tables.filter((t) => t.sectionId === section.id && t.isActive).length;
+                const sectionActive = tables.filter((t) => t.sectionId === section.id && t.isActive);
+                const count = sectionActive.length;
+                const bookedCount = sectionActive.filter(isTableBooked).length;
                 const empty = count === 0;
                 return (
                   <button
@@ -127,7 +140,11 @@ export function PosSeatingModal({
                   >
                     <div className="floor-modal-section-title">{section.name}</div>
                     <div className="floor-modal-section-meta">
-                      {empty ? "No tables" : `${count} table${count === 1 ? "" : "s"}`}
+                      {empty
+                        ? "No tables"
+                        : `${count} table${count === 1 ? "" : "s"}${
+                            bookedCount > 0 ? ` · ${bookedCount} booked` : ""
+                          }`}
                     </div>
                   </button>
                 );
@@ -144,22 +161,48 @@ export function PosSeatingModal({
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {sectionTables.map((t) => {
                     const selected = selectedTableId === t.id;
+<<<<<<< Updated upstream
                     const booked = occupiedTableNumbers?.has(t.tableNumber.trim().toUpperCase()) ?? false;
+=======
+                    const booked = isTableBooked(t);
+                    const allowedWhileBooked =
+                      allowBookedTableId === t.id || selectedTableId === t.id;
+                    const disabled = booked && !allowedWhileBooked;
+>>>>>>> Stashed changes
                     return (
                       <button
                         key={t.id}
                         type="button"
+<<<<<<< Updated upstream
                         disabled={booked}
                         onClick={() => handleTablePick(t.id)}
                         aria-label={booked ? `${t.tableNumber} — booked, unavailable` : t.tableNumber}
                         className={`floor-modal-table-btn ${selected ? "is-selected" : ""} ${booked ? "is-booked" : ""}`}
+=======
+                        disabled={disabled}
+                        onClick={() => handleTablePick(t)}
+                        className={`floor-modal-table-btn ${selected ? "is-selected" : ""} ${
+                          booked ? "is-booked" : ""
+                        }`}
+                        title={
+                          booked
+                            ? t.bookedOrderRef
+                              ? `Booked · ${t.bookedOrderRef}`
+                              : "Booked — close or complete the current order first"
+                            : undefined
+                        }
+>>>>>>> Stashed changes
                       >
                         {booked ? <span className="floor-modal-booked-badge">Booked</span> : null}
                         <div className="floor-modal-table-label">{t.tableNumber}</div>
                         <div className="floor-modal-table-meta">
-                          {viewAllSections
-                            ? (sectionNameById.get(t.sectionId) ?? "")
-                            : `${t.seats} seats`}
+                          {booked
+                            ? t.bookedOrderRef
+                              ? `Booked · ${t.bookedOrderRef}`
+                              : "Booked"
+                            : viewAllSections
+                              ? (sectionNameById.get(t.sectionId) ?? "")
+                              : `${t.seats} seats`}
                         </div>
                       </button>
                     );
