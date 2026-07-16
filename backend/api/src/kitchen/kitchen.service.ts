@@ -19,6 +19,7 @@ import { BillingService } from "../billing/billing.service";
 import { ClosingService } from "../closing/closing.service";
 import { DeliveryService } from "../delivery/delivery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { assertDineInTableAvailable } from "../tables/table-booking";
 
 type StoredLine = { label: string; qty: number; unitPrice: number; menuItemId?: string };
 
@@ -99,6 +100,7 @@ export class KitchenService {
       throw new BadRequestException("A rider is required for delivery orders.");
     }
 
+<<<<<<< Updated upstream
     let createdByName: string | null = null;
     if (createdByUserId) {
       const userRows = await this.db
@@ -109,6 +111,12 @@ export class KitchenService {
       const email = userRows[0]?.email;
       if (email) createdByName = waiterDisplayName(email);
     }
+=======
+    await assertDineInTableAvailable(this.db, branch.id, input.stationLabel.trim(), {
+      allowOrderRef: input.orderRef,
+      intent: "new-order",
+    });
+>>>>>>> Stashed changes
 
     const [row] = await this.db
       .insert(popsKitchenTickets)
@@ -169,6 +177,14 @@ export class KitchenService {
     if (input.stationLabel !== undefined) {
       if (existing.status === "done") {
         throw new BadRequestException("Cannot change table on a completed order");
+      }
+      const nextLabel = input.stationLabel.trim();
+      if (nextLabel.toLowerCase() !== existing.stationLabel.trim().toLowerCase()) {
+        await assertDineInTableAvailable(this.db, existing.branchId, nextLabel, {
+          allowOrderRef: existing.orderRef,
+          excludeTicketId: existing.id,
+          intent: "new-order",
+        });
       }
     }
 

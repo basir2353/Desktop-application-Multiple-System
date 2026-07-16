@@ -226,6 +226,7 @@ export function EmptyState({ title, message }: { title: string; message: string 
 export function Chip({
   label,
   selected,
+  disabled,
   onPress,
   tone,
   sublabel,
@@ -233,6 +234,7 @@ export function Chip({
 }: {
   label: string;
   selected?: boolean;
+  disabled?: boolean;
   onPress: () => void;
   /** "mine" = booked by me (green), "locked" = booked by another waiter (red). */
   tone?: "mine" | "locked";
@@ -248,21 +250,32 @@ export function Chip({
         tone === "mine" && styles.chipMine,
         tone === "locked" && styles.chipLocked,
         selected && styles.chipSelected,
+<<<<<<< Updated upstream
         selected && tone === "locked" && styles.chipSelectedLocked,
         pressed && styles.chipPressed,
         disabled && styles.chipDisabled,
+=======
+        disabled && styles.chipDisabled,
+        pressed && !disabled && styles.chipPressed,
+>>>>>>> Stashed changes
       ]}
     >
       <Text
         style={[
           styles.chipText,
+<<<<<<< Updated upstream
           tone === "mine" && !selected && styles.chipTextMine,
           tone === "locked" && !selected && styles.chipTextLocked,
           selected && styles.chipTextSelected,
+=======
+          selected && styles.chipTextSelected,
+          disabled && styles.chipTextDisabled,
+>>>>>>> Stashed changes
         ]}
       >
         {label}
       </Text>
+<<<<<<< Updated upstream
       {sublabel ? (
         <Text
           style={[
@@ -276,6 +289,8 @@ export function Chip({
           {sublabel}
         </Text>
       ) : null}
+=======
+>>>>>>> Stashed changes
     </Pressable>
   );
 }
@@ -642,6 +657,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderColor: "#d97706",
   },
+<<<<<<< Updated upstream
   chipSelectedLocked: {
     backgroundColor: "#dc2626",
     borderColor: "#b91c1c",
@@ -653,6 +669,12 @@ const styles = StyleSheet.create({
   chipLocked: {
     borderColor: "rgba(248, 113, 113, 0.55)",
     backgroundColor: "rgba(248, 113, 113, 0.12)",
+=======
+  chipDisabled: {
+    opacity: 0.45,
+    borderColor: "#7f1d1d",
+    backgroundColor: "#3f1515",
+>>>>>>> Stashed changes
   },
   chipPressed: {
     opacity: 0.88,
@@ -668,6 +690,7 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: colors.accentText,
   },
+<<<<<<< Updated upstream
   chipTextMine: {
     color: "#4ade80",
   },
@@ -680,6 +703,10 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
     maxWidth: 110,
+=======
+  chipTextDisabled: {
+    color: "#fca5a5",
+>>>>>>> Stashed changes
   },
   qtyStepper: {
     flexDirection: "row",

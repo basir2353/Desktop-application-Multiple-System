@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Load apps/waiter-mobile/.env (Railway API URL, etc.)
+# Load apps/waiter-mobile/.env (API URL, etc.)
 if [ -f "$ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -67,9 +67,14 @@ fi
 
 adb wait-for-device
 adb reverse tcp:8081 tcp:8081
+# Emulator → host local API only when pointing at localhost
+if echo "${EXPO_PUBLIC_API_BASE_URL}" | grep -qE '127\.0\.0\.1|10\.0\.2\.2|localhost'; then
+  adb reverse tcp:3000 tcp:3000
+fi
 
 echo ""
 echo "==> Opening POPS Waiter directly in Expo Go (no browser, no Expo account)…"
+echo "    API: ${EXPO_PUBLIC_API_BASE_URL}"
 echo "    If you see Expo Go Home: tap 'POPS Waiter' under Recently opened,"
 echo "    or tap 'Enter URL manually' and type: exp://127.0.0.1:8081"
 echo "    Do NOT tap 'Log In' at the top — that opens an external browser."

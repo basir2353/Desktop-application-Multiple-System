@@ -24,6 +24,7 @@ import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { AccountingHooksService } from "../accounting/accounting-hooks.service";
 import { ClosingService } from "../closing/closing.service";
 import { InventoryDeductionService } from "../inventory/inventory-deduction.service";
+import { assertDineInTableAvailable } from "../tables/table-booking";
 
 type BillTotals = {
   subtotal: number;
@@ -279,6 +280,11 @@ export class BillingService implements OnApplicationBootstrap {
     const status = input.status ?? "completed";
     const totals = this.computeBillTotals(input);
 
+    await assertDineInTableAvailable(this.db, branch.id, input.tableLabel.trim(), {
+      allowOrderRef: input.orderRef,
+      intent: status === "held" ? "new-order" : "close",
+    });
+
     if (status === "completed") {
       const payments = this.normalizePayments(input.payments, totals.total);
       this.assertPaymentsCoverTotal(payments, totals.total);
@@ -371,6 +377,17 @@ export class BillingService implements OnApplicationBootstrap {
     const nextRiderId = input.riderId !== undefined ? input.riderId : existing.riderId;
     if (nextTableLabel.toLowerCase().includes("delivery") && !nextRiderId) {
       throw new BadRequestException("A rider is required for delivery orders.");
+    }
+
+    if (
+      input.tableLabel !== undefined &&
+      nextTableLabel.toLowerCase() !== existing.tableLabel.trim().toLowerCase()
+    ) {
+      await assertDineInTableAvailable(this.db, existing.branchId, nextTableLabel, {
+        allowOrderRef: existing.orderRef,
+        excludeBillId: existing.id,
+        intent: "new-order",
+      });
     }
 
     const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
