@@ -1,14 +1,5 @@
 import { z } from "zod";
 
-// Duplicated (not imported) from ./kitchen to avoid a circular import —
-// kitchen.ts already imports deliveryStatusSchema from this file.
-const deliveryOrderLineSchema = z.object({
-  label: z.string(),
-  qty: z.number().int().positive(),
-  unitPrice: z.number().int().nonnegative(),
-  menuItemId: z.string().uuid().optional(),
-});
-
 export const DELIVERY_STATUS_VALUES = [
   "unassigned",
   "assigned",
@@ -51,10 +42,6 @@ export const createRiderSchema = z.object({
   name: z.string().min(1).max(80),
   email: z.string().email().min(3).max(320),
   password: z.string().min(8).max(128),
-<<<<<<< Updated upstream
-=======
-  /** 4-digit PIN for mobile rider app quick login. */
->>>>>>> Stashed changes
   pin: z.string().regex(/^\d{4}$/).optional(),
   phone: z.string().max(32).optional(),
   cnic: z.string().max(20).optional(),
@@ -73,10 +60,6 @@ export const updateRiderSchema = z.object({
   active: z.boolean().optional(),
   email: z.string().email().min(3).max(320).optional(),
   password: z.string().min(8).max(128).optional(),
-<<<<<<< Updated upstream
-=======
-  /** Set or replace the 4-digit mobile login PIN. */
->>>>>>> Stashed changes
   pin: z.string().regex(/^\d{4}$/).optional(),
 });
 
@@ -92,7 +75,6 @@ export const deliveryOrderSchema = z.object({
   orderRef: z.string().nullable(),
   stationLabel: z.string(),
   itemsSummary: z.string(),
-  lines: z.array(deliveryOrderLineSchema).optional(),
   notes: z.string().nullable(),
   priority: z.enum(["normal", "priority"]),
   status: z.enum(["new", "cooking", "ready", "done"]),

@@ -226,56 +226,39 @@ export function EmptyState({ title, message }: { title: string; message: string 
 export function Chip({
   label,
   selected,
-  disabled,
   onPress,
   tone,
   sublabel,
-  disabled,
 }: {
   label: string;
   selected?: boolean;
-  disabled?: boolean;
   onPress: () => void;
   /** "mine" = booked by me (green), "locked" = booked by another waiter (red). */
   tone?: "mine" | "locked";
   sublabel?: string;
-  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      disabled={disabled}
       style={({ pressed }) => [
         styles.chip,
         tone === "mine" && styles.chipMine,
         tone === "locked" && styles.chipLocked,
         selected && styles.chipSelected,
-<<<<<<< Updated upstream
         selected && tone === "locked" && styles.chipSelectedLocked,
         pressed && styles.chipPressed,
-        disabled && styles.chipDisabled,
-=======
-        disabled && styles.chipDisabled,
-        pressed && !disabled && styles.chipPressed,
->>>>>>> Stashed changes
       ]}
     >
       <Text
         style={[
           styles.chipText,
-<<<<<<< Updated upstream
           tone === "mine" && !selected && styles.chipTextMine,
           tone === "locked" && !selected && styles.chipTextLocked,
           selected && styles.chipTextSelected,
-=======
-          selected && styles.chipTextSelected,
-          disabled && styles.chipTextDisabled,
->>>>>>> Stashed changes
         ]}
       >
         {label}
       </Text>
-<<<<<<< Updated upstream
       {sublabel ? (
         <Text
           style={[
@@ -289,8 +272,6 @@ export function Chip({
           {sublabel}
         </Text>
       ) : null}
-=======
->>>>>>> Stashed changes
     </Pressable>
   );
 }
@@ -313,44 +294,6 @@ export function QtyStepper({
       <Pressable onPress={onIncrement} style={[styles.qtyBtn, styles.qtyBtnAccent]} hitSlop={8}>
         <Text style={[styles.qtyBtnText, styles.qtyBtnTextAccent]}>+</Text>
       </Pressable>
-    </View>
-  );
-}
-
-export function LoginModeTabs({
-  mode,
-  onChange,
-}: {
-  mode: "password" | "pin";
-  onChange: (mode: "password" | "pin") => void;
-}) {
-  const options: { id: "password" | "pin"; label: string; hint: string }[] = [
-    { id: "password", label: "Sign In", hint: "Email & password" },
-    { id: "pin", label: "Login with PIN", hint: "4-digit branch PIN" },
-  ];
-
-  return (
-    <View style={styles.loginModeWrap}>
-      <Label>Choose how to sign in</Label>
-      <View style={styles.loginModeRow}>
-        {options.map((option) => {
-          const active = mode === option.id;
-          return (
-            <Pressable
-              key={option.id}
-              onPress={() => onChange(option.id)}
-              style={[styles.loginModeTab, active && styles.loginModeTabActive]}
-            >
-              <Text style={[styles.loginModeLabel, active && styles.loginModeLabelActive]}>
-                {option.label}
-              </Text>
-              <Text style={[styles.loginModeHint, active && styles.loginModeHintActive]}>
-                {option.hint}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
     </View>
   );
 }
@@ -657,7 +600,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderColor: "#d97706",
   },
-<<<<<<< Updated upstream
   chipSelectedLocked: {
     backgroundColor: "#dc2626",
     borderColor: "#b91c1c",
@@ -669,18 +611,9 @@ const styles = StyleSheet.create({
   chipLocked: {
     borderColor: "rgba(248, 113, 113, 0.55)",
     backgroundColor: "rgba(248, 113, 113, 0.12)",
-=======
-  chipDisabled: {
-    opacity: 0.45,
-    borderColor: "#7f1d1d",
-    backgroundColor: "#3f1515",
->>>>>>> Stashed changes
   },
   chipPressed: {
     opacity: 0.88,
-  },
-  chipDisabled: {
-    opacity: 0.55,
   },
   chipText: {
     color: colors.text,
@@ -690,7 +623,6 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: colors.accentText,
   },
-<<<<<<< Updated upstream
   chipTextMine: {
     color: "#4ade80",
   },
@@ -703,10 +635,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
     maxWidth: 110,
-=======
-  chipTextDisabled: {
-    color: "#fca5a5",
->>>>>>> Stashed changes
   },
   qtyStepper: {
     flexDirection: "row",
@@ -818,44 +746,5 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 22,
     fontWeight: "600",
-  },
-  loginModeWrap: {
-    gap: 8,
-  },
-  loginModeRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  loginModeTab: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: "#020617",
-    alignItems: "center",
-    gap: 4,
-  },
-  loginModeTabActive: {
-    borderColor: colors.accent,
-    backgroundColor: "rgba(245, 158, 11, 0.15)",
-  },
-  loginModeLabel: {
-    color: colors.muted,
-    fontSize: 15,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  loginModeLabelActive: {
-    color: colors.text,
-  },
-  loginModeHint: {
-    color: colors.muted,
-    fontSize: 11,
-    textAlign: "center",
-  },
-  loginModeHintActive: {
-    color: colors.accent,
   },
 });

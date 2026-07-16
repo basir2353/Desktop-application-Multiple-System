@@ -176,9 +176,6 @@ export function DeliveryPage(): JSX.Element {
   const [linkRiderId, setLinkRiderId] = useState<string | null>(null);
   const [linkEmail, setLinkEmail] = useState("");
   const [linkPassword, setLinkPassword] = useState("");
-  const [linkPin, setLinkPin] = useState("");
-  const [pinRiderId, setPinRiderId] = useState<string | null>(null);
-  const [editRiderPin, setEditRiderPin] = useState("");
 
   const [savedCharges, setSavedCharges] = useState<DeliverySettings>(DEFAULT_DELIVERY_SETTINGS);
   const [draftCharges, setDraftCharges] = useState<DeliverySettings>(DEFAULT_DELIVERY_SETTINGS);
@@ -345,23 +342,11 @@ export function DeliveryPage(): JSX.Element {
         notes: riderNotes.trim() || undefined,
       }),
     onSuccess: (created) => {
-<<<<<<< Updated upstream
       const pinHint = /^\d{4}$/.test(riderPin) ? ` PIN ${riderPin} or` : "";
       resetRiderForm();
       setRidersBranchCode(created.branchCode);
       invalidate();
       setNotice(`Rider added. They can sign in on the mobile app with${pinHint} ${created.email ?? "their email"}.`);
-=======
-      const usedPin = /^\d{4}$/.test(riderPin);
-      resetRiderForm();
-      setRidersBranchCode(created.branchCode);
-      invalidate();
-      setNotice(
-        usedPin
-          ? `Rider added. They can sign in on the rider app with PIN or ${created.email ?? "email"}.`
-          : `Rider added. They can sign in on the mobile app with ${created.email ?? "their email"}. Set a 4-digit PIN for quicker login.`,
-      );
->>>>>>> Stashed changes
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -377,43 +362,14 @@ export function DeliveryPage(): JSX.Element {
   });
 
   const linkLoginMutation = useMutation({
-    mutationFn: ({
-      riderId,
-      email,
-      password,
-      pin,
-    }: {
-      riderId: string;
-      email: string;
-      password: string;
-      pin?: string;
-    }) =>
-      updateRider(riderId, {
-        email,
-        password,
-        ...(pin ? { pin } : {}),
-      }),
+    mutationFn: ({ riderId, email, password }: { riderId: string; email: string; password: string }) =>
+      updateRider(riderId, { email, password }),
     onSuccess: (rider) => {
       setLinkRiderId(null);
       setLinkEmail("");
       setLinkPassword("");
-      setLinkPin("");
       invalidate();
-      setNotice(
-        `Mobile login created for ${rider.name}. They can sign in with PIN or ${rider.email}.`,
-      );
-    },
-    onError: (err: Error) => setNotice(err.message),
-  });
-
-  const setRiderPinMutation = useMutation({
-    mutationFn: ({ riderId, pin }: { riderId: string; pin: string }) =>
-      updateRider(riderId, { pin }),
-    onSuccess: (rider) => {
-      setPinRiderId(null);
-      setEditRiderPin("");
-      invalidate();
-      setNotice(`PIN updated for ${rider.name}. They can use it on the rider app.`);
+      setNotice(`Mobile login created for ${rider.name}. They can sign in with ${rider.email}.`);
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -521,12 +477,7 @@ export function DeliveryPage(): JSX.Element {
           <div className={`max-w-3xl ${cardClass} p-4`}>
             <div className={panelTitleClass}>Add rider</div>
             <p className={`mt-1 text-xs ${mutedClass}`}>
-<<<<<<< Updated upstream
               Assign a branch and mobile login. Riders sign in on the POPS Rider app with their 4-digit PIN (or email and password).
-=======
-              Assign a branch and mobile login. Riders sign in on the rider app with a 4-digit PIN
-              (recommended) or email and password, and only see deliveries for their branch.
->>>>>>> Stashed changes
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <label className={`block text-xs ${mutedClass} sm:col-span-2`}>
@@ -575,11 +526,7 @@ export function DeliveryPage(): JSX.Element {
               />
               <input
                 inputMode="numeric"
-<<<<<<< Updated upstream
                 placeholder="4-digit PIN (for mobile quick login)"
-=======
-                placeholder="4-digit PIN (optional, rider app login)"
->>>>>>> Stashed changes
                 value={riderPin}
                 onChange={(e) => setRiderPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
                 className={fieldInputClass}
@@ -706,28 +653,13 @@ export function DeliveryPage(): JSX.Element {
                           className="h-7 px-2 text-[11px]"
                           onClick={() => {
                             setLinkRiderId(r.id);
-                            setPinRiderId(null);
                             setLinkEmail("");
                             setLinkPassword("");
-                            setLinkPin("");
                           }}
                         >
                           Add login
                         </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-7 px-2 text-[11px]"
-                          onClick={() => {
-                            setPinRiderId(r.id);
-                            setLinkRiderId(null);
-                            setEditRiderPin("");
-                          }}
-                        >
-                          Set PIN
-                        </Button>
-                      )}
+                      ) : null}
                       <Button
                         type="button"
                         variant="ghost"
@@ -750,8 +682,7 @@ export function DeliveryPage(): JSX.Element {
             <div className={`max-w-md ${cardClass} p-4`}>
               <div className={panelTitleClass}>Add mobile login</div>
               <p className={`mt-1 text-xs ${mutedClass}`}>
-                Create sign-in credentials for this rider on branch {ridersBranchCode}. Use a
-                4-digit PIN for quick rider-app login.
+                Create sign-in credentials for this rider on branch {ridersBranchCode}.
               </p>
               <div className="mt-3 grid gap-2">
                 <input
@@ -768,14 +699,6 @@ export function DeliveryPage(): JSX.Element {
                   onChange={(e) => setLinkPassword(e.target.value)}
                   className={fieldInputClass}
                 />
-                <input
-                  inputMode="numeric"
-                  placeholder="4-digit PIN (optional)"
-                  value={linkPin}
-                  onChange={(e) => setLinkPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                  className={fieldInputClass}
-                  maxLength={4}
-                />
               </div>
               <div className="mt-3 flex gap-2">
                 <Button
@@ -784,7 +707,6 @@ export function DeliveryPage(): JSX.Element {
                   disabled={
                     !linkEmail.trim() ||
                     linkPassword.length < 8 ||
-                    (linkPin.length > 0 && linkPin.length !== 4) ||
                     linkLoginMutation.isPending
                   }
                   onClick={() =>
@@ -792,64 +714,16 @@ export function DeliveryPage(): JSX.Element {
                       riderId: linkRiderId,
                       email: linkEmail.trim(),
                       password: linkPassword,
-                      ...( /^\d{4}$/.test(linkPin) ? { pin: linkPin } : {} ),
                     })
                   }
                 >
-                  {linkLoginMutation.isPending ? "Saving…" : "Create login"}
+                  {linkLoginMutation.isPending ? "…" : "Save login"}
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   className="h-8 text-xs"
-                  onClick={() => {
-                    setLinkRiderId(null);
-                    setLinkEmail("");
-                    setLinkPassword("");
-                    setLinkPin("");
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {pinRiderId ? (
-            <div className={`max-w-md ${cardClass} p-4`}>
-              <div className={panelTitleClass}>Set rider PIN</div>
-              <p className={`mt-1 text-xs ${mutedClass}`}>
-                4-digit PIN for the rider mobile app (branch code + PIN login).
-              </p>
-              <div className="mt-3 grid gap-2">
-                <input
-                  inputMode="numeric"
-                  placeholder="4-digit PIN *"
-                  value={editRiderPin}
-                  onChange={(e) => setEditRiderPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                  className={fieldInputClass}
-                  maxLength={4}
-                />
-              </div>
-              <div className="mt-3 flex gap-2">
-                <Button
-                  type="button"
-                  className="h-8 text-xs"
-                  disabled={!/^\d{4}$/.test(editRiderPin) || setRiderPinMutation.isPending}
-                  onClick={() =>
-                    setRiderPinMutation.mutate({ riderId: pinRiderId, pin: editRiderPin })
-                  }
-                >
-                  {setRiderPinMutation.isPending ? "Saving…" : "Save PIN"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-8 text-xs"
-                  onClick={() => {
-                    setPinRiderId(null);
-                    setEditRiderPin("");
-                  }}
+                  onClick={() => setLinkRiderId(null)}
                 >
                   Cancel
                 </Button>
