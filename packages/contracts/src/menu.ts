@@ -84,6 +84,12 @@ export const menuItemSchema = z.object({
   isActive: z.boolean(),
   sortOrder: z.number(),
   variants: z.array(menuItemVariantSchema),
+  /** Item participates in bill-level discounts (AND'd with !nonDiscountable). */
+  discountable: z.boolean().default(true),
+  /** Explicitly excludes this item from discounts, regardless of `discountable`. */
+  nonDiscountable: z.boolean().default(false),
+  /** Excludes this item's amount from the tax base. */
+  nonTaxable: z.boolean().default(false),
 });
 
 export function activeMenuVariants(item: Pick<MenuItem, "variants">): MenuItemVariant[] {
@@ -134,6 +140,9 @@ export const createMenuItemSchema = z.object({
   featured: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   variants: z.array(createMenuItemVariantSchema).min(1).optional(),
+  discountable: z.boolean().optional(),
+  nonDiscountable: z.boolean().optional(),
+  nonTaxable: z.boolean().optional(),
 }).refine(
   (data) => (data.variants?.length ?? 0) > 0 || data.price != null,
   { message: "Provide a price or at least one sub-category" },
@@ -151,6 +160,9 @@ export const updateMenuItemSchema = z.object({
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   variants: z.array(createMenuItemVariantSchema).min(1).optional(),
+  discountable: z.boolean().optional(),
+  nonDiscountable: z.boolean().optional(),
+  nonTaxable: z.boolean().optional(),
 });
 
 export type MenuCategory = z.infer<typeof menuCategorySchema>;

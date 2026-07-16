@@ -25,6 +25,13 @@ export class ClosingController {
     return this.closing.pauseOrders(user.organizationId, branchCode, user.sub);
   }
 
+  @Post("resume-orders")
+  @RequirePermissions("pops.closing.report", "pops.accounting.manage")
+  resumeOrders(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    const { branchCode } = branchCodeBodySchema.parse(body);
+    return this.closing.resumeOrders(user.organizationId, branchCode, user.sub);
+  }
+
   @Post("close-kitchen")
   @RequirePermissions("pops.closing.report", "pops.accounting.manage")
   closeKitchen(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {

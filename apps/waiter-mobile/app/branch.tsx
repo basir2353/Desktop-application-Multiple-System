@@ -3,7 +3,8 @@ import { Redirect, useRouter } from "expo-router";
 import { useEffect, useMemo } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { fetchPopsBranches } from "../src/api/operations";
-import { Card, Label, Muted, Screen, Subtitle, Title, colors } from "../src/components/ui";
+import { Card, Label, Muted, Screen, Subtitle, Title, colors, Button } from "../src/components/ui";
+import { markOnline } from "../src/stores/connectivityStore";
 import { homeRouteForRole, resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -24,7 +25,12 @@ export default function BranchScreen() {
     queryKey: ["branches"],
     enabled: Boolean(accessToken),
     queryFn: fetchPopsBranches,
+    retry: 2,
   });
+
+  useEffect(() => {
+    if (accessToken) markOnline();
+  }, [accessToken]);
 
   const visibleBranches = useMemo(() => {
     const all = branchesQuery.data ?? [];
@@ -80,7 +86,14 @@ export default function BranchScreen() {
         {branchesQuery.isLoading ? (
           <ActivityIndicator color={colors.accent} />
         ) : branchesQuery.isError ? (
-          <Muted>{(branchesQuery.error as Error).message}</Muted>
+          <View style={{ gap: 12 }}>
+            <Muted>{(branchesQuery.error as Error).message}</Muted>
+            <Button
+              label={branchesQuery.isFetching ? "Retrying…" : "Retry"}
+              onPress={() => void branchesQuery.refetch()}
+              loading={branchesQuery.isFetching}
+            />
+          </View>
         ) : visibleBranches.length === 0 ? (
           <Muted>No branches found. Create one in the desktop app first.</Muted>
         ) : (

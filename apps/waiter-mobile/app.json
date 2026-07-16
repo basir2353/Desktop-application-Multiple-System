@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "scheme": "pops-waiter",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "backgroundColor": "#0f172a"
     },
@@ -18,7 +18,8 @@
       "adaptiveIcon": {
         "backgroundColor": "#0f172a"
       },
-      "package": "com.platform.pops.waiter"
+      "package": "com.platform.pops.waiter",
+      "permissions": ["INTERNET", "ACCESS_NETWORK_STATE"]
     },
     "plugins": ["expo-router", "expo-secure-store"]
   }

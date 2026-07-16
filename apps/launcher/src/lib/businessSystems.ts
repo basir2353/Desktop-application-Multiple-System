@@ -26,17 +26,16 @@ export type BusinessSystem = {
 const restaurantHidden = new Set<string>();
 const pharmacyHidden = new Set([
   "menu",
-  "staff-food",
   "tables",
   "kitchen",
   "waiter",
   "delivery",
   "inventory/recipes",
   "manufacturing",
+  "content",
 ]);
 const generalStoreHidden = new Set([
   "menu",
-  "staff-food",
   "tables",
   "kitchen",
   "waiter",
@@ -44,6 +43,7 @@ const generalStoreHidden = new Set([
   "inventory/recipes",
   "inventory/ingredients",
   "manufacturing",
+  "content",
 ]);
 
 export const businessSystems: Record<BusinessSystemId, BusinessSystem> = {

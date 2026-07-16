@@ -179,6 +179,35 @@ export class ClosingService {
     return this.getStatus(organizationId, branchCode);
   }
 
+  async resumeOrders(organizationId: string, branchCode: string, userEmail: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const state = await this.ensureClosingState(organizationId, branch.id);
+    if (!state.ordersPaused) {
+      return this.getStatus(organizationId, branchCode);
+    }
+
+    await this.db
+      .update(popsBranchClosingState)
+      .set({
+        ordersPaused: false,
+        ordersPausedAt: null,
+        ordersPausedBy: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(popsBranchClosingState.branchId, branch.id));
+
+    await this.security.logEvent({
+      organizationId,
+      branchId: branch.id,
+      eventType: "closing",
+      userEmail,
+      action: "resume_orders",
+      detail: `Orders resumed for business date ${state.businessDate}`,
+    });
+
+    return this.getStatus(organizationId, branchCode);
+  }
+
   async closeKitchen(organizationId: string, branchCode: string, userEmail: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     const openTickets = await this.db
@@ -410,15 +439,32 @@ export class ClosingService {
 
   async assertOrdersNotPaused(branchId: string): Promise<void> {
     const rows = await this.db
-      .select({ ordersPaused: popsBranchClosingState.ordersPaused })
+      .select()
       .from(popsBranchClosingState)
       .where(eq(popsBranchClosingState.branchId, branchId))
       .limit(1);
-    if (rows[0]?.ordersPaused) {
-      throw new BadRequestException(
-        "New orders are paused for day closing. Complete closing or ask a manager to resume.",
-      );
+    const state = rows[0];
+    if (!state?.ordersPaused) return;
+
+    // Abandoned day-close left orders paused on an old business date — clear it
+    // so POS is not stuck forever when close-day was never finished.
+    const today = karachiDateKey(new Date());
+    if (state.businessDate < today) {
+      await this.db
+        .update(popsBranchClosingState)
+        .set({
+          ordersPaused: false,
+          ordersPausedAt: null,
+          ordersPausedBy: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(popsBranchClosingState.branchId, branchId));
+      return;
     }
+
+    throw new BadRequestException(
+      "New orders are paused for day closing. Complete closing or ask a manager to resume.",
+    );
   }
 
   private async ensureClosingState(organizationId: string, branchId: string) {

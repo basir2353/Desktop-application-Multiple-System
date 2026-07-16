@@ -5,6 +5,7 @@ import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts
 import { fetchMyDeliveries } from "../src/api/delivery";
 import { EmptyState, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
+import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -52,34 +53,38 @@ export default function RiderDeliveriesScreen() {
             message="When the restaurant assigns delivery orders to you, they will show up here."
           />
         ) : (
-          orders.map((order) => (
-            <Pressable
-              key={order.id}
-              onPress={() => router.push({ pathname: "/rider-delivery", params: { id: order.id } })}
-              style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}
-            >
-              <View style={styles.header}>
-                <Text style={styles.ref}>{orderRefFromTicket(order)}</Text>
-                <StatusBadge
-                  status={
-                    order.deliveryStatus
-                      ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
-                      : order.status === "done"
-                        ? "Completed"
-                        : "In kitchen"
-                  }
-                />
-              </View>
-              <Text style={styles.customer}>{order.customerName}</Text>
-              <Text style={styles.address}>{order.customerAddress}</Text>
-              <Text style={styles.items} numberOfLines={2}>
-                {order.itemsSummary.split(" · Delivery")[0]}
-              </Text>
-              <Text style={styles.meta}>
-                {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery fee
-              </Text>
-            </Pressable>
-          ))
+          orders.map((order) => {
+            const total = deliveryOrderTotal(order);
+            return (
+              <Pressable
+                key={order.id}
+                onPress={() => router.push({ pathname: "/rider-delivery", params: { id: order.id } })}
+                style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}
+              >
+                <View style={styles.header}>
+                  <Text style={styles.ref}>{orderRefFromTicket(order)}</Text>
+                  <StatusBadge
+                    status={
+                      order.deliveryStatus
+                        ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
+                        : order.status === "done"
+                          ? "Completed"
+                          : "In kitchen"
+                    }
+                  />
+                </View>
+                <Text style={styles.customer}>{order.customerName}</Text>
+                <Text style={styles.address}>{order.customerAddress}</Text>
+                <Text style={styles.items} numberOfLines={2}>
+                  {order.itemsSummary.split(" · Delivery")[0]}
+                </Text>
+                {total != null ? <Text style={styles.total}>{formatPkr(total)} total</Text> : null}
+                <Text style={styles.meta}>
+                  {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery fee
+                </Text>
+              </Pressable>
+            );
+          })
         )}
       </ScrollView>
     </Screen>
@@ -101,5 +106,6 @@ const styles = StyleSheet.create({
   customer: { color: colors.text, fontSize: 16, fontWeight: "600" },
   address: { color: colors.muted, fontSize: 13 },
   items: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  total: { color: colors.accent, fontSize: 14, fontWeight: "700", marginTop: 4 },
   meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
 });

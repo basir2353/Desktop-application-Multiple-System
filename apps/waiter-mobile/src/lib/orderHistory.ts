@@ -1,4 +1,4 @@
-import type { Bill, KitchenTicket } from "@platform/contracts";
+import type { Bill, DeliveryOrder, KitchenTicket } from "@platform/contracts";
 import {
   canEditHeldBill,
   canEditKitchenTicket,
@@ -64,9 +64,29 @@ export function unifiedOrderStatus(order: UnifiedOrder): string {
   return kitchenStatusLabel(order.ticket.status);
 }
 
+/** Matches the service/tax rates used when taking a new order in app/order.tsx. */
+const SERVICE_PCT = 10;
+const TAX_PCT = 0.15;
+
+/** Estimated food total (subtotal + service + tax) from any order's priced line items. */
+function estimatedLinesTotal(lines: { unitPrice: number; qty: number }[] | undefined): number | null {
+  const subtotal = (lines ?? []).reduce((sum, line) => sum + line.unitPrice * line.qty, 0);
+  if (subtotal <= 0) return null;
+  const service = Math.round(subtotal * (SERVICE_PCT / 100));
+  const tax = Math.round((subtotal + service) * TAX_PCT);
+  return subtotal + service + tax;
+}
+
 export function unifiedOrderTotal(order: UnifiedOrder): number | null {
   if (order.source === "bill") return order.bill.total;
-  return null;
+  return estimatedLinesTotal(order.ticket.lines);
+}
+
+/** Full bill total for a rider's delivery order — food subtotal + service + tax + delivery fee. */
+export function deliveryOrderTotal(order: DeliveryOrder): number | null {
+  const foodTotal = estimatedLinesTotal(order.lines);
+  if (foodTotal == null) return null;
+  return foodTotal + (order.deliveryChargePkr ?? 0);
 }
 
 export function canEditUnifiedOrder(

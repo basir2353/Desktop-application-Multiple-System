@@ -1,9 +1,5 @@
-import {
-  AuthClient,
-  isLikelyNetworkFailure,
-  platformFetch,
-  wrapNetworkError,
-} from "@platform/auth-client";
+import { isLikelyNetworkFailure, mobileFetch, wrapMobileNetworkError } from "./mobileFetch";
+import { refreshSession } from "./sessionAuth";
 import { decodeAccessToken, isAccessTokenExpired } from "./jwt";
 import { getApiBaseUrl } from "./apiBase";
 import { markOnline, markOffline } from "../stores/connectivityStore";
@@ -29,8 +25,7 @@ async function refreshAccessToken(): Promise<string> {
     }
 
     try {
-      const client = new AuthClient({ baseUrl: getApiBaseUrl() });
-      const tokens = await client.refresh(refreshToken);
+      const tokens = await refreshSession(refreshToken);
       const claims = decodeAccessToken(tokens.accessToken);
       setTokens(tokens.accessToken, tokens.refreshToken, claims, waiterEmail ?? undefined);
       return tokens.accessToken;
@@ -69,20 +64,46 @@ export async function bootstrapSession(): Promise<void> {
   }
 }
 
+function authHeaders(init: RequestInit | undefined, token: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [key, value] of init.headers) headers[key] = value;
+    } else {
+      Object.assign(headers, init.headers);
+    }
+  }
+  headers.Authorization = `Bearer ${token}`;
+  if (
+    init?.body != null &&
+    !headers["Content-Type"] &&
+    !headers["content-type"] &&
+    typeof init.body === "string"
+  ) {
+    headers["Content-Type"] = "application/json";
+  }
+  return headers;
+}
+
 export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = `${getApiBaseUrl()}${path}`;
 
   async function request(token: string): Promise<Response> {
-    const headers = new Headers(init?.headers);
-    headers.set("Authorization", `Bearer ${token}`);
     try {
-      const res = await platformFetch(url, { ...init, headers });
+      const res = await mobileFetch(url, {
+        ...init,
+        headers: authHeaders(init, token),
+      });
       markOnline();
       return res;
     } catch (err) {
       markOffline();
       if (isLikelyNetworkFailure(err)) {
-        throw wrapNetworkError(getApiBaseUrl(), err);
+        throw wrapMobileNetworkError(getApiBaseUrl(), err);
       }
       throw err;
     }

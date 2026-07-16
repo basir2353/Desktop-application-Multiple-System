@@ -6,17 +6,16 @@ import {
   deleteStaffFoodRecord,
   fetchEmployees,
   fetchStaffFood,
-} from "../../api/hr";
-import { formatPkr, hrInputClass, useHrAccess } from "../../hooks/useHr";
-import { accentValueClass, linkDangerClass, mutedClass, panelClass } from "../../lib/themeClasses";
-import { Badge } from "../../ui/Badge";
-import { PageHeader } from "../../ui/PageHeader";
-import { SimpleTable } from "../../ui/SimpleTable";
-import { HrError, HrFormPanel, HrLoading } from "./hr/HrUi";
+} from "../api/hr";
+import { formatPkr, hrInputClass, useHrAccess } from "../hooks/useHr";
+import { accentValueClass, linkDangerClass, mutedClass, panelClass } from "../lib/themeClasses";
+import { Badge } from "../ui/Badge";
+import { SimpleTable } from "../ui/SimpleTable";
+import { HrError, HrFormPanel, HrLoading } from "../pages/modules/hr/HrUi";
 
 type ConsumerType = "staff" | "guest";
 
-export function StaffFoodPage(): JSX.Element {
+export function StaffFoodPanel(): JSX.Element {
   const { branch, canManage } = useHrAccess();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -95,11 +94,6 @@ export function StaffFoodPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Staff food"
-        subtitle="Track staff meals and staff guests — what was ordered and the meal cost."
-      />
-
       {!canManage ? (
         <p className={`text-sm ${mutedClass}`}>Only admins and managers can add or remove records.</p>
       ) : null}

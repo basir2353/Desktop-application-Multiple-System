@@ -41,6 +41,12 @@ export const popsMenuItems = pgTable("pops_menu_items", {
   featured: boolean("featured").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  /** Participates in bill-level discounts (AND'd with !nonDiscountable). */
+  discountable: boolean("discountable").notNull().default(true),
+  /** Explicitly excludes this item from discounts, regardless of `discountable`. */
+  nonDiscountable: boolean("non_discountable").notNull().default(false),
+  /** Excludes this item's amount from the tax base. */
+  nonTaxable: boolean("non_taxable").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

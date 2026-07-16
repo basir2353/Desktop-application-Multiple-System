@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+// Duplicated (not imported) from ./kitchen to avoid a circular import —
+// kitchen.ts already imports deliveryStatusSchema from this file.
+const deliveryOrderLineSchema = z.object({
+  label: z.string(),
+  qty: z.number().int().positive(),
+  unitPrice: z.number().int().nonnegative(),
+  menuItemId: z.string().uuid().optional(),
+});
+
 export const DELIVERY_STATUS_VALUES = [
   "unassigned",
   "assigned",
@@ -75,6 +84,7 @@ export const deliveryOrderSchema = z.object({
   orderRef: z.string().nullable(),
   stationLabel: z.string(),
   itemsSummary: z.string(),
+  lines: z.array(deliveryOrderLineSchema).optional(),
   notes: z.string().nullable(),
   priority: z.enum(["normal", "priority"]),
   status: z.enum(["new", "cooking", "ready", "done"]),

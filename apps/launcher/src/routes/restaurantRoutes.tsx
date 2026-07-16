@@ -6,9 +6,6 @@ const PopsDashboardPage = lazy(() =>
   import("../pops/pages/PopsDashboardPage").then((m) => ({ default: m.PopsDashboardPage })),
 );
 const MenuPage = lazy(() => import("../pops/pages/modules/MenuPage").then((m) => ({ default: m.MenuPage })));
-const StaffFoodPage = lazy(() =>
-  import("../pops/pages/modules/StaffFoodPage").then((m) => ({ default: m.StaffFoodPage })),
-);
 const PosPage = lazy(() => import("../pops/pages/modules/PosPage").then((m) => ({ default: m.PosPage })));
 const CashDrawerPage = lazy(() =>
   import("../pops/pages/modules/CashDrawerPage").then((m) => ({ default: m.CashDrawerPage })),
@@ -154,6 +151,9 @@ const ReportsPage = lazy(() => import("../pops/pages/modules/ReportsPage").then(
 const ManufacturingPage = lazy(() =>
   import("../pops/pages/modules/ManufacturingPage").then((m) => ({ default: m.ManufacturingPage })),
 );
+const ContentPage = lazy(() =>
+  import("../pops/pages/modules/ContentPage").then((m) => ({ default: m.ContentPage })),
+);
 
 /** Restaurant-exclusive routes. Rendered only in restaurant or suite editions. */
 export function restaurantRoutes(): JSX.Element {
@@ -161,7 +161,6 @@ export function restaurantRoutes(): JSX.Element {
     <>
       <Route path="dashboard" element={<PopsDashboardPage />} />
       <Route path="menu" element={<MenuPage />} />
-      <Route path="staff-food" element={<StaffFoodPage />} />
       <Route path="pos" element={<PosPage />} />
       <Route path="pos/cash-drawer" element={<CashDrawerPage />} />
       <Route path="tables" element={<TablesPage />} />
@@ -217,6 +216,7 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="sync" element={<SyncPage />} />
       <Route path="reports" element={<ReportsPage />} />
       <Route path="manufacturing" element={<ManufacturingPage />} />
+      <Route path="content" element={<ContentPage />} />
     </>
   );
 }

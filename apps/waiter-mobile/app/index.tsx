@@ -1,9 +1,8 @@
-import { AuthClient } from "@platform/auth-client";
 import Constants from "expo-constants";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { BackHandler, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
-import { pinLogin } from "../src/api/auth";
+import { passwordLogin, pinLogin } from "../src/api/auth";
 import {
   Button,
   Card,
@@ -18,8 +17,10 @@ import {
 } from "../src/components/ui";
 import { getApiBaseUrl } from "../src/lib/apiBase";
 import { decodeAccessToken } from "../src/lib/jwt";
+import { warmApiConnection } from "../src/lib/warmApi";
 import { homeRouteForRole, resolveStaffRole, type StaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
+import { markOnline } from "../src/stores/connectivityStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 type LoginMode = "pin" | "password";
@@ -106,6 +107,7 @@ export default function LoginScreen() {
     }
     setLoading(true);
     try {
+      await warmApiConnection();
       const tokens = await pinLogin(branchCode, pinValue);
       const decoded = decodeAccessToken(tokens.accessToken);
       const resolvedRole = resolveStaffRole(decoded);
@@ -122,6 +124,7 @@ export default function LoginScreen() {
         throw new Error("This PIN is a cashier account. Switch to the Cashier tab.");
       }
       setTokens(tokens.accessToken, tokens.refreshToken, decoded);
+      markOnline();
       router.replace("/branch");
     } catch (err) {
       setError(err instanceof Error ? err.message : "PIN login failed");
@@ -135,8 +138,8 @@ export default function LoginScreen() {
     setError(null);
     setLoading(true);
     try {
-      const client = new AuthClient({ baseUrl: getApiBaseUrl() });
-      const tokens = await client.login(email.trim(), password);
+      await warmApiConnection();
+      const tokens = await passwordLogin(email.trim(), password);
       const decoded = decodeAccessToken(tokens.accessToken);
       const resolvedRole = resolveStaffRole(decoded);
       if (roleTab === "rider" && resolvedRole !== "rider") {
@@ -149,6 +152,7 @@ export default function LoginScreen() {
         throw new Error("This account is a delivery rider. Switch to the Delivery rider tab.");
       }
       setTokens(tokens.accessToken, tokens.refreshToken, decoded, email.trim());
+      markOnline();
       router.replace("/branch");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Login failed";
@@ -260,6 +264,8 @@ export default function LoginScreen() {
                 <Button label="Sign In" onPress={() => void handlePasswordLogin()} loading={loading} />
                 <Subtitle>
                   Demo: {ROLE_DEFAULTS[roleTab].email} / changeme-please-01
+                  {"\n"}
+                  First sign-in may take up to 30 seconds while the server wakes up.
                 </Subtitle>
               </View>
             )}

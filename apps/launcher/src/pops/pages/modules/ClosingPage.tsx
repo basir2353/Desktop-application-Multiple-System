@@ -8,6 +8,7 @@ import {
   closeKitchenAtDayEnd,
   fetchClosingStatus,
   pauseOrders,
+  resumeOrders,
   runZReport,
   verifyBackup,
 } from "../../api/closing";
@@ -49,11 +50,13 @@ export function ClosingPage(): JSX.Element {
   };
 
   const actionMutation = useMutation({
-    mutationFn: async (action: "pause" | "kitchen" | "zreport" | "backup") => {
+    mutationFn: async (action: "pause" | "resume" | "kitchen" | "zreport" | "backup") => {
       if (!branch?.code) throw new Error("No branch selected");
       switch (action) {
         case "pause":
           return pauseOrders(branch.code);
+        case "resume":
+          return resumeOrders(branch.code);
         case "kitchen":
           return closeKitchenAtDayEnd(branch.code);
         case "zreport":
@@ -66,6 +69,7 @@ export function ClosingPage(): JSX.Element {
       setError(null);
       const labels = {
         pause: "New orders paused",
+        resume: "New orders resumed — POS can take orders again",
         kitchen: "Open kitchen tickets closed",
         zreport: "Z-report generated and PRA queue flushed",
         backup: "Backup snapshot verified",
@@ -131,8 +135,19 @@ export function ClosingPage(): JSX.Element {
       />
 
       {status?.ordersPaused ? (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          New POS and kitchen orders are paused for day closing. Business date: {status.businessDate}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div>
+            New POS and kitchen orders are paused for day closing. Business date: {status.businessDate}
+          </div>
+          {canClose ? (
+            <Button
+              className="shrink-0 text-xs"
+              disabled={actionMutation.isPending}
+              onClick={() => actionMutation.mutate("resume")}
+            >
+              Resume orders
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

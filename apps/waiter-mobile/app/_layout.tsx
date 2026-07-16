@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { bootstrapSession, SessionExpiredError } from "../src/lib/authFetch";
 import { OfflineBanner } from "../src/components/OfflineBanner";
+import { warmApiConnection } from "../src/lib/warmApi";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -54,6 +55,10 @@ export default function RootLayout() {
   const hydrateBranch = useBranchStore((s) => s.hydrate);
   const sessionHydrated = useSessionStore((s) => s.hydrated);
   const branchHydrated = useBranchStore((s) => s.hydrated);
+
+  useEffect(() => {
+    void warmApiConnection();
+  }, []);
 
   useEffect(() => {
     void hydrateSession();

@@ -24,6 +24,7 @@ import {
   colors,
 } from "../src/components/ui";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
+import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -145,31 +146,35 @@ export default function RiderHomeScreen() {
             message={`Nothing assigned to you at ${branch.name} yet. On the desktop app, open Delivery → Orders (branch ${branch.code}), assign delivery orders to your rider name, then pull down to refresh.`}
           />
         ) : (
-          active.slice(0, 5).map((order) => (
-            <Pressable
-              key={order.id}
-              onPress={() => router.push({ pathname: "/rider-delivery", params: { id: order.id } })}
-              style={({ pressed }) => [styles.orderCard, pressed && styles.orderCardPressed]}
-            >
-              <View style={styles.orderHeader}>
-                <Text style={styles.orderRef}>{orderRefFromTicket(order)}</Text>
-                <StatusBadge
-                  status={
-                    order.deliveryStatus
-                      ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
-                      : "Pending"
-                  }
-                />
-              </View>
-              <Text style={styles.customer}>{order.customerName}</Text>
-              <Text style={styles.address} numberOfLines={2}>
-                {order.customerAddress}
-              </Text>
-              <Text style={styles.meta}>
-                {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery
-              </Text>
-            </Pressable>
-          ))
+          active.slice(0, 5).map((order) => {
+            const total = deliveryOrderTotal(order);
+            return (
+              <Pressable
+                key={order.id}
+                onPress={() => router.push({ pathname: "/rider-delivery", params: { id: order.id } })}
+                style={({ pressed }) => [styles.orderCard, pressed && styles.orderCardPressed]}
+              >
+                <View style={styles.orderHeader}>
+                  <Text style={styles.orderRef}>{orderRefFromTicket(order)}</Text>
+                  <StatusBadge
+                    status={
+                      order.deliveryStatus
+                        ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
+                        : "Pending"
+                    }
+                  />
+                </View>
+                <Text style={styles.customer}>{order.customerName}</Text>
+                <Text style={styles.address} numberOfLines={2}>
+                  {order.customerAddress}
+                </Text>
+                {total != null ? <Text style={styles.orderTotal}>{formatPkr(total)} total</Text> : null}
+                <Text style={styles.meta}>
+                  {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery
+                </Text>
+              </Pressable>
+            );
+          })
         )}
 
         <View style={styles.footer}>
@@ -211,6 +216,7 @@ const styles = StyleSheet.create({
   orderRef: { color: colors.text, fontSize: 15, fontWeight: "700" },
   customer: { color: colors.text, fontSize: 16, fontWeight: "600" },
   address: { color: colors.muted, fontSize: 13, lineHeight: 18 },
+  orderTotal: { color: colors.accent, fontSize: 14, fontWeight: "700", marginTop: 4 },
   meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
   footer: { gap: 16, marginTop: 8 },
   signOut: { color: colors.muted, textAlign: "center", fontSize: 13 },

@@ -15,6 +15,9 @@ const SecurityPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("../pops/pages/modules/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
+const PrinterPage = lazy(() =>
+  import("../pops/pages/modules/PrinterPage").then((m) => ({ default: m.PrinterPage })),
+);
 const ClosingPage = lazy(() =>
   import("../pops/pages/modules/ClosingPage").then((m) => ({ default: m.ClosingPage })),
 );
@@ -28,6 +31,7 @@ export function sharedRoutes(): JSX.Element {
       <Route path="notifications/templates" element={<NotificationTemplatesPage />} />
       <Route path="security" element={<SecurityPage />} />
       <Route path="settings" element={<SettingsPage />} />
+      <Route path="printer" element={<PrinterPage />} />
       <Route path="closing" element={<ClosingPage />} />
     </>
   );

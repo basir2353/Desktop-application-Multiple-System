@@ -261,6 +261,9 @@ export class MenuService implements OnModuleInit {
         happyHour: variants.length > 0 ? false : (input.happyHour ?? false),
         featured: input.featured ?? false,
         sortOrder: input.sortOrder ?? 0,
+        discountable: input.discountable ?? true,
+        nonDiscountable: input.nonDiscountable ?? false,
+        nonTaxable: input.nonTaxable ?? false,
       })
       .returning();
 
@@ -300,6 +303,9 @@ export class MenuService implements OnModuleInit {
         ...(nextPrice !== undefined ? { pricePkr: nextPrice } : {}),
         ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
         ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+        ...(input.discountable !== undefined ? { discountable: input.discountable } : {}),
+        ...(input.nonDiscountable !== undefined ? { nonDiscountable: input.nonDiscountable } : {}),
+        ...(input.nonTaxable !== undefined ? { nonTaxable: input.nonTaxable } : {}),
       })
       .where(eq(popsMenuItems.id, itemId))
       .returning();
@@ -370,6 +376,9 @@ export class MenuService implements OnModuleInit {
       isActive: row.isActive,
       sortOrder: row.sortOrder,
       variants: mappedVariants,
+      discountable: row.discountable,
+      nonDiscountable: row.nonDiscountable,
+      nonTaxable: row.nonTaxable,
     };
   }
 

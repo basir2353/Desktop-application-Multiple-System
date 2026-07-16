@@ -65,15 +65,23 @@ function loadEnvApiUrl() {
 
 function resolveBuildPaths() {
   const shortRoots =
-    process.env.POPS_SKIP_SHORT_PATH === "1" ? [] : isWin ? ["E:\\pos-build", "C:\\pops"] : [];
+    process.env.POPS_SKIP_SHORT_PATH === "1"
+      ? []
+      : isWin
+        ? [process.env.POPS_BUILD_ROOT, "E:\\pos-build", "C:\\pops"].filter(Boolean)
+        : [];
   for (const root of shortRoots) {
-    const candidateAndroid = `${root}\\apps\\waiter-mobile\\android`;
-    if (existsSync(candidateAndroid)) {
-      console.log(`[build-apk] Building from ${root} (short path for native CMake)…`);
+    const layouts = [
+      { appRoot: join(root, "apps", "waiter-mobile"), androidDir: join(root, "apps", "waiter-mobile", "android") },
+      { appRoot: root, androidDir: join(root, "android") },
+    ];
+    for (const layout of layouts) {
+      if (!existsSync(join(layout.appRoot, "package.json"))) continue;
+      console.log(`[build-apk] Building from ${layout.appRoot} (short path for native CMake)…`);
       return {
-        appRoot: `${root}\\apps\\waiter-mobile`,
-        androidDir: candidateAndroid,
-        apkSrc: `${candidateAndroid}\\app\\build\\outputs\\apk\\release\\app-release.apk`,
+        appRoot: layout.appRoot,
+        androidDir: layout.androidDir,
+        apkSrc: join(layout.androidDir, "app", "build", "outputs", "apk", "release", "app-release.apk"),
       };
     }
   }
@@ -173,6 +181,16 @@ def resolveHermesCommand(File waiterAppRoot) {
   writeFileSync(gradlePath, text);
 }
 
+function forceArm64Only(propsPath) {
+  if (!existsSync(propsPath)) return;
+  let text = readFileSync(propsPath, "utf8");
+  text = text.replace(/^reactNativeArchitectures=.*$/m, "reactNativeArchitectures=arm64-v8a");
+  if (!/^reactNativeArchitectures=/m.test(text)) {
+    text = `${text.trimEnd()}\nreactNativeArchitectures=arm64-v8a\n`;
+  }
+  writeFileSync(propsPath, text);
+}
+
 function ensureAndroidProject(apiUrl, buildPaths) {
   const buildGradle = join(buildPaths.androidDir, "app", "build.gradle");
   const currentPackage = readAndroidPackageId(buildGradle);
@@ -193,11 +211,13 @@ function ensureAndroidProject(apiUrl, buildPaths) {
 
   patchAndroidBuildGradle(buildGradle, buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
+  forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
 }
 
 function applyAndroidPatches(buildPaths) {
   patchAndroidBuildGradle(join(buildPaths.androidDir, "app", "build.gradle"), buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
+  forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
 }
 
 function clearAutolinkingCache(androidDirPath) {

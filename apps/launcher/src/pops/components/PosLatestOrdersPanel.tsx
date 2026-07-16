@@ -19,6 +19,10 @@ import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { POS_ORDER_MODES } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { loadPosSettings } from "../lib/posSettings";
+import {
+  loadPosOrderModeVisibility,
+  POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT,
+} from "../lib/posOrderModeVisibility";
 import { PosOrderDetailModal } from "./PosOrderDetailModal";
 import { ChangeOrderTableModal } from "./ChangeOrderTableModal";
 
@@ -44,8 +48,48 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
   const canManageTables = displayRole === "admin" || displayRole === "manager";
 
+  const [orderModeVisibility, setOrderModeVisibility] = useState(() =>
+    loadPosOrderModeVisibility(branch?.code),
+  );
+
+  useEffect(() => {
+    setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
+  }, [branch?.code]);
+
+  useEffect(() => {
+    function onOrderModeVisibilityChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
+      }
+    }
+    window.addEventListener(POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT, onOrderModeVisibilityChanged);
+    return () =>
+      window.removeEventListener(POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT, onOrderModeVisibilityChanged);
+  }, [branch?.code]);
+
+  const visibleFilterModes = useMemo(
+    () =>
+      POS_ORDER_MODES.filter((m) => {
+        if (m.id === "online") return orderModeVisibility.onlineEnabled;
+        if (m.id === "foodpanda") return orderModeVisibility.foodpandaEnabled;
+        return true;
+      }),
+    [orderModeVisibility],
+  );
+
   const [search, setSearch] = useState("");
   const [modeFilter, setModeFilter] = useState<PosRecentOrderModeFilter>("all");
+
+  useEffect(() => {
+    if (
+      modeFilter !== "all" &&
+      modeFilter !== "Paid" &&
+      !visibleFilterModes.some((m) => m.label === modeFilter)
+    ) {
+      setModeFilter("all");
+    }
+  }, [visibleFilterModes, modeFilter]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewOrder, setViewOrder] = useState<PosRecentOrder | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<PosRecentOrder | null>(null);
@@ -167,7 +211,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
             >
               All
             </button>
-            {POS_ORDER_MODES.map(({ label }) => (
+            {visibleFilterModes.map(({ label }) => (
               <button
                 key={label}
                 type="button"

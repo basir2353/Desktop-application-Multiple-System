@@ -21,6 +21,7 @@ export function EmployeesPage(): JSX.Element {
     jobTitle: "",
     shiftLabel: "",
     baseSalaryPkr: "",
+    joinDate: "",
   });
 
   const employeesQuery = useQuery({
@@ -33,7 +34,14 @@ export function EmployeesPage(): JSX.Element {
     mutationFn: createEmployee,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["hr"] });
-      setForm({ employeeCode: "", displayName: "", jobTitle: "", shiftLabel: "", baseSalaryPkr: "" });
+      setForm({
+        employeeCode: "",
+        displayName: "",
+        jobTitle: "",
+        shiftLabel: "",
+        baseSalaryPkr: "",
+        joinDate: "",
+      });
     },
   });
 
@@ -92,6 +100,7 @@ export function EmployeesPage(): JSX.Element {
                 jobTitle: form.jobTitle,
                 shiftLabel: form.shiftLabel || undefined,
                 baseSalaryPkr: Number(form.baseSalaryPkr),
+                joinDate: form.joinDate || undefined,
               });
             }}
           >
@@ -100,6 +109,7 @@ export function EmployeesPage(): JSX.Element {
             <input className={hrInputClass} placeholder="Job title" value={form.jobTitle} onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
             <input className={hrInputClass} placeholder="Shift (2pm–10pm)" value={form.shiftLabel} onChange={(e) => setForm((f) => ({ ...f, shiftLabel: e.target.value }))} />
             <input className={hrInputClass} placeholder="Base salary (PKR)" type="number" value={form.baseSalaryPkr} onChange={(e) => setForm((f) => ({ ...f, baseSalaryPkr: e.target.value }))} />
+            <input className={hrInputClass} placeholder="Date of joining" type="date" value={form.joinDate} onChange={(e) => setForm((f) => ({ ...f, joinDate: e.target.value }))} />
           </HrFormPanel>
         </>
       ) : null}
@@ -113,6 +123,7 @@ export function EmployeesPage(): JSX.Element {
             { key: "jobTitle", header: "Role" },
             { key: "shiftLabel", header: "Shift", render: (r) => String(r.shiftLabel ?? "—") },
             { key: "baseSalaryPkr", header: "Salary", render: (r) => formatPkr(Number(r.baseSalaryPkr)) },
+            { key: "joinDate", header: "Joined", render: (r) => String(r.joinDate ?? "—") },
             {
               key: "employmentStatus",
               header: "Status",

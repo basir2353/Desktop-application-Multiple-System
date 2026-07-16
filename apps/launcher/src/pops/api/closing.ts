@@ -29,6 +29,16 @@ export async function pauseOrders(branchCode: string): Promise<ClosingStatus> {
   return closingStatusSchema.parse(await res.json());
 }
 
+export async function resumeOrders(branchCode: string): Promise<ClosingStatus> {
+  const res = await authFetch("/v1/closing/resume-orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ branchCode }),
+  });
+  if (!res.ok) await parseError(res, "Resume orders failed");
+  return closingStatusSchema.parse(await res.json());
+}
+
 export async function closeKitchenAtDayEnd(branchCode: string): Promise<ClosingStatus> {
   const res = await authFetch("/v1/closing/close-kitchen", {
     method: "POST",

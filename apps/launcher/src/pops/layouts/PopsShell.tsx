@@ -1,6 +1,6 @@
 import { Button } from "@platform/ui";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { getBusinessSystem } from "../../lib/businessSystems";
 import { isSingleSystemEdition } from "../../lib/edition";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
@@ -9,6 +9,10 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { PopsAlertCenter } from "../components/PopsAlertCenter";
+import {
+  loadPosHeaderVisible,
+  POS_HEADER_VISIBLE_EVENT,
+} from "../lib/posTopExperience";
 import { PopsMobileNav, PopsSidebarNav } from "./PopsNavMenu";
 
 const SIDEBAR_STORAGE_KEY = "pops-sidebar-visible";
@@ -53,6 +57,7 @@ function readSidebarVisible(): boolean {
 
 export function PopsShell(): JSX.Element {
   const navigate = useNavigate();
+  const location = useLocation();
   const clearSession = useSessionStore((s) => s.clear);
   const clearBranch = usePopsStore((s) => s.clearBranch);
   const branch = usePopsStore((s) => s.branch);
@@ -60,6 +65,9 @@ export function PopsShell(): JSX.Element {
   const systemId = useActiveSystemId();
   const system = getBusinessSystem(systemId);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarVisible);
+  const [posHeaderVisible, setPosHeaderVisibleState] = useState(loadPosHeaderVisible);
+  const isPosRoute = /\/pos(?:\/|$)/.test(location.pathname);
+  const showHeader = !isPosRoute || posHeaderVisible;
 
   useEffect(() => {
     try {
@@ -68,6 +76,15 @@ export function PopsShell(): JSX.Element {
       // ignore storage errors
     }
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    function onHeaderVisible(event: Event): void {
+      const visible = Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible);
+      setPosHeaderVisibleState(visible);
+    }
+    window.addEventListener(POS_HEADER_VISIBLE_EVENT, onHeaderVisible);
+    return () => window.removeEventListener(POS_HEADER_VISIBLE_EVENT, onHeaderVisible);
+  }, []);
 
   function signOut(): void {
     clearSession();
@@ -124,45 +141,47 @@ export function PopsShell(): JSX.Element {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/30 md:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            {!sidebarOpen ? (
-              <button
-                type="button"
-                className="hidden rounded-md border border-slate-300 bg-white p-2 text-slate-600 transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:bg-slate-800 dark:hover:text-white md:inline-flex"
-                aria-label="Open sidebar"
-                title="Open sidebar"
-                onClick={() => setSidebarOpen(true)}
-              >
-                <MenuIcon />
-              </button>
-            ) : null}
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-slate-900 dark:text-white">{branch?.name ?? "—"}</div>
-              <div className="text-xs text-slate-500">
-                {branch?.city} · Role: <span className="text-slate-700 dark:text-slate-300">{displayRole}</span>
+        {showHeader ? (
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/30 md:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              {!sidebarOpen ? (
+                <button
+                  type="button"
+                  className="hidden rounded-md border border-slate-300 bg-white p-2 text-slate-600 transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:bg-slate-800 dark:hover:text-white md:inline-flex"
+                  aria-label="Open sidebar"
+                  title="Open sidebar"
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <MenuIcon />
+                </button>
+              ) : null}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-slate-900 dark:text-white">{branch?.name ?? "—"}</div>
+                <div className="text-xs text-slate-500">
+                  {branch?.city} · Role: <span className="text-slate-700 dark:text-slate-300">{displayRole}</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ThemeToggle compact />
-            {systemId === "restaurant" ? <PopsAlertCenter /> : null}
-            <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
-              Switch branch
-            </Button>
-            {isSingleSystemEdition() ? null : (
-              <Button variant="ghost" className="text-xs" onClick={() => navigate("/")}>
-                Switch system
+            <div className="flex flex-wrap items-center gap-2">
+              <ThemeToggle compact />
+              {systemId === "restaurant" ? <PopsAlertCenter /> : null}
+              <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
+                Switch branch
               </Button>
-            )}
-            <Button variant="ghost" className="text-xs" onClick={() => navigate("/platform")}>
-              Module runtime
-            </Button>
-            <Button variant="ghost" className="text-xs" onClick={signOut}>
-              Sign out
-            </Button>
-          </div>
-        </header>
+              {isSingleSystemEdition() ? null : (
+                <Button variant="ghost" className="text-xs" onClick={() => navigate("/")}>
+                  Switch system
+                </Button>
+              )}
+              <Button variant="ghost" className="text-xs" onClick={() => navigate("/platform")}>
+                Module runtime
+              </Button>
+              <Button variant="ghost" className="text-xs" onClick={signOut}>
+                Sign out
+              </Button>
+            </div>
+          </header>
+        ) : null}
 
         <div className="border-b border-slate-200 bg-slate-100 px-2 py-2 md:hidden dark:border-slate-800 dark:bg-slate-900/50">
           <div className="flex gap-1 overflow-x-auto pb-1">

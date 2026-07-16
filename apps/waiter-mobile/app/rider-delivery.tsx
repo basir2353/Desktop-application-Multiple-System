@@ -5,6 +5,7 @@ import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts
 import { fetchMyDeliveries, updateDeliveryStatus } from "../src/api/delivery";
 import { Button, Card, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
+import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -64,6 +65,7 @@ export default function RiderDeliveryDetailScreen() {
   const canStart = status === "assigned";
   const canComplete = status === "out_for_delivery";
   const isDone = status === "delivered" || order.status === "done";
+  const total = deliveryOrderTotal(order);
 
   return (
     <Screen>
@@ -94,7 +96,13 @@ export default function RiderDeliveryDetailScreen() {
         </Card>
 
         <Card style={styles.section}>
-          <Text style={styles.label}>Delivery fee</Text>
+          {total != null ? (
+            <>
+              <Text style={styles.label}>Total bill</Text>
+              <Text style={[styles.value, styles.total]}>{formatPkr(total)}</Text>
+            </>
+          ) : null}
+          <Text style={[styles.label, total != null && { marginTop: 12 }]}>Delivery fee</Text>
           <Text style={styles.value}>{formatPkr(order.deliveryChargePkr)}</Text>
           <Text style={styles.meta}>Placed {formatTimeAgo(order.createdAt)}</Text>
         </Card>
@@ -140,6 +148,7 @@ const styles = StyleSheet.create({
   section: { gap: 4 },
   label: { color: colors.muted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" },
   value: { color: colors.text, fontSize: 16, lineHeight: 22 },
+  total: { color: colors.accent, fontSize: 22, fontWeight: "700" },
   items: { color: colors.text, fontSize: 14, lineHeight: 20 },
   meta: { color: colors.muted, fontSize: 12, marginTop: 8 },
   actions: { gap: 10, marginTop: 8 },

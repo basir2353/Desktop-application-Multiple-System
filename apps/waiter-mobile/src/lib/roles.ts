@@ -7,8 +7,9 @@ export function resolveStaffRole(claims: AccessTokenClaims | null): StaffRole | 
   if (claims.role === "rider") return "rider";
   if (claims.role === "cashier") return "cashier";
   if (claims.role === "waiter") return "waiter";
-  if (claims.permissions.includes("pops.delivery.manage") && claims.riderId) return "rider";
-  if (claims.permissions.includes("pops.kitchen.bump")) return "waiter";
+  const permissions = Array.isArray(claims.permissions) ? claims.permissions : [];
+  if (permissions.includes("pops.delivery.manage") && claims.riderId) return "rider";
+  if (permissions.includes("pops.kitchen.bump")) return "waiter";
   return "waiter";
 }
 

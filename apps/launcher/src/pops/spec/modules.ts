@@ -14,7 +14,6 @@ export const popsNavItems: PopsNavItem[] = [
   { type: "link", path: "dashboard", label: "Dashboard" },
   { type: "link", path: "auth", label: "Users & access" },
   { type: "link", path: "menu", label: "Menu" },
-  { type: "link", path: "staff-food", label: "Staff food" },
   {
     type: "group",
     label: "POS",
@@ -107,8 +106,10 @@ export const popsNavItems: PopsNavItem[] = [
     ],
   },
   { type: "link", path: "manufacturing", label: "Production" },
+  { type: "link", path: "content", label: "Content Updation" },
   { type: "link", path: "security", label: "Security" },
   { type: "link", path: "settings", label: "Settings" },
+  { type: "link", path: "printer", label: "Printer" },
   { type: "link", path: "closing", label: "Closing" },
 ];
 

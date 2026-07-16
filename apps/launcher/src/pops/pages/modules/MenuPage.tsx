@@ -53,6 +53,9 @@ function emptyVariantRow(): VariantRow {
 type ItemFormState = {
   name: string;
   featured: boolean;
+  discountable: boolean;
+  nonDiscountable: boolean;
+  nonTaxable: boolean;
   variants: VariantRow[];
 };
 
@@ -60,6 +63,9 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
   return {
     name: item.name,
     featured: item.featured,
+    discountable: item.discountable,
+    nonDiscountable: item.nonDiscountable,
+    nonTaxable: item.nonTaxable,
     variants:
       item.variants.length > 0
         ? item.variants.map((v) => ({
@@ -245,6 +251,35 @@ function MenuItemEditModal({
               Feature this dish on POS
             </span>
           </label>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                className="accent-amber-500"
+                checked={form.discountable}
+                onChange={(e) => setForm((f) => ({ ...f, discountable: e.target.checked }))}
+              />
+              Discountable
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                className="accent-amber-500"
+                checked={form.nonDiscountable}
+                onChange={(e) => setForm((f) => ({ ...f, nonDiscountable: e.target.checked }))}
+              />
+              Non-Discountable
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                className="accent-amber-500"
+                checked={form.nonTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, nonTaxable: e.target.checked }))}
+              />
+              Non-Taxable
+            </label>
+          </div>
           <MenuItemVariantFields form={form} onChange={setForm} />
           <MenuImagePicker
             label="Dish photo"
@@ -289,6 +324,9 @@ export function MenuPage(): JSX.Element {
   const [itemForm, setItemForm] = useState<ItemFormState>({
     name: "",
     featured: false,
+    discountable: true,
+    nonDiscountable: false,
+    nonTaxable: false,
     variants: [emptyVariantRow()],
   });
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
@@ -432,12 +470,22 @@ export function MenuPage(): JSX.Element {
         sortOrder: categoryItems.length,
         imageUrl,
         featured: itemForm.featured,
+        discountable: itemForm.discountable,
+        nonDiscountable: itemForm.nonDiscountable,
+        nonTaxable: itemForm.nonTaxable,
         variants,
       });
     },
     onSuccess: () => {
       invalidate();
-      setItemForm({ name: "", featured: false, variants: [emptyVariantRow()] });
+      setItemForm({
+        name: "",
+        featured: false,
+        discountable: true,
+        nonDiscountable: false,
+        nonTaxable: false,
+        variants: [emptyVariantRow()],
+      });
       setNewItemImage(null);
       setError(null);
     },
@@ -493,6 +541,9 @@ export function MenuPage(): JSX.Element {
       return updateMenuItem(id, {
         name: form.name.trim(),
         featured: form.featured,
+        discountable: form.discountable,
+        nonDiscountable: form.nonDiscountable,
+        nonTaxable: form.nonTaxable,
         variants,
         ...(imageUrl !== undefined ? { imageUrl } : {}),
       });
@@ -956,6 +1007,35 @@ export function MenuPage(): JSX.Element {
                       Feature this dish on POS
                     </span>
                   </label>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <input
+                        type="checkbox"
+                        className="accent-amber-500"
+                        checked={itemForm.discountable}
+                        onChange={(e) => setItemForm((f) => ({ ...f, discountable: e.target.checked }))}
+                      />
+                      Discountable
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <input
+                        type="checkbox"
+                        className="accent-amber-500"
+                        checked={itemForm.nonDiscountable}
+                        onChange={(e) => setItemForm((f) => ({ ...f, nonDiscountable: e.target.checked }))}
+                      />
+                      Non-Discountable
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <input
+                        type="checkbox"
+                        className="accent-amber-500"
+                        checked={itemForm.nonTaxable}
+                        onChange={(e) => setItemForm((f) => ({ ...f, nonTaxable: e.target.checked }))}
+                      />
+                      Non-Taxable
+                    </label>
+                  </div>
 
                   <MenuItemVariantFields form={itemForm} onChange={setItemForm} />
 
