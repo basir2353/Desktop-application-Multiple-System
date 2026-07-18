@@ -26,6 +26,10 @@ export function canEditKitchenTicket(ticket: KitchenTicket): boolean {
   return ticket.status !== "done";
 }
 
+export function tableStationLabel(tableNumber: string): string {
+  return `Table ${tableNumber.trim()}`;
+}
+
 export function canEditHeldBill(bill: Bill): boolean {
   return bill.status === "held";
 }
@@ -37,6 +41,17 @@ export function ownsKitchenTicket(
 ): boolean {
   if (!ticket.createdById) return true;
   return Boolean(userId) && ticket.createdById === userId;
+}
+
+/** Dine-in running ticket that can be moved to another table. */
+export function canTransferKitchenTicket(
+  ticket: KitchenTicket,
+  userId?: string | null,
+): boolean {
+  if (ticket.status === "done") return false;
+  const label = ticket.stationLabel.trim().toLowerCase();
+  if (label.includes("delivery") || label.includes("takeaway")) return false;
+  return ownsKitchenTicket(ticket, userId);
 }
 
 export function ownsHeldBill(bill: Bill, userId: string | null | undefined): boolean {

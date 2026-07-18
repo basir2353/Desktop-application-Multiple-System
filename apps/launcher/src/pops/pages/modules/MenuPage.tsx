@@ -41,6 +41,19 @@ import {
   importMenuRows,
   parseMenuImportFile,
 } from "../../lib/menuImportExport";
+import {
+  DEFAULT_PRINTER_SECTIONS,
+  loadPrinterSections,
+  PRINTER_SECTIONS_CHANGED_EVENT,
+  type PrinterSection,
+} from "../../lib/printerSections";
+import {
+  itemHasSectionOverride,
+  loadPrinterRouting,
+  PRINTER_ROUTING_CHANGED_EVENT,
+  setCategorySections,
+  setItemSections,
+} from "../../lib/printerRouting";
 
 type VariantRow = { label: string; price: string; barcode: string };
 
@@ -197,18 +210,26 @@ function MenuItemEditModal({
   item,
   loading,
   error,
+  branchCode,
+  sections,
   onClose,
   onSave,
 }: {
   item: MenuItem;
   loading: boolean;
   error: string | null;
+  branchCode: string | undefined;
+  sections: PrinterSection[];
   onClose: () => void;
   onSave: (form: ItemFormState, imageFile: File | null, clearImage: boolean) => void;
 }): JSX.Element {
   const [form, setForm] = useState<ItemFormState>(() => menuItemToEditForm(item));
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [clearImage, setClearImage] = useState(false);
+  const [printOverride, setPrintOverride] = useState(() => itemHasSectionOverride(branchCode, item.id));
+  const [printSections, setPrintSections] = useState<string[]>(
+    () => loadPrinterRouting(branchCode).byItem[item.id] ?? loadPrinterRouting(branchCode).byCategory[item.categoryId] ?? [],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60">
@@ -280,6 +301,54 @@ function MenuItemEditModal({
               Non-Taxable
             </label>
           </div>
+          <div>
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                className="accent-amber-500"
+                checked={!printOverride}
+                onChange={(e) => {
+                  const useCategory = e.target.checked;
+                  setPrintOverride(!useCategory);
+                  if (useCategory && branchCode) {
+                    setItemSections(branchCode, item.id, null);
+                    setPrintSections(loadPrinterRouting(branchCode).byCategory[item.categoryId] ?? []);
+                  }
+                }}
+              />
+              Use category's printing
+            </label>
+            {printOverride ? (
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {sections
+                  .filter((s) => s.enabled)
+                  .map((section) => {
+                    const assigned = printSections.includes(section.id);
+                    return (
+                      <button
+                        key={section.id}
+                        type="button"
+                        onClick={() => {
+                          const next = assigned
+                            ? printSections.filter((id) => id !== section.id)
+                            : [...printSections, section.id];
+                          setPrintSections(next);
+                          if (branchCode) setItemSections(branchCode, item.id, next);
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition ${
+                          assigned
+                            ? "border-amber-400 bg-amber-500/15 text-amber-200"
+                            : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600"
+                        }`}
+                      >
+                        <span aria-hidden>{section.icon}</span>
+                        {section.name}
+                      </button>
+                    );
+                  })}
+              </div>
+            ) : null}
+          </div>
           <MenuItemVariantFields form={form} onChange={setForm} />
           <MenuImagePicker
             label="Dish photo"
@@ -339,6 +408,43 @@ export function MenuPage(): JSX.Element {
   const [menuTransferNotice, setMenuTransferNotice] = useState<string | null>(null);
   const [menuTransferBusy, setMenuTransferBusy] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const [printerSections, setPrinterSections] = useState<PrinterSection[]>(DEFAULT_PRINTER_SECTIONS);
+  const [routingRevision, setRoutingRevision] = useState(0);
+
+  useEffect(() => {
+    setPrinterSections(loadPrinterSections(branch?.code));
+  }, [branch?.code]);
+
+  useEffect(() => {
+    function onSectionsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setPrinterSections(loadPrinterSections(branch?.code));
+      }
+    }
+    function onRoutingChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setRoutingRevision((n) => n + 1);
+      }
+    }
+    window.addEventListener(PRINTER_SECTIONS_CHANGED_EVENT, onSectionsChanged);
+    window.addEventListener(PRINTER_ROUTING_CHANGED_EVENT, onRoutingChanged);
+    return () => {
+      window.removeEventListener(PRINTER_SECTIONS_CHANGED_EVENT, onSectionsChanged);
+      window.removeEventListener(PRINTER_ROUTING_CHANGED_EVENT, onRoutingChanged);
+    };
+  }, [branch?.code]);
+
+  const enabledPrinterSections = useMemo(
+    () => printerSections.filter((s) => s.enabled),
+    [printerSections],
+  );
+
+  const routing = useMemo(() => {
+    void routingRevision;
+    return loadPrinterRouting(branch?.code);
+  }, [branch?.code, routingRevision]);
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branch?.code],
@@ -747,6 +853,38 @@ export function MenuPage(): JSX.Element {
                   onClear={() => void updateCategoryImage(null, true)}
                   disabled={categoryImageUploading}
                 />
+                <div>
+                  <div className="text-xs font-medium text-slate-400">Print to</div>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {enabledPrinterSections.map((section) => {
+                      const assigned = (routing.byCategory[selectedCategory.id] ?? []).includes(section.id);
+                      return (
+                        <button
+                          key={section.id}
+                          type="button"
+                          onClick={() => {
+                            const current = routing.byCategory[selectedCategory.id] ?? [];
+                            const next = assigned
+                              ? current.filter((id) => id !== section.id)
+                              : [...current, section.id];
+                            setCategorySections(branch!.code, selectedCategory.id, next);
+                          }}
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition ${
+                            assigned
+                              ? "border-amber-400 bg-amber-500/15 text-amber-200"
+                              : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600"
+                          }`}
+                        >
+                          <span aria-hidden>{section.icon}</span>
+                          {section.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Items in this category print to the selected sections unless overridden per item.
+                  </p>
+                </div>
                 <div className="flex gap-2">
                 <Button
                   variant="ghost"
@@ -1195,6 +1333,8 @@ export function MenuPage(): JSX.Element {
           item={editingItem}
           loading={updateItemMutation.isPending}
           error={editError}
+          branchCode={branch?.code}
+          sections={printerSections}
           onClose={() => {
             setEditingItem(null);
             setEditError(null);

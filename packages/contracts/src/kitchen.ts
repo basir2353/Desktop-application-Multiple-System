@@ -8,7 +8,7 @@ export const kitchenTicketPrioritySchema = z.enum(["normal", "priority"]);
 export const kitchenTicketLineSchema = z.object({
   label: z.string(),
   qty: z.number().int().positive(),
-  unitPrice: z.number().int().nonnegative(),
+  unitPrice: z.coerce.number().nonnegative().default(0),
   menuItemId: z.string().uuid().optional(),
 });
 

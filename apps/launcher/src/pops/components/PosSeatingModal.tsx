@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RestaurantTable, SeatingSection } from "@platform/contracts";
 import { modalBackdropClass } from "../lib/themeClasses";
 
@@ -8,6 +8,8 @@ type Props = {
   selectedSectionId: string | null;
   selectedTableId: string | null;
   isLoading: boolean;
+  /** Table numbers (uppercased) that currently have an active order. */
+  occupiedTableNumbers?: Set<string>;
   onSelectSection: (sectionId: string | null) => void;
   onSelectTable: (tableId: string) => void;
   onClose: () => void;
@@ -19,6 +21,7 @@ export function PosSeatingModal({
   selectedSectionId,
   selectedTableId,
   isLoading,
+  occupiedTableNumbers,
   onSelectSection,
   onSelectTable,
   onClose,
@@ -33,9 +36,16 @@ export function PosSeatingModal({
 
   const activeSections = sections.filter((s) => s.isActive);
   const [viewAllSections, setViewAllSections] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const selectedSection = viewAllSections
     ? null
     : (activeSections.find((s) => s.id === selectedSectionId) ?? null);
+
+  useEffect(() => {
+    if (viewAllSections || selectedSection) {
+      scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [viewAllSections, selectedSection]);
   const sectionTables = viewAllSections
     ? tables.filter((t) => t.isActive)
     : selectedSectionId
@@ -84,7 +94,7 @@ export function PosSeatingModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
           {isLoading ? (
             <p className="floor-modal-body-text">Loading floor plan…</p>
           ) : activeSections.length === 0 ? (
@@ -134,13 +144,17 @@ export function PosSeatingModal({
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {sectionTables.map((t) => {
                     const selected = selectedTableId === t.id;
+                    const booked = occupiedTableNumbers?.has(t.tableNumber.trim().toUpperCase()) ?? false;
                     return (
                       <button
                         key={t.id}
                         type="button"
+                        disabled={booked}
                         onClick={() => handleTablePick(t.id)}
-                        className={`floor-modal-table-btn ${selected ? "is-selected" : ""}`}
+                        aria-label={booked ? `${t.tableNumber} — booked, unavailable` : t.tableNumber}
+                        className={`floor-modal-table-btn ${selected ? "is-selected" : ""} ${booked ? "is-booked" : ""}`}
                       >
+                        {booked ? <span className="floor-modal-booked-badge">Booked</span> : null}
                         <div className="floor-modal-table-label">{t.tableNumber}</div>
                         <div className="floor-modal-table-meta">
                           {viewAllSections

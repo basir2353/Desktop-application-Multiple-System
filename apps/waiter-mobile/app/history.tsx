@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Bill, BillPayment } from "@platform/contracts";
+import type { Bill, BillPayment, KitchenTicket, MenuItem } from "@platform/contracts";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { completeBill, fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets } from "../src/api/kitchen";
+import { fetchBranchMenu } from "../src/api/menu";
 import {
   Card,
   Chip,
@@ -26,7 +27,7 @@ import {
 } from "../src/components/ui";
 import { CloseOrderModal } from "../src/components/CloseOrderModal";
 import { formatPkr, formatTimeAgo, formatWhen, isToday } from "../src/lib/orderDisplay";
-import { printBillReceipt } from "../src/lib/printBill";
+import { printBillReceipt, printKitchenOrder } from "../src/lib/printBill";
 import { canCloseOrders } from "../src/lib/roles";
 import {
   buildUnifiedOrders,
@@ -80,6 +81,15 @@ export default function HistoryScreen() {
     refetchInterval: 15_000,
   });
 
+  const menuQuery = useQuery({
+    queryKey: ["menu", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchBranchMenu(branchCode),
+    staleTime: 5 * 60_000,
+  });
+
+  const menuItems = menuQuery.data?.items ?? [];
+
   const unified = useMemo(
     () => buildUnifiedOrders(ordersQuery.data ?? [], kitchenQuery.data ?? []),
     [ordersQuery.data, kitchenQuery.data],
@@ -100,7 +110,10 @@ export default function HistoryScreen() {
 
   const kitchenCount = filtered.filter((order) => order.source === "kitchen").length;
   const billCount = filtered.filter((order) => order.source === "bill").length;
-  const totalAmount = filtered.reduce((sum, order) => sum + (unifiedOrderTotal(order) ?? 0), 0);
+  const totalAmount = filtered.reduce(
+    (sum, order) => sum + (unifiedOrderTotal(order, menuItems) ?? 0),
+    0,
+  );
   const loading = ordersQuery.isLoading || kitchenQuery.isLoading;
   const refreshing = ordersQuery.isFetching || kitchenQuery.isFetching;
   const queryError =
@@ -149,6 +162,16 @@ export default function HistoryScreen() {
     if (!branch) return;
     const ok = await printBillReceipt(branch.name, branch.code, bill);
     setNotice(ok ? `Receipt for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
+  }
+
+  async function handlePrintKitchen(ticket: KitchenTicket): Promise<void> {
+    if (!branch) return;
+    const ok = await printKitchenOrder(branch.name, branch.code, ticket, menuItems);
+    setNotice(
+      ok
+        ? `Print order sent for ${ticket.orderRef ?? ticket.ticketRef}.`
+        : `Could not print ${ticket.orderRef ?? ticket.ticketRef}.`,
+    );
   }
 
   function openEdit(order: UnifiedOrder): void {
@@ -256,10 +279,15 @@ export default function HistoryScreen() {
               <OrderHistoryCard
                 key={`${order.source}-${order.id}`}
                 order={order}
+                menuItems={menuItems}
                 userId={claims?.sub ?? null}
                 onEdit={openEdit}
                 onClose={cashierCanClose && order.source === "bill" && order.bill.status === "held" ? () => setCloseBill(order.bill) : undefined}
-                onPrint={order.source === "bill" ? () => void handlePrint(order.bill) : undefined}
+                onPrint={
+                  order.source === "bill"
+                    ? () => void handlePrint(order.bill)
+                    : () => void handlePrintKitchen(order.ticket)
+                }
               />
             ))}
           </View>
@@ -283,18 +311,20 @@ export default function HistoryScreen() {
 
 function OrderHistoryCard({
   order,
+  menuItems,
   userId,
   onEdit,
   onClose,
   onPrint,
 }: {
   order: UnifiedOrder;
+  menuItems: MenuItem[];
   userId: string | null;
   onEdit: (order: UnifiedOrder) => void;
   onClose?: () => void;
   onPrint?: () => void;
 }) {
-  const total = unifiedOrderTotal(order);
+  const total = unifiedOrderTotal(order, menuItems);
   const accent = orderStatusAccent(order);
   const status = unifiedOrderStatus(order);
   const meta =
@@ -317,7 +347,10 @@ function OrderHistoryCard({
             <Text style={styles.sourceLabel}>{sourceLabel}</Text>
           </View>
         </View>
-        <StatusBadge status={status} />
+        <View style={styles.orderTopRight}>
+          <Text style={styles.orderTotal}>{total != null ? formatPkr(total) : "—"}</Text>
+          <StatusBadge status={status} />
+        </View>
       </View>
 
       <Text style={styles.itemsSummary} numberOfLines={3}>
@@ -326,11 +359,6 @@ function OrderHistoryCard({
 
       <View style={styles.orderFooter}>
         <View style={styles.orderFooterLeft}>
-          {total != null ? (
-            <Text style={styles.orderTotal}>{formatPkr(total)}</Text>
-          ) : (
-            <Text style={styles.inKitchen}>In kitchen</Text>
-          )}
           <Text style={styles.orderWhen}>{formatTimeAgo(order.createdAt)}</Text>
           <Text style={styles.orderWhenExact}>{formatWhen(order.createdAt)}</Text>
         </View>
@@ -344,7 +372,9 @@ function OrderHistoryCard({
         ) : null}
         {onPrint ? (
           <Pressable onPress={onPrint} style={styles.printBtn}>
-            <Text style={styles.printBtnText}>Print</Text>
+            <Text style={styles.printBtnText}>
+              {order.source === "bill" ? "Print" : "Print order"}
+            </Text>
           </Pressable>
         ) : null}
         {onClose ? (
@@ -447,6 +477,10 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
+  },
+  orderTopRight: {
+    alignItems: "flex-end",
+    gap: 6,
   },
   orderTopCopy: {
     flex: 1,

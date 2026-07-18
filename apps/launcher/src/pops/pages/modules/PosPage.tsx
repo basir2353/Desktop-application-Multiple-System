@@ -10,8 +10,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { usePopsStore } from "../../../stores/popsStore";
+import { useSessionStore } from "../../../stores/sessionStore";
 import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../../api/billing";
-import { fetchOpenCashSession } from "../../api/accounting";
+import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
+import { fetchClosingStatus, resumeOrders } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
@@ -61,6 +63,7 @@ import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCh
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/ChangeOrderTableModal";
 import { PosPayOutModal } from "../../components/PosPayOutModal";
+import { PosStaffFoodModal } from "../../components/PosStaffFoodModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
@@ -75,8 +78,21 @@ import {
   POS_SETTINGS_CHANGED_EVENT,
   type PosSettings,
 } from "../../lib/posSettings";
+import {
+  loadPosHeaderVisible,
+  setPosHeaderVisible,
+} from "../../lib/posTopExperience";
+import {
+  DEFAULT_POS_ORDER_MODE_VISIBILITY,
+  loadPosOrderModeVisibility,
+  POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT,
+  type PosOrderModeVisibility,
+} from "../../lib/posOrderModeVisibility";
 import { buildMenuItemOrderCounts, sortMenuByPopularity } from "../../lib/posMenuPopularity";
 import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
+import { loadPrinterSections } from "../../lib/printerSections";
+import { groupCartLinesBySection } from "../../lib/printerRouting";
+import { logPrintEvent } from "../../lib/printHistory";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
   formatHappyHourSlotSummary,
@@ -103,14 +119,35 @@ const POS_PRIMARY_PAY_BTN = `${POS_ACTION_BTN} h-10 border-0 bg-emerald-600 text
 const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-9 border border-slate-200 bg-white font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white`;
 const POS_TOOLBAR_BTN =
   "inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
+const POS_ZOOM_BTN =
+  "inline-flex shrink-0 items-center justify-center rounded-md border border-slate-600/80 bg-transparent px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
+const POS_HEADER_TOGGLE_BTN =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-600/80 bg-transparent text-slate-300 transition hover:bg-slate-800 hover:text-white";
+const POS_ZOOM_LEVELS = [0.6, 0.75, 0.85, 1, 1.15, 1.3, 1.5] as const;
+const POS_ZOOM_STORAGE_KEY = "pops-pos-font-zoom-index";
 const POS_MODE_BAR =
-  "flex shrink-0 rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
+  "no-scrollbar flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
 const POS_MODE_BTN = (active: boolean) =>
-  `flex-1 rounded-md px-2 py-2 text-xs font-semibold transition ${
+  `shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition ${
     active
       ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
       : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
   }`;
+
+const POS_ZOOM_DEFAULT_INDEX = 3; // 100%
+
+function loadPosZoomIndex(): number {
+  try {
+    const raw = localStorage.getItem(POS_ZOOM_STORAGE_KEY);
+    const parsed = raw == null ? POS_ZOOM_DEFAULT_INDEX : Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= POS_ZOOM_LEVELS.length) {
+      return POS_ZOOM_DEFAULT_INDEX;
+    }
+    return parsed;
+  } catch {
+    return POS_ZOOM_DEFAULT_INDEX;
+  }
+}
 
 type PosEditingOrder =
   | { kind: "ticket"; ticketId: string }
@@ -133,17 +170,25 @@ export function PosPage(): JSX.Element {
   const [deliveryRiderId, setDeliveryRiderId] = useState("");
   const [deliveryChargePkr, setDeliveryChargePkr] = useState(0);
   const [deliveryDetailsOpen, setDeliveryDetailsOpen] = useState(false);
+  const [deliveryCustomerPickerOpen, setDeliveryCustomerPickerOpen] = useState(false);
+  const [deliveryCustomerSearch, setDeliveryCustomerSearch] = useState("");
   const [selectedFloorSectionId, setSelectedFloorSectionId] = useState<string | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [menuView, setMenuView] = useState<"all" | "category" | "featured">("all");
   const [search, setSearch] = useState("");
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
+  const [searchHighlight, setSearchHighlight] = useState(0);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
   const [cart, setCart] = useState<PosCartLine[]>([]);
   const [variantPickerItem, setVariantPickerItem] = useState<ApiMenuItem | null>(null);
   const [discountPctInput, setDiscountPctInput] = useState(0);
   const [discountAmountInput, setDiscountAmountInput] = useState(0);
   const [discountEditedAs, setDiscountEditedAs] = useState<"pct" | "amount">("pct");
   const [posSettings, setPosSettings] = useState<PosSettings>(() => loadPosSettings(undefined));
+  const [orderModeVisibility, setOrderModeVisibility] = useState<PosOrderModeVisibility>(
+    () => DEFAULT_POS_ORDER_MODE_VISIBILITY,
+  );
   const [happyHourSettings, setHappyHourSettings] = useState<HappyHourSettings>(
     () => DEFAULT_HAPPY_HOUR_SETTINGS,
   );
@@ -153,15 +198,23 @@ export function PosPage(): JSX.Element {
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [ticketServicePct, setTicketServicePct] = useState(10);
   const [seatingModalOpen, setSeatingModalOpen] = useState(false);
-  const [orderTypeModalOpen, setOrderTypeModalOpen] = useState(true);
-  const [modeConfirmed, setModeConfirmed] = useState(false);
+  const orderTypeModalShown = useSessionStore((s) => s.orderTypeModalShown);
+  const markOrderTypeModalShown = useSessionStore((s) => s.markOrderTypeModalShown);
+  const seatingModalShown = useSessionStore((s) => s.seatingModalShown);
+  const markSeatingModalShown = useSessionStore((s) => s.markSeatingModalShown);
+  const [orderTypeModalOpen, setOrderTypeModalOpen] = useState(!orderTypeModalShown);
+  const [modeConfirmed, setModeConfirmed] = useState(orderTypeModalShown);
   const [editingOrder, setEditingOrder] = useState<PosEditingOrder>(null);
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
   const [payOutModalOpen, setPayOutModalOpen] = useState(false);
+  const [staffFoodModalOpen, setStaffFoodModalOpen] = useState(false);
   const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
+  const [zoomIndex, setZoomIndex] = useState(loadPosZoomIndex);
+  const [headerVisible, setHeaderVisible] = useState(loadPosHeaderVisible);
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
+  const deliveryCustomerFieldRef = useRef<HTMLDivElement>(null);
   const pendingEditRef = useRef<PosEditLocationState | null>(
     (location.state as PosEditLocationState | null) ?? null,
   );
@@ -175,6 +228,19 @@ export function PosPage(): JSX.Element {
   useEffect(() => {
     setPosSettings(loadPosSettings(branch?.code));
     setHappyHourSettings(loadHappyHourSettings(branch?.code));
+    setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
+  }, [branch?.code]);
+
+  useEffect(() => {
+    function onOrderModeVisibilityChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
+      }
+    }
+    window.addEventListener(POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT, onOrderModeVisibilityChanged);
+    return () =>
+      window.removeEventListener(POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT, onOrderModeVisibilityChanged);
   }, [branch?.code]);
 
   useEffect(() => {
@@ -279,11 +345,99 @@ export function PosPage(): JSX.Element {
     refetchInterval: 20_000,
   });
 
+  const customerInvoicesQuery = useQuery({
+    queryKey: ["accounting", "receivable", branch?.code],
+    enabled: Boolean(branch?.code) && deliveryCustomerPickerOpen,
+    queryFn: () => fetchCustomerInvoices(branch!.code),
+  });
+
+  const knownDeliveryCustomers = useMemo(() => {
+    const seen = new Map<string, { name: string; phone: string; address: string }>();
+    for (const invoice of customerInvoicesQuery.data ?? []) {
+      const key = (invoice.customerPhone || invoice.customerName).trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.set(key, { name: invoice.customerName, phone: invoice.customerPhone ?? "", address: "" });
+    }
+    for (const bill of ordersQuery.data ?? []) {
+      const parsed = parseDeliveryFieldsFromNotes(bill.notes);
+      if (!parsed.customer && !parsed.phone) continue;
+      const key = (parsed.phone || parsed.customer).trim().toLowerCase();
+      if (!key) continue;
+      const existing = seen.get(key);
+      if (existing) {
+        if (!existing.address && parsed.address) existing.address = parsed.address;
+        continue;
+      }
+      seen.set(key, {
+        name: parsed.customer || "Unnamed customer",
+        phone: parsed.phone,
+        address: parsed.address,
+      });
+    }
+    return [...seen.values()].slice(0, 50);
+  }, [customerInvoicesQuery.data, ordersQuery.data]);
+
+  const filteredDeliveryCustomers = useMemo(() => {
+    const q = deliveryCustomerSearch.trim().toLowerCase();
+    if (!q) return knownDeliveryCustomers;
+    return knownDeliveryCustomers.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.phone.includes(q),
+    );
+  }, [knownDeliveryCustomers, deliveryCustomerSearch]);
+
+  function handleDeliveryCustomerChange(value: string): void {
+    setDeliveryCustomer(value);
+    const triggerIndex = Math.max(value.lastIndexOf("*"), value.lastIndexOf("#"));
+    if (triggerIndex !== -1) {
+      setDeliveryCustomerPickerOpen(true);
+      setDeliveryCustomerSearch(value.slice(triggerIndex + 1));
+    } else {
+      setDeliveryCustomerPickerOpen(false);
+    }
+  }
+
+  function selectKnownDeliveryCustomer(customer: { name: string; phone: string; address: string }): void {
+    setDeliveryCustomer(customer.name);
+    if (customer.phone) setDeliveryPhone(customer.phone);
+    if (customer.address) setDeliveryAddress(customer.address);
+    setDeliveryCustomerPickerOpen(false);
+    setDeliveryCustomerSearch("");
+  }
+
+  useEffect(() => {
+    if (!deliveryCustomerPickerOpen) return;
+    function onDocMouseDown(e: MouseEvent): void {
+      if (deliveryCustomerFieldRef.current && !deliveryCustomerFieldRef.current.contains(e.target as Node)) {
+        setDeliveryCustomerPickerOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onDocMouseDown);
+    return () => window.removeEventListener("mousedown", onDocMouseDown);
+  }, [deliveryCustomerPickerOpen]);
+
   const cashSessionQuery = useQuery({
     queryKey: ["accounting", "cash-session-open", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchOpenCashSession(branch!.code),
     refetchInterval: 30_000,
+  });
+
+  const closingStatusQuery = useQuery({
+    queryKey: ["closing", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchClosingStatus(branch!.code),
+    refetchInterval: 30_000,
+  });
+
+  const resumeOrdersMutation = useMutation({
+    mutationFn: () => resumeOrders(branch!.code),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["closing"] });
+      setPrintNotice({ message: "Orders resumed — you can take new orders again.", tone: "success" });
+    },
+    onError: (err: Error) => {
+      setPrintNotice({ message: err.message, tone: "error" });
+    },
   });
 
   useEffect(() => {
@@ -331,6 +485,39 @@ export function PosPage(): JSX.Element {
     [floorTables, selectedFloorSectionId],
   );
 
+  const occupiedTableNumbers = useMemo(() => {
+    const set = new Set<string>();
+    for (const ticket of kitchenQuery.data ?? []) {
+      if (ticket.status === "done") continue;
+      if (editingOrder?.kind === "ticket" && ticket.id === editingOrder.ticketId) continue;
+      const tableNumber = tableNumberFromStation(ticket.stationLabel);
+      if (tableNumber) set.add(tableNumber.trim().toUpperCase());
+    }
+    for (const bill of ordersQuery.data ?? []) {
+      if (bill.status !== "held") continue;
+      if (editingOrder?.kind === "held-bill" && bill.id === editingOrder.billId) continue;
+      const tableNumber = tableNumberFromStation(bill.tableLabel);
+      if (tableNumber) set.add(tableNumber.trim().toUpperCase());
+    }
+    return set;
+  }, [kitchenQuery.data, ordersQuery.data, editingOrder]);
+
+  const visiblePosOrderModes = useMemo(
+    () =>
+      POS_ORDER_MODES.filter((m) => {
+        if (m.id === "online") return orderModeVisibility.onlineEnabled;
+        if (m.id === "foodpanda") return orderModeVisibility.foodpandaEnabled;
+        return true;
+      }),
+    [orderModeVisibility],
+  );
+
+  useEffect(() => {
+    if (!visiblePosOrderModes.some((m) => m.id === mode)) {
+      setMode("dine-in");
+    }
+  }, [visiblePosOrderModes, mode]);
+
   function switchMode(nextMode: PosOrderMode): void {
     setMode(nextMode);
     if (nextMode === "delivery") {
@@ -340,20 +527,28 @@ export function PosPage(): JSX.Element {
 
   function beginNextOrderCycle(): void {
     switchMode("dine-in");
-    setModeConfirmed(false);
     setSelectedFloorSectionId(null);
     setSelectedTableId(null);
     setSeatingModalOpen(false);
     seatingAutoOpened.current = false;
-    setOrderTypeModalOpen(true);
+    if (orderTypeModalShown) {
+      // "Select order type" only shows once per app run — later orders default to dine-in;
+      // staff switch modes via the always-visible tab bar instead.
+      setModeConfirmed(true);
+      setOrderTypeModalOpen(false);
+    } else {
+      setModeConfirmed(false);
+      setOrderTypeModalOpen(true);
+    }
   }
 
   function confirmOrderType(nextMode: PosOrderMode): void {
     switchMode(nextMode);
     setModeConfirmed(true);
     setOrderTypeModalOpen(false);
+    markOrderTypeModalShown();
     if (nextMode === "dine-in") {
-      if (floorSections.length > 0) {
+      if (floorSections.length > 0 && !seatingModalShown) {
         setSeatingModalOpen(true);
         seatingAutoOpened.current = true;
       }
@@ -367,9 +562,10 @@ export function PosPage(): JSX.Element {
 
   function dismissOrderTypeModal(): void {
     setOrderTypeModalOpen(false);
+    markOrderTypeModalShown();
     if (!modeConfirmed) {
       setModeConfirmed(true);
-      if (mode === "dine-in" && floorSections.length > 0 && !selectedTableId) {
+      if (mode === "dine-in" && floorSections.length > 0 && !selectedTableId && !seatingModalShown) {
         setSeatingModalOpen(true);
         seatingAutoOpened.current = true;
       }
@@ -386,19 +582,19 @@ export function PosPage(): JSX.Element {
       }
       return;
     }
+    if (seatingModalShown) return;
     if (floorSections.length > 0 && !selectedTableId && !seatingAutoOpened.current) {
       setSeatingModalOpen(true);
       seatingAutoOpened.current = true;
     }
-  }, [mode, modeConfirmed, floorSections.length, selectedTableId]);
+  }, [mode, modeConfirmed, floorSections.length, selectedTableId, seatingModalShown]);
 
   useEffect(() => {
     if (!selectedTableId) return;
     const table = floorTables.find((t) => t.id === selectedTableId);
-    if (table && table.sectionId !== selectedFloorSectionId) {
-      setSelectedFloorSectionId(table.sectionId);
-    }
-  }, [selectedTableId, floorTables, selectedFloorSectionId]);
+    if (!table) return;
+    setSelectedFloorSectionId((prev) => (prev !== table.sectionId ? table.sectionId : prev));
+  }, [selectedTableId, floorTables]);
 
   useEffect(() => {
     if (!selectedFloorSectionId) return;
@@ -462,6 +658,23 @@ export function PosPage(): JSX.Element {
     menuItemOrderCounts,
   ]);
 
+  const searchDropdownItems = useMemo(() => filteredMenu.slice(0, 8), [filteredMenu]);
+
+  useEffect(() => {
+    setSearchHighlight(0);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!searchDropdownOpen) return;
+    function onClickOutside(e: MouseEvent): void {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSearchDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [searchDropdownOpen]);
+
   function addVariantToCart(item: ApiMenuItem, variant: MenuItemVariant | null): void {
     setCart((prev) => {
       const sortOrder = nextCartSortOrder(prev);
@@ -482,6 +695,33 @@ export function PosPage(): JSX.Element {
       return;
     }
     addVariantToCart(item, pickDefaultVariant(item));
+  }
+
+  function selectSearchDropdownItem(item: ApiMenuItem): void {
+    onDishClick(item);
+    setSearch("");
+    setSearchDropdownOpen(false);
+  }
+
+  function onSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>): void {
+    if (!isSearching || searchDropdownItems.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSearchDropdownOpen(true);
+      setSearchHighlight((i) => Math.min(searchDropdownItems.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSearchDropdownOpen(true);
+      setSearchHighlight((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      if (!searchDropdownOpen) return;
+      e.preventDefault();
+      const item = searchDropdownItems[searchHighlight];
+      if (item) selectSearchDropdownItem(item);
+    } else if (e.key === "Escape") {
+      setSearchDropdownOpen(false);
+    }
+    // ArrowLeft / ArrowRight are left untouched so the text cursor still moves within the input.
   }
 
   function setQty(lineKey: string, qty: number): void {
@@ -530,6 +770,18 @@ export function PosPage(): JSX.Element {
 
   const subtotal = effectiveCart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
 
+  const itemEligibility = useMemo(() => {
+    const discountableSubtotal = effectiveCart.reduce(
+      (s, l) => s + (l.item.discountable && !l.item.nonDiscountable ? l.unitPrice * l.qty : 0),
+      0,
+    );
+    const taxableSubtotal = effectiveCart.reduce(
+      (s, l) => s + (l.item.nonTaxable ? 0 : l.unitPrice * l.qty),
+      0,
+    );
+    return { discountableSubtotal, taxableSubtotal };
+  }, [effectiveCart]);
+
   useEffect(() => {
     setDiscountAmountInput((prev) => clampDiscountPkr(prev, subtotal));
   }, [subtotal]);
@@ -540,7 +792,7 @@ export function PosPage(): JSX.Element {
         ? discountAmountFromPct(discountPctInput, subtotal)
         : clampDiscountPkr(discountAmountInput, subtotal);
     const charge = mode === "delivery" ? deliveryChargePkr : 0;
-    return computeTicketTotals(subtotal, discountSeed, ticketServicePct, taxPct, charge);
+    return computeTicketTotals(subtotal, discountSeed, ticketServicePct, taxPct, charge, itemEligibility);
   }, [
     subtotal,
     discountPctInput,
@@ -550,6 +802,7 @@ export function PosPage(): JSX.Element {
     taxPct,
     mode,
     deliveryChargePkr,
+    itemEligibility,
   ]);
 
   const { discount, discountPct, service, tax, deliveryCharge, total } = ticketTotals;
@@ -620,7 +873,7 @@ export function PosPage(): JSX.Element {
   }
 
   function resetAfterKitchenOrder(): void {
-    setOrderRef(nextOrderRef(branch?.code));
+    setOrderRef(peekNextOrderRef(branch?.code));
     setCart([]);
     setDeliveryCustomer("");
     setDeliveryPhone("");
@@ -823,7 +1076,7 @@ export function PosPage(): JSX.Element {
       }
       return createKitchenTicket({
         branchCode: branch!.code,
-        orderRef,
+        orderRef: nextOrderRef(branch!.code),
         stationLabel,
         lines: kitchenLines(),
         notes: orderNotes,
@@ -832,7 +1085,18 @@ export function PosPage(): JSX.Element {
     },
     onSuccess: () => {
       const wasTicketEdit = editingOrder?.kind === "ticket";
-      const kotOk = printKot(buildKotPrintPayload());
+      const kotOk = buildRoutedKotPrintPayloads()
+        .map((payload) => {
+          const ok = printKot(payload);
+          logPrintEvent(branch?.code, {
+            kind: "kot",
+            printerName: payload.printerName,
+            orderRef: payload.orderRef,
+            ok,
+          });
+          return ok;
+        })
+        .every(Boolean);
       invalidateOrderFeeds();
       setEditingOrder(null);
       resetAfterKitchenOrder();
@@ -912,7 +1176,7 @@ export function PosPage(): JSX.Element {
       }
       const bill = await createBill({
         branchCode: branch!.code,
-        orderRef,
+        orderRef: nextOrderRef(branch!.code),
         tableLabel: billTableLabel,
         waiterName: "POS Counter",
         notes: orderNotes,
@@ -925,6 +1189,9 @@ export function PosPage(): JSX.Element {
         payments: status === "completed" ? payments : undefined,
         ...deliveryExtras(),
       });
+      if (editingOrder?.kind === "ticket") {
+        await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
+      }
       return { bill, intent };
     },
     onSuccess: ({ bill, intent }) => {
@@ -958,7 +1225,7 @@ export function PosPage(): JSX.Element {
     mutationFn: async (splits: SplitBillPart[]) => {
       const err = validateBillCheckout();
       if (err) throw new Error(err);
-      const groupRef = orderRef;
+      const groupRef = nextOrderRef(branch!.code);
       const bills = [];
       for (let i = 0; i < splits.length; i++) {
         const split = splits[i];
@@ -971,7 +1238,7 @@ export function PosPage(): JSX.Element {
             : 0;
         const bill = await createBill({
           branchCode: branch!.code,
-          orderRef,
+          orderRef: groupRef,
           tableLabel: billTableLabel,
           waiterName: "POS Counter",
           notes: orderNotes ? `${orderNotes} · ${split.label}` : split.label,
@@ -1019,6 +1286,30 @@ export function PosPage(): JSX.Element {
     };
   }
 
+  /**
+   * Splits the KOT by printer section (Kitchen, Grill, Bar, ...) when categories/items
+   * have a "Print to" assignment configured. Falls back to a single combined KOT — the
+   * original behavior — when no routing is set up for anything in the cart.
+   */
+  function buildRoutedKotPrintPayloads(): Omit<PrintTicketInput, "kind">[] {
+    const basePayload = buildKotPrintPayload();
+    const enabledSections = loadPrinterSections(branch?.code).filter((s) => s.enabled);
+    if (enabledSections.length === 0) return [basePayload];
+
+    const enabledSectionIds = new Set(enabledSections.map((s) => s.id));
+    const groups = groupCartLinesBySection(branch?.code, effectiveCart, enabledSectionIds);
+    if (groups.length <= 1 && groups[0]?.sectionId == null) return [basePayload];
+
+    return groups.map(({ sectionId, lines }) => {
+      const section = sectionId ? enabledSections.find((s) => s.id === sectionId) : null;
+      return {
+        ...basePayload,
+        lines: lines.map((line) => ({ label: line.lineLabel, qty: line.qty, unitPrice: 0 })),
+        printerName: section ? `${section.icon} ${section.name}` : "Unassigned",
+      };
+    });
+  }
+
   function runPrintOrder(): void {
     createOrderMutation.mutate();
   }
@@ -1052,6 +1343,24 @@ export function PosPage(): JSX.Element {
         ? "Select table"
         : null;
 
+  const zoom = POS_ZOOM_LEVELS[zoomIndex] ?? 1;
+
+  function setPosZoomIndex(next: number): void {
+    const clamped = Math.max(0, Math.min(POS_ZOOM_LEVELS.length - 1, next));
+    setZoomIndex(clamped);
+    try {
+      localStorage.setItem(POS_ZOOM_STORAGE_KEY, String(clamped));
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function toggleHeaderVisible(): void {
+    const next = !headerVisible;
+    setHeaderVisible(next);
+    setPosHeaderVisible(next);
+  }
+
   return (
     <div className="flex min-h-[calc(100vh-4.25rem)] flex-col gap-2">
       {terminalBlocked ? (
@@ -1062,13 +1371,59 @@ export function PosPage(): JSX.Element {
       ) : null}
       {/* Compact toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900/40 px-2.5 py-2">
+        <button
+          type="button"
+          className={POS_HEADER_TOGGLE_BTN}
+          aria-pressed={!headerVisible}
+          aria-label={headerVisible ? "Hide top navigation bar" : "Show top navigation bar"}
+          title={headerVisible ? "Hide top navigation" : "Show top navigation"}
+          onClick={toggleHeaderVisible}
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+          </svg>
+        </button>
         <div className="shrink-0 text-sm font-semibold text-white">POS</div>
-        <input
-          placeholder="Search menu or scan SKU…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="min-w-0 flex-1 basis-[10rem] rounded-md border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/40 sm:max-w-md"
-        />
+        <div ref={searchContainerRef} className="relative min-w-0 flex-1 basis-[10rem] sm:max-w-md">
+          <input
+            placeholder="Search menu or scan SKU…"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setSearchDropdownOpen(true);
+            }}
+            onFocus={() => setSearchDropdownOpen(true)}
+            onKeyDown={onSearchKeyDown}
+            className="w-full rounded-md border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/40"
+          />
+          {searchDropdownOpen && isSearching && searchDropdownItems.length > 0 ? (
+            <div className="absolute left-0 top-full z-30 mt-1 w-full overflow-hidden rounded-md border border-slate-700 bg-slate-900 shadow-xl">
+              {searchDropdownItems.map((item, index) => {
+                const price = menuItemDisplayPrice(item);
+                const hasPicker = resolvePosSellableVariants(item).length > 1;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onMouseEnter={() => setSearchHighlight(index)}
+                    onClick={() => selectSearchDropdownItem(item)}
+                    className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition ${
+                      index === searchHighlight
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-200 hover:bg-slate-800"
+                    }`}
+                  >
+                    <span className="truncate">{item.name}</span>
+                    <span className={`shrink-0 font-semibold ${index === searchHighlight ? "" : "text-amber-300"}`}>
+                      {hasPicker ? "From " : ""}
+                      {price.toLocaleString()}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         <div className="flex w-full shrink-0 flex-wrap items-center gap-1 sm:ml-auto sm:w-auto">
           {cashSessionQuery.data ? (
             <span className="rounded-md bg-emerald-500/15 px-2 py-1 text-[10px] font-medium text-emerald-300 ring-1 ring-emerald-500/30">
@@ -1103,8 +1458,49 @@ export function PosPage(): JSX.Element {
           <button type="button" className={POS_TOOLBAR_BTN} onClick={() => setPayOutModalOpen(true)}>
             Paying out
           </button>
+          <button type="button" className={POS_TOOLBAR_BTN} onClick={() => setStaffFoodModalOpen(true)}>
+            Staff food
+          </button>
+          <div className="ml-1 flex items-center gap-1.5 border-l border-slate-700/80 pl-2">
+            <button
+              type="button"
+              className={POS_ZOOM_BTN}
+              onClick={() => setPosZoomIndex(zoomIndex - 1)}
+              disabled={zoomIndex === 0}
+            >
+              Zoom out
+            </button>
+            <span className="min-w-[2.5rem] text-center text-[10px] font-medium tabular-nums text-slate-400">
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              type="button"
+              className={POS_ZOOM_BTN}
+              onClick={() => setPosZoomIndex(zoomIndex + 1)}
+              disabled={zoomIndex === POS_ZOOM_LEVELS.length - 1}
+            >
+              Zoom in
+            </button>
+          </div>
         </div>
       </div>
+
+      {closingStatusQuery.data?.ordersPaused ? (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+          <span>
+            New orders are paused for day closing (business date{" "}
+            {closingStatusQuery.data.businessDate}). Resume to continue, or switch to another branch.
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+            disabled={resumeOrdersMutation.isPending}
+            onClick={() => resumeOrdersMutation.mutate()}
+          >
+            {resumeOrdersMutation.isPending ? "Resuming…" : "Resume orders"}
+          </button>
+        </div>
+      ) : null}
 
       {menuQuery.isError ? (
         <p className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -1117,6 +1513,7 @@ export function PosPage(): JSX.Element {
           selectedMode={mode}
           onSelect={confirmOrderType}
           onClose={dismissOrderTypeModal}
+          modes={visiblePosOrderModes}
         />
       ) : null}
 
@@ -1127,9 +1524,13 @@ export function PosPage(): JSX.Element {
           selectedSectionId={selectedFloorSectionId}
           selectedTableId={selectedTableId}
           isLoading={floorQuery.isLoading}
+          occupiedTableNumbers={occupiedTableNumbers}
           onSelectSection={setSelectedFloorSectionId}
           onSelectTable={setSelectedTableId}
-          onClose={() => setSeatingModalOpen(false)}
+          onClose={() => {
+            setSeatingModalOpen(false);
+            markSeatingModalShown();
+          }}
         />
       ) : null}
 
@@ -1146,7 +1547,10 @@ export function PosPage(): JSX.Element {
       ) : null}
 
       {/* Main POS grid */}
-      <div className="grid flex-1 grid-cols-12 gap-3 lg:items-start">
+      <div
+        className="grid flex-1 grid-cols-12 gap-3 lg:items-start"
+        style={{ zoom }}
+      >
         {/* Menu column */}
         <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           {/* Category pills */}
@@ -1313,8 +1717,13 @@ export function PosPage(): JSX.Element {
           <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-                  {editingOrder ? "Editing" : "Current ticket"}
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                    {editingOrder ? "Editing" : "Current ticket"}
+                  </div>
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-400">
+                    {posOrderModeLabel(mode)}
+                  </span>
                 </div>
                 <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
                   {editingOrder ? "Modify order" : "New order"}
@@ -1339,8 +1748,16 @@ export function PosPage(): JSX.Element {
 
           <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800/80 dark:bg-slate-900/30">
             <div className={POS_MODE_BAR}>
-              {POS_ORDER_MODES.map(({ id, label }) => (
-                <button key={id} type="button" onClick={() => switchMode(id)} className={POS_MODE_BTN(mode === id)}>
+              {visiblePosOrderModes.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={(e) => {
+                    switchMode(id);
+                    e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+                  }}
+                  className={POS_MODE_BTN(mode === id)}
+                >
                   {label}
                 </button>
               ))}
@@ -1361,18 +1778,6 @@ export function PosPage(): JSX.Element {
                   ›
                 </span>
               </button>
-            ) : null}
-
-            {mode === "online" || mode === "foodpanda" ? (
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
-                {mode === "online" ? "Online order channel" : "Foodpanda order channel"}
-              </div>
-            ) : null}
-
-            {mode === "takeaway" ? (
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-300">
-                Takeaway counter
-              </div>
             ) : null}
 
             {mode === "delivery" ? (
@@ -1400,12 +1805,50 @@ export function PosPage(): JSX.Element {
                 {deliveryDetailsOpen ? (
                   <div className="mt-1.5 grid grid-cols-1 gap-1.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700/60 dark:bg-slate-950/40">
                     <div className="grid grid-cols-2 gap-1.5">
-                      <input
-                        placeholder="Customer"
-                        value={deliveryCustomer}
-                        onChange={(e) => setDeliveryCustomer(e.target.value)}
-                        className={`${TICKET_INPUT_CLASS} py-1.5`}
-                      />
+                      <div className="relative" ref={deliveryCustomerFieldRef}>
+                        <input
+                          placeholder="Customer (type * or # to search)"
+                          value={deliveryCustomer}
+                          onChange={(e) => handleDeliveryCustomerChange(e.target.value)}
+                          onFocus={() => {
+                            if (Math.max(deliveryCustomer.lastIndexOf("*"), deliveryCustomer.lastIndexOf("#")) !== -1) {
+                              setDeliveryCustomerPickerOpen(true);
+                            }
+                          }}
+                          className={`${TICKET_INPUT_CLASS} py-1.5`}
+                        />
+                        {deliveryCustomerPickerOpen ? (
+                          <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
+                            {customerInvoicesQuery.isLoading ? (
+                              <p className="px-2.5 py-2 text-xs text-slate-500">Loading customers…</p>
+                            ) : customerInvoicesQuery.isError ? (
+                              <p className="px-2.5 py-2 text-xs text-red-400">
+                                Could not load accounts: {(customerInvoicesQuery.error as Error).message}
+                              </p>
+                            ) : filteredDeliveryCustomers.length === 0 ? (
+                              <p className="px-2.5 py-2 text-xs text-slate-500">
+                                No existing customers yet — fill in Customer/Phone on a delivery order once, or add
+                                one from Accounts, and it'll show up here next time.
+                              </p>
+                            ) : (
+                              filteredDeliveryCustomers.map((customer) => (
+                                <button
+                                  key={`${customer.name}-${customer.phone}`}
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => selectKnownDeliveryCustomer(customer)}
+                                  className="flex w-full flex-col items-start gap-0 px-2.5 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800"
+                                >
+                                  <span className="font-medium">{customer.name}</span>
+                                  {customer.phone ? (
+                                    <span className="text-[10px] text-slate-400">{customer.phone}</span>
+                                  ) : null}
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
                       <input
                         placeholder="Phone"
                         type="tel"
@@ -1770,6 +2213,10 @@ export function PosPage(): JSX.Element {
           onClose={() => setPayOutModalOpen(false)}
           onSuccess={(message) => setPrintNotice({ message, tone: "success" })}
         />
+      ) : null}
+
+      {staffFoodModalOpen ? (
+        <PosStaffFoodModal onClose={() => setStaffFoodModalOpen(false)} />
       ) : null}
 
       {cashierModal && branch?.code ? (

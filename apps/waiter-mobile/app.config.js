@@ -3,18 +3,23 @@ const path = require("path");
 
 const base = require("./app.json");
 
-function loadEnvApiUrl() {
+function loadEnvValue(key) {
   const envPath = path.join(__dirname, ".env");
   if (!fs.existsSync(envPath)) return undefined;
   for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.trim().match(/^EXPO_PUBLIC_API_BASE_URL=(.+)$/);
+    const m = line.trim().match(new RegExp(`^${key}=(.+)$`));
     if (m) return m[1].trim().replace(/^["']|["']$/g, "");
   }
   return undefined;
 }
 
-const variant = process.env.EXPO_PUBLIC_APP_VARIANT || process.env.APP_VARIANT || "waiter";
-const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || loadEnvApiUrl();
+const variant =
+  process.env.EXPO_PUBLIC_APP_VARIANT ||
+  process.env.APP_VARIANT ||
+  loadEnvValue("EXPO_PUBLIC_APP_VARIANT") ||
+  loadEnvValue("APP_VARIANT") ||
+  "waiter";
+const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || loadEnvValue("EXPO_PUBLIC_API_BASE_URL");
 
 const variants = {
   waiter: {

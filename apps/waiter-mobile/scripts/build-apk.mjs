@@ -134,6 +134,20 @@ function patchAndroidBuildGradle(gradlePath, buildAppRoot) {
     );
   }
 
+  // Skip Hermes source maps — compose-source-maps fails on empty Metro maps (Node 24 / export:embed).
+  if (!/^\s*hermesFlags\s*=/m.test(text)) {
+    text = text.replace(
+      /\/\/\s*hermesFlags\s*=\s*\["-O",\s*"-output-source-map"\]/,
+      'hermesFlags = ["-O"]',
+    );
+  }
+  if (!/^\s*hermesFlags\s*=/m.test(text) && text.includes('bundleCommand = "export:embed"')) {
+    text = text.replace(
+      /bundleCommand = "export:embed"\n/,
+      'bundleCommand = "export:embed"\n    hermesFlags = ["-O"]\n',
+    );
+  }
+
   if (!text.includes("expo.modules.ExpoModulesPackage")) {
     const autolinkPatch = `
 // expo-modules-autolinking still emits legacy expo.core.ExpoModulesPackage; Expo 52 uses expo.modules.
@@ -212,12 +226,25 @@ function ensureAndroidProject(apiUrl, buildPaths) {
   patchAndroidBuildGradle(buildGradle, buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
+  forceApplicationId(buildGradle, variant.packageId);
+}
+
+function forceApplicationId(buildGradlePath, packageId) {
+  if (!existsSync(buildGradlePath)) return;
+  let text = readFileSync(buildGradlePath, "utf8");
+  const next = text.replace(/applicationId\s+'[^']+'/, `applicationId '${packageId}'`);
+  if (next !== text) {
+    writeFileSync(buildGradlePath, next);
+    console.log(`[build-apk] Forced applicationId → ${packageId}`);
+  }
 }
 
 function applyAndroidPatches(buildPaths) {
-  patchAndroidBuildGradle(join(buildPaths.androidDir, "app", "build.gradle"), buildPaths.appRoot);
+  const buildGradle = join(buildPaths.androidDir, "app", "build.gradle");
+  patchAndroidBuildGradle(buildGradle, buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
+  forceApplicationId(buildGradle, variant.packageId);
 }
 
 function clearAutolinkingCache(androidDirPath) {
@@ -288,6 +315,16 @@ const gradleEnv = {
   APP_VARIANT: variant.envVariant,
   EXPO_NO_METRO_WORKSPACE_ROOT: "1",
 };
+
+// Metro writes sourcemaps here before Gradle creates the folder (clean prebuild).
+mkdirSync(
+  join(paths.androidDir, "app", "build", "intermediates", "sourcemaps", "react", "release"),
+  { recursive: true },
+);
+mkdirSync(
+  join(paths.androidDir, "app", "build", "generated", "assets", "createBundleReleaseJsAndAssets"),
+  { recursive: true },
+);
 
 const gradlew = join(paths.androidDir, isWin ? "gradlew.bat" : "gradlew");
 if (isWin) {

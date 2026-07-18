@@ -90,9 +90,11 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       }
       const showQty = fields!.itemQty;
       const showAmt = fields!.itemAmount;
+      const colCount = 1 + (showQty ? 1 : 0) + (showAmt ? 2 : 0);
       return `<tr>
-        <td class="item-name" colspan="${showQty || showAmt ? 1 : 3}">${escapeHtml(line.label)}</td>
         ${showQty ? `<td class="qty">${line.qty}</td>` : ""}
+        <td class="item-name" colspan="${showQty || showAmt ? 1 : colCount}">${escapeHtml(line.label)}</td>
+        ${showAmt ? `<td class="price">${formatMoney(line.unitPrice)}</td>` : ""}
         ${showAmt ? `<td class="amt">${formatMoney(lineTotal)}</td>` : ""}
       </tr>`;
     })
@@ -165,12 +167,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       : "";
 
   const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : receiptFonts.body;
-  const emphasizeMeta = !isReceipt && kotSettings.emphasizeOrderMeta;
+  // Order ref / type / table chips are always emphasized (bold, larger) on customer receipts;
+  // on kitchen tickets it stays behind the existing toggle.
+  const emphasizeMeta = isReceipt || kotSettings.emphasizeOrderMeta;
   const compact = isReceipt && billSettings.layout === "compact";
   const headerAlign = isReceipt && billSettings.headerAlign === "left" ? "left" : "center";
   const showItemTable = !isReceipt || fields!.itemQty || fields!.itemAmount || input.lines.length > 0;
   const showQtyCol = !isReceipt || fields!.itemQty;
-  const showAmtCol = !isReceipt || fields!.itemAmount;
+  // Price/Amount are receipt-only — kitchen tickets never show pricing to kitchen staff.
+  const showAmtCol = isReceipt && fields!.itemAmount;
   const showItemHeaders = !isReceipt || fields!.itemHeaders;
   const displayBusinessName =
     isReceipt && billSettings.headerBusinessName.trim()
@@ -199,6 +204,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     thead th { font-size: ${receiptFonts.th}px; }
     td.item-name { font-size: ${receiptFonts.itemName}px; }
     td.qty { font-size: ${receiptFonts.qty}px; }
+    td.price { font-size: ${receiptFonts.amt}px; }
     td.amt { font-size: ${receiptFonts.amt}px; }
     .row .label { font-size: ${receiptFonts.rowLabel}px; }
     .row .value { font-size: ${receiptFonts.rowValue}px; }
@@ -320,6 +326,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       text-align: left;
     }
     thead th.qty { width: 32px; text-align: center; }
+    thead th.price { text-align: right; }
     thead th.amt { text-align: right; }
     tbody td {
       padding: 5px 0;
@@ -340,6 +347,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-weight: 600;
       color: #374151;
       font-variant-numeric: tabular-nums;
+    }
+    td.price {
+      text-align: right;
+      white-space: nowrap;
+      font-size: 10px;
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
+      color: #6b7280;
+      padding-right: 8px;
     }
     td.amt {
       text-align: right;
@@ -465,8 +481,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     ${showItemHeaders
       ? `<thead>
       <tr>
-        <th>Item</th>
         ${showQtyCol ? '<th class="qty">Qty</th>' : ""}
+        <th>Item</th>
+        ${showAmtCol ? '<th class="price">Price</th>' : ""}
         ${showAmtCol ? '<th class="amt">Amount</th>' : ""}
       </tr>
     </thead>`
@@ -488,11 +505,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
 </html>`;
 }
 
-/** Opens the system print dialog with a thermal-style ticket. */
-export function printTicket(input: PrintTicketInput): boolean {
-  if (input.lines.length === 0) return false;
-
-  const html = buildTicketHtml(input);
+/** Opens the system print dialog with an arbitrary HTML document via a hidden iframe. */
+export function printHtmlDocument(html: string, docTitle?: string): boolean {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("title", "print");
   iframe.style.cssText =
@@ -510,8 +524,8 @@ export function printTicket(input: PrintTicketInput): boolean {
   doc.write(html);
   doc.close();
 
-  if (input.printerName) {
-    doc.title = `${input.kind === "receipt" ? "Receipt" : "KOT"} · ${input.printerName}`;
+  if (docTitle) {
+    doc.title = docTitle;
   }
 
   const cleanup = (): void => {
@@ -528,6 +542,43 @@ export function printTicket(input: PrintTicketInput): boolean {
   });
 
   return true;
+}
+
+/** Opens the system print dialog with a thermal-style ticket. */
+export function printTicket(input: PrintTicketInput): boolean {
+  if (input.lines.length === 0) return false;
+
+  const html = buildTicketHtml(input);
+  const docTitle = input.printerName
+    ? `${input.kind === "receipt" ? "Receipt" : "KOT"} · ${input.printerName}`
+    : undefined;
+  return printHtmlDocument(html, docTitle);
+}
+
+/** Opens the system print dialog with a simple test page for a named printer. */
+export function printTestPage(printerName: string): boolean {
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Test print · ${printerName}</title>
+<style>
+  body { font-family: monospace; width: 280px; margin: 0 auto; padding: 16px 0; text-align: center; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  p { font-size: 11px; margin: 4px 0; }
+  hr { border: none; border-top: 1px dashed #000; margin: 10px 0; }
+</style>
+</head>
+<body>
+  <h1>TEST PRINT</h1>
+  <hr />
+  <p>Printer: ${printerName}</p>
+  <p>${new Date().toLocaleString()}</p>
+  <hr />
+  <p>If this printed correctly, the printer is connected and working.</p>
+</body>
+</html>`;
+  return printHtmlDocument(html, `Test print · ${printerName}`);
 }
 
 export function billToPrintInput(

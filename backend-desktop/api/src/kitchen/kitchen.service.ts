@@ -345,7 +345,18 @@ export class KitchenService {
       .where(and(eq(popsMenuItems.branchId, branchId), eq(popsMenuItems.isActive, true)));
 
     return lines.map((line) => {
-      if (line.menuItemId) return line;
+      if (line.unitPrice > 0 && line.menuItemId) return line;
+
+      if (line.menuItemId) {
+        const byId = menuRows.find((item) => item.id === line.menuItemId);
+        if (byId) {
+          return {
+            ...line,
+            unitPrice: line.unitPrice > 0 ? line.unitPrice : byId.price,
+          };
+        }
+      }
+
       const norm = normalizeMenuLabel(line.label);
       const match = menuRows.find((item) => {
         const itemLabel = formatMenuItemLabel(item.name, item.portion);
@@ -387,7 +398,9 @@ export class KitchenService {
         /* fall through */
       }
     }
-    return row.itemsSummary
+    const deliverySplit = row.itemsSummary.split(/\s·\s*Delivery\b/i)[0] ?? row.itemsSummary;
+    const foodPart = deliverySplit.split(" · ")[0]?.trim() || deliverySplit.trim();
+    return foodPart
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean)

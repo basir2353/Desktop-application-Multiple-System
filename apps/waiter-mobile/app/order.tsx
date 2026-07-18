@@ -54,7 +54,7 @@ import {
   type MobileOrderMode,
 } from "../src/lib/orderMode";
 import { resolveStaffRole, isCashierRole } from "../src/lib/roles";
-import { printBillReceipt } from "../src/lib/printBill";
+import { printBillReceipt, printCartOrder, printKitchenOrder } from "../src/lib/printBill";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 const SERVICE_PCT = 10;
@@ -75,6 +75,7 @@ export default function OrderScreen() {
   const queryClient = useQueryClient();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
+  const waiterEmail = useSessionStore((s) => s.waiterEmail);
   const clearSession = useSessionStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
   const clearBranch = useBranchStore((s) => s.clear);
@@ -391,21 +392,30 @@ export default function OrderScreen() {
         ...deliveryExtras,
       });
     },
-    onSuccess: () => {
+    onSuccess: async (ticket) => {
       const wasEdit = editingOrder?.kind === "ticket";
       updateDraft({ cart: [], notes: "" });
       setEditingOrder(null);
       appliedEditRef.current = null;
       setShowMenu(false);
       invalidateOrderFeeds();
-      setNotice(wasEdit ? "Order updated successfully." : "Order sent to kitchen successfully.");
+      const printed = await printKitchenOrder(branch!.name, branch!.code, ticket, menuItems);
+      setNotice(
+        wasEdit
+          ? printed
+            ? "Order updated and printed."
+            : "Order updated successfully."
+          : printed
+            ? "Order sent to kitchen and printed."
+            : "Order sent to kitchen successfully.",
+      );
       if (wasEdit) router.replace("/order");
     },
     onError: (err: Error) => setNotice(err.message),
   });
 
   const billMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (cart.length === 0) throw new Error("Add at least one item.");
       const targetErr = validateOrderTarget();
       if (targetErr) throw new Error(targetErr);
@@ -426,7 +436,7 @@ export default function OrderScreen() {
           deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
         });
       }
-      return createBill({
+      const bill = await createBill({
         branchCode,
         orderRef,
         tableLabel,
@@ -441,6 +451,10 @@ export default function OrderScreen() {
         riderId: orderMode === "delivery" ? deliveryRiderId || undefined : undefined,
         deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : undefined,
       });
+      if (editingOrder?.kind === "ticket") {
+        await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
+      }
+      return bill;
     },
     onSuccess: async (bill) => {
       const wasEdit = editingOrder?.kind === "bill";
@@ -612,6 +626,7 @@ export default function OrderScreen() {
             >
               {tables.map((t) => {
                 const occ = occupancyForTable(tableOccupancy, t.tableNumber);
+                const lockedByOther = Boolean(occ && !occ.mine);
                 return (
                   <Chip
                     key={t.id}
@@ -621,6 +636,7 @@ export default function OrderScreen() {
                     sublabel={
                       occ ? (occ.mine ? "Your order" : occ.ownerName ?? "Booked") : undefined
                     }
+                    disabled={lockedByOther}
                     onPress={() => selectTable(t.tableNumber)}
                   />
                 );
@@ -756,8 +772,8 @@ export default function OrderScreen() {
                   sendMutation.isPending
                     ? "Saving…"
                     : editingOrder?.kind === "ticket"
-                      ? "Update order"
-                      : "Send to kitchen"
+                      ? "Update & print"
+                      : "Send & print"
                 }
                 onPress={() => sendMutation.mutate()}
                 disabled={cart.length === 0 || Boolean(validateOrderTarget())}
@@ -766,11 +782,43 @@ export default function OrderScreen() {
             </View>
             ) : null}
           </View>
+
+          {cart.length > 0 && editingOrder?.kind !== "bill" ? (
+            <Button
+              label="Print order"
+              variant="ghost"
+              disabled={Boolean(validateOrderTarget())}
+              onPress={() => {
+                void (async () => {
+                  const ok = await printCartOrder({
+                    branchName: branch.name,
+                    branchCode: branch.code,
+                    orderRef,
+                    stationLabel: stationLabelForMode(orderMode, activeTableId),
+                    waiterName: waiterEmail,
+                    notes: combinedOrderNotes() ?? null,
+                    lines: cartLines(),
+                    total,
+                  });
+                  setNotice(ok ? "Print order sent." : "Could not print order.");
+                })();
+              }}
+            />
+          ) : null}
         </Card>
 
         {showMenu ? (
           <Card style={styles.menuCard}>
             <SectionHeader title="Menu" actionLabel="Close" onAction={() => setShowMenu(false)} />
+
+            {cartQty > 0 ? (
+              <View style={styles.menuCartSummary}>
+                <Text style={styles.menuCartSummaryText}>
+                  Qty {cartQty} · {cart.length} item{cart.length === 1 ? "" : "s"}
+                </Text>
+                <Text style={styles.menuCartSummaryTotal}>{formatPkr(subtotal)}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.searchWrap}>
               <Text style={styles.searchIcon}>⌕</Text>
@@ -827,23 +875,37 @@ export default function OrderScreen() {
                 {section.items.map((item) => {
                   const inCart = cart.find((l) => l.item.id === item.id)?.qty ?? 0;
                   return (
-                    <Pressable
-                      key={item.id}
-                      onPress={() => addToCart(item)}
-                      style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-                    >
-                      <View style={styles.menuItemCopy}>
+                    <View key={item.id} style={styles.menuItem}>
+                      <Pressable
+                        onPress={() => {
+                          if (inCart === 0) addToCart(item);
+                        }}
+                        style={({ pressed }) => [
+                          styles.menuItemCopy,
+                          pressed && inCart === 0 && styles.menuItemPressed,
+                        ]}
+                      >
                         <Text style={styles.menuItemName} numberOfLines={2}>
                           {formatMenuItemLabel(item)}
                         </Text>
                         <Text style={styles.menuItemPrice}>{formatPkr(item.price)}</Text>
-                      </View>
-                      <View style={[styles.addBtn, inCart > 0 && styles.addBtnActive]}>
-                        <Text style={[styles.addBtnText, inCart > 0 && styles.addBtnTextActive]}>
-                          {inCart > 0 ? inCart : "+"}
-                        </Text>
-                      </View>
-                    </Pressable>
+                      </Pressable>
+                      {inCart > 0 ? (
+                        <QtyStepper
+                          qty={inCart}
+                          onDecrement={() => setLineQty(item.id, inCart - 1)}
+                          onIncrement={() => setLineQty(item.id, inCart + 1)}
+                        />
+                      ) : (
+                        <Pressable
+                          onPress={() => addToCart(item)}
+                          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
+                          hitSlop={8}
+                        >
+                          <Text style={styles.addBtnText}>+</Text>
+                        </Pressable>
+                      )}
+                    </View>
                   );
                 })}
               </View>
@@ -1134,17 +1196,38 @@ const styles = StyleSheet.create({
     gap: 12,
     borderColor: "rgba(245, 158, 11, 0.25)",
   },
+  menuCartSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  menuCartSummaryText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  menuCartSummaryTotal: {
+    color: colors.accent,
+    fontSize: 16,
+    fontWeight: "800",
+  },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0b1220",
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
   },
   searchIcon: {
-    color: "#64748b",
+    color: colors.muted,
     fontSize: 18,
     marginRight: 8,
   },
@@ -1171,35 +1254,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0b1220",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    padding: 14,
+    borderColor: colors.border,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
   menuItemPressed: {
-    opacity: 0.85,
+    opacity: 0.9,
     borderColor: "rgba(245, 158, 11, 0.55)",
-    backgroundColor: "#fff7ed",
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
   },
   menuItemCopy: {
     flex: 1,
     gap: 4,
   },
   menuItemName: {
-    color: "#0f172a",
+    color: colors.text,
     fontSize: 15,
     fontWeight: "600",
     lineHeight: 20,
   },
   menuItemPrice: {
-    color: "#b45309",
+    color: colors.accent,
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   addBtn: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1207,15 +1291,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  addBtnText: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "600",
+    lineHeight: 24,
+  },
   addBtnActive: {
     backgroundColor: colors.accent,
     borderColor: "#d97706",
-  },
-  addBtnText: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "500",
-    lineHeight: 22,
   },
   addBtnTextActive: {
     color: colors.accentText,

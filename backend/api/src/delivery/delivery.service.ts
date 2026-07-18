@@ -14,6 +14,7 @@ import {
   organizationMemberships,
   popsBranches,
   popsKitchenTickets,
+  popsMenuItems,
   popsRiders,
   organizations,
   users,
@@ -461,12 +462,61 @@ export class DeliveryService implements OnApplicationBootstrap {
 
   private async mapDeliveryOrder(row: typeof popsKitchenTickets.$inferSelect) {
     const ticket = await this.mapTicketWithRider(row);
+    const lines = await this.enrichLinesFromMenu(row.branchId, ticket.lines ?? []);
     const contact = this.parseDeliveryContact(row.itemsSummary);
     return {
       ...ticket,
+      lines,
       customerName: contact.customer,
       customerAddress: contact.address,
     };
+  }
+
+  private async enrichLinesFromMenu(
+    branchId: string,
+    lines: { label: string; qty: number; unitPrice: number; menuItemId?: string }[],
+  ): Promise<{ label: string; qty: number; unitPrice: number; menuItemId?: string }[]> {
+    if (lines.length === 0) return lines;
+
+    const menuRows = await this.db
+      .select({
+        id: popsMenuItems.id,
+        name: popsMenuItems.name,
+        portion: popsMenuItems.portion,
+        price: popsMenuItems.pricePkr,
+      })
+      .from(popsMenuItems)
+      .where(and(eq(popsMenuItems.branchId, branchId), eq(popsMenuItems.isActive, true)));
+
+    return lines.map((line) => {
+      if (line.unitPrice > 0 && line.menuItemId) return line;
+
+      if (line.menuItemId) {
+        const byId = menuRows.find((item) => item.id === line.menuItemId);
+        if (byId) {
+          return {
+            ...line,
+            unitPrice: line.unitPrice > 0 ? line.unitPrice : byId.price,
+          };
+        }
+      }
+
+      const norm = normalizeMenuLabel(line.label);
+      const match = menuRows.find((item) => {
+        const itemLabel = formatMenuItemLabel(item.name, item.portion);
+        return (
+          normalizeMenuLabel(itemLabel) === norm ||
+          normalizeMenuLabel(item.name) === norm ||
+          norm.includes(normalizeMenuLabel(item.name))
+        );
+      });
+      if (!match) return line;
+      return {
+        ...line,
+        unitPrice: line.unitPrice > 0 ? line.unitPrice : match.price,
+        menuItemId: match.id,
+      };
+    });
   }
 
   private parseDeliveryContact(text: string | null | undefined): { customer: string; address: string } {
@@ -586,4 +636,14 @@ export class DeliveryService implements OnApplicationBootstrap {
     if (!branch) throw new NotFoundException(`Branch not found: ${code}`);
     return branch;
   }
+}
+
+function normalizeMenuLabel(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function formatMenuItemLabel(name: string, portion: string | null): string {
+  if (!portion) return name;
+  const p = portion.charAt(0).toUpperCase() + portion.slice(1);
+  return `${name} (${p})`;
 }

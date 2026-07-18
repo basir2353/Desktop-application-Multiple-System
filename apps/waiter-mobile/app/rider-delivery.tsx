@@ -3,6 +3,7 @@ import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts";
 import { fetchMyDeliveries, updateDeliveryStatus } from "../src/api/delivery";
+import { fetchBranchMenu } from "../src/api/menu";
 import { Button, Card, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
@@ -27,7 +28,15 @@ export default function RiderDeliveryDetailScreen() {
     refetchInterval: 8_000,
   });
 
+  const menuQuery = useQuery({
+    queryKey: ["menu", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchBranchMenu(branchCode),
+    staleTime: 5 * 60_000,
+  });
+
   const order = deliveriesQuery.data?.find((o) => o.id === id);
+  const menuItems = menuQuery.data?.items ?? [];
 
   const statusMutation = useMutation({
     mutationFn: (deliveryStatus: "out_for_delivery" | "delivered") =>
@@ -65,7 +74,7 @@ export default function RiderDeliveryDetailScreen() {
   const canStart = status === "assigned";
   const canComplete = status === "out_for_delivery";
   const isDone = status === "delivered" || order.status === "done";
-  const total = deliveryOrderTotal(order);
+  const total = deliveryOrderTotal(order, menuItems);
 
   return (
     <Screen>
@@ -96,13 +105,11 @@ export default function RiderDeliveryDetailScreen() {
         </Card>
 
         <Card style={styles.section}>
-          {total != null ? (
-            <>
-              <Text style={styles.label}>Total bill</Text>
-              <Text style={[styles.value, styles.total]}>{formatPkr(total)}</Text>
-            </>
-          ) : null}
-          <Text style={[styles.label, total != null && { marginTop: 12 }]}>Delivery fee</Text>
+          <Text style={styles.label}>Total bill</Text>
+          <Text style={[styles.value, styles.total]}>
+            {total != null ? formatPkr(total) : "Calculating…"}
+          </Text>
+          <Text style={[styles.label, { marginTop: 12 }]}>Delivery fee</Text>
           <Text style={styles.value}>{formatPkr(order.deliveryChargePkr)}</Text>
           <Text style={styles.meta}>Placed {formatTimeAgo(order.createdAt)}</Text>
         </Card>

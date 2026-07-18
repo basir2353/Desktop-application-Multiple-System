@@ -229,6 +229,7 @@ export function Chip({
   onPress,
   tone,
   sublabel,
+  disabled,
 }: {
   label: string;
   selected?: boolean;
@@ -236,10 +237,12 @@ export function Chip({
   /** "mine" = booked by me (green), "locked" = booked by another waiter (red). */
   tone?: "mine" | "locked";
   sublabel?: string;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       style={({ pressed }) => [
         styles.chip,
         tone === "mine" && styles.chipMine,
@@ -247,6 +250,7 @@ export function Chip({
         selected && styles.chipSelected,
         selected && tone === "locked" && styles.chipSelectedLocked,
         pressed && styles.chipPressed,
+        disabled && styles.chipDisabled,
       ]}
     >
       <Text
@@ -294,6 +298,44 @@ export function QtyStepper({
       <Pressable onPress={onIncrement} style={[styles.qtyBtn, styles.qtyBtnAccent]} hitSlop={8}>
         <Text style={[styles.qtyBtnText, styles.qtyBtnTextAccent]}>+</Text>
       </Pressable>
+    </View>
+  );
+}
+
+export function LoginModeTabs({
+  mode,
+  onChange,
+}: {
+  mode: "password" | "pin";
+  onChange: (mode: "password" | "pin") => void;
+}) {
+  const options: { id: "password" | "pin"; label: string; hint: string }[] = [
+    { id: "password", label: "Sign In", hint: "Email & password" },
+    { id: "pin", label: "Login with PIN", hint: "4-digit branch PIN" },
+  ];
+
+  return (
+    <View style={styles.loginModeWrap}>
+      <Label>Choose how to sign in</Label>
+      <View style={styles.loginModeRow}>
+        {options.map((option) => {
+          const active = mode === option.id;
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => onChange(option.id)}
+              style={[styles.loginModeTab, active && styles.loginModeTabActive]}
+            >
+              <Text style={[styles.loginModeLabel, active && styles.loginModeLabelActive]}>
+                {option.label}
+              </Text>
+              <Text style={[styles.loginModeHint, active && styles.loginModeHintActive]}>
+                {option.hint}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -615,6 +657,9 @@ const styles = StyleSheet.create({
   chipPressed: {
     opacity: 0.88,
   },
+  chipDisabled: {
+    opacity: 0.55,
+  },
   chipText: {
     color: colors.text,
     fontSize: 14,
@@ -746,5 +791,44 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 22,
     fontWeight: "600",
+  },
+  loginModeWrap: {
+    gap: 8,
+  },
+  loginModeRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  loginModeTab: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#020617",
+    alignItems: "center",
+    gap: 4,
+  },
+  loginModeTabActive: {
+    borderColor: colors.accent,
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
+  loginModeLabel: {
+    color: colors.muted,
+    fontSize: 15,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  loginModeLabelActive: {
+    color: colors.text,
+  },
+  loginModeHint: {
+    color: colors.muted,
+    fontSize: 11,
+    textAlign: "center",
+  },
+  loginModeHintActive: {
+    color: colors.accent,
   },
 });

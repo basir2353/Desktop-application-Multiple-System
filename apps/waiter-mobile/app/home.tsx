@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets } from "../src/api/kitchen";
+import { fetchBranchMenu } from "../src/api/menu";
 import { fetchBranchFloor } from "../src/api/tables";
 import {
   Card,
@@ -30,7 +31,7 @@ import {
   orderRefFromTicket,
   waiterDisplayName,
 } from "../src/lib/orderDisplay";
-import { buildUnifiedOrders } from "../src/lib/orderHistory";
+import { buildUnifiedOrders, kitchenTicketTotal } from "../src/lib/orderHistory";
 import { resolveStaffRole, canCloseOrders } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -40,7 +41,7 @@ type QuickAction = {
   title: string;
   subtitle: string;
   icon: string;
-  route: "/order" | "/orders" | "/history";
+  route: "/order" | "/orders" | "/history" | "/table-transfer";
   primary?: boolean;
   historyFilter?: "held";
 };
@@ -76,6 +77,13 @@ export default function HomeScreen() {
     queryFn: () => fetchBranchFloor(branchCode),
   });
 
+  const menuQuery = useQuery({
+    queryKey: ["menu", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchBranchMenu(branchCode),
+    staleTime: 5 * 60_000,
+  });
+
   if (!accessToken) {
     return <Redirect href="/" />;
   }
@@ -90,6 +98,7 @@ export default function HomeScreen() {
 
   const tickets = kitchenQuery.data ?? [];
   const bills = ordersQuery.data ?? [];
+  const menuItems = menuQuery.data?.items ?? [];
   const unified = buildUnifiedOrders(bills, tickets);
   const activeTickets = tickets.filter((t) => t.status !== "done");
   const readyCount = activeTickets.filter((t) => t.status === "ready").length;
@@ -132,6 +141,13 @@ export default function HomeScreen() {
       subtitle: `${activeTickets.length} active · ${cookingCount} cooking`,
       icon: "◎",
       route: "/orders",
+    },
+    {
+      id: "transfer",
+      title: "Table transfer",
+      subtitle: "Move dine-in order to another table",
+      icon: "⇄",
+      route: "/table-transfer",
     },
     {
       id: "history",
@@ -302,6 +318,7 @@ export default function HomeScreen() {
               {recentTickets.map((ticket) => {
                 const status = kitchenStatusLabel(ticket.status);
                 const accent = kitchenStatusAccent(ticket.status);
+                const total = kitchenTicketTotal(ticket, menuItems);
                 return (
                   <Pressable
                     key={ticket.id}
@@ -314,7 +331,12 @@ export default function HomeScreen() {
                   >
                     <View style={styles.pulseTop}>
                       <Text style={styles.pulseRef}>{orderRefFromTicket(ticket)}</Text>
-                      <StatusBadge status={status} />
+                      <View style={styles.pulseTopRight}>
+                        <Text style={styles.pulseTotal}>
+                          {total != null ? formatPkr(total) : "—"}
+                        </Text>
+                        <StatusBadge status={status} />
+                      </View>
                     </View>
                     <View style={styles.pulseMetaRow}>
                       <View style={styles.tablePill}>
@@ -615,6 +637,15 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 13,
     lineHeight: 18,
+  },
+  pulseTopRight: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  pulseTotal: {
+    color: colors.accent,
+    fontSize: 15,
+    fontWeight: "800",
   },
   footer: {
     flexDirection: "row",

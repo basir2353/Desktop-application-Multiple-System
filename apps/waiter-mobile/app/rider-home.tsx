@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { DELIVERY_STATUS_LABELS, type DeliveryOrder, type DeliveryStatus } from "@platform/contracts";
 import { fetchMyDeliveries } from "../src/api/delivery";
+import { fetchBranchMenu } from "../src/api/menu";
 import {
   Button,
   Card,
@@ -52,8 +53,16 @@ export default function RiderHomeScreen() {
     refetchInterval: 8_000,
   });
 
+  const menuQuery = useQuery({
+    queryKey: ["menu", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchBranchMenu(branchCode),
+    staleTime: 5 * 60_000,
+  });
+
   const orders = deliveriesQuery.data ?? [];
   const active = useMemo(() => activeDeliveries(orders), [orders]);
+  const menuItems = menuQuery.data?.items ?? [];
 
   const assigned = active.filter((o) => o.deliveryStatus === "assigned").length;
   const enRoute = active.filter((o) => o.deliveryStatus === "out_for_delivery").length;
@@ -147,7 +156,7 @@ export default function RiderHomeScreen() {
           />
         ) : (
           active.slice(0, 5).map((order) => {
-            const total = deliveryOrderTotal(order);
+            const total = deliveryOrderTotal(order, menuItems);
             return (
               <Pressable
                 key={order.id}
@@ -156,19 +165,23 @@ export default function RiderHomeScreen() {
               >
                 <View style={styles.orderHeader}>
                   <Text style={styles.orderRef}>{orderRefFromTicket(order)}</Text>
-                  <StatusBadge
-                    status={
-                      order.deliveryStatus
-                        ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
-                        : "Pending"
-                    }
-                  />
+                  <View style={styles.orderHeaderRight}>
+                    <Text style={styles.orderTotal}>
+                      {total != null ? formatPkr(total) : "—"}
+                    </Text>
+                    <StatusBadge
+                      status={
+                        order.deliveryStatus
+                          ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
+                          : "Pending"
+                      }
+                    />
+                  </View>
                 </View>
                 <Text style={styles.customer}>{order.customerName}</Text>
                 <Text style={styles.address} numberOfLines={2}>
                   {order.customerAddress}
                 </Text>
-                {total != null ? <Text style={styles.orderTotal}>{formatPkr(total)} total</Text> : null}
                 <Text style={styles.meta}>
                   {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery
                 </Text>
@@ -213,10 +226,11 @@ const styles = StyleSheet.create({
   },
   orderCardPressed: { opacity: 0.85 },
   orderHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  orderHeaderRight: { alignItems: "flex-end", gap: 6 },
   orderRef: { color: colors.text, fontSize: 15, fontWeight: "700" },
   customer: { color: colors.text, fontSize: 16, fontWeight: "600" },
   address: { color: colors.muted, fontSize: 13, lineHeight: 18 },
-  orderTotal: { color: colors.accent, fontSize: 14, fontWeight: "700", marginTop: 4 },
+  orderTotal: { color: colors.accent, fontSize: 15, fontWeight: "800" },
   meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
   footer: { gap: 16, marginTop: 8 },
   signOut: { color: colors.muted, textAlign: "center", fontSize: 13 },

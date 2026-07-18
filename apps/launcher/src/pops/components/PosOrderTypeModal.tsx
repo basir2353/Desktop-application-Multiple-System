@@ -14,9 +14,15 @@ type Props = {
   selectedMode: PosOrderMode;
   onSelect: (mode: PosOrderMode) => void;
   onClose: () => void;
+  modes?: { id: PosOrderMode; label: string }[];
 };
 
-export function PosOrderTypeModal({ selectedMode, onSelect, onClose }: Props): JSX.Element {
+export function PosOrderTypeModal({
+  selectedMode,
+  onSelect,
+  onClose,
+  modes = POS_ORDER_MODES,
+}: Props): JSX.Element {
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key === "Escape") onClose();
@@ -51,7 +57,7 @@ export function PosOrderTypeModal({ selectedMode, onSelect, onClose }: Props): J
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <div className="grid gap-2 sm:grid-cols-2">
-            {POS_ORDER_MODES.map(({ id, label }) => {
+            {modes.map(({ id, label }) => {
               const selected = selectedMode === id;
               return (
                 <button

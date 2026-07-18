@@ -3,6 +3,7 @@ import { Redirect, useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts";
 import { fetchMyDeliveries } from "../src/api/delivery";
+import { fetchBranchMenu } from "../src/api/menu";
 import { EmptyState, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
@@ -25,11 +26,19 @@ export default function RiderDeliveriesScreen() {
     refetchInterval: 8_000,
   });
 
+  const menuQuery = useQuery({
+    queryKey: ["menu", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchBranchMenu(branchCode),
+    staleTime: 5 * 60_000,
+  });
+
   if (!accessToken) return <Redirect href="/" />;
   if (role === "waiter") return <Redirect href="/home" />;
   if (!branch) return <Redirect href="/branch" />;
 
   const orders = deliveriesQuery.data ?? [];
+  const menuItems = menuQuery.data?.items ?? [];
 
   return (
     <Screen>
@@ -54,7 +63,7 @@ export default function RiderDeliveriesScreen() {
           />
         ) : (
           orders.map((order) => {
-            const total = deliveryOrderTotal(order);
+            const total = deliveryOrderTotal(order, menuItems);
             return (
               <Pressable
                 key={order.id}
@@ -63,22 +72,24 @@ export default function RiderDeliveriesScreen() {
               >
                 <View style={styles.header}>
                   <Text style={styles.ref}>{orderRefFromTicket(order)}</Text>
-                  <StatusBadge
-                    status={
-                      order.deliveryStatus
-                        ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
-                        : order.status === "done"
-                          ? "Completed"
-                          : "In kitchen"
-                    }
-                  />
+                  <View style={styles.headerRight}>
+                    <Text style={styles.total}>{total != null ? formatPkr(total) : "—"}</Text>
+                    <StatusBadge
+                      status={
+                        order.deliveryStatus
+                          ? DELIVERY_STATUS_LABELS[order.deliveryStatus as DeliveryStatus]
+                          : order.status === "done"
+                            ? "Completed"
+                            : "In kitchen"
+                      }
+                    />
+                  </View>
                 </View>
                 <Text style={styles.customer}>{order.customerName}</Text>
                 <Text style={styles.address}>{order.customerAddress}</Text>
                 <Text style={styles.items} numberOfLines={2}>
                   {order.itemsSummary.split(" · Delivery")[0]}
                 </Text>
-                {total != null ? <Text style={styles.total}>{formatPkr(total)} total</Text> : null}
                 <Text style={styles.meta}>
                   {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery fee
                 </Text>
@@ -102,10 +113,11 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerRight: { alignItems: "flex-end", gap: 6 },
   ref: { color: colors.text, fontWeight: "700", fontSize: 15 },
   customer: { color: colors.text, fontSize: 16, fontWeight: "600" },
   address: { color: colors.muted, fontSize: 13 },
   items: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  total: { color: colors.accent, fontSize: 14, fontWeight: "700", marginTop: 4 },
+  total: { color: colors.accent, fontSize: 15, fontWeight: "800" },
   meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
 });
