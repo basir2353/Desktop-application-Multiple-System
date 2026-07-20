@@ -35,7 +35,13 @@ import {
   unifiedOrderTotal,
   type UnifiedOrder,
 } from "../../lib/orderHistory";
-import { printKot, printReceipt, type PrintTicketInput } from "../../lib/printTicket";
+import {
+  printKotDetailed,
+  printReceiptDetailed,
+  withPrinterProfile,
+  type PrintTicketInput,
+} from "../../lib/printTicket";
+import { resolveKotPrinter, resolveReceiptPrinter } from "../../lib/printerRouting";
 import {
   cardClass,
   emptyStateBoxClass,
@@ -883,7 +889,25 @@ export function DeliveryPage(): JSX.Element {
                         <Button
                           type="button"
                           className="h-7 text-xs"
-                          onClick={() => printReceipt(billToPrint(branch.name, branch.code, selected.bill))}
+                          onClick={() => {
+                            void (async () => {
+                              const profile = resolveReceiptPrinter(
+                                branch.code,
+                                selected.bill.waiterId,
+                              );
+                              const result = await printReceiptDetailed(
+                                withPrinterProfile(
+                                  billToPrint(branch.name, branch.code, selected.bill),
+                                  profile,
+                                ),
+                              );
+                              setNotice(
+                                result.ok
+                                  ? `Receipt printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : ""}.`
+                                  : `Reprint failed: ${result.error ?? "check printer assignment"}.`,
+                              );
+                            })();
+                          }}
                         >
                           Reprint
                         </Button>
@@ -891,9 +915,22 @@ export function DeliveryPage(): JSX.Element {
                         <Button
                           type="button"
                           className="h-7 text-xs"
-                          onClick={() =>
-                            printKot(ticketToPrint(selected.ticket, branch.name, branch.code))
-                          }
+                          onClick={() => {
+                            void (async () => {
+                              const profile = resolveKotPrinter(branch.code, null, undefined, "kitchen");
+                              const result = await printKotDetailed(
+                                withPrinterProfile(
+                                  ticketToPrint(selected.ticket, branch.name, branch.code),
+                                  profile,
+                                ),
+                              );
+                              setNotice(
+                                result.ok
+                                  ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : ""}.`
+                                  : `KOT print failed: ${result.error ?? "check printer assignment"}.`,
+                              );
+                            })();
+                          }}
                         >
                           Print KOT
                         </Button>

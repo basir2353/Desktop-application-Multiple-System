@@ -1,6 +1,5 @@
-/** Local log of print attempts — per-branch, localStorage-backed. There is no real
- * async print queue (printing is synchronous, dialog-based), so this history log is
- * what backs the "Print Queue" / "Today's print count" views. */
+/** Local log of print attempts — per-branch, localStorage-backed.
+ * Backs the "Print Queue" / "Today's print count" views. */
 
 export type PrintHistoryEntry = {
   id: string;

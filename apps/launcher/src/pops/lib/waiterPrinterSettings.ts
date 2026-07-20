@@ -1,5 +1,10 @@
+import { resolvePrinterForUser, resolveReceiptPrinter } from "./printerRouting";
+
 export type WaiterPrinterConfig = {
+  /** Profile / station label shown in UI. */
   printerName: string;
+  /** OS spooler name for direct print (when known). */
+  systemPrinterName?: string;
 };
 
 export const WAITER_PRINTER_PRESETS = [
@@ -43,8 +48,22 @@ export function getWaiterPrinter(
 ): WaiterPrinterConfig | null {
   if (!branchCode || !waiterId) return null;
   const config = loadWaiterPrinterMap(branchCode)[waiterId];
-  if (!config?.printerName?.trim()) return null;
-  return { printerName: config.printerName.trim() };
+  if (config?.printerName?.trim()) {
+    const name = config.printerName.trim();
+    // Legacy waiter map stores OS / station names used as the direct-print target.
+    return { printerName: name, systemPrinterName: name };
+  }
+
+  // Fall back to Assign Users (many-to-many) profiles — never treat display name as OS name.
+  const profile =
+    resolveReceiptPrinter(branchCode, waiterId) ?? resolvePrinterForUser(branchCode, waiterId);
+  if (profile) {
+    return {
+      printerName: profile.name,
+      systemPrinterName: profile.systemPrinterName?.trim() || undefined,
+    };
+  }
+  return null;
 }
 
 export function setWaiterPrinter(

@@ -207,6 +207,14 @@ export function ContentPage(): JSX.Element {
             />
             Foodpanda Orders
           </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={orderModeVisibility.staffFoodEnabled}
+              onChange={(e) => toggleOrderMode("staffFoodEnabled", e.target.checked)}
+            />
+            Staff Food
+          </label>
         </div>
       </section>
 

@@ -69,6 +69,9 @@ type ItemFormState = {
   discountable: boolean;
   nonDiscountable: boolean;
   nonTaxable: boolean;
+  askForPrice: boolean;
+  askForQty: boolean;
+  allowManualDiscount: boolean;
   variants: VariantRow[];
 };
 
@@ -76,9 +79,12 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
   return {
     name: item.name,
     featured: item.featured,
-    discountable: item.discountable,
-    nonDiscountable: item.nonDiscountable,
+    discountable: item.discountable && !item.nonDiscountable,
+    nonDiscountable: item.nonDiscountable || !item.discountable,
     nonTaxable: item.nonTaxable,
+    askForPrice: item.askForPrice,
+    askForQty: item.askForQty,
+    allowManualDiscount: item.allowManualDiscount,
     variants:
       item.variants.length > 0
         ? item.variants.map((v) => ({
@@ -88,6 +94,102 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
           }))
         : [{ label: "", price: String(item.price), barcode: item.barcode ?? "" }],
   };
+}
+
+function MenuItemFlagFields({
+  form,
+  onChange,
+}: {
+  form: ItemFormState;
+  onChange: (next: ItemFormState) => void;
+}): JSX.Element {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-4">
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={form.discountable && !form.nonDiscountable}
+            onChange={(e) =>
+              onChange({
+                ...form,
+                discountable: e.target.checked,
+                nonDiscountable: !e.target.checked,
+                allowManualDiscount: e.target.checked ? form.allowManualDiscount : false,
+              })
+            }
+          />
+          Discountable
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={form.nonDiscountable || !form.discountable}
+            onChange={(e) =>
+              onChange({
+                ...form,
+                nonDiscountable: e.target.checked,
+                discountable: !e.target.checked,
+                allowManualDiscount: e.target.checked ? false : form.allowManualDiscount,
+              })
+            }
+          />
+          Non-Discountable
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={form.nonTaxable}
+            onChange={(e) =>
+              onChange({
+                ...form,
+                nonTaxable: e.target.checked,
+                allowManualDiscount: e.target.checked ? false : form.allowManualDiscount,
+              })
+            }
+          />
+          Non-Taxable
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={form.askForPrice}
+            onChange={(e) => onChange({ ...form, askForPrice: e.target.checked })}
+          />
+          Ask for Price
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={form.askForQty}
+            onChange={(e) => onChange({ ...form, askForQty: e.target.checked })}
+          />
+          Ask for Qty
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={form.allowManualDiscount && form.discountable && !form.nonDiscountable && !form.nonTaxable}
+            disabled={!form.discountable || form.nonDiscountable || form.nonTaxable}
+            onChange={(e) => onChange({ ...form, allowManualDiscount: e.target.checked })}
+          />
+          Item Manual Discount (% or PKR)
+        </label>
+      </div>
+      <p className="text-[10px] text-slate-500">
+        Discountable / Non-Discountable control bill discounts. Non-Taxable removes tax and hides bill
+        Disc % / Disc Rs on POS. Ask for Price/Qty prompts on add. Manual discount is per line.
+      </p>
+    </div>
+  );
 }
 
 function MenuItemVariantFields({
@@ -272,35 +374,7 @@ function MenuItemEditModal({
               Feature this dish on POS
             </span>
           </label>
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-xs text-slate-400">
-              <input
-                type="checkbox"
-                className="accent-amber-500"
-                checked={form.discountable}
-                onChange={(e) => setForm((f) => ({ ...f, discountable: e.target.checked }))}
-              />
-              Discountable
-            </label>
-            <label className="flex items-center gap-2 text-xs text-slate-400">
-              <input
-                type="checkbox"
-                className="accent-amber-500"
-                checked={form.nonDiscountable}
-                onChange={(e) => setForm((f) => ({ ...f, nonDiscountable: e.target.checked }))}
-              />
-              Non-Discountable
-            </label>
-            <label className="flex items-center gap-2 text-xs text-slate-400">
-              <input
-                type="checkbox"
-                className="accent-amber-500"
-                checked={form.nonTaxable}
-                onChange={(e) => setForm((f) => ({ ...f, nonTaxable: e.target.checked }))}
-              />
-              Non-Taxable
-            </label>
-          </div>
+          <MenuItemFlagFields form={form} onChange={setForm} />
           <div>
             <label className="flex items-center gap-2 text-xs text-slate-400">
               <input
@@ -396,12 +470,16 @@ export function MenuPage(): JSX.Element {
     discountable: true,
     nonDiscountable: false,
     nonTaxable: false,
+    askForPrice: false,
+    askForQty: false,
+    allowManualDiscount: false,
     variants: [emptyVariantRow()],
   });
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [categoryImageUploading, setCategoryImageUploading] = useState(false);
+  const [categoryReorderBusy, setCategoryReorderBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [happyHourDraft, setHappyHourDraft] = useState<HappyHourSettings>(DEFAULT_HAPPY_HOUR_SETTINGS);
   const [happyHourNotice, setHappyHourNotice] = useState<string | null>(null);
@@ -516,9 +594,61 @@ export function MenuPage(): JSX.Element {
     [items, selectedCategory?.id],
   );
 
+  const selectedCategoryIndex = useMemo(
+    () => (selectedCategory ? categories.findIndex((c) => c.id === selectedCategory.id) : -1),
+    [categories, selectedCategory],
+  );
+
   function invalidate(): void {
     void queryClient.invalidateQueries({ queryKey: ["menu"] });
   }
+
+  async function moveCategory(index: number, direction: -1 | 1): Promise<void> {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= categories.length || categoryReorderBusy) return;
+    const current = categories[index];
+    const neighbor = categories[targetIndex];
+    if (!current || !neighbor) return;
+
+    setCategoryReorderBusy(true);
+    setError(null);
+    try {
+      const currentOrder = current.sortOrder;
+      const neighborOrder = neighbor.sortOrder;
+      // If both share the same sortOrder, assign contiguous ranks after the swap.
+      const nextCurrent = currentOrder === neighborOrder ? targetIndex : neighborOrder;
+      const nextNeighbor = currentOrder === neighborOrder ? index : currentOrder;
+      await Promise.all([
+        updateMenuCategory(current.id, { sortOrder: nextCurrent }),
+        updateMenuCategory(neighbor.id, { sortOrder: nextNeighbor }),
+      ]);
+      invalidate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to move category");
+    } finally {
+      setCategoryReorderBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (categoryReorderBusy || selectedCategoryIndex < 0) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        void moveCategory(selectedCategoryIndex, -1);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        void moveCategory(selectedCategoryIndex, 1);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   const createCategoryMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -576,9 +706,12 @@ export function MenuPage(): JSX.Element {
         sortOrder: categoryItems.length,
         imageUrl,
         featured: itemForm.featured,
-        discountable: itemForm.discountable,
-        nonDiscountable: itemForm.nonDiscountable,
+        discountable: itemForm.discountable && !itemForm.nonDiscountable,
+        nonDiscountable: itemForm.nonDiscountable || !itemForm.discountable,
         nonTaxable: itemForm.nonTaxable,
+        askForPrice: itemForm.askForPrice,
+        askForQty: itemForm.askForQty,
+        allowManualDiscount: itemForm.allowManualDiscount,
         variants,
       });
     },
@@ -590,6 +723,9 @@ export function MenuPage(): JSX.Element {
         discountable: true,
         nonDiscountable: false,
         nonTaxable: false,
+        askForPrice: false,
+        askForQty: false,
+        allowManualDiscount: false,
         variants: [emptyVariantRow()],
       });
       setNewItemImage(null);
@@ -644,15 +780,22 @@ export function MenuPage(): JSX.Element {
       } else if (clearImage) {
         imageUrl = null;
       }
-      return updateMenuItem(id, {
-        name: form.name.trim(),
-        featured: form.featured,
-        discountable: form.discountable,
-        nonDiscountable: form.nonDiscountable,
-        nonTaxable: form.nonTaxable,
-        variants,
-        ...(imageUrl !== undefined ? { imageUrl } : {}),
-      });
+      return updateMenuItem(
+        id,
+        {
+          name: form.name.trim(),
+          featured: form.featured,
+          discountable: form.discountable && !form.nonDiscountable,
+          nonDiscountable: form.nonDiscountable || !form.discountable,
+          nonTaxable: form.nonTaxable,
+          askForPrice: form.askForPrice,
+          askForQty: form.askForQty,
+          allowManualDiscount: form.allowManualDiscount,
+          variants,
+          ...(imageUrl !== undefined ? { imageUrl } : {}),
+        },
+        branch?.code,
+      );
     },
     onSuccess: () => {
       invalidate();
@@ -842,6 +985,29 @@ export function MenuPage(): JSX.Element {
                 </li>
               ))}
             </ul>
+            {selectedCategory && categories.length > 1 ? (
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-xs"
+                  disabled={categoryReorderBusy || selectedCategoryIndex <= 0}
+                  onClick={() => void moveCategory(selectedCategoryIndex, -1)}
+                >
+                  ↑ Up
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-xs"
+                  disabled={categoryReorderBusy || selectedCategoryIndex >= categories.length - 1}
+                  onClick={() => void moveCategory(selectedCategoryIndex, 1)}
+                >
+                  ↓ Down
+                </Button>
+                <span className="text-[10px] text-slate-500">or use ↑ ↓ keys</span>
+              </div>
+            ) : null}
             {selectedCategory ? (
               <div className="mt-4 space-y-3 border-t border-slate-800 pt-3">
                 <MenuImagePicker
@@ -1145,35 +1311,7 @@ export function MenuPage(): JSX.Element {
                       Feature this dish on POS
                     </span>
                   </label>
-                  <div className="flex flex-wrap gap-4">
-                    <label className="flex items-center gap-2 text-xs text-slate-400">
-                      <input
-                        type="checkbox"
-                        className="accent-amber-500"
-                        checked={itemForm.discountable}
-                        onChange={(e) => setItemForm((f) => ({ ...f, discountable: e.target.checked }))}
-                      />
-                      Discountable
-                    </label>
-                    <label className="flex items-center gap-2 text-xs text-slate-400">
-                      <input
-                        type="checkbox"
-                        className="accent-amber-500"
-                        checked={itemForm.nonDiscountable}
-                        onChange={(e) => setItemForm((f) => ({ ...f, nonDiscountable: e.target.checked }))}
-                      />
-                      Non-Discountable
-                    </label>
-                    <label className="flex items-center gap-2 text-xs text-slate-400">
-                      <input
-                        type="checkbox"
-                        className="accent-amber-500"
-                        checked={itemForm.nonTaxable}
-                        onChange={(e) => setItemForm((f) => ({ ...f, nonTaxable: e.target.checked }))}
-                      />
-                      Non-Taxable
-                    </label>
-                  </div>
+                  <MenuItemFlagFields form={itemForm} onChange={setItemForm} />
 
                   <MenuItemVariantFields form={itemForm} onChange={setItemForm} />
 

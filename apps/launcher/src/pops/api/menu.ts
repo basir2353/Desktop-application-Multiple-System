@@ -11,6 +11,63 @@ import {
   type UpdateMenuItem,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
+import {
+  applyMenuItemOptions,
+  menuApiSupportsItemOptions,
+  normalizeMenuItemOptions,
+  saveMenuItemOptions,
+  type MenuItemOptions,
+} from "../lib/menuItemOptions";
+
+/** Cached capability: live Railway may not have option columns yet. */
+let apiSupportsItemOptions: boolean | null = null;
+
+const OPTION_KEYS = [
+  "discountable",
+  "nonDiscountable",
+  "nonTaxable",
+  "askForPrice",
+  "askForQty",
+  "allowManualDiscount",
+] as const;
+
+type OptionKey = (typeof OPTION_KEYS)[number];
+
+function splitItemOptions<T extends Partial<MenuItemOptions>>(input: T): {
+  options: Partial<MenuItemOptions>;
+  rest: Omit<T, OptionKey>;
+} {
+  const options: Partial<MenuItemOptions> = {};
+  const rest = { ...input } as T & Record<string, unknown>;
+  for (const key of OPTION_KEYS) {
+    if (rest[key] !== undefined) {
+      options[key] = rest[key] as boolean;
+      delete rest[key];
+    }
+  }
+  return { options, rest: rest as Omit<T, OptionKey> };
+}
+
+function rememberApiSupportFromItems(items: MenuItem[]): void {
+  if (items.length === 0) return;
+  apiSupportsItemOptions = items.some((item) => menuApiSupportsItemOptions(item));
+}
+
+function withLocalOptions(menu: BranchMenu): BranchMenu {
+  rememberApiSupportFromItems(menu.items);
+  return {
+    ...menu,
+    items: applyMenuItemOptions(menu.branchCode, menu.items),
+  };
+}
+
+function mergeOptionsIntoItem(item: MenuItem, options: Partial<MenuItemOptions>): MenuItem {
+  if (Object.keys(options).length === 0) return item;
+  return {
+    ...item,
+    ...normalizeMenuItemOptions({ ...item, ...options }),
+  };
+}
 
 export async function fetchBranchMenu(branchCode: string): Promise<BranchMenu> {
   const params = new URLSearchParams({ branchCode });
@@ -20,7 +77,7 @@ export async function fetchBranchMenu(branchCode: string): Promise<BranchMenu> {
     throw new Error(err?.message ?? `Menu failed: ${res.status}`);
   }
   const json: unknown = await res.json();
-  return branchMenuSchema.parse(json);
+  return withLocalOptions(branchMenuSchema.parse(json));
 }
 
 export async function fetchBranchMenuAdmin(branchCode: string): Promise<BranchMenu> {
@@ -31,7 +88,7 @@ export async function fetchBranchMenuAdmin(branchCode: string): Promise<BranchMe
     throw new Error(err?.message ?? `Menu admin failed: ${res.status}`);
   }
   const json: unknown = await res.json();
-  return branchMenuSchema.parse(json);
+  return withLocalOptions(branchMenuSchema.parse(json));
 }
 
 export async function createMenuCategory(input: CreateMenuCategory): Promise<MenuCategory> {
@@ -62,24 +119,72 @@ export async function deleteMenuCategory(categoryId: string): Promise<void> {
   if (!res.ok) throw new Error(`Delete category failed: ${res.status}`);
 }
 
-export async function createMenuItem(input: CreateMenuItem): Promise<MenuItem> {
+async function postMenuItem(body: unknown): Promise<MenuItem> {
   const res = await authFetch("/v1/menu/items", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Create item failed: ${res.status}`);
   return menuItemSchema.parse(await res.json());
 }
 
-export async function updateMenuItem(itemId: string, input: UpdateMenuItem): Promise<MenuItem> {
+async function patchMenuItem(itemId: string, body: unknown): Promise<MenuItem> {
   const res = await authFetch(`/v1/menu/items/${itemId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Update item failed: ${res.status}`);
   return menuItemSchema.parse(await res.json());
+}
+
+export async function createMenuItem(input: CreateMenuItem): Promise<MenuItem> {
+  const { options, rest } = splitItemOptions(input);
+  let item: MenuItem;
+
+  if (apiSupportsItemOptions === false || Object.keys(options).length === 0) {
+    item = await postMenuItem(rest);
+  } else {
+    try {
+      item = await postMenuItem({ ...rest, ...options });
+      apiSupportsItemOptions = true;
+    } catch {
+      apiSupportsItemOptions = false;
+      item = await postMenuItem(rest);
+    }
+  }
+
+  if (Object.keys(options).length > 0) {
+    saveMenuItemOptions(input.branchCode, item.id, options);
+  }
+  return mergeOptionsIntoItem(item, options);
+}
+
+export async function updateMenuItem(
+  itemId: string,
+  input: UpdateMenuItem,
+  branchCode?: string,
+): Promise<MenuItem> {
+  const { options, rest } = splitItemOptions(input);
+  let item: MenuItem;
+
+  if (apiSupportsItemOptions === false || Object.keys(options).length === 0) {
+    item = await patchMenuItem(itemId, rest);
+  } else {
+    try {
+      item = await patchMenuItem(itemId, { ...rest, ...options });
+      apiSupportsItemOptions = true;
+    } catch {
+      apiSupportsItemOptions = false;
+      item = await patchMenuItem(itemId, rest);
+    }
+  }
+
+  if (branchCode && Object.keys(options).length > 0) {
+    saveMenuItemOptions(branchCode, itemId, options);
+  }
+  return mergeOptionsIntoItem(item, options);
 }
 
 export async function deleteMenuItem(itemId: string): Promise<void> {

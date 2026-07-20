@@ -19,28 +19,46 @@ import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from ".
 import { fetchBranchMenu } from "../../api/menu";
 import { fetchBranchFloor } from "../../api/tables";
 import { PosDishVariantModal } from "../../components/PosDishVariantModal";
+import { PosItemPromptModal } from "../../components/PosItemPromptModal";
 import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
 import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
 import { PosSeatingModal } from "../../components/PosSeatingModal";
 import {
   POS_ORDER_MODES,
+  parseStaffFoodPersonFromStation,
   posBillTableLabel,
   posDeliveryNotes,
   posOrderModeLabel,
   posPrintTableLabel,
+  posStaffFoodNotes,
   posStationLabel,
   type PosOrderMode,
+  type StaffFoodConsumerType,
 } from "../../lib/posOrderMode";
 import {
   buildCartLine,
+  canEditLineDiscount,
+  cartLineManualDiscountPkr,
+  cartLineNet,
+  isMenuItemDiscountable,
+  itemNeedsPosPrompt,
+  lineBlocksBillDiscount,
   nextCartSortOrder,
   pickDefaultVariant,
   resolvePosSellableVariants,
   shouldOpenVariantPicker,
   sortCartLinesNewestFirst,
+  sortCartLinesOldestFirst,
+  withLiveMenuItem,
+  type LineDiscountMode,
   type PosCartLine,
 } from "../../lib/posCart";
-import { printReceipt, printKot, type PrintTicketInput } from "../../lib/printTicket";
+import {
+  printReceiptDetailed,
+  printKotDetailed,
+  withPrinterProfile,
+  type PrintTicketInput,
+} from "../../lib/printTicket";
 import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
@@ -63,11 +81,11 @@ import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCh
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/ChangeOrderTableModal";
 import { PosPayOutModal } from "../../components/PosPayOutModal";
-import { PosStaffFoodModal } from "../../components/PosStaffFoodModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
+import { createStaffFoodRecord, fetchEmployees } from "../../api/hr";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
-import { amberPillActiveClass, fieldInputClass, pillInactiveClass } from "../../lib/themeClasses";
+import { fieldInputClass } from "../../lib/themeClasses";
 import {
   DELIVERY_SETTINGS_CHANGED_EVENT,
   loadDeliverySettings,
@@ -91,7 +109,11 @@ import {
 import { buildMenuItemOrderCounts, sortMenuByPopularity } from "../../lib/posMenuPopularity";
 import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
 import { loadPrinterSections } from "../../lib/printerSections";
-import { groupCartLinesBySection } from "../../lib/printerRouting";
+import {
+  groupCartLinesBySection,
+  resolveKotPrinter,
+  resolveReceiptPrinter,
+} from "../../lib/printerRouting";
 import { logPrintEvent } from "../../lib/printHistory";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
@@ -135,6 +157,20 @@ const POS_MODE_BTN = (active: boolean) =>
   }`;
 
 const POS_ZOOM_DEFAULT_INDEX = 3; // 100%
+/** Ticket cart: 3 cols × 2 rows (6 items) visible; scroll when more. */
+const POS_CART_COLS = 3;
+const POS_CART_VISIBLE_ROWS = 2;
+const POS_CART_CARD_ROW_PX = 112;
+const POS_CART_GRID_GAP_PX = 8;
+const POS_CART_VISIBLE_COUNT = POS_CART_COLS * POS_CART_VISIBLE_ROWS;
+const POS_CART_LIST_MAX_PX =
+  POS_CART_CARD_ROW_PX * POS_CART_VISIBLE_ROWS + POS_CART_GRID_GAP_PX * (POS_CART_VISIBLE_ROWS - 1);
+
+function posCartListHeightPx(itemCount: number): number {
+  if (itemCount <= 0) return 0;
+  const rows = Math.min(POS_CART_VISIBLE_ROWS, Math.ceil(itemCount / POS_CART_COLS));
+  return POS_CART_CARD_ROW_PX * rows + POS_CART_GRID_GAP_PX * Math.max(0, rows - 1);
+}
 
 function loadPosZoomIndex(): number {
   try {
@@ -172,6 +208,11 @@ export function PosPage(): JSX.Element {
   const [deliveryDetailsOpen, setDeliveryDetailsOpen] = useState(false);
   const [deliveryCustomerPickerOpen, setDeliveryCustomerPickerOpen] = useState(false);
   const [deliveryCustomerSearch, setDeliveryCustomerSearch] = useState("");
+  const [staffFoodConsumerType, setStaffFoodConsumerType] = useState<StaffFoodConsumerType>("staff");
+  const [staffFoodEmployeeId, setStaffFoodEmployeeId] = useState("");
+  const [staffFoodGuestName, setStaffFoodGuestName] = useState("");
+  const [staffFoodPendingName, setStaffFoodPendingName] = useState("");
+  const [staffFoodExtraNotes, setStaffFoodExtraNotes] = useState("");
   const [selectedFloorSectionId, setSelectedFloorSectionId] = useState<string | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -180,8 +221,15 @@ export function PosPage(): JSX.Element {
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [cart, setCart] = useState<PosCartLine[]>([]);
+  /** Which cart card is active — controls whether bill Disc % / Disc Rs is shown. */
+  const [selectedCartKey, setSelectedCartKey] = useState<string | null>(null);
   const [variantPickerItem, setVariantPickerItem] = useState<ApiMenuItem | null>(null);
+  const [itemPrompt, setItemPrompt] = useState<{
+    item: ApiMenuItem;
+    variant: MenuItemVariant | null;
+  } | null>(null);
   const [discountPctInput, setDiscountPctInput] = useState(0);
   const [discountAmountInput, setDiscountAmountInput] = useState(0);
   const [discountEditedAs, setDiscountEditedAs] = useState<"pct" | "amount">("pct");
@@ -208,7 +256,6 @@ export function PosPage(): JSX.Element {
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
   const [payOutModalOpen, setPayOutModalOpen] = useState(false);
-  const [staffFoodModalOpen, setStaffFoodModalOpen] = useState(false);
   const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
   const [zoomIndex, setZoomIndex] = useState(loadPosZoomIndex);
   const [headerVisible, setHeaderVisible] = useState(loadPosHeaderVisible);
@@ -300,6 +347,49 @@ export function PosPage(): JSX.Element {
     () => (ridersQuery.data ?? []).filter((r) => r.active),
     [ridersQuery.data],
   );
+
+  const staffEmployeesQuery = useQuery({
+    queryKey: ["hr", "employees", branch?.code],
+    enabled: Boolean(branch?.code) && mode === "staff-food",
+    queryFn: () => fetchEmployees(branch!.code),
+  });
+
+  const activeStaffEmployees = useMemo(
+    () => (staffEmployeesQuery.data ?? []).filter((e) => e.employmentStatus === "active"),
+    [staffEmployeesQuery.data],
+  );
+
+  const staffFoodPersonName = useMemo(() => {
+    if (staffFoodConsumerType === "guest") return staffFoodGuestName.trim();
+    return (
+      activeStaffEmployees.find((e) => e.id === staffFoodEmployeeId)?.displayName?.trim() ||
+      staffFoodPendingName.trim()
+    );
+  }, [
+    staffFoodConsumerType,
+    staffFoodGuestName,
+    staffFoodEmployeeId,
+    staffFoodPendingName,
+    activeStaffEmployees,
+  ]);
+
+  useEffect(() => {
+    if (mode !== "staff-food" || staffFoodConsumerType !== "staff") return;
+    if (staffFoodEmployeeId || !staffFoodPendingName.trim()) return;
+    const match = activeStaffEmployees.find(
+      (e) => e.displayName.trim().toLowerCase() === staffFoodPendingName.trim().toLowerCase(),
+    );
+    if (match) {
+      setStaffFoodEmployeeId(match.id);
+      setStaffFoodPendingName("");
+    }
+  }, [
+    mode,
+    staffFoodConsumerType,
+    staffFoodEmployeeId,
+    staffFoodPendingName,
+    activeStaffEmployees,
+  ]);
 
   useEffect(() => {
     if (mode !== "delivery") setDeliveryDetailsOpen(false);
@@ -507,6 +597,7 @@ export function PosPage(): JSX.Element {
       POS_ORDER_MODES.filter((m) => {
         if (m.id === "online") return orderModeVisibility.onlineEnabled;
         if (m.id === "foodpanda") return orderModeVisibility.foodpandaEnabled;
+        if (m.id === "staff-food") return orderModeVisibility.staffFoodEnabled;
         return true;
       }),
     [orderModeVisibility],
@@ -519,6 +610,14 @@ export function PosPage(): JSX.Element {
   }, [visiblePosOrderModes, mode]);
 
   function switchMode(nextMode: PosOrderMode): void {
+    if (nextMode === "staff-food" && editingOrder) {
+      setEditingOrder(null);
+      setCart([]);
+      setDiscountPctInput(0);
+      setDiscountAmountInput(0);
+      setDiscountEditedAs("pct");
+      setOrderRef(peekNextOrderRef(branch?.code));
+    }
     setMode(nextMode);
     if (nextMode === "delivery") {
       setDeliveryDetailsOpen(true);
@@ -675,18 +774,36 @@ export function PosPage(): JSX.Element {
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [searchDropdownOpen]);
 
-  function addVariantToCart(item: ApiMenuItem, variant: MenuItemVariant | null): void {
+  function addVariantToCart(
+    item: ApiMenuItem,
+    variant: MenuItemVariant | null,
+    opts?: { qty?: number; unitPrice?: number },
+  ): void {
+    const qty = opts?.qty ?? 1;
+    const unitPrice = opts?.unitPrice;
     setCart((prev) => {
       const sortOrder = nextCartSortOrder(prev);
-      const line = buildCartLine(item, variant, 1, sortOrder);
-      const i = prev.findIndex((l) => l.key === line.key);
+      const line = buildCartLine(item, variant, qty, sortOrder, unitPrice);
+      // Open-price / custom qty lines should not silently merge with catalog lines.
+      const canMerge = unitPrice == null && qty === 1;
+      const i = canMerge ? prev.findIndex((l) => l.key === line.key) : -1;
       if (i >= 0) {
-        return prev.map((l) =>
-          l.key === line.key ? { ...l, qty: l.qty + 1, sortOrder } : l,
-        );
+        const key = line.key;
+        setSelectedCartKey(key);
+        // Keep existing cart position when quantity increases on an already-added line.
+        return prev.map((l) => (l.key === key ? { ...l, qty: l.qty + qty } : l));
       }
+      setSelectedCartKey(line.key);
       return [line, ...prev];
     });
+  }
+
+  function beginAddToCart(item: ApiMenuItem, variant: MenuItemVariant | null): void {
+    if (itemNeedsPosPrompt(item)) {
+      setItemPrompt({ item, variant });
+      return;
+    }
+    addVariantToCart(item, variant);
   }
 
   function onDishClick(item: ApiMenuItem): void {
@@ -694,7 +811,25 @@ export function PosPage(): JSX.Element {
       setVariantPickerItem(item);
       return;
     }
-    addVariantToCart(item, pickDefaultVariant(item));
+    beginAddToCart(item, pickDefaultVariant(item));
+  }
+
+  function setLineDiscount(
+    lineKey: string,
+    mode: LineDiscountMode,
+    value: number,
+  ): void {
+    setCart((prev) =>
+      prev.map((l) =>
+        l.key === lineKey
+          ? {
+              ...l,
+              lineDiscountMode: mode,
+              lineDiscountValue: Math.max(0, value),
+            }
+          : l,
+      ),
+    );
   }
 
   function selectSearchDropdownItem(item: ApiMenuItem): void {
@@ -724,20 +859,44 @@ export function PosPage(): JSX.Element {
     // ArrowLeft / ArrowRight are left untouched so the text cursor still moves within the input.
   }
 
+  useEffect(() => {
+    function onGlobalKeyDown(e: KeyboardEvent): void {
+      if (e.key !== "F9") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable) &&
+        target !== searchInputRef.current
+      ) {
+        // Still allow F9 from other fields to jump to menu search.
+      }
+      e.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+      setSearchDropdownOpen(true);
+    }
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, []);
+
   function setQty(lineKey: string, qty: number): void {
     setCart((prev) => {
       if (qty <= 0) return prev.filter((l) => l.key !== lineKey);
-      const existing = prev.find((l) => l.key === lineKey);
-      const sortOrder =
-        existing && qty > existing.qty ? nextCartSortOrder(prev) : (existing?.sortOrder ?? 0);
-      return prev.map((l) => (l.key === lineKey ? { ...l, qty, sortOrder } : l));
+      // Keep cart position fixed — only +/- quantity, do not bump sortOrder.
+      return prev.map((l) => (l.key === lineKey ? { ...l, qty } : l));
     });
   }
 
-  const effectiveCart = useMemo(
-    () => applyHappyHourBonus(cart, menuItems, happyHourSettings),
-    [cart, menuItems, happyHourSettings],
-  );
+  const menuById = useMemo(() => new Map(menuItems.map((item) => [item.id, item])), [menuItems]);
+
+  const effectiveCart = useMemo(() => {
+    const withBonus = applyHappyHourBonus(cart, menuItems, happyHourSettings);
+    // Always use latest menu flags so Non-discountable / Non-taxable apply to every line.
+    return withBonus.map((line) => withLiveMenuItem(line, menuById));
+  }, [cart, menuItems, happyHourSettings, menuById]);
 
   const displayCart = useMemo(
     () => sortCartLinesNewestFirst(effectiveCart),
@@ -747,8 +906,20 @@ export function PosPage(): JSX.Element {
   const cartListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (displayCart.length === 0) {
+      setSelectedCartKey(null);
+      return;
+    }
+    if (!selectedCartKey || !displayCart.some((l) => l.key === selectedCartKey)) {
+      setSelectedCartKey(displayCart[0].key);
+    }
+  }, [displayCart, selectedCartKey]);
+
+  useEffect(() => {
     if (displayCart.length === 0) return;
-    cartListRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const el = cartListRef.current;
+    if (!el) return;
+    el.scrollTo({ top: 0, behavior: "smooth" });
   }, [displayCart[0]?.key, displayCart[0]?.sortOrder, displayCart[0]?.qty]);
 
   const happyHourBonus = useMemo(
@@ -768,29 +939,49 @@ export function PosPage(): JSX.Element {
 
   const happyHourLive = isHappyHourActive(happyHourSettings);
 
-  const subtotal = effectiveCart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
+  const subtotal = effectiveCart.reduce((s, l) => s + cartLineNet(l), 0);
 
   const itemEligibility = useMemo(() => {
-    const discountableSubtotal = effectiveCart.reduce(
-      (s, l) => s + (l.item.discountable && !l.item.nonDiscountable ? l.unitPrice * l.qty : 0),
-      0,
-    );
-    const taxableSubtotal = effectiveCart.reduce(
-      (s, l) => s + (l.item.nonTaxable ? 0 : l.unitPrice * l.qty),
-      0,
-    );
+    const discountableSubtotal = effectiveCart.reduce((s, l) => {
+      // Non-taxable / non-discountable lines never absorb bill discount.
+      if (lineBlocksBillDiscount(l)) return s;
+      return s + cartLineNet(l);
+    }, 0);
+    const taxableSubtotal = effectiveCart.reduce((s, l) => {
+      if (l.item.nonTaxable) return s;
+      return s + cartLineNet(l);
+    }, 0);
     return { discountableSubtotal, taxableSubtotal };
   }, [effectiveCart]);
 
+  const selectedCartLine = useMemo(
+    () => displayCart.find((l) => l.key === selectedCartKey) ?? displayCart[0] ?? null,
+    [displayCart, selectedCartKey],
+  );
+
+  // Disc panel follows the clicked cart card (every item, not just the first).
+  const showTicketDiscount = Boolean(
+    selectedCartLine &&
+      !lineBlocksBillDiscount(selectedCartLine) &&
+      itemEligibility.discountableSubtotal > 0,
+  );
+  const showTaxRow = itemEligibility.taxableSubtotal > 0;
+
   useEffect(() => {
-    setDiscountAmountInput((prev) => clampDiscountPkr(prev, subtotal));
-  }, [subtotal]);
+    if (!showTicketDiscount) {
+      setDiscountPctInput(0);
+      setDiscountAmountInput(0);
+      return;
+    }
+    setDiscountAmountInput((prev) => clampDiscountPkr(prev, itemEligibility.discountableSubtotal));
+  }, [itemEligibility.discountableSubtotal, showTicketDiscount, selectedCartKey]);
 
   const ticketTotals = useMemo(() => {
-    const discountSeed =
-      discountEditedAs === "pct"
-        ? discountAmountFromPct(discountPctInput, subtotal)
-        : clampDiscountPkr(discountAmountInput, subtotal);
+    const discountSeed = !showTicketDiscount
+      ? 0
+      : discountEditedAs === "pct"
+        ? discountAmountFromPct(discountPctInput, itemEligibility.discountableSubtotal)
+        : clampDiscountPkr(discountAmountInput, itemEligibility.discountableSubtotal);
     const charge = mode === "delivery" ? deliveryChargePkr : 0;
     return computeTicketTotals(subtotal, discountSeed, ticketServicePct, taxPct, charge, itemEligibility);
   }, [
@@ -803,6 +994,7 @@ export function PosPage(): JSX.Element {
     mode,
     deliveryChargePkr,
     itemEligibility,
+    showTicketDiscount,
   ]);
 
   const { discount, discountPct, service, tax, deliveryCharge, total } = ticketTotals;
@@ -817,32 +1009,49 @@ export function PosPage(): JSX.Element {
 
   function onDiscountPctChange(raw: number): void {
     const pct = Math.max(0, Math.min(50, raw));
+    const base = itemEligibility.discountableSubtotal;
     setDiscountEditedAs("pct");
     setDiscountPctInput(pct);
-    setDiscountAmountInput(discountAmountFromPct(pct, subtotal));
+    setDiscountAmountInput(discountAmountFromPct(pct, base));
   }
 
   function onDiscountAmountChange(raw: number): void {
-    const amount = clampDiscountPkr(raw, subtotal);
+    const base = itemEligibility.discountableSubtotal;
+    const amount = clampDiscountPkr(raw, base);
     setDiscountEditedAs("amount");
     setDiscountAmountInput(amount);
-    setDiscountPctInput(discountPctFromAmount(amount, subtotal));
+    setDiscountPctInput(discountPctFromAmount(amount, base));
   }
 
   const modeLabel = posOrderModeLabel(mode);
-  const orderNotes = posDeliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress);
-  const stationLabel = posStationLabel(mode, tableLabel);
-  const billTableLabel = posBillTableLabel(mode, tableLabel);
+  const orderNotes =
+    mode === "delivery"
+      ? posDeliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress)
+      : mode === "staff-food"
+        ? posStaffFoodNotes(staffFoodConsumerType, staffFoodPersonName, staffFoodExtraNotes)
+        : undefined;
+  const stationLabel = posStationLabel(mode, tableLabel, staffFoodPersonName, staffFoodConsumerType);
+  const billTableLabel = posBillTableLabel(
+    mode,
+    tableLabel,
+    staffFoodPersonName,
+    staffFoodConsumerType,
+  );
+
+  /** Print / kitchen payload: oldest first so the last-added item is at the bottom. */
+  const printOrderedCart = () => sortCartLinesOldestFirst(effectiveCart);
 
   function buildPrintPayload(): Omit<PrintTicketInput, "kind"> {
+    const lines = printOrderedCart();
     return {
       branchName: branch?.name ?? "POPS",
       branchCode: branch?.code ?? "—",
       orderRef,
       modeLabel,
-      tableLabel: posPrintTableLabel(mode, tableLabel),
+      tableLabel: posPrintTableLabel(mode, tableLabel, staffFoodPersonName, staffFoodConsumerType),
       notes: orderNotes,
-      lines: effectiveCart.map((line) => ({
+      waiterName: mode === "staff-food" && staffFoodPersonName ? staffFoodPersonName : undefined,
+      lines: lines.map((line) => ({
         label: line.lineLabel,
         qty: line.qty,
         unitPrice: line.unitPrice,
@@ -860,7 +1069,7 @@ export function PosPage(): JSX.Element {
   }
 
   const kitchenLines = () =>
-    effectiveCart.map((line) => ({
+    printOrderedCart().map((line) => ({
       label: line.lineLabel,
       qty: line.qty,
       unitPrice: line.unitPrice,
@@ -872,6 +1081,14 @@ export function PosPage(): JSX.Element {
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
   }
 
+  function resetStaffFoodFields(): void {
+    setStaffFoodConsumerType("staff");
+    setStaffFoodEmployeeId("");
+    setStaffFoodGuestName("");
+    setStaffFoodPendingName("");
+    setStaffFoodExtraNotes("");
+  }
+
   function resetAfterKitchenOrder(): void {
     setOrderRef(peekNextOrderRef(branch?.code));
     setCart([]);
@@ -881,7 +1098,32 @@ export function PosPage(): JSX.Element {
     setDeliveryRiderId("");
     setDeliveryChargePkr(loadDeliverySettings(branch?.code).defaultChargePkr);
     setDeliveryDetailsOpen(false);
+    resetStaffFoodFields();
     beginNextOrderCycle();
+  }
+
+  async function persistStaffFoodRecord(): Promise<void> {
+    if (mode !== "staff-food" || !branch?.code || !staffFoodPersonName) return;
+    const itemsOrdered = effectiveCart
+      .map((line) => `${line.lineLabel} x${line.qty}`)
+      .join(", ")
+      .slice(0, 1000);
+    if (!itemsOrdered) return;
+    try {
+      await createStaffFoodRecord({
+        branchCode: branch.code,
+        consumerType: staffFoodConsumerType,
+        employeeId: staffFoodConsumerType === "staff" ? staffFoodEmployeeId || undefined : undefined,
+        personName: staffFoodPersonName,
+        mealDate: new Date().toISOString().slice(0, 10),
+        itemsOrdered,
+        amountPkr: Math.max(0, Math.round(total)),
+        notes: staffFoodExtraNotes.trim() || undefined,
+      });
+      void queryClient.invalidateQueries({ queryKey: ["hr", "staff-food"] });
+    } catch {
+      // Order already succeeded — don't block POS on HR log failure.
+    }
   }
 
   function resetAfterBill(): void {
@@ -892,8 +1134,8 @@ export function PosPage(): JSX.Element {
     resetAfterKitchenOrder();
   }
 
-  function applyTableFromStation(stationLabel: string): void {
-    const tableNumber = tableNumberFromStation(stationLabel);
+  function applyTableFromStation(stationLabelValue: string): void {
+    const tableNumber = tableNumberFromStation(stationLabelValue);
     if (!tableNumber) {
       setSelectedTableId(null);
       return;
@@ -903,6 +1145,28 @@ export function PosPage(): JSX.Element {
       setSelectedFloorSectionId(table.sectionId);
       setSelectedTableId(table.id);
     }
+  }
+
+  function applyStaffFoodFromStation(stationLabelValue: string): void {
+    const parsed = parseStaffFoodPersonFromStation(stationLabelValue);
+    if (!parsed) {
+      resetStaffFoodFields();
+      return;
+    }
+    setStaffFoodConsumerType(parsed.consumerType);
+    setStaffFoodExtraNotes("");
+    if (parsed.consumerType === "guest") {
+      setStaffFoodEmployeeId("");
+      setStaffFoodPendingName("");
+      setStaffFoodGuestName(parsed.personName);
+      return;
+    }
+    setStaffFoodGuestName("");
+    const match = activeStaffEmployees.find(
+      (e) => e.displayName.trim().toLowerCase() === parsed.personName.toLowerCase(),
+    );
+    setStaffFoodEmployeeId(match?.id ?? "");
+    setStaffFoodPendingName(match ? "" : parsed.personName);
   }
 
   function applyTicketToPos(ticket: KitchenTicket): void {
@@ -917,6 +1181,7 @@ export function PosPage(): JSX.Element {
     setDiscountEditedAs("pct");
     setDeliveryRiderId(ticket.riderId ?? "");
     setDeliveryChargePkr(ticket.deliveryChargePkr ?? 0);
+    applyStaffFoodFromStation(ticket.stationLabel);
     const delivery = parseDeliveryFieldsFromNotes(ticket.notes ?? null);
     setDeliveryCustomer(delivery.customer);
     setDeliveryPhone(delivery.phone);
@@ -941,6 +1206,7 @@ export function PosPage(): JSX.Element {
     setDiscountEditedAs("amount");
     setDeliveryRiderId(bill.riderId ?? "");
     setDeliveryChargePkr(bill.deliveryChargePkr ?? 0);
+    applyStaffFoodFromStation(bill.tableLabel);
     const delivery = parseDeliveryFieldsFromNotes(bill.notes);
     setDeliveryCustomer(delivery.customer);
     setDeliveryPhone(delivery.phone);
@@ -1038,6 +1304,16 @@ export function PosPage(): JSX.Element {
     return null;
   }
 
+  function validateStaffFoodPerson(): string | null {
+    if (mode !== "staff-food") return null;
+    if (staffFoodConsumerType === "staff") {
+      if (!staffFoodEmployeeId) return "Select which staff member took the food.";
+      return null;
+    }
+    if (!staffFoodGuestName.trim()) return "Enter the guest name for staff food.";
+    return null;
+  }
+
   function validateKitchenOrder(): string | null {
     if (cart.length === 0) return "Add items to the ticket.";
     if (!branch?.code) return "Select a branch first.";
@@ -1047,6 +1323,8 @@ export function PosPage(): JSX.Element {
     }
     const riderErr = validateDeliveryRider();
     if (riderErr) return riderErr;
+    const staffErr = validateStaffFoodPerson();
+    if (staffErr) return staffErr;
     return null;
   }
 
@@ -1059,6 +1337,8 @@ export function PosPage(): JSX.Element {
     }
     const riderErr = validateDeliveryRider();
     if (riderErr) return riderErr;
+    const staffErr = validateStaffFoodPerson();
+    if (staffErr) return staffErr;
     return null;
   }
 
@@ -1083,31 +1363,46 @@ export function PosPage(): JSX.Element {
         ...deliveryExtras(),
       });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       const wasTicketEdit = editingOrder?.kind === "ticket";
-      const kotOk = buildRoutedKotPrintPayloads()
-        .map((payload) => {
-          const ok = printKot(payload);
-          logPrintEvent(branch?.code, {
-            kind: "kot",
-            printerName: payload.printerName,
-            orderRef: payload.orderRef,
-            ok,
-          });
-          return ok;
-        })
-        .every(Boolean);
+      const payloads = buildRoutedKotPrintPayloads();
+      let kotOk = true;
+      const printErrors: string[] = [];
+      for (const payload of payloads) {
+        const result = await printKotDetailed(payload);
+        const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
+        logPrintEvent(branch?.code, {
+          kind: "kot",
+          printerName: target,
+          orderRef: payload.orderRef,
+          ok: result.ok,
+        });
+        if (!result.ok) {
+          kotOk = false;
+          printErrors.push(`${target}: ${result.error ?? "print failed"}`);
+        }
+      }
+      if (!wasTicketEdit) {
+        await persistStaffFoodRecord();
+      }
       invalidateOrderFeeds();
       setEditingOrder(null);
       resetAfterKitchenOrder();
-      setPrintNotice(
-        noticeFromPrintResult(
-          kotOk,
-          wasTicketEdit
-            ? `${modeLabel} order updated and sent to kitchen.`
-            : `${modeLabel} order saved and sent to kitchen.`,
-        ),
-      );
+      if (kotOk) {
+        setPrintNotice(
+          noticeFromPrintResult(
+            true,
+            wasTicketEdit
+              ? `${modeLabel} order updated and sent to kitchen.`
+              : `${modeLabel} order saved and sent to kitchen.`,
+          ),
+        );
+      } else {
+        setPrintNotice({
+          tone: "error",
+          message: `Order saved, but KOT print failed — ${printErrors.join("; ")}. Check Printer → Assign Users / OS link.`,
+        });
+      }
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
@@ -1165,20 +1460,21 @@ export function PosPage(): JSX.Element {
           deliveryChargePkr: mode === "delivery" ? deliveryChargePkr : 0,
         });
         if (status === "held") {
-          return { bill: updated, intent };
+          return { bill: updated, intent, skipStaffFoodLog: true };
         }
         const completed = await completeBill(editingOrder.billId, {
           payments,
           servicePct: checkoutServicePct,
           taxPct: checkoutTaxPct,
         });
-        return { bill: completed, intent };
+        return { bill: completed, intent, skipStaffFoodLog: true };
       }
       const bill = await createBill({
         branchCode: branch!.code,
         orderRef: nextOrderRef(branch!.code),
         tableLabel: billTableLabel,
-        waiterName: "POS Counter",
+        waiterName:
+          mode === "staff-food" && staffFoodPersonName ? staffFoodPersonName : "POS Counter",
         notes: orderNotes,
         lines: cartToBillLines(effectiveCart),
         discountPct: discount > 0 ? discountPct : undefined,
@@ -1192,26 +1488,64 @@ export function PosPage(): JSX.Element {
       if (editingOrder?.kind === "ticket") {
         await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
       }
-      return { bill, intent };
+      return {
+        bill,
+        intent,
+        // Kitchen Order already logged HR; avoid a second record on Pay.
+        skipStaffFoodLog: editingOrder?.kind === "ticket",
+      };
     },
-    onSuccess: ({ bill, intent }) => {
+    onSuccess: async ({ bill, intent, skipStaffFoodLog }) => {
       setCheckoutModal(null);
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
       if (intent === "hold") {
+        // Direct hold still records who took staff food.
+        if (!skipStaffFoodLog) {
+          await persistStaffFoodRecord();
+        }
         resetAfterBill();
         setPrintNotice({ message: `Bill ${bill.billRef} held — complete payment from Orders.`, tone: "success" });
         return;
       }
-      const payload = buildPrintPayload();
-      const ok = printReceipt({ ...payload, billRef: bill.billRef, waiterName: bill.waiterName });
+      if (!skipStaffFoodLog) {
+        await persistStaffFoodRecord();
+      }
+      const sessionUserId = useSessionStore.getState().claims?.sub;
+      const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
+      const payload = withPrinterProfile(
+        {
+          ...buildPrintPayload(),
+          billRef: bill.billRef,
+          waiterName: bill.waiterName,
+        },
+        receiptProfile,
+      );
+      const result = await printReceiptDetailed(payload);
+      const target = payload.systemPrinterName ?? payload.printerName ?? "Receipt";
+      logPrintEvent(branch?.code, {
+        kind: "receipt",
+        printerName: target,
+        orderRef: payload.orderRef,
+        ok: result.ok,
+      });
       resetAfterBill();
-      if (intent === "invoice") {
+      if (result.ok) {
         setPrintNotice(
-          noticeFromPrintResult(ok, `Invoice printed — ${bill.billRef} saved to orders.`),
+          noticeFromPrintResult(
+            true,
+            intent === "invoice"
+              ? `Invoice printed to ${target} — ${bill.billRef}`
+              : `${modeLabel} paid — printed to ${target} (${bill.billRef})`,
+          ),
         );
       } else {
-        setPrintNotice(noticeFromPrintResult(ok, `${modeLabel} paid — ${bill.billRef}`));
+        setPrintNotice({
+          tone: "error",
+          message: `Bill ${bill.billRef} saved, but print to ${target} failed${
+            result.error ? `: ${result.error}` : ""
+          }. Link an OS printer on Printer Profiles.`,
+        });
       }
       const phone = phoneFromBillNotes(bill.notes);
       if (phone || mode === "delivery") {
@@ -1260,15 +1594,51 @@ export function PosPage(): JSX.Element {
       }
       return bills;
     },
-    onSuccess: (bills) => {
+    onSuccess: async (bills) => {
       setSplitModalOpen(false);
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
+      const sessionUserId = useSessionStore.getState().claims?.sub;
+      const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
+      let printOk = true;
+      for (const bill of bills) {
+        const payload = withPrinterProfile(
+          {
+            ...buildPrintPayload(),
+            billRef: bill.billRef,
+            orderRef: bill.orderRef ?? bill.billRef,
+            waiterName: bill.waiterName,
+            lines: bill.lines.map((line) => ({
+              label: line.label,
+              qty: line.qty,
+              unitPrice: line.unitPrice,
+            })),
+            subtotal: bill.subtotal,
+            discount: bill.discount,
+            service: bill.service,
+            tax: bill.tax,
+            total: bill.total,
+            servicePct: bill.servicePct,
+            taxPct: bill.taxPct,
+          },
+          receiptProfile,
+        );
+        const result = await printReceiptDetailed(payload);
+        logPrintEvent(branch?.code, {
+          kind: "receipt",
+          printerName: payload.systemPrinterName ?? payload.printerName ?? "Receipt",
+          orderRef: payload.orderRef,
+          ok: result.ok,
+        });
+        if (!result.ok) printOk = false;
+      }
       resetAfterBill();
-      setPrintNotice({
-        message: `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
-        tone: "success",
-      });
+      setPrintNotice(
+        noticeFromPrintResult(
+          printOk,
+          `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
+        ),
+      );
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
@@ -1283,6 +1653,8 @@ export function PosPage(): JSX.Element {
       service: 0,
       tax: 0,
       total: 0,
+      // Edited kitchen tickets print as UPDATE so kitchen can spot revisions.
+      isOrderUpdate: editingOrder?.kind === "ticket",
     };
   }
 
@@ -1293,20 +1665,45 @@ export function PosPage(): JSX.Element {
    */
   function buildRoutedKotPrintPayloads(): Omit<PrintTicketInput, "kind">[] {
     const basePayload = buildKotPrintPayload();
+    const sessionUserId = useSessionStore.getState().claims?.sub;
     const enabledSections = loadPrinterSections(branch?.code).filter((s) => s.enabled);
-    if (enabledSections.length === 0) return [basePayload];
+
+    const attachKotProfile = (
+      payload: Omit<PrintTicketInput, "kind">,
+      sectionId: string | null,
+      preferredType: "kitchen" | "bar" = "kitchen",
+    ): Omit<PrintTicketInput, "kind"> => {
+      const profile = resolveKotPrinter(branch?.code, sectionId, sessionUserId, preferredType);
+      return withPrinterProfile(payload, profile);
+    };
+
+    if (enabledSections.length === 0) {
+      return [attachKotProfile(basePayload, null, "kitchen")];
+    }
 
     const enabledSectionIds = new Set(enabledSections.map((s) => s.id));
-    const groups = groupCartLinesBySection(branch?.code, effectiveCart, enabledSectionIds);
-    if (groups.length <= 1 && groups[0]?.sectionId == null) return [basePayload];
+    const groups = groupCartLinesBySection(branch?.code, printOrderedCart(), enabledSectionIds);
+    if (groups.length <= 1 && groups[0]?.sectionId == null) {
+      return [attachKotProfile(basePayload, null, "kitchen")];
+    }
 
     return groups.map(({ sectionId, lines }) => {
       const section = sectionId ? enabledSections.find((s) => s.id === sectionId) : null;
-      return {
-        ...basePayload,
-        lines: lines.map((line) => ({ label: line.lineLabel, qty: line.qty, unitPrice: 0 })),
-        printerName: section ? `${section.icon} ${section.name}` : "Unassigned",
-      };
+      const preferredType =
+        section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
+          ? ("bar" as const)
+          : ("kitchen" as const);
+      const label = section ? `${section.icon} ${section.name}` : "Kitchen";
+      const orderedLines = sortCartLinesOldestFirst(lines);
+      return attachKotProfile(
+        {
+          ...basePayload,
+          lines: orderedLines.map((line) => ({ label: line.lineLabel, qty: line.qty, unitPrice: 0 })),
+          printerName: label,
+        },
+        sectionId,
+        preferredType,
+      );
     });
   }
 
@@ -1386,7 +1783,8 @@ export function PosPage(): JSX.Element {
         <div className="shrink-0 text-sm font-semibold text-white">POS</div>
         <div ref={searchContainerRef} className="relative min-w-0 flex-1 basis-[10rem] sm:max-w-md">
           <input
-            placeholder="Search menu or scan SKU…"
+            ref={searchInputRef}
+            placeholder="Search menu or scan SKU… (F9)"
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -1457,9 +1855,6 @@ export function PosPage(): JSX.Element {
           </button>
           <button type="button" className={POS_TOOLBAR_BTN} onClick={() => setPayOutModalOpen(true)}>
             Paying out
-          </button>
-          <button type="button" className={POS_TOOLBAR_BTN} onClick={() => setStaffFoodModalOpen(true)}>
-            Staff food
           </button>
           <div className="ml-1 flex items-center gap-1.5 border-l border-slate-700/80 pl-2">
             <button
@@ -1539,10 +1934,26 @@ export function PosPage(): JSX.Element {
           item={variantPickerItem}
           variants={resolvePosSellableVariants(variantPickerItem)}
           onSelect={(variant) => {
-            addVariantToCart(variantPickerItem, variant);
+            beginAddToCart(variantPickerItem, variant);
             setVariantPickerItem(null);
           }}
           onClose={() => setVariantPickerItem(null)}
+        />
+      ) : null}
+
+      {itemPrompt ? (
+        <PosItemPromptModal
+          item={itemPrompt.item}
+          variant={itemPrompt.variant}
+          defaultPrice={itemPrompt.variant?.price ?? itemPrompt.item.price}
+          onConfirm={({ price, qty }) => {
+            addVariantToCart(itemPrompt.item, itemPrompt.variant, {
+              qty,
+              unitPrice: itemPrompt.item.askForPrice ? price : undefined,
+            });
+            setItemPrompt(null);
+          }}
+          onClose={() => setItemPrompt(null)}
         />
       ) : null}
 
@@ -1553,19 +1964,19 @@ export function PosPage(): JSX.Element {
       >
         {/* Menu column */}
         <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
-          {/* Category pills */}
+          {/* Category pills — bar background only; amber on selected */}
           {categories.length > 0 ? (
-            <div className="mb-1.5 flex shrink-0 gap-1 overflow-x-auto pb-0.5">
+            <div className="no-scrollbar mb-1.5 flex shrink-0 gap-1.5 overflow-x-auto rounded-xl bg-amber-50 p-1.5 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
               <button
                 type="button"
                 onClick={() => {
                   setMenuView("all");
                   setCategoryId(null);
                 }}
-                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
                   showAllItems
-                    ? "bg-slate-700 text-white"
-                    : "bg-slate-900/60 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                    ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                    : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"
                 }`}
               >
                 All
@@ -1573,16 +1984,24 @@ export function PosPage(): JSX.Element {
               <button
                 type="button"
                 onClick={() => setMenuView("featured")}
-                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] transition ${
+                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
                   showFeaturedOnly
-                    ? amberPillActiveClass
-                    : pillInactiveClass
+                    ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                    : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-amber-200"
                 }`}
               >
-                <span aria-hidden>★</span>
+                <span className={showFeaturedOnly ? "text-slate-950" : "text-amber-500"} aria-hidden>
+                  ★
+                </span>
                 Featured
                 {featuredCount > 0 ? (
-                  <span className="rounded-full bg-slate-950/60 px-1.5 text-[10px] tabular-nums">
+                  <span
+                    className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
+                      showFeaturedOnly
+                        ? "bg-slate-950/15 text-slate-950"
+                        : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
+                    }`}
+                  >
                     {featuredCount}
                   </span>
                 ) : null}
@@ -1595,10 +2014,10 @@ export function PosPage(): JSX.Element {
                     setMenuView("category");
                     setCategoryId(c.id);
                   }}
-                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
                     menuView === "category" && activeCategoryId === c.id
-                      ? "bg-slate-700 text-white"
-                      : "bg-slate-900/60 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                      ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                      : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"
                   }`}
                 >
                   {c.name}
@@ -1712,8 +2131,8 @@ export function PosPage(): JSX.Element {
           </div>
         </div>
 
-        {/* Current ticket — grows with cart items; page scrolls instead of inner cart scroll */}
-        <div className="col-span-12 flex min-h-[36rem] flex-col rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:col-span-4 dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
+        {/* Current ticket — cart shows 6 items (3×2); scroll for the rest */}
+        <div className="col-span-12 flex min-h-[36rem] flex-col rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)] lg:min-h-0 dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
           <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
@@ -1726,7 +2145,7 @@ export function PosPage(): JSX.Element {
                   </span>
                 </div>
                 <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
-                  {editingOrder ? "Modify order" : "New order"}
+                  {editingOrder ? "Modify order" : mode === "staff-food" ? "Staff food" : "New order"}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1778,6 +2197,73 @@ export function PosPage(): JSX.Element {
                   ›
                 </span>
               </button>
+            ) : null}
+
+            {mode === "staff-food" ? (
+              <div className="mt-2 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700/60 dark:bg-slate-950/40">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <select
+                    value={staffFoodConsumerType}
+                    onChange={(e) => {
+                      const next = e.target.value as StaffFoodConsumerType;
+                      setStaffFoodConsumerType(next);
+                      setStaffFoodEmployeeId("");
+                      setStaffFoodGuestName("");
+                      setStaffFoodPendingName("");
+                    }}
+                    className={`${TICKET_INPUT_CLASS} py-1.5`}
+                  >
+                    <option value="staff">Staff</option>
+                    <option value="guest">Guest</option>
+                  </select>
+                  {staffFoodConsumerType === "staff" ? (
+                    <select
+                      value={staffFoodEmployeeId}
+                      onChange={(e) => {
+                        setStaffFoodEmployeeId(e.target.value);
+                        setStaffFoodPendingName("");
+                      }}
+                      className={`${TICKET_INPUT_CLASS} py-1.5 ${
+                        !staffFoodEmployeeId ? "border-amber-400 dark:border-amber-500/40" : ""
+                      }`}
+                    >
+                      <option value="">
+                        {staffEmployeesQuery.isLoading ? "Loading staff…" : "Select staff *"}
+                      </option>
+                      {activeStaffEmployees.map((employee) => (
+                        <option key={employee.id} value={employee.id}>
+                          {employee.displayName}
+                          {employee.jobTitle ? ` · ${employee.jobTitle}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      placeholder="Guest name *"
+                      value={staffFoodGuestName}
+                      onChange={(e) => setStaffFoodGuestName(e.target.value)}
+                      className={`${TICKET_INPUT_CLASS} py-1.5 ${
+                        !staffFoodGuestName.trim() ? "border-amber-400 dark:border-amber-500/40" : ""
+                      }`}
+                    />
+                  )}
+                </div>
+                <input
+                  placeholder="Notes (optional)"
+                  value={staffFoodExtraNotes}
+                  onChange={(e) => setStaffFoodExtraNotes(e.target.value)}
+                  className={`${TICKET_INPUT_CLASS} py-1.5`}
+                />
+                {staffFoodPersonName ? (
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Ticket will show Staff Food · {staffFoodPersonName}
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                    Select who took the food, then add menu items and Order / Pay as usual.
+                  </p>
+                )}
+              </div>
             ) : null}
 
             {mode === "delivery" ? (
@@ -1920,7 +2406,7 @@ export function PosPage(): JSX.Element {
             </p>
           ) : null}
 
-          <div ref={cartListRef} className="p-3">
+          <div className="shrink-0 p-3">
             {displayCart.length === 0 ? (
               <div className="flex min-h-[12rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
                 <div className="mb-2 text-2xl opacity-40" aria-hidden>
@@ -1932,17 +2418,45 @@ export function PosPage(): JSX.Element {
                 </p>
               </div>
             ) : (
-              <ul className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-                {displayCart.map((line) => (
+              <div
+                ref={cartListRef}
+                className={
+                  displayCart.length > POS_CART_VISIBLE_COUNT
+                    ? "overflow-y-auto overscroll-contain pr-1"
+                    : "overflow-hidden"
+                }
+                style={{
+                  height: `${posCartListHeightPx(displayCart.length)}px`,
+                  maxHeight: `${POS_CART_LIST_MAX_PX}px`,
+                }}
+              >
+              <ul
+                className="grid grid-cols-3 gap-2"
+                style={{ gridAutoRows: `${POS_CART_CARD_ROW_PX}px` }}
+              >
+                {displayCart.map((line) => {
+                  const isSelected = selectedCartLine?.key === line.key;
+                  return (
                   <li
                     key={line.key}
-                    className={`flex min-w-0 flex-col gap-2 rounded-lg border px-2 py-2 transition ${
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedCartKey(line.key)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedCartKey(line.key);
+                      }
+                    }}
+                    className={`flex min-h-0 min-w-0 cursor-pointer flex-col gap-1 overflow-hidden rounded-lg border px-2 py-2 transition ${
                       line.isComplimentary
                         ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
-                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
+                        : isSelected
+                          ? "border-amber-400 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-amber-500/10 dark:ring-amber-500/30"
+                          : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
                     }`}
                   >
-                    <div className="min-w-0 flex-1 leading-snug">
+                    <div className="min-h-0 min-w-0 flex-1 overflow-hidden leading-snug">
                       <div className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-900 dark:text-slate-100">
                         {line.lineLabel}
                       </div>
@@ -1950,20 +2464,44 @@ export function PosPage(): JSX.Element {
                         {line.isComplimentary ? (
                           <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
                         ) : (
-                          <>Rs {line.unitPrice.toLocaleString()} each</>
+                          <>
+                            Rs {line.unitPrice.toLocaleString()} each
+                            {cartLineManualDiscountPkr(line) > 0 ? (
+                              <span className="ml-1 text-emerald-600 dark:text-emerald-400">
+                                · net Rs {cartLineNet(line).toLocaleString()}
+                              </span>
+                            ) : null}
+                          </>
                         )}
                       </div>
+                      {!line.isComplimentary && !isMenuItemDiscountable(line.item) ? (
+                        <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-rose-600 dark:text-rose-400">
+                          Non-discountable
+                        </div>
+                      ) : null}
+                      {!line.isComplimentary && line.item.nonTaxable ? (
+                        <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">
+                          Non-taxable
+                        </div>
+                      ) : null}
                     </div>
                     {line.isComplimentary ? (
                       <span className="self-start rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
                         FREE
                       </span>
                     ) : (
-                      <div className="flex w-full items-center justify-center gap-1 rounded-lg bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
+                      <>
+                      <div
+                        className="flex w-full items-center justify-center gap-1 rounded-lg bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <button
                           type="button"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                          onClick={() => setQty(line.key, line.qty - 1)}
+                          onClick={() => {
+                            setSelectedCartKey(line.key);
+                            setQty(line.key, line.qty - 1);
+                          }}
                           aria-label="Decrease quantity"
                         >
                           −
@@ -1974,63 +2512,116 @@ export function PosPage(): JSX.Element {
                         <button
                           type="button"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                          onClick={() => setQty(line.key, line.qty + 1)}
+                          onClick={() => {
+                            setSelectedCartKey(line.key);
+                            setQty(line.key, line.qty + 1);
+                          }}
                           aria-label="Increase quantity"
                         >
                           +
                         </button>
                       </div>
+                      {canEditLineDiscount(line) ? (
+                        <div
+                          className="grid grid-cols-2 gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="text-[9px] uppercase tracking-wide text-slate-500">
+                            Disc %
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              className="mt-0.5 w-full rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px] text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                              value={
+                                line.lineDiscountMode === "percent" ? (line.lineDiscountValue ?? 0) : ""
+                              }
+                              placeholder="0"
+                              onChange={(e) =>
+                                setLineDiscount(line.key, "percent", Number(e.target.value) || 0)
+                              }
+                            />
+                          </label>
+                          <label className="text-[9px] uppercase tracking-wide text-slate-500">
+                            Disc Rs
+                            <input
+                              type="number"
+                              min={0}
+                              className="mt-0.5 w-full rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px] text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                              value={
+                                line.lineDiscountMode === "amount" ? (line.lineDiscountValue ?? 0) : ""
+                              }
+                              placeholder="0"
+                              onChange={(e) =>
+                                setLineDiscount(line.key, "amount", Number(e.target.value) || 0)
+                              }
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                      </>
                     )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
+              </div>
             )}
           </div>
 
-          <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
+          <div className="mt-auto shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Discount
-                </span>
-                <div className="flex gap-1">
-                  {[5, 10, 15, 20].map((pct) => (
-                    <button
-                      key={pct}
-                      type="button"
-                      className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 hover:bg-amber-100 hover:text-amber-800 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-200"
-                      onClick={() => onDiscountPctChange(pct)}
-                    >
-                      {pct}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  Disc %
-                  <input
-                    type="number"
-                    min={0}
-                    max={50}
-                    value={discountEditedAs === "pct" ? discountPctInput : discountPct}
-                    onChange={(e) => onDiscountPctChange(Number(e.target.value) || 0)}
-                    className={TICKET_NUMBER_INPUT_CLASS}
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  Disc Rs
-                  <input
-                    type="number"
-                    min={0}
-                    max={subtotal}
-                    value={discountEditedAs === "amount" ? discountAmountInput : discount}
-                    onChange={(e) => onDiscountAmountChange(Number(e.target.value) || 0)}
-                    className={TICKET_NUMBER_INPUT_CLASS}
-                  />
-                </label>
-              </div>
-              <div className="mt-3 space-y-1.5 text-xs">
+              {showTicketDiscount ? (
+                <>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Discount
+                    </span>
+                    <div className="flex gap-1">
+                      {[5, 10, 15, 20].map((pct) => (
+                        <button
+                          key={pct}
+                          type="button"
+                          className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 hover:bg-amber-100 hover:text-amber-800 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-amber-500/20 dark:hover:text-amber-200"
+                          onClick={() => onDiscountPctChange(pct)}
+                        >
+                          {pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                      Disc %
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={discountEditedAs === "pct" ? discountPctInput : discountPct}
+                        onChange={(e) => onDiscountPctChange(Number(e.target.value) || 0)}
+                        className={TICKET_NUMBER_INPUT_CLASS}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                      Disc Rs
+                      <input
+                        type="number"
+                        min={0}
+                        max={subtotal}
+                        value={discountEditedAs === "amount" ? discountAmountInput : discount}
+                        onChange={(e) => onDiscountAmountChange(Number(e.target.value) || 0)}
+                        className={TICKET_NUMBER_INPUT_CLASS}
+                      />
+                    </label>
+                  </div>
+                </>
+              ) : selectedCartLine && lineBlocksBillDiscount(selectedCartLine) ? (
+                <p className="mb-2 text-[10px] text-rose-600 dark:text-rose-400">
+                  {selectedCartLine.item.nonTaxable ? "Non-taxable" : "Non-discountable"} item
+                  selected — Disc % / Disc Rs hidden. Tap a normal item to show discount.
+                </p>
+              ) : null}
+              <div className={`${showTicketDiscount ? "mt-3" : ""} space-y-1.5 text-xs`}>
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
                   <span>Subtotal</span>
                   <span className="tabular-nums text-slate-900 dark:text-slate-300">
@@ -2049,12 +2640,19 @@ export function PosPage(): JSX.Element {
                     {service.toLocaleString()}
                   </span>
                 </div>
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                  <span>Tax {taxPct}%</span>
-                  <span className="tabular-nums text-slate-900 dark:text-slate-300">
-                    {tax.toLocaleString()}
-                  </span>
-                </div>
+                {showTaxRow ? (
+                  <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                    <span>Tax {taxPct}%</span>
+                    <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                      {tax.toLocaleString()}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between text-sky-600 dark:text-sky-400">
+                    <span>Tax</span>
+                    <span className="tabular-nums">Exempt</span>
+                  </div>
+                )}
                 {mode === "delivery" && deliveryCharge > 0 ? (
                   <div className="flex justify-between text-slate-600 dark:text-slate-400">
                     <span>Delivery</span>
@@ -2213,10 +2811,6 @@ export function PosPage(): JSX.Element {
           onClose={() => setPayOutModalOpen(false)}
           onSuccess={(message) => setPrintNotice({ message, tone: "success" })}
         />
-      ) : null}
-
-      {staffFoodModalOpen ? (
-        <PosStaffFoodModal onClose={() => setStaffFoodModalOpen(false)} />
       ) : null}
 
       {cashierModal && branch?.code ? (

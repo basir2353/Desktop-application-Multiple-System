@@ -25,6 +25,9 @@ export function inferPosModeFromStation(stationLabel: string): PosOrderMode {
   const value = stationLabel.toLowerCase();
   if (value.includes("foodpanda") || value.startsWith("fp-")) return "foodpanda";
   if (value.includes("online") || value.startsWith("ol-")) return "online";
+  if (value.includes("staff food") || value.includes("staff-food") || value.startsWith("sf-")) {
+    return "staff-food";
+  }
   if (value.includes("delivery")) return "delivery";
   if (value.includes("takeaway") || value.includes("counter")) return "takeaway";
   return "dine-in";

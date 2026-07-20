@@ -264,6 +264,9 @@ export class MenuService implements OnModuleInit {
         discountable: input.discountable ?? true,
         nonDiscountable: input.nonDiscountable ?? false,
         nonTaxable: input.nonTaxable ?? false,
+        askForPrice: input.askForPrice ?? false,
+        askForQty: input.askForQty ?? false,
+        allowManualDiscount: input.allowManualDiscount ?? false,
       })
       .returning();
 
@@ -306,6 +309,11 @@ export class MenuService implements OnModuleInit {
         ...(input.discountable !== undefined ? { discountable: input.discountable } : {}),
         ...(input.nonDiscountable !== undefined ? { nonDiscountable: input.nonDiscountable } : {}),
         ...(input.nonTaxable !== undefined ? { nonTaxable: input.nonTaxable } : {}),
+        ...(input.askForPrice !== undefined ? { askForPrice: input.askForPrice } : {}),
+        ...(input.askForQty !== undefined ? { askForQty: input.askForQty } : {}),
+        ...(input.allowManualDiscount !== undefined
+          ? { allowManualDiscount: input.allowManualDiscount }
+          : {}),
       })
       .where(eq(popsMenuItems.id, itemId))
       .returning();
@@ -379,6 +387,9 @@ export class MenuService implements OnModuleInit {
       discountable: row.discountable,
       nonDiscountable: row.nonDiscountable,
       nonTaxable: row.nonTaxable,
+      askForPrice: row.askForPrice,
+      askForQty: row.askForQty,
+      allowManualDiscount: row.allowManualDiscount,
     };
   }
 

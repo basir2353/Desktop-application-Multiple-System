@@ -1,7 +1,14 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { fetchInventoryDashboard } from "../../../api/inventory";
 import { formatPkr, useInventoryAccess } from "../../../hooks/useInventory";
+import {
+  loadStockAlertSettings,
+  saveStockAlertSettings,
+  STOCK_ALERT_SETTINGS_CHANGED_EVENT,
+  type StockAlertSettings,
+} from "../../../lib/stockAlertSettings";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { InventoryError, InventoryLoading } from "./InventoryUi";
@@ -19,6 +26,25 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
 
 export function InventoryDashboardPage(): JSX.Element {
   const { branch } = useInventoryAccess();
+  const [alertSettings, setAlertSettings] = useState<StockAlertSettings>(() =>
+    loadStockAlertSettings(branch?.code),
+  );
+  const [alertNotice, setAlertNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAlertSettings(loadStockAlertSettings(branch?.code));
+  }, [branch?.code]);
+
+  useEffect(() => {
+    function onChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setAlertSettings(loadStockAlertSettings(branch?.code));
+      }
+    }
+    window.addEventListener(STOCK_ALERT_SETTINGS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(STOCK_ALERT_SETTINGS_CHANGED_EVENT, onChanged);
+  }, [branch?.code]);
 
   const dashboardQuery = useQuery({
     queryKey: ["inventory", "dashboard", branch?.code],
@@ -34,6 +60,14 @@ export function InventoryDashboardPage(): JSX.Element {
 
   const m = dashboardQuery.data!;
 
+  function saveAlerts(next: StockAlertSettings): void {
+    if (!branch?.code) return;
+    saveStockAlertSettings(branch.code, next);
+    setAlertSettings(next);
+    setAlertNotice("Stock alert settings saved.");
+    window.setTimeout(() => setAlertNotice(null), 3000);
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -42,7 +76,7 @@ export function InventoryDashboardPage(): JSX.Element {
         actions={
           <>
             <Link to="/pops/inventory/purchase-orders" className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
-              New PO
+              Kitchen demand
             </Link>
             <Link to="/pops/inventory/goods-receiving" className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
               Receive goods
@@ -55,6 +89,46 @@ export function InventoryDashboardPage(): JSX.Element {
       />
 
       <InventoryFlowBanner />
+
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+        <div className="text-sm font-medium text-white">Automatic quantity alerts</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Notify when stock reaches each ingredient&apos;s reorder level (set on Ingredients). Optional buffer
+          triggers the alert earlier.
+        </p>
+        {alertNotice ? (
+          <p className="mt-2 text-xs text-emerald-300">{alertNotice}</p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-end gap-4">
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input
+              type="checkbox"
+              checked={alertSettings.autoNotifyEnabled}
+              onChange={(e) =>
+                saveAlerts({ ...alertSettings, autoNotifyEnabled: e.target.checked })
+              }
+            />
+            Enable automatic stock notifications
+          </label>
+          <label className="block text-xs text-slate-400">
+            Extra buffer (units above reorder level)
+            <input
+              type="number"
+              min={0}
+              max={10000}
+              className="mt-1 w-28 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-white"
+              value={alertSettings.notifyBufferQty}
+              disabled={!alertSettings.autoNotifyEnabled}
+              onChange={(e) =>
+                saveAlerts({
+                  ...alertSettings,
+                  notifyBufferQty: Math.max(0, Number(e.target.value) || 0),
+                })
+              }
+            />
+          </label>
+        </div>
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total ingredients" value={String(m.totalIngredients)} />
@@ -92,7 +166,7 @@ export function InventoryDashboardPage(): JSX.Element {
             {[
               { to: "/pops/inventory/ingredients", label: "Ingredients" },
               { to: "/pops/inventory/recipes", label: "Recipes" },
-              { to: "/pops/inventory/purchase-orders", label: "Purchase orders" },
+              { to: "/pops/inventory/purchase-orders", label: "Kitchen demand / PO" },
               { to: "/pops/inventory/waste", label: "Waste" },
               { to: "/pops/inventory/stock", label: "Stock management" },
               { to: "/pops/inventory/reports", label: "Reports" },

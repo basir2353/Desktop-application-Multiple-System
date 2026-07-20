@@ -90,6 +90,12 @@ export const menuItemSchema = z.object({
   nonDiscountable: z.boolean().default(false),
   /** Excludes this item's amount from the tax base. */
   nonTaxable: z.boolean().default(false),
+  /** POS prompts for unit price when adding this item. */
+  askForPrice: z.boolean().default(false),
+  /** POS prompts for quantity when adding this item. */
+  askForQty: z.boolean().default(false),
+  /** POS allows a per-line manual discount (% or PKR) on this item. */
+  allowManualDiscount: z.boolean().default(false),
 });
 
 export function activeMenuVariants(item: Pick<MenuItem, "variants">): MenuItemVariant[] {
@@ -143,6 +149,9 @@ export const createMenuItemSchema = z.object({
   discountable: z.boolean().optional(),
   nonDiscountable: z.boolean().optional(),
   nonTaxable: z.boolean().optional(),
+  askForPrice: z.boolean().optional(),
+  askForQty: z.boolean().optional(),
+  allowManualDiscount: z.boolean().optional(),
 }).refine(
   (data) => (data.variants?.length ?? 0) > 0 || data.price != null,
   { message: "Provide a price or at least one sub-category" },
@@ -163,6 +172,9 @@ export const updateMenuItemSchema = z.object({
   discountable: z.boolean().optional(),
   nonDiscountable: z.boolean().optional(),
   nonTaxable: z.boolean().optional(),
+  askForPrice: z.boolean().optional(),
+  askForQty: z.boolean().optional(),
+  allowManualDiscount: z.boolean().optional(),
 });
 
 export type MenuCategory = z.infer<typeof menuCategorySchema>;

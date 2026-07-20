@@ -12,6 +12,8 @@ import {
   loadKotPrintSettings,
   type KotPrintSettings,
 } from "./kotPrintSettings";
+import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
+import { isVirtualSystemPrinter, printToSystemPrinter } from "./systemPrinters";
 
 export type PrintLine = {
   label: string;
@@ -28,8 +30,12 @@ export type PrintTicketInput = {
   modeLabel: string;
   tableLabel?: string;
   waiterName?: string;
-  /** Assigned waiter printer — shown on ticket and print job title. */
+  /** Display label for the ticket / job title (section or profile name). */
   printerName?: string;
+  /** OS printer name — when set, print goes directly to this device (no dialog). */
+  systemPrinterName?: string;
+  copies?: number;
+  paperSize?: PrinterPaperSize;
   notes?: string;
   lines: PrintLine[];
   subtotal: number;
@@ -43,7 +49,33 @@ export type PrintTicketInput = {
   discountPct: number;
   kotSettings?: KotPrintSettings;
   billPrintSettings?: BillPrintSettings;
+  /**
+   * When true (edited kitchen ticket), KOT shows a clear UPDATE marker
+   * so kitchen staff can tell it apart from a new order.
+   */
+  isOrderUpdate?: boolean;
 };
+
+/** Apply a resolved printer profile onto a ticket payload. */
+export function withPrinterProfile<T extends Omit<PrintTicketInput, "kind">>(
+  input: T,
+  profile: PrinterProfile | null | undefined,
+): T {
+  if (!profile) return input;
+  const linked = profile.systemPrinterName?.trim();
+  const fromProfile = linked && !isVirtualSystemPrinter(linked) ? linked : undefined;
+  const fromInput =
+    input.systemPrinterName?.trim() && !isVirtualSystemPrinter(input.systemPrinterName)
+      ? input.systemPrinterName.trim()
+      : undefined;
+  return {
+    ...input,
+    printerName: profile.name,
+    systemPrinterName: fromProfile ?? fromInput,
+    copies: profile.copies,
+    paperSize: profile.paperSize,
+  };
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -67,7 +99,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
   const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
   const fields = isReceipt ? billSettings.fields : null;
-  const title = isReceipt ? billSettings.documentTitle : "Kitchen Order";
+  const isOrderUpdate = !isReceipt && Boolean(input.isOrderUpdate);
+  const title = isReceipt
+    ? billSettings.documentTitle
+    : isOrderUpdate
+      ? "Kitchen Order — UPDATE"
+      : "Kitchen Order";
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -79,13 +116,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const lineRows = input.lines
     .map((line) => {
       const lineTotal = line.unitPrice * line.qty;
-      const itemBorder = !isReceipt && kotSettings.itemUnderlineSeparator
-        ? ' style="border-bottom: 1px solid #111827"'
-        : "";
+      const kotSepClass = !isReceipt && kotSettings.itemUnderlineSeparator ? ' class="kot-item-sep"' : "";
       if (!isReceipt) {
-        return `<tr${itemBorder}>
-        <td class="item-name">${escapeHtml(line.label)}</td>
+        // Match header order: Qty | Item (including last row underline when enabled)
+        return `<tr${kotSepClass}>
         <td class="qty">${line.qty}</td>
+        <td class="item-name">${escapeHtml(line.label)}</td>
       </tr>`;
       }
       const showQty = fields!.itemQty;
@@ -154,9 +190,14 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         input.billRef ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>` : null,
         input.waiterName ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>` : null,
         input.printerName ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>` : null,
+        isOrderUpdate ? `<span class="meta-chip meta-update">UPDATE</span>` : null,
       ]
         .filter(Boolean)
         .join("");
+
+  const kotUpdateBanner = isOrderUpdate
+    ? `<div class="kot-update-banner">*** UPDATE — REVISED ORDER ***</div>`
+    : "";
 
   const kotTotalsBlock =
     !isReceipt && kotSettings.showItemTotals
@@ -334,11 +375,56 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-bottom: 1px solid #f3f4f6;
     }
     tbody tr:last-child td { border-bottom: none; }
+    /* KOT: header on top → middle space → items last → totals */
+    body.ticket-kot .timestamp { margin-bottom: 0; }
+    body.ticket-kot .kot-mid-space {
+      height: 16px;
+      margin: 0;
+    }
+    body.ticket-kot table.items {
+      margin: 0 0 0;
+      width: 100%;
+    }
+    body.ticket-kot thead th { padding: 0 0 4px; }
+    body.ticket-kot thead th.qty,
+    body.ticket-kot td.qty {
+      width: 36px;
+      text-align: left;
+      padding-right: 16px; /* space in the middle between Qty and Item */
+      vertical-align: middle;
+    }
+    body.ticket-kot thead th.item,
+    body.ticket-kot td.item-name {
+      text-align: left;
+      width: auto;
+    }
+    body.ticket-kot tbody td {
+      padding: 3px 0;
+      border-bottom: none;
+      line-height: 1.3;
+      vertical-align: middle;
+    }
+    body.ticket-kot tbody tr.kot-item-sep td {
+      border-bottom: 1px solid #d1d5db;
+      padding: 4px 0;
+    }
+    /* Last item: no extra line — middle space before totals instead */
+    body.ticket-kot tbody tr.kot-item-sep:last-child td {
+      border-bottom: none;
+      padding-bottom: 2px;
+    }
+    body.ticket-kot .kot-totals {
+      margin: 14px 0 4px;
+      padding-top: 10px;
+      border-top: 1px dashed #9ca3af;
+    }
+    body.ticket-kot .footer { margin-top: 10px; padding-top: 8px; }
+    body.ticket-kot .kot-banner { margin-top: 4px; padding: 4px 6px; }
     td.item-name {
       font-size: 10.5px;
       font-weight: 500;
       color: #111827;
-      padding-right: 6px;
+      padding-right: 0;
     }
     td.qty {
       width: 32px;
@@ -438,6 +524,28 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border: 1.5px solid #111827;
       padding: 6px 8px;
     }
+    .kot-banner.kot-banner-update {
+      border-width: 2px;
+      letter-spacing: 0.12em;
+    }
+    .meta-chip.meta-update {
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      border: 1.5px solid #111827;
+      background: #111827;
+      color: #fff;
+    }
+    .kot-update-banner {
+      margin: 6px 0 8px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #111827;
+      border: 2px solid #111827;
+      padding: 7px 8px;
+    }
     .kot-totals {
       border-top: 1px dashed #9ca3af;
       padding-top: 8px;
@@ -446,12 +554,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     @media print {
       body { padding: 0; }
       .meta-chip { background: transparent; padding: 0; }
-      @page { margin: 4mm; size: 80mm auto; }
+      @page { margin: 4mm; size: ${input.paperSize === "58mm" ? "58mm" : input.paperSize === "A4" ? "A4" : "80mm"} auto; }
     }
     ${receiptCss}
   </style>
 </head>
-<body>
+<body class="${isReceipt ? "ticket-receipt" : "ticket-kot"}">
   ${showHeaderBlock
     ? `<header class="header">
     ${fields!.branchName ? `<div class="branch-name">${escapeHtml(displayBusinessName)}</div>` : ""}
@@ -465,6 +573,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   </header>`
       : ""}
   ${metaRows ? `<div class="meta">${metaRows}</div>` : ""}
+  ${kotUpdateBanner}
   ${isReceipt && fields?.notes && input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : !isReceipt && input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
   ${isReceipt && fields && (fields.timestamp || fields.branchCode)
     ? `<div class="timestamp">${[
@@ -476,13 +585,14 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     : !isReceipt
       ? `<div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>`
       : ""}
+  ${!isReceipt ? `<div class="kot-mid-space" aria-hidden="true"></div>` : ""}
   ${showItemTable
-    ? `<table>
+    ? `<table class="items">
     ${showItemHeaders
       ? `<thead>
       <tr>
         ${showQtyCol ? '<th class="qty">Qty</th>' : ""}
-        <th>Item</th>
+        <th class="item">Item</th>
         ${showAmtCol ? '<th class="price">Price</th>' : ""}
         ${showAmtCol ? '<th class="amt">Amount</th>' : ""}
       </tr>
@@ -499,10 +609,32 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     ${showFooterSecondary ? `<div class="footer-secondary">${escapeHtml(billSettings.footerSecondaryText.trim())}</div>` : ""}
   </div>`
     : !isReceipt
-      ? '<div class="footer"><div class="kot-banner">Kitchen copy — order</div></div>'
+      ? `<div class="footer"><div class="kot-banner${isOrderUpdate ? " kot-banner-update" : ""}">${
+          isOrderUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"
+        }</div></div>`
       : ""}
 </body>
 </html>`;
+}
+
+/** Strip HTML to plain text suitable for thermal / ESC-POS spooler jobs. */
+export function htmlToPlainText(html: string): string {
+  const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
+  const cleaned = body
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<\/(p|div|tr|h[1-6]|li)[^>]*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/td>/gi, "\t")
+    .replace(/<hr[^>]*>/gi, "\n--------------------------------\n");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = cleaned;
+  return (tmp.textContent || tmp.innerText || "")
+    .replace(/\t+/g, "  ")
+    .replace(/[ \t]+\n/g, "\n")
+    // Compact thermal output — no large blank gaps between item lines
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 }
 
 /** Opens the system print dialog with an arbitrary HTML document via a hidden iframe. */
@@ -544,7 +676,73 @@ export function printHtmlDocument(html: string, docTitle?: string): boolean {
   return true;
 }
 
-/** Opens the system print dialog with a thermal-style ticket. */
+export type PrintJobOptions = {
+  /** Prefer sending to this OS printer when running inside Tauri. */
+  systemPrinterName?: string;
+  copies?: number;
+  jobTitle?: string;
+  /**
+   * When an assigned OS printer is set:
+   * - true (default): fail if native print fails (do not silently open the dialog)
+   * - false: fall back to the OS print dialog
+   */
+  requireNamedPrinter?: boolean;
+};
+
+export type PrintJobResult = {
+  ok: boolean;
+  /** True when the job went to the named OS printer (no dialog). */
+  usedNamedPrinter: boolean;
+  error?: string;
+};
+
+/**
+ * Print HTML: try named OS printer first (Tauri), otherwise open the print dialog.
+ */
+export async function printHtmlDocumentAsync(
+  html: string,
+  options?: PrintJobOptions,
+): Promise<boolean> {
+  const result = await printHtmlDocumentDetailed(html, options);
+  return result.ok;
+}
+
+/** Same as printHtmlDocumentAsync but reports whether the named printer was used. */
+export async function printHtmlDocumentDetailed(
+  html: string,
+  options?: PrintJobOptions,
+): Promise<PrintJobResult> {
+  const copies = Math.max(1, options?.copies ?? 1);
+  const jobTitle = options?.jobTitle;
+  const systemPrinterName = options?.systemPrinterName?.trim();
+  const requireNamed = options?.requireNamedPrinter ?? Boolean(systemPrinterName);
+
+  if (systemPrinterName) {
+    const plain = htmlToPlainText(html);
+    if (!plain) {
+      return { ok: false, usedNamedPrinter: false, error: "Print content was empty after conversion." };
+    }
+    const result = await printToSystemPrinter({
+      printerName: systemPrinterName,
+      content: plain + "\n\n",
+      jobName: jobTitle,
+      copies,
+    });
+    if (result.ok) return { ok: true, usedNamedPrinter: true };
+    if (requireNamed) {
+      return { ok: false, usedNamedPrinter: false, error: result.error };
+    }
+  }
+
+  for (let i = 0; i < copies; i++) {
+    if (!printHtmlDocument(html, jobTitle)) {
+      return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
+    }
+  }
+  return { ok: true, usedNamedPrinter: false };
+}
+
+/** Opens the system print dialog with a thermal-style ticket (sync / dialog fallback). */
 export function printTicket(input: PrintTicketInput): boolean {
   if (input.lines.length === 0) return false;
 
@@ -555,13 +753,48 @@ export function printTicket(input: PrintTicketInput): boolean {
   return printHtmlDocument(html, docTitle);
 }
 
-/** Opens the system print dialog with a simple test page for a named printer. */
+/** Print a ticket, routing to the assigned OS printer when `systemPrinterName` is set. */
+export async function printTicketAsync(input: PrintTicketInput): Promise<boolean> {
+  const result = await printTicketDetailed(input);
+  return result.ok;
+}
+
+/** Print a ticket and report whether the named OS printer was used. */
+export async function printTicketDetailed(input: PrintTicketInput): Promise<PrintJobResult> {
+  if (input.lines.length === 0) {
+    return { ok: false, usedNamedPrinter: false, error: "No lines to print." };
+  }
+
+  const html = buildTicketHtml(input);
+  const docTitle = input.printerName
+    ? `${input.kind === "receipt" ? "Receipt" : "KOT"} · ${input.printerName}`
+    : input.kind === "receipt"
+      ? "Receipt"
+      : "KOT";
+  // When an OS printer is assigned, require it — do not silently use another device.
+  return printHtmlDocumentDetailed(html, {
+    systemPrinterName: input.systemPrinterName,
+    copies: input.copies,
+    jobTitle: docTitle,
+    requireNamedPrinter: Boolean(input.systemPrinterName?.trim()),
+  });
+}
+
+/** Test page — targets the named OS printer when available. */
 export function printTestPage(printerName: string): boolean {
+  void printTestPageAsync(printerName);
+  return true;
+}
+
+export async function printTestPageAsync(
+  printerName: string,
+  options?: { copies?: number },
+): Promise<boolean> {
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Test print · ${printerName}</title>
+<title>Test print · ${escapeHtml(printerName)}</title>
 <style>
   body { font-family: monospace; width: 280px; margin: 0 auto; padding: 16px 0; text-align: center; }
   h1 { font-size: 14px; margin: 0 0 8px; }
@@ -572,13 +805,18 @@ export function printTestPage(printerName: string): boolean {
 <body>
   <h1>TEST PRINT</h1>
   <hr />
-  <p>Printer: ${printerName}</p>
-  <p>${new Date().toLocaleString()}</p>
+  <p>Printer: ${escapeHtml(printerName)}</p>
+  <p>${escapeHtml(new Date().toLocaleString())}</p>
   <hr />
   <p>If this printed correctly, the printer is connected and working.</p>
 </body>
 </html>`;
-  return printHtmlDocument(html, `Test print · ${printerName}`);
+  return printHtmlDocumentAsync(html, {
+    systemPrinterName: printerName,
+    copies: options?.copies ?? 1,
+    jobTitle: `Test print · ${printerName}`,
+    requireNamedPrinter: false,
+  });
 }
 
 export function billToPrintInput(
@@ -616,15 +854,38 @@ export function printReceipt(input: Omit<PrintTicketInput, "kind">): boolean {
   return printTicket({ ...input, kind: "receipt" });
 }
 
+export async function printReceiptAsync(input: Omit<PrintTicketInput, "kind">): Promise<boolean> {
+  return printTicketAsync({ ...input, kind: "receipt" });
+}
+
+export async function printReceiptDetailed(
+  input: Omit<PrintTicketInput, "kind">,
+): Promise<PrintJobResult> {
+  return printTicketDetailed({ ...input, kind: "receipt" });
+}
+
 export function printBill(
   branchName: string,
   branchCode: string,
   bill: Bill,
-  options?: { printerName?: string; billPrintSettings?: BillPrintSettings },
+  options?: { printerName?: string; systemPrinterName?: string; billPrintSettings?: BillPrintSettings },
 ): boolean {
-  return printReceipt({
+  void printBillAsync(branchName, branchCode, bill, options);
+  return true;
+}
+
+export async function printBillAsync(
+  branchName: string,
+  branchCode: string,
+  bill: Bill,
+  options?: { printerName?: string; systemPrinterName?: string; billPrintSettings?: BillPrintSettings },
+): Promise<boolean> {
+  // Never treat display/profile names as OS spooler names.
+  const systemPrinterName = options?.systemPrinterName?.trim() || undefined;
+  return printReceiptAsync({
     ...billToPrintInput(branchName, branchCode, bill),
-    printerName: options?.printerName,
+    printerName: options?.printerName ?? systemPrinterName,
+    systemPrinterName,
     billPrintSettings: options?.billPrintSettings ?? loadBillPrintSettings(branchCode),
   });
 }
@@ -661,16 +922,33 @@ export function printPosRecentOrder(
   branchName: string,
   branchCode: string,
   order: PosRecentOrder,
-  options?: { printerName?: string },
+  options?: { printerName?: string; systemPrinterName?: string },
 ): boolean {
+  void printPosRecentOrderAsync(branchName, branchCode, order, options);
+  return true;
+}
+
+export async function printPosRecentOrderAsync(
+  branchName: string,
+  branchCode: string,
+  order: PosRecentOrder,
+  options?: { printerName?: string; systemPrinterName?: string },
+): Promise<boolean> {
   if (order.kind === "paid" && order.bill) {
-    return printBill(branchName, branchCode, order.bill, { printerName: options?.printerName });
+    return printBillAsync(branchName, branchCode, order.bill, {
+      printerName: options?.printerName,
+      systemPrinterName: options?.systemPrinterName,
+    });
   }
   if (order.kitchenTicket) {
-    return printKot(kitchenTicketToKotPrint(order.kitchenTicket, branchName, branchCode));
+    return printKotAsync({
+      ...kitchenTicketToKotPrint(order.kitchenTicket, branchName, branchCode),
+      printerName: options?.printerName,
+      systemPrinterName: options?.systemPrinterName,
+    });
   }
   if (order.detail.kind === "pending") {
-    return printKot({
+    return printKotAsync({
       branchName,
       branchCode,
       orderRef: order.detail.orderRef ?? order.detail.ticketRef,
@@ -688,6 +966,8 @@ export function printPosRecentOrder(
       total: 0,
       servicePct: 0,
       discountPct: 0,
+      printerName: options?.printerName,
+      systemPrinterName: options?.systemPrinterName,
     });
   }
   return false;
@@ -695,4 +975,14 @@ export function printPosRecentOrder(
 
 export function printKot(input: Omit<PrintTicketInput, "kind">): boolean {
   return printTicket({ ...input, kind: "kot" });
+}
+
+export async function printKotAsync(input: Omit<PrintTicketInput, "kind">): Promise<boolean> {
+  return printTicketAsync({ ...input, kind: "kot" });
+}
+
+export async function printKotDetailed(
+  input: Omit<PrintTicketInput, "kind">,
+): Promise<PrintJobResult> {
+  return printTicketDetailed({ ...input, kind: "kot" });
 }

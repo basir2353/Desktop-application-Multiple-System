@@ -7,7 +7,20 @@ import { createBill, createWaiter, fetchWaiters, updateWaiter } from "../../api/
 import { fetchKitchenTickets, createKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
 import { fetchBranchFloor } from "../../api/tables";
-import { printReceipt, billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
+import {
+  printReceiptAsync,
+  printKotDetailed,
+  billToPrintInput,
+  withPrinterProfile,
+  type PrintTicketInput,
+} from "../../lib/printTicket";
+import {
+  groupCartLinesBySection,
+  resolveKotPrinter,
+  resolveReceiptPrinter,
+} from "../../lib/printerRouting";
+import { loadPrinterSections } from "../../lib/printerSections";
+import type { PosCartLine } from "../../lib/posCart";
 import {
   getWaiterPrinter,
   loadWaiterPrinterMap,
@@ -390,15 +403,83 @@ export function WaiterPage(): JSX.Element {
         })),
       });
     },
-    onSuccess: () => {
+    onSuccess: async (ticket) => {
+      const cartSnapshot = cart;
       if (branchCode && tableId) {
-        saveLastOrder(branchCode, tableId, { cart, notes });
+        saveLastOrder(branchCode, tableId, { cart: cartSnapshot, notes });
       }
       updateDraft({ cart: [], notes: "" });
       setShowMenu(false);
       void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
-      setNotice("Order sent to kitchen.");
+
+      // Route KOT to assigned kitchen/bar printers (same model as POS).
+      const asPosLines: PosCartLine[] = cartSnapshot.map((line, index) => ({
+        key: `${line.item.id}-${index}`,
+        item: line.item,
+        variant: null,
+        qty: line.qty,
+        unitPrice: line.item.price,
+        lineLabel: formatMenuItemLabel(line.item),
+        sortOrder: line.sortOrder ?? index,
+        isComplimentary: false,
+      }));
+      const enabledSections = loadPrinterSections(branchCode).filter((s) => s.enabled);
+      const enabledIds = new Set(enabledSections.map((s) => s.id));
+      const groups =
+        enabledSections.length > 0
+          ? groupCartLinesBySection(branchCode, asPosLines, enabledIds)
+          : [{ sectionId: null as string | null, lines: asPosLines }];
+
+      let printOk = true;
+      const errors: string[] = [];
+      for (const group of groups) {
+        const section = group.sectionId
+          ? enabledSections.find((s) => s.id === group.sectionId)
+          : null;
+        const preferredType =
+          section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
+            ? ("bar" as const)
+            : ("kitchen" as const);
+        const profile = resolveKotPrinter(branchCode, group.sectionId, waiterId, preferredType);
+        const payload = withPrinterProfile(
+          {
+            branchName: branch?.name ?? "POPS",
+            branchCode: branchCode || "—",
+            orderRef: ticket.orderRef ?? ticket.ticketRef,
+            modeLabel: "Dine-in",
+            tableLabel: `Table ${tableId}`,
+            waiterName: waiters.find((w) => w.id === waiterId)?.name,
+            lines: [...group.lines]
+              .sort((a, b) => a.sortOrder - b.sortOrder || a.key.localeCompare(b.key))
+              .map((l) => ({
+                label: l.lineLabel,
+                qty: l.qty,
+                unitPrice: 0,
+              })),
+            subtotal: 0,
+            discount: 0,
+            service: 0,
+            tax: 0,
+            total: 0,
+            servicePct: 0,
+            discountPct: 0,
+            printerName: section ? `${section.icon} ${section.name}` : "Kitchen",
+          },
+          profile,
+        );
+        const result = await printKotDetailed(payload);
+        if (!result.ok) {
+          printOk = false;
+          errors.push(result.error ?? payload.printerName ?? "KOT");
+        }
+      }
+
+      setNotice(
+        printOk
+          ? "Order sent to kitchen and printed."
+          : `Order sent to kitchen, but print failed — ${errors.join("; ")}. Check Printer Assign Users.`,
+      );
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -490,21 +571,27 @@ export function WaiterPage(): JSX.Element {
     }
     try {
       const bill = await createBillMutation.mutateAsync();
-      const printerName = getWaiterPrinter(branchCode, waiterId)?.printerName;
-      const payload: Omit<PrintTicketInput, "kind"> = {
-        ...billToPrintInput(branch?.name ?? "POPS", branchCode || "—", bill),
-        printerName,
-      };
-      const ok = printReceipt(payload);
+      const profile = resolveReceiptPrinter(branchCode, waiterId);
+      const assigned = getWaiterPrinter(branchCode, waiterId);
+      const payload: Omit<PrintTicketInput, "kind"> = withPrinterProfile(
+        {
+          ...billToPrintInput(branch?.name ?? "POPS", branchCode || "—", bill),
+          printerName: profile?.name ?? assigned?.printerName,
+          systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
+        },
+        profile,
+      );
+      const ok = await printReceiptAsync(payload);
+      const target = payload.systemPrinterName ?? payload.printerName;
       if (ok) {
         updateDraft({ cart: [], notes: "" });
         setNotice(
-          printerName
-            ? `Bill ${bill.billRef} created for ${bill.waiterName} — printing to ${printerName}.`
+          target
+            ? `Bill ${bill.billRef} created for ${bill.waiterName} — printing to ${target}.`
             : `Bill ${bill.billRef} created for ${bill.waiterName} — sent to printer.`,
         );
       } else {
-        setNotice(`Bill ${bill.billRef} created but print dialog failed.`);
+        setNotice(`Bill ${bill.billRef} created but print failed.`);
       }
     } catch {
       /* error handled in mutation */

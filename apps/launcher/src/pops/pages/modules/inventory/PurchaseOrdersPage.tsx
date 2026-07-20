@@ -1,6 +1,7 @@
 import { PO_STATUSES, type PoStatus, type PurchaseOrder } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { createPurchaseOrder, fetchBranchInventory, updatePurchaseOrderStatus } from "../../../api/inventory";
 import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import {
@@ -128,8 +129,16 @@ export function PurchaseOrdersPage(): JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Purchase orders"
-        subtitle="Kitchen demand requests — create, track, and approve supplier orders."
+        title="Kitchen demand"
+        subtitle="Create supplier purchase orders from kitchen demand, then receive goods with quantities."
+        actions={
+          <Link
+            to="/pops/inventory/goods-receiving"
+            className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-indigo-500"
+          >
+            Receive goods
+          </Link>
+        }
       />
 
       <InventoryFlowBanner activeStep="Purchase Order" />
@@ -159,9 +168,34 @@ export function PurchaseOrdersPage(): JSX.Element {
             createMutation.mutate();
           }}
         >
-          <div className="border-b border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/50">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">New purchase order</h2>
-            <p className={`mt-0.5 text-xs ${mutedClass}`}>Fill in supplier details and add all required items below.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/50">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">New kitchen demand / PO</h2>
+              <p className={`mt-0.5 text-xs ${mutedClass}`}>
+                Choose a supplier (e.g. Kitchen Fresh Pvt. Ltd.), add items and quantities, then approve and receive.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200"
+              onClick={() => {
+                const low = ingredients.filter((i) => i.currentStock <= i.reorderLevel);
+                if (low.length === 0) {
+                  setError("No low-stock ingredients to fill from kitchen demand.");
+                  return;
+                }
+                setLines(
+                  low.map((ing) => ({
+                    ingredientId: ing.id,
+                    qty: String(Math.max(1, ing.reorderLevel - ing.currentStock + ing.reorderLevel)),
+                    unitCost: String(ing.unitCost),
+                  })),
+                );
+                setError(null);
+              }}
+            >
+              Fill from low stock
+            </button>
           </div>
 
           <div className="space-y-6 p-5">
@@ -306,26 +340,62 @@ export function PurchaseOrdersPage(): JSX.Element {
               { key: "status", header: "Status", render: (r) => <Badge tone={poTone(r.status)}>{r.status}</Badge> },
               { key: "items", header: "Items", render: (r) => <span className="tabular-nums">{r.items}</span> },
               {
+                key: "lines",
+                header: "Demand lines",
+                render: (r) =>
+                  r.lines && r.lines.length > 0 ? (
+                    <span className="text-[11px] text-slate-400">
+                      {r.lines
+                        .slice(0, 3)
+                        .map((l) => `${l.ingredientName} ×${l.qty}`)
+                        .join(", ")}
+                      {r.lines.length > 3 ? ` +${r.lines.length - 3}` : ""}
+                    </span>
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
                 key: "totalAmount",
                 header: "Amount",
                 render: (r) => <span className={tableCellAmountClass}>{formatPkr(r.totalAmount)}</span>,
               },
               { key: "expectedDate", header: "Expected", render: (r) => r.expectedDate ?? "—" },
               { key: "chef", header: "Chef", render: (r) => r.chef ?? "—" },
-              ...(canManage ? [{
-                id: "actions",
-                key: "id" as const,
-                header: "Status",
-                render: (r: PurchaseOrder) => (
-                  <select
-                    className={`${selectClass} py-1.5 text-xs`}
-                    value={r.status}
-                    onChange={(e) => statusMutation.mutate({ id: r.id, status: e.target.value as PoStatus })}
-                  >
-                    {PO_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                ),
-              }] : []),
+              ...(canManage
+                ? [
+                    {
+                      id: "actions",
+                      key: "id" as const,
+                      header: "Actions",
+                      render: (r: PurchaseOrder) => (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <select
+                            className={`${selectClass} py-1.5 text-xs`}
+                            value={r.status}
+                            onChange={(e) =>
+                              statusMutation.mutate({ id: r.id, status: e.target.value as PoStatus })
+                            }
+                          >
+                            {PO_STATUSES.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                          {r.status !== "Received" && r.status !== "Cancelled" ? (
+                            <Link
+                              to={`/pops/inventory/goods-receiving?poId=${r.id}`}
+                              className="text-[11px] font-medium text-sky-400 hover:text-sky-300"
+                            >
+                              Receive
+                            </Link>
+                          ) : null}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
             rows={orders}
           />

@@ -20,12 +20,13 @@ import { billChannelLabel, businessDateKey, filterOrdersByDateTime, ordersPageBi
 import { loadPosSettings } from "../../lib/posSettings";
 import { discountAmountFromPct } from "../../lib/posDiscount";
 import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
-import { printBill } from "../../lib/printTicket";
+import { printBillAsync } from "../../lib/printTicket";
 import {
   loadBillPrintSettings,
   saveBillPrintSettings,
   type BillPrintSettings,
 } from "../../lib/billPrintSettings";
+import { resolveReceiptPrinter } from "../../lib/printerRouting";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { BillCustomizationPanel } from "../../components/BillCustomizationPanel";
 import { BillDetailModal } from "../../components/BillDetailModal";
@@ -245,7 +246,9 @@ export function BillManagementPage(): JSX.Element {
       setFormError(null);
       setNotice(`Bill ${bill.billRef} created${bill.status === "held" ? " (held)" : ""}.`);
       if (bill.status === "completed" && branch) {
-        printBill(branch.name, branch.code, bill, { billPrintSettings });
+        void printBillToAssigned(branch.name, branch.code, bill, billPrintSettings).then((ok) => {
+          if (!ok) setNotice(`Bill ${bill.billRef} created but print failed. Check printer assignment.`);
+        });
       }
     },
     onError: (err: Error) => setFormError(err.message),
@@ -291,7 +294,11 @@ export function BillManagementPage(): JSX.Element {
       setHeldToPay(null);
       invalidate();
       setNotice(`Payment completed — ${bill.billRef}`);
-      if (branch) printBill(branch.name, branch.code, bill, { billPrintSettings });
+      if (branch) {
+        void printBillToAssigned(branch.name, branch.code, bill, billPrintSettings).then((ok) => {
+          if (!ok) setNotice(`Payment completed — ${bill.billRef}, but print failed.`);
+        });
+      }
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -316,11 +323,30 @@ export function BillManagementPage(): JSX.Element {
     onError: (err: Error) => setNotice(err.message),
   });
 
+  async function printBillToAssigned(
+    branchName: string,
+    branchCode: string,
+    bill: Bill,
+    settings: BillPrintSettings,
+  ): Promise<boolean> {
+    const profile = resolveReceiptPrinter(branchCode, bill.waiterId);
+    const assigned = getWaiterPrinter(branchCode, bill.waiterId);
+    return printBillAsync(branchName, branchCode, bill, {
+      printerName: profile?.name ?? assigned?.printerName,
+      systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
+      billPrintSettings: settings,
+    });
+  }
+
   function reprint(bill: Bill): void {
     if (!branch) return;
-    const printerName = getWaiterPrinter(branch.code, bill.waiterId)?.printerName;
-    printBill(branch.name, branch.code, bill, { printerName, billPrintSettings });
-    setNotice(`Invoice reprinted — ${bill.billRef}`);
+    void printBillToAssigned(branch.name, branch.code, bill, billPrintSettings).then((ok) => {
+      setNotice(
+        ok
+          ? `Invoice reprinted — ${bill.billRef}`
+          : `Reprint failed for ${bill.billRef}. Check printer assignment / OS link.`,
+      );
+    });
   }
 
   function openEdit(bill: Bill, appendItem = false): void {

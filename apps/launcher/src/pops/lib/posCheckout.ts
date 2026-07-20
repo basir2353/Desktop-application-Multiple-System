@@ -1,6 +1,6 @@
 import type { BillLine, BillPayment, PaymentMethod } from "@platform/contracts";
 import { computeTicketTotals } from "./posDiscount";
-import type { PosCartLine } from "./posCart";
+import { cartLineNet, type PosCartLine } from "./posCart";
 import { effectiveTaxPct, type PosSettings } from "./posSettings";
 
 export type CheckoutTotals = ReturnType<typeof computeTicketTotals> & {
@@ -11,12 +11,16 @@ export type CheckoutTotals = ReturnType<typeof computeTicketTotals> & {
 export type CheckoutMode = "full" | "partial" | "hold";
 
 export function cartToBillLines(cart: PosCartLine[]): BillLine[] {
-  return cart.map((line) => ({
-    label: line.lineLabel,
-    qty: line.qty,
-    unitPrice: line.unitPrice,
-    menuItemId: line.item.id,
-  }));
+  return cart.map((line) => {
+    const net = cartLineNet(line);
+    const unitPrice = line.qty > 0 ? Math.round(net / line.qty) : line.unitPrice;
+    return {
+      label: line.lineLabel,
+      qty: line.qty,
+      unitPrice,
+      menuItemId: line.item.id,
+    };
+  });
 }
 
 export function computeCheckoutTotals(

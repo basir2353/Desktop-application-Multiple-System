@@ -131,10 +131,14 @@ export type OrderChannelLabel =
   | "Takeaway"
   | "Delivery"
   | "Online Orders"
-  | "Foodpanda Orders";
+  | "Foodpanda Orders"
+  | "Staff Food";
 
 export function billChannelLabel(tableLabel: string): OrderChannelLabel {
   const label = tableLabel.trim().toLowerCase();
+  if (label.includes("staff food") || label.includes("staff-food") || label.startsWith("sf-")) {
+    return "Staff Food";
+  }
   if (label.includes("foodpanda") || label.startsWith("fp-")) return "Foodpanda Orders";
   if (label.includes("online") || label.startsWith("ol-")) return "Online Orders";
   if (label === "delivery" || label.startsWith("dl-")) return "Delivery";
@@ -196,6 +200,7 @@ export const CHANNEL_COLORS: Record<OrderChannelLabel, string> = {
   Delivery: "rgb(167 139 250)",
   "Online Orders": "rgb(251 191 36)",
   "Foodpanda Orders": "rgb(244 114 182)",
+  "Staff Food": "rgb(148 163 184)",
 };
 
 const ALL_CHANNELS: OrderChannelLabel[] = [
@@ -204,6 +209,7 @@ const ALL_CHANNELS: OrderChannelLabel[] = [
   "Delivery",
   "Online Orders",
   "Foodpanda Orders",
+  "Staff Food",
 ];
 
 /** Revenue split by service channel (completed orders). */

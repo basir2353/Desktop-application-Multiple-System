@@ -208,15 +208,25 @@ export function OrdersPage(): JSX.Element {
   );
 
   function reprint(bill: Bill): void {
-    const printerName = getWaiterPrinter(branch?.code, bill.waiterId)?.printerName;
-    const ok = printBill(branch?.name ?? "POPS", branch?.code ?? "—", bill, { printerName });
-    setNotice(
-      ok
-        ? printerName
-          ? `Reprinting ${bill.billRef} to ${printerName}…`
-          : `Reprinting ${bill.billRef}…`
-        : "Could not open print dialog.",
-    );
+    void (async () => {
+      const { resolveReceiptPrinter } = await import("../../lib/printerRouting");
+      const { printBillAsync } = await import("../../lib/printTicket");
+      const branchCode = branch?.code ?? undefined;
+      const profile = resolveReceiptPrinter(branchCode, bill.waiterId);
+      const assigned = getWaiterPrinter(branchCode, bill.waiterId);
+      const systemPrinterName = profile?.systemPrinterName ?? assigned?.systemPrinterName;
+      const ok = await printBillAsync(branch?.name ?? "POPS", branchCode ?? "—", bill, {
+        printerName: profile?.name ?? assigned?.printerName,
+        systemPrinterName,
+      });
+      setNotice(
+        ok
+          ? systemPrinterName
+            ? `Reprinting ${bill.billRef} to ${systemPrinterName}…`
+            : `Reprinting ${bill.billRef}…`
+          : `Reprint failed for ${bill.billRef}. Check printer assignment / OS link.`,
+      );
+    })();
   }
 
   function openOrder(order: UnifiedOrder): void {

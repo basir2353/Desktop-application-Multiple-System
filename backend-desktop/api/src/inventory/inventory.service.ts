@@ -1291,6 +1291,8 @@ export class InventoryService implements OnModuleInit {
       .where(eq(popsPurchaseOrders.branchId, branchId))
       .orderBy(desc(popsPurchaseOrders.createdAt));
 
+    const ingredientMap = await this.ingredientNameMap(branchId);
+
     return Promise.all(
       rows.map(async (po) => {
         const supplier = await this.db
@@ -1314,6 +1316,15 @@ export class InventoryService implements OnModuleInit {
           expectedDate: po.expectedDate ?? null,
           requestedBy: po.requestedBy,
           chef: po.chef,
+          lines: lines.map((line) => ({
+            id: line.id,
+            ingredientId: line.ingredientId,
+            ingredientName: ingredientMap.get(line.ingredientId) ?? "—",
+            qty: line.qty,
+            unit: line.unit,
+            unitCost: line.unitCostPkr,
+            receivedQty: line.receivedQty,
+          })),
         };
       }),
     );

@@ -2,10 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { usePopsStore } from "../../stores/popsStore";
-import { fetchInventoryDashboard } from "../api/inventory";
+import { fetchBranchInventory } from "../api/inventory";
 import { fetchKitchenTickets } from "../api/kitchen";
 import {
-  inventoryAlertsFromDashboard,
   KITCHEN_SLOW_ALERT_MINS,
   KITCHEN_SLOW_WARN_MINS,
   kitchenAlertsFromTickets,
@@ -13,10 +12,44 @@ import {
   newOrderAlert,
   type PopsAlert,
 } from "../lib/popsAlerts";
+import {
+  loadStockAlertSettings,
+  STOCK_ALERT_SETTINGS_CHANGED_EVENT,
+  type StockAlertSettings,
+} from "../lib/stockAlertSettings";
 
 export type PopsToast = PopsAlert & { toastId: string };
 
 const TOAST_TTL_MS = 8_000;
+
+function stockAlertsFromIngredients(
+  ingredients: {
+    id: string;
+    name: string;
+    unit: string;
+    currentStock: number;
+    reorderLevel: number;
+  }[],
+  settings: StockAlertSettings,
+): PopsAlert[] {
+  if (!settings.autoNotifyEnabled) return [];
+  const now = new Date().toISOString();
+  const limitExtra = settings.notifyBufferQty;
+  return ingredients
+    .filter((ing) => ing.currentStock <= ing.reorderLevel + limitExtra)
+    .map((ing) => {
+      const out = ing.currentStock <= 0;
+      return {
+        id: `stock-${ing.id}-${ing.currentStock}-${ing.reorderLevel + limitExtra}`,
+        kind: "low_stock" as const,
+        tone: out ? ("danger" as const) : ("warning" as const),
+        title: out ? "Out of stock" : "Low stock",
+        message: `${ing.name} — ${ing.currentStock} ${ing.unit} (alert at ${ing.reorderLevel + limitExtra} ${ing.unit})`,
+        href: "/pops/inventory/ingredients",
+        at: now,
+      };
+    });
+}
 
 export function usePopsAlerts(): {
   alerts: PopsAlert[];
@@ -30,12 +63,30 @@ export function usePopsAlerts(): {
   const systemId = useActiveSystemId();
   const restaurantAlerts = systemId === "restaurant";
   const [toasts, setToasts] = useState<PopsToast[]>([]);
+  const [stockSettings, setStockSettings] = useState<StockAlertSettings>(() =>
+    loadStockAlertSettings(branch?.code),
+  );
 
   const prevTicketIdsRef = useRef<Set<string>>(new Set());
   const prevStockAlertIdsRef = useRef<Set<string>>(new Set());
   const toastedKeysRef = useRef<Set<string>>(new Set());
   const kitchenInitializedRef = useRef(false);
   const stockInitializedRef = useRef(false);
+
+  useEffect(() => {
+    setStockSettings(loadStockAlertSettings(branch?.code));
+  }, [branch?.code]);
+
+  useEffect(() => {
+    function onSettingsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setStockSettings(loadStockAlertSettings(branch?.code));
+      }
+    }
+    window.addEventListener(STOCK_ALERT_SETTINGS_CHANGED_EVENT, onSettingsChanged);
+    return () => window.removeEventListener(STOCK_ALERT_SETTINGS_CHANGED_EVENT, onSettingsChanged);
+  }, [branch?.code]);
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branch?.code],
@@ -45,9 +96,9 @@ export function usePopsAlerts(): {
   });
 
   const inventoryQuery = useQuery({
-    queryKey: ["inventory-dashboard", branch?.code],
+    queryKey: ["inventory", branch?.code],
     enabled: restaurantAlerts && Boolean(branch?.code),
-    queryFn: () => fetchInventoryDashboard(branch!.code),
+    queryFn: () => fetchBranchInventory(branch!.code),
     refetchInterval: restaurantAlerts ? 30_000 : false,
   });
 
@@ -55,9 +106,9 @@ export function usePopsAlerts(): {
 
   const alerts = useMemo(() => {
     const kitchen = kitchenAlertsFromTickets(tickets);
-    const stock = inventoryQuery.data ? inventoryAlertsFromDashboard(inventoryQuery.data) : [];
+    const stock = stockAlertsFromIngredients(inventoryQuery.data?.ingredients ?? [], stockSettings);
     return mergeAlerts(kitchen, stock);
-  }, [tickets, inventoryQuery.data]);
+  }, [tickets, inventoryQuery.data, stockSettings]);
 
   const unreadCount = alerts.length;
 
@@ -141,8 +192,13 @@ export function usePopsAlerts(): {
 
   useEffect(() => {
     if (!restaurantAlerts || !inventoryQuery.data) return;
+    if (!stockSettings.autoNotifyEnabled) {
+      prevStockAlertIdsRef.current = new Set();
+      stockInitializedRef.current = true;
+      return;
+    }
 
-    const stockAlerts = inventoryAlertsFromDashboard(inventoryQuery.data);
+    const stockAlerts = stockAlertsFromIngredients(inventoryQuery.data.ingredients, stockSettings);
     const currentIds = new Set(stockAlerts.map((a) => a.id));
 
     if (!stockInitializedRef.current) {
@@ -158,7 +214,7 @@ export function usePopsAlerts(): {
     }
 
     prevStockAlertIdsRef.current = currentIds;
-  }, [inventoryQuery.data, branch?.code, restaurantAlerts]);
+  }, [inventoryQuery.data, branch?.code, restaurantAlerts, stockSettings]);
 
   function dismissToast(toastId: string): void {
     setToasts((prev) => prev.filter((t) => t.toastId !== toastId));

@@ -14,8 +14,10 @@ import {
   type PosRecentOrderModeFilter,
 } from "../lib/recentOrders";
 import { updateKitchenTicket } from "../api/kitchen";
-import { printPosRecentOrder } from "../lib/printTicket";
+import { printPosRecentOrderAsync } from "../lib/printTicket";
+import { resolveKotPrinter, resolveReceiptPrinter } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
+import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { loadPosSettings } from "../lib/posSettings";
@@ -73,6 +75,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
       POS_ORDER_MODES.filter((m) => {
         if (m.id === "online") return orderModeVisibility.onlineEnabled;
         if (m.id === "foodpanda") return orderModeVisibility.foodpandaEnabled;
+        if (m.id === "staff-food") return orderModeVisibility.staffFoodEnabled;
         return true;
       }),
     [orderModeVisibility],
@@ -133,11 +136,19 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
     if (!branch) return;
-    const printerName =
-      order.bill?.waiterId != null
-        ? getWaiterPrinter(branch.code, order.bill.waiterId)?.printerName
-        : undefined;
-    printPosRecentOrder(branch.name, branch.code, order, { printerName });
+    void (async () => {
+      const sessionUserId = useSessionStore.getState().claims?.sub;
+      const isReceipt = order.kind === "paid" && order.bill != null;
+      const profile = isReceipt
+        ? resolveReceiptPrinter(branch.code, order.bill?.waiterId ?? sessionUserId)
+        : resolveKotPrinter(branch.code, null, sessionUserId, "kitchen");
+      const assigned =
+        order.bill?.waiterId != null ? getWaiterPrinter(branch.code, order.bill.waiterId) : null;
+      await printPosRecentOrderAsync(branch.name, branch.code, order, {
+        printerName: profile?.name ?? assigned?.printerName,
+        systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
+      });
+    })();
   }
 
   function toggleSelected(order: PosRecentOrder): void {

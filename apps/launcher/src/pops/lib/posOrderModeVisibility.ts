@@ -3,11 +3,13 @@
 export type PosOrderModeVisibility = {
   onlineEnabled: boolean;
   foodpandaEnabled: boolean;
+  staffFoodEnabled: boolean;
 };
 
 export const DEFAULT_POS_ORDER_MODE_VISIBILITY: PosOrderModeVisibility = {
   onlineEnabled: true,
   foodpandaEnabled: true,
+  staffFoodEnabled: true,
 };
 
 export const POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT = "pops-pos-order-mode-visibility-changed";
@@ -20,6 +22,7 @@ export function normalizePosOrderModeVisibility(
   return {
     onlineEnabled: input.onlineEnabled ?? true,
     foodpandaEnabled: input.foodpandaEnabled ?? true,
+    staffFoodEnabled: input.staffFoodEnabled ?? true,
   };
 }
 

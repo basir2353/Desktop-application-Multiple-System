@@ -47,6 +47,12 @@ export const popsMenuItems = pgTable("pops_menu_items", {
   nonDiscountable: boolean("non_discountable").notNull().default(false),
   /** Excludes this item's amount from the tax base. */
   nonTaxable: boolean("non_taxable").notNull().default(false),
+  /** POS prompts for unit price when adding this item. */
+  askForPrice: boolean("ask_for_price").notNull().default(false),
+  /** POS prompts for quantity when adding this item. */
+  askForQty: boolean("ask_for_qty").notNull().default(false),
+  /** POS allows a per-line manual discount (% or PKR) on this item. */
+  allowManualDiscount: boolean("allow_manual_discount").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

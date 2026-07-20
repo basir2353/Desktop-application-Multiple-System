@@ -8,6 +8,7 @@ const ORDER_TYPE_HINTS: Record<PosOrderMode, string> = {
   delivery: "Customer delivery · assign rider",
   online: "Web or app orders",
   foodpanda: "Foodpanda aggregator orders",
+  "staff-food": "Staff meals and staff guest meals",
 };
 
 type Props = {

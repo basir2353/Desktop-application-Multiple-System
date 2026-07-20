@@ -1,11 +1,14 @@
+import type { PurchaseOrder } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { createGoodsReceipt, fetchBranchInventory } from "../../../api/inventory";
 import { GrnIngredientPickerModal } from "../../../components/GrnIngredientPickerModal";
 import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { InventoryError, InventoryFormPanel, InventoryLoading } from "./InventoryUi";
+import { InventoryFlowBanner } from "./InventoryFlowBanner";
 
 type LineDefaults = {
   qty: string;
@@ -23,6 +26,8 @@ type GrnLine = {
   unitCost: number;
   batchNumber: string;
   expiryDate: string;
+  orderedQty?: number;
+  alreadyReceivedQty?: number;
 };
 
 const DEFAULT_LINE_VALUES = (): LineDefaults => ({
@@ -32,9 +37,31 @@ const DEFAULT_LINE_VALUES = (): LineDefaults => ({
   expiryDate: "",
 });
 
+function remainingPoQty(po: PurchaseOrder): GrnLine[] {
+  return (po.lines ?? [])
+    .map((line) => {
+      const remaining = Math.max(0, line.qty - line.receivedQty);
+      if (remaining <= 0) return null;
+      return {
+        id: crypto.randomUUID(),
+        ingredientId: line.ingredientId,
+        ingredientName: line.ingredientName,
+        unit: line.unit,
+        qty: remaining,
+        unitCost: line.unitCost,
+        batchNumber: "",
+        expiryDate: "",
+        orderedQty: line.qty,
+        alreadyReceivedQty: line.receivedQty,
+      } satisfies GrnLine;
+    })
+    .filter((line): line is GrnLine => line != null);
+}
+
 export function GoodsReceivingPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -60,6 +87,56 @@ export function GoodsReceivingPage(): JSX.Element {
     [ingredients],
   );
   const stagedIngredientIds = useMemo(() => new Set(lines.map((line) => line.ingredientId)), [lines]);
+  const openPos =
+    query.data?.purchaseOrders.filter((p) => p.status !== "Received" && p.status !== "Cancelled") ?? [];
+
+  function applyPurchaseOrder(poId: string): void {
+    if (!poId) {
+      setHeader((prev) => ({ ...prev, purchaseOrderId: "", supplierId: prev.supplierId }));
+      return;
+    }
+    const po = openPos.find((p) => p.id === poId) ?? query.data?.purchaseOrders.find((p) => p.id === poId);
+    if (!po) {
+      setError("Purchase order not found.");
+      return;
+    }
+    const remaining = remainingPoQty(po);
+    setHeader((prev) => ({
+      ...prev,
+      purchaseOrderId: po.id,
+      supplierId: po.supplierId,
+    }));
+    setLines(remaining);
+    setError(null);
+    setNotice(
+      remaining.length > 0
+        ? `Loaded ${remaining.length} open line(s) from ${po.poNumber} (${po.supplierName}). Edit qty, then Receive goods.`
+        : `${po.poNumber} has no remaining quantity to receive.`,
+    );
+  }
+
+  // Deep-link from Kitchen Demand / PO history: /goods-receiving?poId=...
+  useEffect(() => {
+    const poId = searchParams.get("poId");
+    if (!poId || !query.data) return;
+    const po =
+      query.data.purchaseOrders.find((p) => p.id === poId) ??
+      null;
+    if (!po) return;
+    const remaining = remainingPoQty(po);
+    setHeader((prev) => ({
+      ...prev,
+      purchaseOrderId: po.id,
+      supplierId: po.supplierId,
+    }));
+    setLines(remaining);
+    setNotice(
+      remaining.length > 0
+        ? `Loaded ${remaining.length} open line(s) from ${po.poNumber} (${po.supplierName}). Edit qty, then Receive goods.`
+        : `${po.poNumber} has no remaining quantity to receive.`,
+    );
+    setSearchParams({}, { replace: true });
+  }, [query.data, searchParams, setSearchParams]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -149,6 +226,10 @@ export function GoodsReceivingPage(): JSX.Element {
     setNotice(null);
   }
 
+  function updateLine(lineId: string, patch: Partial<GrnLine>): void {
+    setLines((prev) => prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)));
+  }
+
   function removeLine(lineId: string): void {
     setLines((prev) => prev.filter((line) => line.id !== lineId));
   }
@@ -157,13 +238,17 @@ export function GoodsReceivingPage(): JSX.Element {
   if (query.isError) return <InventoryError message={(query.error as Error).message} />;
 
   const suppliers = query.data?.suppliers.filter((s) => s.active) ?? [];
-  const openPos = query.data?.purchaseOrders.filter((p) => p.status !== "Received" && p.status !== "Cancelled") ?? [];
   const receipts = query.data?.goodsReceipts ?? [];
   const stagedTotal = lines.reduce((sum, line) => sum + line.qty * line.unitCost, 0);
+  const linkedPo = openPos.find((p) => p.id === header.purchaseOrderId);
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Goods receiving" subtitle="Record deliveries — inventory updates automatically on save." />
+      <PageHeader
+        title="Goods receiving"
+        subtitle="Receive against a purchase order (Kitchen Demand) or record an ad-hoc delivery."
+      />
+      <InventoryFlowBanner activeStep="Goods Receiving" />
       {notice ? (
         <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
           {notice}
@@ -181,6 +266,18 @@ export function GoodsReceivingPage(): JSX.Element {
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <select
               className={selectClass}
+              value={header.purchaseOrderId}
+              onChange={(e) => applyPurchaseOrder(e.target.value)}
+            >
+              <option value="">Select purchase order…</option>
+              {openPos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.poNumber} · {p.supplierName} · {p.status}
+                </option>
+              ))}
+            </select>
+            <select
+              className={selectClass}
               value={header.supplierId}
               onChange={(e) => setHeader({ ...header, supplierId: e.target.value })}
             >
@@ -188,18 +285,6 @@ export function GoodsReceivingPage(): JSX.Element {
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={selectClass}
-              value={header.purchaseOrderId}
-              onChange={(e) => setHeader({ ...header, purchaseOrderId: e.target.value })}
-            >
-              <option value="">Link PO (optional)</option>
-              {openPos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.poNumber}
                 </option>
               ))}
             </select>
@@ -217,8 +302,26 @@ export function GoodsReceivingPage(): JSX.Element {
             />
           </div>
 
+          {linkedPo ? (
+            <p className="text-[11px] text-slate-400">
+              Receiving against <span className="font-medium text-amber-200">{linkedPo.poNumber}</span>
+              {" · "}
+              {linkedPo.supplierName}
+              {" · "}
+              <Link to="/pops/inventory/purchase-orders" className="text-sky-400 hover:text-sky-300">
+                Back to Kitchen Demand
+              </Link>
+            </p>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              Tip: pick a PO to auto-fill supplier and remaining quantities, or add ingredients manually.
+            </p>
+          )}
+
           <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Add items</div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Add extra items (optional)
+            </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <button
                 type="button"
@@ -226,7 +329,9 @@ export function GoodsReceivingPage(): JSX.Element {
                 className={`${inputClass} flex items-center justify-between text-left`}
               >
                 <span className={lines.length > 0 ? "text-slate-200" : "text-slate-500"}>
-                  {lines.length > 0 ? `${lines.length} ingredient${lines.length === 1 ? "" : "s"} added` : "Select ingredients…"}
+                  {lines.length > 0
+                    ? `${lines.length} ingredient${lines.length === 1 ? "" : "s"} on list`
+                    : "Select ingredients…"}
                 </span>
                 <span className="text-slate-500" aria-hidden>
                   ▾
@@ -236,7 +341,7 @@ export function GoodsReceivingPage(): JSX.Element {
                 className={inputClass}
                 type="number"
                 min={1}
-                placeholder="Qty received"
+                placeholder="Default qty"
                 value={lineDefaults.qty}
                 onChange={(e) => setLineDefaults({ ...lineDefaults, qty: e.target.value })}
               />
@@ -244,7 +349,7 @@ export function GoodsReceivingPage(): JSX.Element {
                 className={inputClass}
                 type="number"
                 min={0}
-                placeholder="Unit cost"
+                placeholder="Default unit cost"
                 value={lineDefaults.unitCost}
                 onChange={(e) => setLineDefaults({ ...lineDefaults, unitCost: e.target.value })}
               />
@@ -269,16 +374,13 @@ export function GoodsReceivingPage(): JSX.Element {
                 + Add item
               </button>
             </div>
-            <p className="mt-2 text-[10px] text-slate-500">
-              Qty, cost, batch, and expiry apply to all ingredients you select in the popup.
-            </p>
           </div>
 
           {lines.length > 0 ? (
             <div className="rounded-lg border border-slate-800/80 bg-slate-950/20">
               <div className="flex items-center justify-between border-b border-slate-800/80 px-3 py-2">
                 <span className="text-xs font-medium text-slate-300">
-                  {lines.length} item{lines.length === 1 ? "" : "s"} to receive
+                  {lines.length} item{lines.length === 1 ? "" : "s"} to receive — edit qty as needed
                 </span>
                 <span className="text-xs font-semibold text-amber-200">Rs {stagedTotal.toLocaleString()}</span>
               </div>
@@ -286,19 +388,78 @@ export function GoodsReceivingPage(): JSX.Element {
                 rowKey={(row) => row.id}
                 columns={[
                   { key: "name", header: "Ingredient", render: (row) => row.ingredientName },
-                  { key: "qty", header: "Qty", render: (row) => `${row.qty} ${row.unit}` },
+                  {
+                    key: "ordered",
+                    header: "Ordered",
+                    render: (row) =>
+                      row.orderedQty != null ? `${row.orderedQty} ${row.unit}` : "—",
+                  },
+                  {
+                    key: "prev",
+                    header: "Already recv.",
+                    render: (row) =>
+                      row.alreadyReceivedQty != null ? `${row.alreadyReceivedQty} ${row.unit}` : "—",
+                  },
+                  {
+                    key: "qty",
+                    header: "Receive qty",
+                    render: (row) => (
+                      <input
+                        className={`${inputClass} w-24 py-1`}
+                        type="number"
+                        min={1}
+                        value={row.qty}
+                        onChange={(e) =>
+                          updateLine(row.id, { qty: Math.max(1, Math.round(Number(e.target.value) || 1)) })
+                        }
+                      />
+                    ),
+                  },
                   {
                     key: "cost",
                     header: "Unit cost",
-                    render: (row) => `Rs ${row.unitCost.toLocaleString()}`,
+                    render: (row) => (
+                      <input
+                        className={`${inputClass} w-28 py-1`}
+                        type="number"
+                        min={0}
+                        value={row.unitCost}
+                        onChange={(e) =>
+                          updateLine(row.id, {
+                            unitCost: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                          })
+                        }
+                      />
+                    ),
                   },
                   {
                     key: "lineTotal",
                     header: "Line total",
                     render: (row) => `Rs ${(row.qty * row.unitCost).toLocaleString()}`,
                   },
-                  { key: "batch", header: "Batch", render: (row) => row.batchNumber || "—" },
-                  { key: "expiry", header: "Expiry", render: (row) => row.expiryDate || "—" },
+                  {
+                    key: "batch",
+                    header: "Batch",
+                    render: (row) => (
+                      <input
+                        className={`${inputClass} w-28 py-1`}
+                        value={row.batchNumber}
+                        onChange={(e) => updateLine(row.id, { batchNumber: e.target.value })}
+                      />
+                    ),
+                  },
+                  {
+                    key: "expiry",
+                    header: "Expiry",
+                    render: (row) => (
+                      <input
+                        className={`${inputClass} w-36 py-1`}
+                        type="date"
+                        value={row.expiryDate}
+                        onChange={(e) => updateLine(row.id, { expiryDate: e.target.value })}
+                      />
+                    ),
+                  },
                   {
                     key: "actions",
                     header: "",
@@ -317,7 +478,9 @@ export function GoodsReceivingPage(): JSX.Element {
               />
             </div>
           ) : (
-            <p className="text-xs text-slate-500">Select ingredients above, then click Receive goods.</p>
+            <p className="text-xs text-slate-500">
+              Select a purchase order to load remaining quantities, or add ingredients manually.
+            </p>
           )}
         </InventoryFormPanel>
       ) : null}
@@ -337,7 +500,8 @@ export function GoodsReceivingPage(): JSX.Element {
             <div>
               <div className="text-sm font-medium text-white">{gr.grnNumber}</div>
               <div className="mt-1 text-xs text-slate-500">
-                {gr.supplierName} · Invoice {gr.invoiceNumber ?? "—"} · {gr.deliveryDate}
+                {gr.supplierName}
+                {gr.poNumber ? ` · PO ${gr.poNumber}` : ""} · Invoice {gr.invoiceNumber ?? "—"} · {gr.deliveryDate}
               </div>
             </div>
             <div className="text-sm text-amber-200">Rs {gr.totalCost.toLocaleString()}</div>

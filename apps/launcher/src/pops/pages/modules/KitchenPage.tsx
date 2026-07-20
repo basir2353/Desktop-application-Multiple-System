@@ -21,7 +21,8 @@ import {
   unifiedOrderTotal,
   type UnifiedOrder,
 } from "../../lib/orderHistory";
-import { printKot, type PrintTicketInput } from "../../lib/printTicket";
+import { printKotDetailed, withPrinterProfile, type PrintTicketInput } from "../../lib/printTicket";
+import { resolveKotPrinter } from "../../lib/printerRouting";
 import {
   ModuleCountBadge,
   ModuleFilterBar,
@@ -427,7 +428,18 @@ export function KitchenPage(): JSX.Element {
                     <button
                       type="button"
                       className="text-[11px] text-amber-300 hover:text-amber-200"
-                      onClick={() => printKot(ticketToPrint(r.ticket, branch.name, branch.code))}
+                      onClick={() => {
+                        void (async () => {
+                          const base = ticketToPrint(r.ticket, branch.name, branch.code);
+                          const profile = resolveKotPrinter(branch.code, null, undefined, "kitchen");
+                          const result = await printKotDetailed(withPrinterProfile(base, profile));
+                          setNotice(
+                            result.ok
+                              ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : ""}.`
+                              : `KOT print failed: ${result.error ?? "check printer assignment"}.`,
+                          );
+                        })();
+                      }}
                     >
                       Print KOT
                     </button>

@@ -1,5 +1,5 @@
 import { Button } from "@platform/ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePopsStore } from "../../../stores/popsStore";
 import {
@@ -30,18 +30,27 @@ import {
   deletePrinterProfile,
   duplicatePrinterProfile,
   exportPrinterConfig,
+  getPrintersForUser,
+  getUserIdsForPrinter,
   importPrinterConfig,
+  listAssignedCounters,
   loadPrinterRouting,
   movePrinterPriority,
   PRINTER_ROUTING_CHANGED_EVENT,
+  PRINTER_TYPE_LABELS,
   setCategorySections,
   setItemSections,
+  setReceiptPrinter,
+  setUserPrinters,
   togglePrinterForSection,
+  toggleUserPrinter,
   updatePrinterProfile,
   type PrinterPaperSize,
+  type PrinterProfile,
   type PrinterRoutingState,
+  type PrinterType,
 } from "../../lib/printerRouting";
-import { listSystemPrinters, type SystemPrinterInfo } from "../../lib/systemPrinters";
+import { listSystemPrintersDetailed, type SystemPrinterInfo } from "../../lib/systemPrinters";
 import {
   clearPrintHistory,
   loadPrintHistory,
@@ -49,7 +58,7 @@ import {
   PRINT_HISTORY_CHANGED_EVENT,
   todaysPrintCount,
 } from "../../lib/printHistory";
-import { printTestPage } from "../../lib/printTicket";
+import { printTestPageAsync } from "../../lib/printTicket";
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { fetchOrgUsers } from "../../api/users";
 import { PageHeader } from "../../ui/PageHeader";
@@ -60,13 +69,14 @@ const SECTION_COLOR_CHOICES = [
   "#22d3ee", "#a3e635", "#fb923c", "#34d399", "#94a3b8",
 ];
 const PAPER_SIZES: PrinterPaperSize[] = ["58mm", "80mm", "A4"];
+const PRINTER_TYPES = Object.keys(PRINTER_TYPE_LABELS) as PrinterType[];
 
 const TABS = [
   { id: "sections", label: "Sections" },
   { id: "categories", label: "Categories" },
   { id: "items", label: "Items" },
   { id: "profiles", label: "Printer Profiles" },
-  { id: "users", label: "Users" },
+  { id: "assign", label: "Assign Users" },
   { id: "preview", label: "Routing Preview" },
   { id: "queue", label: "Print Queue" },
 ] as const;
@@ -173,12 +183,23 @@ function PrinterDashboardStats({
   );
 }
 
+function printerTypeForSection(section: PrinterSection): PrinterType {
+  const n = section.name.toLowerCase();
+  if (n.includes("bar") || n.includes("drink") || n.includes("beverage")) return "bar";
+  if (n.includes("receipt") || n.includes("bill") || n.includes("cashier") || n.includes("counter")) {
+    return "receipt";
+  }
+  return "kitchen";
+}
+
 function PrinterSectionsTab({
   branchCode,
   sections,
   routing,
   systemPrinters,
+  allSystemPrinters,
   systemPrintersLoading,
+  systemPrintersError,
   onRefreshSystemPrinters,
   categories,
   items,
@@ -187,8 +208,12 @@ function PrinterSectionsTab({
   branchCode: string;
   sections: PrinterSection[];
   routing: PrinterRoutingState;
+  /** Prefer real printers; may be empty on PCs that only have Fax/PDF. */
   systemPrinters: SystemPrinterInfo[];
+  /** Full Windows list — always shown so staff can see / assign. */
+  allSystemPrinters: SystemPrinterInfo[];
   systemPrintersLoading: boolean;
+  systemPrintersError: string | null;
   onRefreshSystemPrinters: () => void;
   categories: { id: string; name: string }[];
   items: { id: string; name: string; categoryId: string }[];
@@ -197,14 +222,33 @@ function PrinterSectionsTab({
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [sectionSearch, setSectionSearch] = useState("");
   const [printerSearch, setPrinterSearch] = useState("");
+  const [printerPickerOpen, setPrinterPickerOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
   const [newSectionIcon, setNewSectionIcon] = useState(SECTION_ICON_CHOICES[0]);
   const [newSectionColor, setNewSectionColor] = useState(SECTION_COLOR_CHOICES[0]);
-  const [newPrinterName, setNewPrinterName] = useState("");
+  const printerPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!selectedSectionId && sections.length > 0) setSelectedSectionId(sections[0].id);
   }, [sections, selectedSectionId]);
+
+  useEffect(() => {
+    if (!printerPickerOpen) return;
+    function onPointerDown(event: MouseEvent): void {
+      if (!printerPickerRef.current?.contains(event.target as Node)) {
+        setPrinterPickerOpen(false);
+      }
+    }
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") setPrinterPickerOpen(false);
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [printerPickerOpen]);
 
   const selectedSection = sections.find((s) => s.id === selectedSectionId) ?? null;
 
@@ -214,6 +258,21 @@ function PrinterSectionsTab({
   const filteredPrinters = routing.printers.filter((p) =>
     p.name.toLowerCase().includes(printerSearch.trim().toLowerCase()),
   );
+  const displayedSystemPrinters = useMemo(() => {
+    const q = printerSearch.trim().toLowerCase();
+    const source = allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters;
+    // Real printers first, then virtual (Fax/PDF) so the list is never empty when Windows has devices.
+    const sorted = [...source].sort((a, b) => Number(a.isVirtual) - Number(b.isVirtual));
+    if (!q) return sorted;
+    return sorted.filter(
+      (printer) =>
+        printer.name.toLowerCase().includes(q) ||
+        printer.portName.toLowerCase().includes(q) ||
+        printer.connectionType.toLowerCase().includes(q),
+    );
+  }, [allSystemPrinters, systemPrinters, printerSearch]);
+
+  const selectableSystemPrinters = displayedSystemPrinters;
 
   function sectionCountsFor(section: PrinterSection) {
     const printerIds = routing.sectionPrinters[section.id] ?? [];
@@ -238,73 +297,142 @@ function PrinterSectionsTab({
 
   function assignSystemPrinter(printer: SystemPrinterInfo): void {
     if (!selectedSection) {
-      notify("Select a section first, then Assign.");
+      notify("Select Kitchen or Bar on the left, then tap Use for…");
       return;
     }
-    let profile = routing.printers.find((p) => p.systemPrinterName === printer.name);
+    const printerType = printerTypeForSection(selectedSection);
+    // Virtual devices (Fax/PDF): keep as profile label, but do not force direct OS print
+    // (that fails with StartDocPrinterW). Real printers get a direct OS link.
+    const systemPrinterName = printer.isVirtual ? undefined : printer.name;
+    let profile =
+      routing.printers.find((p) => p.systemPrinterName === printer.name) ??
+      routing.printers.find((p) => p.name.toLowerCase() === printer.name.toLowerCase());
     if (!profile) {
-      profile = addPrinterProfile(branchCode, printer.name, { systemPrinterName: printer.name });
+      try {
+        profile = addPrinterProfile(branchCode, printer.name, {
+          systemPrinterName,
+          printerType,
+        });
+      } catch (err) {
+        notify(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    } else {
+      updatePrinterProfile(branchCode, profile.id, {
+        printerType,
+        systemPrinterName: systemPrinterName ?? profile.systemPrinterName,
+      });
     }
     togglePrinterForSection(branchCode, selectedSection.id, profile.id, true);
-    notify(`${printer.name} assigned to ${selectedSection.name}.`);
+    notify(
+      printer.isVirtual
+        ? `✓ ${printer.name} → ${selectedSection.name}. (Virtual printer — Windows print dialog will open.)`
+        : `✓ ${printer.name} → ${selectedSection.name}. Done.`,
+    );
+    setPrinterPickerOpen(false);
+    setPrinterSearch("");
+  }
+
+  function addSystemPrinterFromList(printer: SystemPrinterInfo): void {
+    assignSystemPrinter(printer);
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 dark:border-amber-500/20">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-900 dark:text-white">System printers</div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900 dark:text-white">
+              1) Pick a section → 2) Tap a printer
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {selectedSection
+                ? `Selected: ${selectedSection.name}. Tap “Use for ${selectedSection.name}” on a printer below.`
+                : "Select Kitchen or Bar on the left, then choose a printer."}
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             {systemPrintersLoading ? <span className="text-[10px] text-slate-500">Scanning…</span> : null}
-            <Button type="button" variant="ghost" className="text-xs" onClick={onRefreshSystemPrinters}>
-              Refresh
+            <Button type="button" className="text-xs" onClick={onRefreshSystemPrinters}>
+              Refresh printers
             </Button>
           </div>
         </div>
-        <p className="mt-1 text-xs text-slate-500">
-          Detected from this computer's OS print spooler. Select a section below, then Assign a printer to it.
-        </p>
+
+        {systemPrintersError ? (
+          <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+            {systemPrintersError}
+          </div>
+        ) : null}
+
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {systemPrinters.length === 0 ? (
-            <p className="text-xs text-slate-500">
-              {systemPrintersLoading ? "Scanning for printers…" : "No printers detected on this system."}
-            </p>
+          {systemPrintersLoading && displayedSystemPrinters.length === 0 ? (
+            <p className="text-xs text-slate-500">Scanning Windows printers…</p>
+          ) : displayedSystemPrinters.length === 0 ? (
+            <div className="col-span-full space-y-2 text-xs text-slate-400">
+              <p>No printers detected on this computer.</p>
+              <p>
+                Open Windows Settings → Printers, install your kitchen printer, then click{" "}
+                <span className="text-amber-300">Refresh printers</span>.
+              </p>
+            </div>
           ) : (
-            systemPrinters.map((printer) => (
-              <div key={printer.name} className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+            displayedSystemPrinters.map((printer) => (
+              <div
+                key={printer.name}
+                className={`rounded-lg border p-3 ${
+                  printer.isVirtual
+                    ? "border-slate-800 bg-slate-950/40 opacity-90"
+                    : "border-slate-700 bg-slate-950/60"
+                }`}
+              >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-medium text-slate-200">{printer.name}</div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
-                      <span className={`h-1.5 w-1.5 rounded-full ${statusDot(printer.state)}`} aria-hidden />
-                      {statusLabel(printer.state)}
-                      <span>·</span>
-                      {printer.connectionType}
-                      {printer.isDefault ? (
-                        <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-amber-300">Default</span>
-                      ) : null}
-                    </div>
-                  </div>
+                  <div className="truncate text-sm font-medium text-white">{printer.name}</div>
+                  {printer.isVirtual ? (
+                    <span className="shrink-0 rounded-full bg-slate-700/80 px-1.5 py-0.5 text-[9px] text-slate-300">
+                      Virtual
+                    </span>
+                  ) : (
+                    <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-300">
+                      Ready
+                    </span>
+                  )}
                 </div>
-                <div className="mt-2 flex gap-2 text-[10px]">
-                  <button
+                <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+                  <span className={`h-1.5 w-1.5 rounded-full ${statusDot(printer.state)}`} aria-hidden />
+                  {statusLabel(printer.state)} · {printer.connectionType}
+                  {printer.isDefault ? (
+                    <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-amber-300">Default</span>
+                  ) : null}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
                     type="button"
-                    className="text-amber-400 hover:text-amber-300"
-                    onClick={() => {
-                      const ok = printTestPage(printer.name);
-                      logPrintEvent(branchCode, { kind: "test", printerName: printer.name, ok });
-                      notify(ok ? `Test print sent to ${printer.name}.` : "Could not open the print dialog.");
-                    }}
-                  >
-                    Test print
-                  </button>
-                  <button
-                    type="button"
-                    className="text-sky-400 hover:text-sky-300"
+                    className="text-xs"
+                    disabled={!selectedSection}
                     onClick={() => assignSystemPrinter(printer)}
                   >
-                    Assign to {selectedSection?.name ?? "…"}
-                  </button>
+                    Use for {selectedSection?.name ?? "section"}
+                  </Button>
+                  {!printer.isVirtual ? (
+                    <button
+                      type="button"
+                      className="text-[11px] text-amber-400 hover:text-amber-300"
+                      onClick={() => {
+                        void (async () => {
+                          const ok = await printTestPageAsync(printer.name);
+                          logPrintEvent(branchCode, { kind: "test", printerName: printer.name, ok });
+                          notify(
+                            ok
+                              ? `Test print sent to ${printer.name}.`
+                              : `Test print failed on ${printer.name}.`,
+                          );
+                        })();
+                      }}
+                    >
+                      Test
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))
@@ -417,35 +545,110 @@ function PrinterSectionsTab({
 
           {/* Center panel — printer profiles */}
           <div className="lg:col-span-5">
-            <div className="flex items-center gap-2">
-              <input
-                className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
-                placeholder="Search printers…"
-                value={printerSearch}
-                onChange={(e) => setPrinterSearch(e.target.value)}
-              />
+            <div className="relative" ref={printerPickerRef}>
+              <div className="flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
+                  placeholder="Search system printers…"
+                  value={printerSearch}
+                  onChange={(e) => {
+                    setPrinterSearch(e.target.value);
+                    setPrinterPickerOpen(true);
+                  }}
+                  onFocus={() => {
+                    setPrinterPickerOpen(true);
+                    if (systemPrinters.length === 0) onRefreshSystemPrinters();
+                  }}
+                  onKeyDown={(e) => {
+                    // Never create a printer from free text (blocks typing "fax").
+                    if (e.key === "Enter") e.preventDefault();
+                  }}
+                />
+                <Button
+                  type="button"
+                  className="shrink-0 text-xs"
+                  onClick={() => {
+                    setPrinterPickerOpen((open) => !open);
+                    if (!printerPickerOpen && systemPrinters.length === 0) onRefreshSystemPrinters();
+                  }}
+                >
+                  {printerPickerOpen ? "Close" : "Pick printer"}
+                </Button>
+              </div>
+
+              {printerPickerOpen ? (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 shadow-xl shadow-black/40">
+                  <div className="sticky top-0 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-2.5 py-1.5">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                      Select a system printer
+                    </span>
+                    <button
+                      type="button"
+                      className="text-[10px] text-sky-400 hover:text-sky-300"
+                      onClick={() => onRefreshSystemPrinters()}
+                    >
+                      {systemPrintersLoading ? "Scanning…" : "Refresh"}
+                    </button>
+                  </div>
+                  {systemPrintersLoading && systemPrinters.length === 0 ? (
+                    <p className="px-2.5 py-3 text-xs text-slate-500">Scanning for printers…</p>
+                  ) : selectableSystemPrinters.length === 0 ? (
+                    <p className="px-2.5 py-3 text-xs text-slate-500">
+                      {systemPrinters.length === 0
+                        ? "No printers detected on this computer."
+                        : "No printers match your search."}
+                    </p>
+                  ) : (
+                    <ul className="py-1">
+                      {selectableSystemPrinters.map((printer) => {
+                        const alreadyAdded = routing.printers.some(
+                          (p) =>
+                            p.systemPrinterName === printer.name ||
+                            p.name.toLowerCase() === printer.name.toLowerCase(),
+                        );
+                        return (
+                          <li key={printer.name}>
+                            <button
+                              type="button"
+                              onClick={() => addSystemPrinterFromList(printer)}
+                              className="flex w-full items-start gap-2 px-2.5 py-2 text-left hover:bg-slate-900"
+                            >
+                              <span
+                                className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(printer.state)}`}
+                                aria-hidden
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs font-medium text-slate-100">
+                                  {printer.name}
+                                </span>
+                                <span className="mt-0.5 block text-[10px] text-slate-500">
+                                  {statusLabel(printer.state)} · {printer.connectionType}
+                                  {printer.isDefault ? " · Default" : ""}
+                                </span>
+                              </span>
+                              <span
+                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                                  alreadyAdded
+                                    ? "bg-slate-700/70 text-slate-300"
+                                    : "bg-amber-500/15 text-amber-300"
+                                }`}
+                              >
+                                {alreadyAdded ? "Added" : "Select"}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
             </div>
 
-            <div className="mt-2 flex gap-2">
-              <input
-                className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
-                placeholder="Add printer profile manually"
-                value={newPrinterName}
-                onChange={(e) => setNewPrinterName(e.target.value)}
-              />
-              <Button
-                type="button"
-                className="shrink-0 text-xs"
-                disabled={!newPrinterName.trim()}
-                onClick={() => {
-                  const created = addPrinterProfile(branchCode, newPrinterName.trim());
-                  setNewPrinterName("");
-                  notify(`Printer "${created.name}" added.`);
-                }}
-              >
-                Add printer
-              </Button>
-            </div>
+            <p className="mt-1.5 text-[10px] text-slate-500">
+              Click Add printer, pick from the list, then it appears in the table below
+              {selectedSection ? ` and is assigned to ${selectedSection.name}` : ""}.
+            </p>
 
             <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
               <table className="w-full text-left text-xs">
@@ -462,7 +665,7 @@ function PrinterSectionsTab({
                   {filteredPrinters.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-2.5 py-4 text-center text-slate-500">
-                        No printer profiles yet. Add one above or Assign a detected system printer.
+                        No printer profiles yet. Use Add printer above and select from the list.
                       </td>
                     </tr>
                   ) : (
@@ -508,9 +711,20 @@ function PrinterSectionsTab({
                             type="button"
                             className="text-amber-400 hover:text-amber-300"
                             onClick={() => {
-                              const ok = printTestPage(printer.name);
-                              logPrintEvent(branchCode, { kind: "test", printerName: printer.name, ok });
-                              notify(ok ? `Test print sent to ${printer.name}.` : "Could not open the print dialog.");
+                              void (async () => {
+                                const target = printer.systemPrinterName?.trim();
+                                if (!target) {
+                                  notify("Link an OS printer on this profile before Test Print.");
+                                  return;
+                                }
+                                const ok = await printTestPageAsync(target);
+                                logPrintEvent(branchCode, { kind: "test", printerName: target, ok });
+                                notify(
+                                  ok
+                                    ? `Test print sent to ${target}.`
+                                    : `Test print failed on ${target}. Check connection.`,
+                                );
+                              })();
                             }}
                           >
                             Test print
@@ -917,127 +1131,333 @@ function PrinterItemsTab({
 function PrinterProfilesTab({
   branchCode,
   routing,
+  systemPrinters,
+  users,
   notify,
 }: {
   branchCode: string;
   routing: PrinterRoutingState;
+  systemPrinters: SystemPrinterInfo[];
+  users: { id: string; email: string; role: string }[];
   notify: (message: string) => void;
 }): JSX.Element {
   const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState<PrinterType>("kitchen");
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-      <div className="text-sm font-semibold text-slate-900 dark:text-white">Printer profiles</div>
-      <p className="mt-1 text-xs text-slate-500">
-        Reusable print settings — copies, paper size, auto-cut — that sections, categories, items, and users
-        select instead of retyping a printer name.
-      </p>
-
-      <div className="mt-3 flex gap-2">
-        <input
-          className="min-w-0 flex-1 max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
-          placeholder="New printer profile name"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-        />
-        <Button
-          type="button"
-          className="shrink-0 text-xs"
-          disabled={!newName.trim()}
-          onClick={() => {
-            addPrinterProfile(branchCode, newName.trim());
-            setNewName("");
-          }}
+    <div className="space-y-4">
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">Default receipt printer</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Used for POS Pay / Invoice / split bills. Branch: <span className="font-mono text-slate-300">{branchCode}</span>
+        </p>
+        <select
+          className="mt-3 w-full max-w-md rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white"
+          value={routing.receiptPrinterId ?? ""}
+          onChange={(e) => setReceiptPrinter(branchCode, e.target.value || null)}
         >
-          Add profile
-        </Button>
+          <option value="">Auto — first Receipt-type profile</option>
+          {routing.printers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.systemPrinterName ? ` → ${p.systemPrinterName}` : ""} ({PRINTER_TYPE_LABELS[p.printerType]})
+            </option>
+          ))}
+        </select>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {routing.printers.length === 0 ? (
-          <p className="text-xs text-slate-500">No printer profiles yet.</p>
-        ) : (
-          routing.printers.map((printer) => (
-            <div key={printer.id} className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-              <input
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-medium text-white outline-none focus:border-amber-500/50"
-                value={printer.name}
-                onChange={(e) => updatePrinterProfile(branchCode, printer.id, { name: e.target.value })}
-              />
-              {printer.systemPrinterName ? (
-                <p className="text-[10px] text-sky-400">Linked to OS printer: {printer.systemPrinterName}</p>
-              ) : null}
-              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
-                <label className="block">
-                  Copies
-                  <input
-                    type="number"
-                    min={1}
-                    max={9}
-                    value={printer.copies}
-                    onChange={(e) =>
-                      updatePrinterProfile(branchCode, printer.id, {
-                        copies: Math.max(1, Number(e.target.value) || 1),
-                      })
-                    }
-                    className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
-                  />
-                </label>
-                <label className="block">
-                  Paper size
-                  <select
-                    value={printer.paperSize}
-                    onChange={(e) =>
-                      updatePrinterProfile(branchCode, printer.id, {
-                        paperSize: e.target.value as PrinterPaperSize,
-                      })
-                    }
-                    className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
-                  >
-                    {PAPER_SIZES.map((size) => (
-                      <option key={size} value={size}>
-                        {size}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                <input
-                  type="checkbox"
-                  checked={printer.autoCut}
-                  onChange={(e) => updatePrinterProfile(branchCode, printer.id, { autoCut: e.target.checked })}
-                />
-                Auto cut after each ticket
-              </label>
-              <div className="flex justify-between text-[10px]">
-                <button
-                  type="button"
-                  className="text-sky-400 hover:text-sky-300"
-                  onClick={() => {
-                    const copy = duplicatePrinterProfile(branchCode, printer.id);
-                    if (copy) notify(`Profile duplicated as "${copy.name}".`);
-                  }}
-                >
-                  Duplicate
-                </button>
-                <button
-                  type="button"
-                  className="text-red-400 hover:text-red-300"
-                  onClick={() => deletePrinterProfile(branchCode, printer.id)}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))
-        )}
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">Printer profiles</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Printer Name, Type (Kitchen/Bar/Receipt), OS link, Counter/User, Status, and Test Print. Assign profiles to
+          sections so POS KOTs route to the correct device.
+        </p>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            className="min-w-0 flex-1 max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
+            placeholder="Printer name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <select
+            className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+            value={newType}
+            onChange={(e) => setNewType(e.target.value as PrinterType)}
+          >
+            {PRINTER_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {PRINTER_TYPE_LABELS[type]}
+              </option>
+            ))}
+          </select>
+          <select
+            className="min-w-[10rem] rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+            id="new-profile-os-printer"
+            defaultValue=""
+          >
+            <option value="">Link OS printer (required for direct print)</option>
+            {systemPrinters.map((sp) => (
+              <option key={sp.name} value={sp.name}>
+                {sp.name}
+                {sp.isDefault ? " (default)" : ""}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            className="shrink-0 text-xs"
+            disabled={!newName.trim()}
+            onClick={() => {
+              const osSelect = document.getElementById("new-profile-os-printer") as HTMLSelectElement | null;
+              const systemPrinterName = osSelect?.value?.trim() || undefined;
+              addPrinterProfile(branchCode, newName.trim(), {
+                printerType: newType,
+                systemPrinterName,
+              });
+              setNewName("");
+              if (osSelect) osSelect.value = "";
+              notify(
+                systemPrinterName
+                  ? `Profile added and linked to ${systemPrinterName}.`
+                  : "Profile added — link an OS printer before POS can print directly.",
+              );
+            }}
+          >
+            Add profile
+          </Button>
+        </div>
+
+        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-800">
+          <table className="w-full min-w-[56rem] text-left text-xs">
+            <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-2.5 py-2">Printer name</th>
+                <th className="px-2.5 py-2">Type</th>
+                <th className="px-2.5 py-2">OS printer</th>
+                <th className="px-2.5 py-2">Counter</th>
+                <th className="px-2.5 py-2">Assigned users</th>
+                <th className="px-2.5 py-2">Branch</th>
+                <th className="px-2.5 py-2">Status</th>
+                <th className="px-2.5 py-2">Copies / Paper</th>
+                <th className="px-2.5 py-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {routing.printers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-2.5 py-4 text-center text-slate-500">
+                    No printer profiles yet — add one or Assign a system printer from Sections.
+                  </td>
+                </tr>
+              ) : (
+                routing.printers.map((printer) => (
+                  <tr key={printer.id} className="align-top">
+                    <td className="px-2.5 py-2">
+                      <input
+                        className="w-full min-w-[8rem] rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                        value={printer.name}
+                        onChange={(e) =>
+                          updatePrinterProfile(branchCode, printer.id, { name: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td className="px-2.5 py-2">
+                      <select
+                        className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                        value={printer.printerType}
+                        onChange={(e) =>
+                          updatePrinterProfile(branchCode, printer.id, {
+                            printerType: e.target.value as PrinterType,
+                          })
+                        }
+                      >
+                        {PRINTER_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {PRINTER_TYPE_LABELS[type]}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-2.5 py-2">
+                      <select
+                        className="max-w-[12rem] rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                        value={printer.systemPrinterName ?? ""}
+                        onChange={(e) =>
+                          updatePrinterProfile(branchCode, printer.id, {
+                            systemPrinterName: e.target.value || undefined,
+                          })
+                        }
+                      >
+                        <option value="">Not linked</option>
+                        {systemPrinters.map((sp) => (
+                          <option key={sp.name} value={sp.name}>
+                            {sp.name}
+                            {sp.isDefault ? " (default)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-2.5 py-2">
+                      <input
+                        className="w-24 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                        placeholder="Counter"
+                        value={printer.assignedCounter ?? ""}
+                        onChange={(e) =>
+                          updatePrinterProfile(branchCode, printer.id, {
+                            assignedCounter: e.target.value || undefined,
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-2.5 py-2">
+                      <AssignedUsersCell
+                        branchCode={branchCode}
+                        printer={printer}
+                        users={users}
+                      />
+                    </td>
+                    <td className="px-2.5 py-2 font-mono text-[10px] text-slate-400">{branchCode}</td>
+                    <td className="px-2.5 py-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updatePrinterProfile(branchCode, printer.id, {
+                            status: printer.status === "online" ? "offline" : "online",
+                          })
+                        }
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          printer.status === "online"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : "bg-red-500/15 text-red-300"
+                        }`}
+                      >
+                        {printer.status === "online" ? "Online" : "Offline"}
+                      </button>
+                    </td>
+                    <td className="px-2.5 py-2">
+                      <div className="flex flex-col gap-1">
+                        <input
+                          type="number"
+                          min={1}
+                          max={9}
+                          value={printer.copies}
+                          onChange={(e) =>
+                            updatePrinterProfile(branchCode, printer.id, {
+                              copies: Math.max(1, Number(e.target.value) || 1),
+                            })
+                          }
+                          className="w-14 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          title="Copies"
+                        />
+                        <select
+                          value={printer.paperSize}
+                          onChange={(e) =>
+                            updatePrinterProfile(branchCode, printer.id, {
+                              paperSize: e.target.value as PrinterPaperSize,
+                            })
+                          }
+                          className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                        >
+                          {PAPER_SIZES.map((size) => (
+                            <option key={size} value={size}>
+                              {size}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
+                    <td className="px-2.5 py-2">
+                      <div className="flex flex-col items-start gap-1">
+                        <button
+                          type="button"
+                          className="text-amber-400 hover:text-amber-300"
+                          onClick={() => {
+                            void (async () => {
+                              const target = printer.systemPrinterName?.trim();
+                              if (!target) {
+                                notify("Link an OS printer on this profile before Test Print.");
+                                return;
+                              }
+                              const ok = await printTestPageAsync(target, { copies: printer.copies });
+                              logPrintEvent(branchCode, { kind: "test", printerName: target, ok });
+                              notify(
+                                ok
+                                  ? `Test print sent to ${target}.`
+                                  : `Test print failed on ${target}. Check the OS printer link.`,
+                              );
+                            })();
+                          }}
+                        >
+                          Test print
+                        </button>
+                        <button
+                          type="button"
+                          className="text-sky-400 hover:text-sky-300"
+                          onClick={() => {
+                            const copy = duplicatePrinterProfile(branchCode, printer.id);
+                            if (copy) notify(`Profile duplicated as "${copy.name}".`);
+                          }}
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          type="button"
+                          className="text-red-400 hover:text-red-300"
+                          onClick={() => deletePrinterProfile(branchCode, printer.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
-function PrinterUsersTab({
+function AssignedUsersCell({
+  branchCode,
+  printer,
+  users,
+}: {
+  branchCode: string;
+  printer: PrinterProfile;
+  users: { id: string; email: string; role: string }[];
+}): JSX.Element {
+  const assignedIds = getUserIdsForPrinter(branchCode, printer.id);
+  const labels = assignedIds.map((id) => users.find((u) => u.id === id)?.email ?? id);
+
+  return (
+    <div className="min-w-[10rem] space-y-1">
+      {labels.length === 0 ? (
+        <span className="text-[10px] text-slate-600">No users — use Assign Users tab</span>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {labels.slice(0, 4).map((label) => (
+            <span
+              key={label}
+              className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-300"
+              title={label}
+            >
+              {label.includes("@") ? label.split("@")[0] : label}
+            </span>
+          ))}
+          {labels.length > 4 ? (
+            <span className="text-[10px] text-slate-500">+{labels.length - 4}</span>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrinterAssignmentTab({
   branchCode,
   routing,
   users,
@@ -1048,116 +1468,306 @@ function PrinterUsersTab({
   users: { id: string; email: string; role: string }[];
   notify: (message: string) => void;
 }): JSX.Element {
+  const [filterUser, setFilterUser] = useState("");
+  const [filterCounter, setFilterCounter] = useState("");
+  const [filterType, setFilterType] = useState<PrinterType | "">("");
+  const [filterPrinter, setFilterPrinter] = useState("");
   const [search, setSearch] = useState("");
-  const [bulkPrinter, setBulkPrinter] = useState("");
-  // Not memoized on purpose: this is a cheap localStorage read that must reflect the
-  // latest assignment immediately — the parent's `notify` state update on each
-  // selection already re-renders this component, which re-reads fresh here.
-  const printerMap = loadPrinterAssignments(branchCode);
-  const printerOptions = [...new Set([...routing.printers.map((p) => p.name), ...PRINTER_PRESETS])];
-  const filtered = users.filter(
-    (u) =>
-      u.email.toLowerCase().includes(search.trim().toLowerCase()) ||
-      u.role.toLowerCase().includes(search.trim().toLowerCase()),
-  );
+  const counters = listAssignedCounters(branchCode);
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+
+  const filteredUsers = users.filter((u) => {
+    if (filterUser && u.id !== filterUser) return false;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return u.email.toLowerCase().includes(q) || u.role.toLowerCase().includes(q);
+  });
+
+  const filteredPrinters = routing.printers.filter((p) => {
+    if (filterType && p.printerType !== filterType) return false;
+    if (filterCounter && (p.assignedCounter ?? "") !== filterCounter) return false;
+    if (filterPrinter && p.id !== filterPrinter) return false;
+    return true;
+  });
+
+  function assignAllOfType(userId: string, type: PrinterType, assign: boolean): void {
+    const targets = routing.printers.filter((p) => p.printerType === type);
+    for (const p of targets) toggleUserPrinter(branchCode, userId, p.id, assign);
+    notify(
+      assign
+        ? `Assigned all ${PRINTER_TYPE_LABELS[type]} printers to user.`
+        : `Removed all ${PRINTER_TYPE_LABELS[type]} printers from user.`,
+    );
+  }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-      <div className="text-sm font-semibold text-slate-900 dark:text-white">User printer assignment</div>
-      <p className="mt-1 text-xs text-slate-500">
-        Route a user's prints to a specific printer profile — used when no category/item routing applies.
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+    <div className="space-y-4">
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+          Assign printers to users / waiters
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          One user can have Kitchen + Bar + Receipt. One printer can be shared by many users. Branch:{" "}
+          <span className="font-mono text-slate-300">{branchCode}</span>
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="text-[10px] uppercase tracking-wide text-slate-500">
+            Branch
+            <input
+              readOnly
+              value={branchCode}
+              className="mt-0.5 w-full rounded-md border border-slate-700 bg-slate-950/80 px-2 py-1.5 font-mono text-xs text-slate-300"
+            />
+          </label>
+          <label className="text-[10px] uppercase tracking-wide text-slate-500">
+            Counter
+            <select
+              className="mt-0.5 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+              value={filterCounter}
+              onChange={(e) => setFilterCounter(e.target.value)}
+            >
+              <option value="">All counters</option>
+              {counters.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-[10px] uppercase tracking-wide text-slate-500">
+            User
+            <select
+              className="mt-0.5 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+              value={filterUser}
+              onChange={(e) => setFilterUser(e.target.value)}
+            >
+              <option value="">All users</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.email}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-[10px] uppercase tracking-wide text-slate-500">
+            Printer type
+            <select
+              className="mt-0.5 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as PrinterType | "")}
+            >
+              <option value="">All types</option>
+              {PRINTER_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {PRINTER_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-[10px] uppercase tracking-wide text-slate-500">
+            Printer
+            <select
+              className="mt-0.5 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+              value={filterPrinter}
+              onChange={(e) => setFilterPrinter(e.target.value)}
+            >
+              <option value="">All printers</option>
+              {routing.printers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({PRINTER_TYPE_LABELS[p.printerType]})
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <input
-          className="min-w-0 flex-1 max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
+          className="mt-2 w-full max-w-md rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
           placeholder="Search users…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select
-          className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-          value={bulkPrinter}
-          onChange={(e) => setBulkPrinter(e.target.value)}
-        >
-          <option value="">Bulk assign printer…</option>
-          {printerOptions.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <Button
-          type="button"
-          variant="ghost"
-          className="text-xs"
-          disabled={!bulkPrinter}
-          onClick={() => {
-            for (const u of filtered) setUserPrinter(branchCode, u.id, bulkPrinter);
-            notify(`Assigned "${bulkPrinter}" to ${filtered.length} user(s).`);
-          }}
-        >
-          Apply to filtered
-        </Button>
       </div>
 
-      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="px-2.5 py-2">User</th>
-              <th className="px-2.5 py-2">Role</th>
-              <th className="px-2.5 py-2">Printer profile</th>
-              <th className="px-2.5 py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/80">
-            {filtered.length === 0 ? (
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">User → Assigned printers</div>
+        <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+          <table className="w-full min-w-[40rem] text-left text-xs">
+            <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
-                <td colSpan={4} className="px-2.5 py-4 text-center text-slate-500">
-                  No users found.
-                </td>
+                <th className="px-2.5 py-2">User / Waiter</th>
+                <th className="px-2.5 py-2">Role</th>
+                <th className="px-2.5 py-2">Assigned printers</th>
+                <th className="px-2.5 py-2">Quick</th>
               </tr>
-            ) : (
-              filtered.map((u) => {
-                const current = printerMap.byUser[u.id]?.printerName ?? "";
-                return (
-                  <tr key={u.id}>
-                    <td className="px-2.5 py-2 text-slate-200">{u.email}</td>
-                    <td className="px-2.5 py-2 text-slate-400">{u.role}</td>
-                    <td className="px-2.5 py-2">
-                      <select
-                        className="w-full max-w-[12rem] rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
-                        value={current}
-                        onChange={(e) => {
-                          setUserPrinter(branchCode, u.id, e.target.value);
-                          notify(`Printer updated for ${u.email}.`);
-                        }}
-                      >
-                        <option value="">Default</option>
-                        {printerOptions.map((p) => (
-                          <option key={p} value={p}>
-                            {p}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      {current ? (
-                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
-                          Assigned
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {filteredUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-2.5 py-4 text-center text-slate-500">
+                    No users match filters.
+                  </td>
+                </tr>
+              ) : (
+                filteredUsers.map((u) => {
+                  const assigned = getPrintersForUser(branchCode, u.id);
+                  const assignedIds = new Set(assigned.map((p) => p.id));
+                  return (
+                    <tr key={u.id} className="align-top">
+                      <td className="px-2.5 py-2 font-medium text-slate-200">{u.email}</td>
+                      <td className="px-2.5 py-2 text-slate-400">{u.role}</td>
+                      <td className="px-2.5 py-2">
+                        {filteredPrinters.length === 0 ? (
+                          <span className="text-slate-600">No printers match filters</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {filteredPrinters.map((p) => {
+                              const on = assignedIds.has(p.id);
+                              return (
+                                <label
+                                  key={p.id}
+                                  className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2 py-1 text-[10px] ring-1 transition ${
+                                    on
+                                      ? "bg-amber-500/20 text-amber-100 ring-amber-500/40"
+                                      : "bg-slate-900 text-slate-400 ring-slate-700 hover:ring-slate-500"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="accent-amber-500"
+                                    checked={on}
+                                    onChange={(e) => {
+                                      toggleUserPrinter(branchCode, u.id, p.id, e.target.checked);
+                                      notify(
+                                        e.target.checked
+                                          ? `Assigned ${p.name} → ${u.email}`
+                                          : `Removed ${p.name} from ${u.email}`,
+                                      );
+                                    }}
+                                  />
+                                  <span>
+                                    {p.name}
+                                    <span className="ml-1 opacity-70">
+                                      · {PRINTER_TYPE_LABELS[p.printerType]}
+                                      {p.assignedCounter ? ` · ${p.assignedCounter}` : ""}
+                                    </span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {assigned.length > 0 ? (
+                          <p className="mt-1.5 text-[10px] text-slate-500">
+                            {assigned.length} assigned:{" "}
+                            {assigned
+                              .map((p) => `${p.name} (${PRINTER_TYPE_LABELS[p.printerType]})`)
+                              .join(", ")}
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-2.5 py-2">
+                        <div className="flex flex-col gap-1">
+                          {(["kitchen", "bar", "receipt"] as PrinterType[]).map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              className="text-left text-[10px] text-sky-400 hover:text-sky-300"
+                              onClick={() => assignAllOfType(u.id, type, true)}
+                            >
+                              + All {PRINTER_TYPE_LABELS[type]}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="text-left text-[10px] text-red-400 hover:text-red-300"
+                            onClick={() => {
+                              setUserPrinters(branchCode, u.id, []);
+                              notify(`Cleared all printers for ${u.email}.`);
+                            }}
+                          >
+                            Clear all
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">Printer → Assigned users</div>
+        <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+          <table className="w-full min-w-[36rem] text-left text-xs">
+            <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-2.5 py-2">Printer</th>
+                <th className="px-2.5 py-2">Type</th>
+                <th className="px-2.5 py-2">Counter</th>
+                <th className="px-2.5 py-2">Status</th>
+                <th className="px-2.5 py-2">Assigned users</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {filteredPrinters.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-2.5 py-4 text-center text-slate-500">
+                    No printers match filters. Add profiles first.
+                  </td>
+                </tr>
+              ) : (
+                filteredPrinters.map((p) => {
+                  const userIds = getUserIdsForPrinter(branchCode, p.id);
+                  return (
+                    <tr key={p.id}>
+                      <td className="px-2.5 py-2 font-medium text-slate-200">
+                        {p.name}
+                        {p.systemPrinterName ? (
+                          <div className="text-[10px] text-sky-400">{p.systemPrinterName}</div>
+                        ) : null}
+                      </td>
+                      <td className="px-2.5 py-2 text-slate-400">{PRINTER_TYPE_LABELS[p.printerType]}</td>
+                      <td className="px-2.5 py-2 text-slate-400">{p.assignedCounter || "—"}</td>
+                      <td className="px-2.5 py-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] ${
+                            p.status === "online"
+                              ? "bg-emerald-500/15 text-emerald-300"
+                              : "bg-red-500/15 text-red-300"
+                          }`}
+                        >
+                          {p.status}
                         </span>
-                      ) : (
-                        <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] text-slate-400">
-                          Default
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                      </td>
+                      <td className="px-2.5 py-2">
+                        {userIds.length === 0 ? (
+                          <span className="text-slate-600">Shared with nobody yet</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {userIds.map((id) => {
+                              const u = userById.get(id);
+                              return (
+                                <span
+                                  key={id}
+                                  className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-200"
+                                >
+                                  {u?.email ?? id}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -1335,10 +1945,12 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
 
   const systemPrintersQuery = useQuery({
     queryKey: ["system-printers"],
-    queryFn: listSystemPrinters,
+    queryFn: listSystemPrintersDetailed,
     refetchInterval: 15_000,
   });
-  const systemPrinters = systemPrintersQuery.data ?? [];
+  const systemPrinters = systemPrintersQuery.data?.usable ?? [];
+  const allSystemPrinters = systemPrintersQuery.data?.printers ?? [];
+  const systemPrintersError = systemPrintersQuery.data?.error ?? null;
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branchCode, "printer-management"],
@@ -1374,13 +1986,15 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
             className="text-xs"
             disabled={systemPrinters.length === 0}
             onClick={() => {
-              let sent = 0;
-              for (const p of systemPrinters) {
-                const ok = printTestPage(p.name);
-                logPrintEvent(branchCode, { kind: "test", printerName: p.name, ok });
-                if (ok) sent += 1;
-              }
-              notify(`Test print sent to ${sent} of ${systemPrinters.length} printers.`);
+              void (async () => {
+                let sent = 0;
+                for (const p of systemPrinters) {
+                  const ok = await printTestPageAsync(p.name);
+                  logPrintEvent(branchCode, { kind: "test", printerName: p.name, ok });
+                  if (ok) sent += 1;
+                }
+                notify(`Test print sent to ${sent} of ${systemPrinters.length} printers.`);
+              })();
             }}
           >
             Test all printers
@@ -1459,7 +2073,9 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
           sections={sections}
           routing={routing}
           systemPrinters={systemPrinters}
+          allSystemPrinters={allSystemPrinters}
           systemPrintersLoading={systemPrintersQuery.isFetching}
+          systemPrintersError={systemPrintersError}
           onRefreshSystemPrinters={() => void systemPrintersQuery.refetch()}
           categories={categories}
           items={items}
@@ -1479,10 +2095,16 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
         />
       ) : null}
       {activeTab === "profiles" ? (
-        <PrinterProfilesTab branchCode={branchCode} routing={routing} notify={notify} />
+        <PrinterProfilesTab
+          branchCode={branchCode}
+          routing={routing}
+          systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
+          users={users}
+          notify={notify}
+        />
       ) : null}
-      {activeTab === "users" ? (
-        <PrinterUsersTab branchCode={branchCode} routing={routing} users={users} notify={notify} />
+      {activeTab === "assign" ? (
+        <PrinterAssignmentTab branchCode={branchCode} routing={routing} users={users} notify={notify} />
       ) : null}
       {activeTab === "preview" ? (
         <PrinterRoutingPreviewTab sections={sections} routing={routing} categories={categories} items={items} />
