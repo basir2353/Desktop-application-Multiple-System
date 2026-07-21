@@ -65,6 +65,7 @@ function emptyVariantRow(): VariantRow {
 
 type ItemFormState = {
   name: string;
+  secondaryName: string;
   featured: boolean;
   discountable: boolean;
   nonDiscountable: boolean;
@@ -72,12 +73,14 @@ type ItemFormState = {
   askForPrice: boolean;
   askForQty: boolean;
   allowManualDiscount: boolean;
+  defaultDiscountPct: string;
   variants: VariantRow[];
 };
 
 function menuItemToEditForm(item: MenuItem): ItemFormState {
   return {
     name: item.name,
+    secondaryName: item.secondaryName ?? "",
     featured: item.featured,
     discountable: item.discountable && !item.nonDiscountable,
     nonDiscountable: item.nonDiscountable || !item.discountable,
@@ -85,6 +88,7 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
     askForPrice: item.askForPrice,
     askForQty: item.askForQty,
     allowManualDiscount: item.allowManualDiscount,
+    defaultDiscountPct: String(item.defaultDiscountPct ?? 0),
     variants:
       item.variants.length > 0
         ? item.variants.map((v) => ({
@@ -179,14 +183,37 @@ function MenuItemFlagFields({
             className="accent-amber-500"
             checked={form.allowManualDiscount && form.discountable && !form.nonDiscountable && !form.nonTaxable}
             disabled={!form.discountable || form.nonDiscountable || form.nonTaxable}
-            onChange={(e) => onChange({ ...form, allowManualDiscount: e.target.checked })}
+            onChange={(e) =>
+              onChange({
+                ...form,
+                allowManualDiscount: e.target.checked,
+                defaultDiscountPct: e.target.checked ? form.defaultDiscountPct : "0",
+              })
+            }
           />
           Item Manual Discount (% or PKR)
         </label>
       </div>
+      {form.allowManualDiscount && form.discountable && !form.nonDiscountable && !form.nonTaxable ? (
+        <label className="block text-xs text-slate-400">
+          Default Discount %
+          <input
+            type="number"
+            min={0}
+            max={100}
+            className="mt-1 w-full max-w-[8rem] rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.defaultDiscountPct}
+            onChange={(e) => onChange({ ...form, defaultDiscountPct: e.target.value })}
+          />
+          <span className="mt-1 block text-[10px] text-slate-500">
+            Applied automatically when this item is added on POS (staff can still change Disc % / Disc Rs).
+          </span>
+        </label>
+      ) : null}
       <p className="text-[10px] text-slate-500">
-        Discountable / Non-Discountable control bill discounts. Non-Taxable removes tax and hides bill
-        Disc % / Disc Rs on POS. Ask for Price/Qty prompts on add. Manual discount is per line.
+        Secondary name (Urdu) is used for kitchen printing and bills. Discountable / Non-Discountable
+        control bill discounts. Non-Taxable removes tax and hides bill Disc % / Disc Rs on POS. Ask for
+        Price/Qty prompts on add. Manual discount is per line.
       </p>
     </div>
   );
@@ -333,6 +360,10 @@ function MenuItemEditModal({
     () => loadPrinterRouting(branchCode).byItem[item.id] ?? loadPrinterRouting(branchCode).byCategory[item.categoryId] ?? [],
   );
 
+  useEffect(() => {
+    setForm(menuItemToEditForm(item));
+  }, [item]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60">
       <div
@@ -361,6 +392,20 @@ function MenuItemEditModal({
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               required
             />
+          </label>
+          <label className="block text-xs text-slate-400">
+            Item secondary name (Urdu)
+            <input
+              dir="rtl"
+              lang="ur"
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+              placeholder="اردو نام"
+              value={form.secondaryName}
+              onChange={(e) => setForm((f) => ({ ...f, secondaryName: e.target.value }))}
+            />
+            <span className="mt-1 block text-[10px] text-slate-500">
+              Used for kitchen printing notification and bill.
+            </span>
           </label>
           <label className="flex items-center gap-2 text-xs text-slate-400">
             <input
@@ -466,6 +511,7 @@ export function MenuPage(): JSX.Element {
   const [newCategoryImage, setNewCategoryImage] = useState<File | null>(null);
   const [itemForm, setItemForm] = useState<ItemFormState>({
     name: "",
+    secondaryName: "",
     featured: false,
     discountable: true,
     nonDiscountable: false,
@@ -473,6 +519,7 @@ export function MenuPage(): JSX.Element {
     askForPrice: false,
     askForQty: false,
     allowManualDiscount: false,
+    defaultDiscountPct: "0",
     variants: [emptyVariantRow()],
   });
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
@@ -703,6 +750,7 @@ export function MenuPage(): JSX.Element {
         branchCode: branch!.code,
         categoryId: selectedCategory!.id,
         name: itemForm.name.trim(),
+        secondaryName: itemForm.secondaryName.trim() || null,
         sortOrder: categoryItems.length,
         imageUrl,
         featured: itemForm.featured,
@@ -712,6 +760,9 @@ export function MenuPage(): JSX.Element {
         askForPrice: itemForm.askForPrice,
         askForQty: itemForm.askForQty,
         allowManualDiscount: itemForm.allowManualDiscount,
+        defaultDiscountPct: itemForm.allowManualDiscount
+          ? Math.max(0, Math.min(100, Number(itemForm.defaultDiscountPct) || 0))
+          : 0,
         variants,
       });
     },
@@ -719,6 +770,7 @@ export function MenuPage(): JSX.Element {
       invalidate();
       setItemForm({
         name: "",
+        secondaryName: "",
         featured: false,
         discountable: true,
         nonDiscountable: false,
@@ -726,6 +778,7 @@ export function MenuPage(): JSX.Element {
         askForPrice: false,
         askForQty: false,
         allowManualDiscount: false,
+        defaultDiscountPct: "0",
         variants: [emptyVariantRow()],
       });
       setNewItemImage(null);
@@ -784,6 +837,7 @@ export function MenuPage(): JSX.Element {
         id,
         {
           name: form.name.trim(),
+          secondaryName: form.secondaryName.trim() || null,
           featured: form.featured,
           discountable: form.discountable && !form.nonDiscountable,
           nonDiscountable: form.nonDiscountable || !form.discountable,
@@ -791,13 +845,27 @@ export function MenuPage(): JSX.Element {
           askForPrice: form.askForPrice,
           askForQty: form.askForQty,
           allowManualDiscount: form.allowManualDiscount,
+          defaultDiscountPct: form.allowManualDiscount
+            ? Math.max(0, Math.min(100, Number(form.defaultDiscountPct) || 0))
+            : 0,
           variants,
           ...(imageUrl !== undefined ? { imageUrl } : {}),
         },
         branch?.code,
       );
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      if (branch?.code && updated) {
+        queryClient.setQueryData(["menu", "admin", branch.code], (prev: unknown) => {
+          if (!prev || typeof prev !== "object") return prev;
+          const menu = prev as { items?: MenuItem[]; branchCode?: string; categories?: unknown };
+          if (!Array.isArray(menu.items)) return prev;
+          return {
+            ...menu,
+            items: menu.items.map((row) => (row.id === updated.id ? { ...row, ...updated } : row)),
+          };
+        });
+      }
       invalidate();
       setEditingItem(null);
       setEditError(null);
@@ -1299,6 +1367,20 @@ export function MenuPage(): JSX.Element {
                       required
                     />
                   </label>
+                  <label className="block text-xs text-slate-400">
+                    Item secondary name (Urdu)
+                    <input
+                      dir="rtl"
+                      lang="ur"
+                      className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      placeholder="اردو نام"
+                      value={itemForm.secondaryName}
+                      onChange={(e) => setItemForm((f) => ({ ...f, secondaryName: e.target.value }))}
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-500">
+                      Used for kitchen printing notification and bill.
+                    </span>
+                  </label>
                   <label className="flex items-center gap-2 text-xs text-slate-400">
                     <input
                       type="checkbox"
@@ -1358,6 +1440,11 @@ export function MenuPage(): JSX.Element {
                                 ) : null}
                                 <span>{r.name}</span>
                               </div>
+                              {r.secondaryName ? (
+                                <div dir="rtl" lang="ur" className="mt-0.5 text-xs text-slate-500">
+                                  {r.secondaryName}
+                                </div>
+                              ) : null}
                               {r.variants.length > 0 ? (
                                 <div className="mt-1 flex flex-wrap gap-1">
                                   {r.variants.map((v) => (

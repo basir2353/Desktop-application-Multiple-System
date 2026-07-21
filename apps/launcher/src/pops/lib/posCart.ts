@@ -54,6 +54,10 @@ export function buildCartLine(
     unitPriceOverride != null && unitPriceOverride >= 0
       ? Math.round(unitPriceOverride)
       : (variant?.price ?? item.price);
+  const defaultPct =
+    item.allowManualDiscount && !item.nonTaxable && isMenuItemDiscountable(item)
+      ? Math.max(0, Math.min(100, Math.round(item.defaultDiscountPct ?? 0)))
+      : 0;
   return {
     key: cartLineKey(item.id, variant?.id),
     item,
@@ -62,8 +66,8 @@ export function buildCartLine(
     unitPrice,
     lineLabel,
     sortOrder,
-    lineDiscountMode: null,
-    lineDiscountValue: 0,
+    lineDiscountMode: defaultPct > 0 ? "percent" : null,
+    lineDiscountValue: defaultPct > 0 ? defaultPct : 0,
   };
 }
 

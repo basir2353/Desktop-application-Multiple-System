@@ -254,6 +254,7 @@ export class MenuService implements OnModuleInit {
         branchId: branch.id,
         categoryId: input.categoryId,
         name: input.name.trim(),
+        secondaryName: input.secondaryName?.trim() || null,
         imageUrl: input.imageUrl?.trim() || null,
         portion: variants.length > 0 ? null : (input.portion ?? null),
         pricePkr: basePrice,
@@ -267,6 +268,7 @@ export class MenuService implements OnModuleInit {
         askForPrice: input.askForPrice ?? false,
         askForQty: input.askForQty ?? false,
         allowManualDiscount: input.allowManualDiscount ?? false,
+        defaultDiscountPct: input.defaultDiscountPct ?? 0,
       })
       .returning();
 
@@ -294,6 +296,9 @@ export class MenuService implements OnModuleInit {
       .set({
         ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
         ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+        ...(input.secondaryName !== undefined
+          ? { secondaryName: input.secondaryName?.trim() || null }
+          : {}),
         ...(input.imageUrl !== undefined ? { imageUrl: input.imageUrl } : {}),
         ...(variants && variants.length > 0
           ? { portion: null, barcode: null, happyHour: false }
@@ -313,6 +318,9 @@ export class MenuService implements OnModuleInit {
         ...(input.askForQty !== undefined ? { askForQty: input.askForQty } : {}),
         ...(input.allowManualDiscount !== undefined
           ? { allowManualDiscount: input.allowManualDiscount }
+          : {}),
+        ...(input.defaultDiscountPct !== undefined
+          ? { defaultDiscountPct: input.defaultDiscountPct }
           : {}),
       })
       .where(eq(popsMenuItems.id, itemId))
@@ -375,6 +383,7 @@ export class MenuService implements OnModuleInit {
       id: row.id,
       categoryId: row.categoryId,
       name: row.name,
+      secondaryName: row.secondaryName ?? null,
       imageUrl: row.imageUrl ?? null,
       portion: row.portion as MenuPortion | null,
       price: minVariantPrice ?? row.pricePkr,
@@ -390,6 +399,7 @@ export class MenuService implements OnModuleInit {
       askForPrice: row.askForPrice,
       askForQty: row.askForQty,
       allowManualDiscount: row.allowManualDiscount,
+      defaultDiscountPct: row.defaultDiscountPct ?? 0,
     };
   }
 

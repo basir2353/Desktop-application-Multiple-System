@@ -9,6 +9,13 @@ export type PosSettings = {
   cardTaxPct: number;
   /** Master toggle — when off, no tax is added to tickets. */
   taxEnabled: boolean;
+  /**
+   * When enabled, apply `autoDiscountPct` on every sale automatically
+   * (only to discountable / taxable-eligible lines). Original prices stay visible.
+   */
+  autoDiscountEnabled: boolean;
+  /** Automatic bill discount percent (default 10). */
+  autoDiscountPct: number;
 };
 
 export const DEFAULT_POS_SETTINGS: PosSettings = {
@@ -18,6 +25,8 @@ export const DEFAULT_POS_SETTINGS: PosSettings = {
   cashTaxPct: 16,
   cardTaxPct: 8,
   taxEnabled: true,
+  autoDiscountEnabled: false,
+  autoDiscountPct: 10,
 };
 
 export const POS_SETTINGS_CHANGED_EVENT = "pops-pos-settings-changed";
@@ -37,6 +46,8 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     cashTaxPct: clampPct(input.cashTaxPct ?? DEFAULT_POS_SETTINGS.cashTaxPct),
     cardTaxPct: clampPct(input.cardTaxPct ?? DEFAULT_POS_SETTINGS.cardTaxPct),
     taxEnabled: input.taxEnabled ?? DEFAULT_POS_SETTINGS.taxEnabled,
+    autoDiscountEnabled: input.autoDiscountEnabled ?? DEFAULT_POS_SETTINGS.autoDiscountEnabled,
+    autoDiscountPct: clampPct(input.autoDiscountPct ?? DEFAULT_POS_SETTINGS.autoDiscountPct, 50),
   };
 }
 

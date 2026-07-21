@@ -271,6 +271,40 @@ export function setUserPrinters(branchCode: string, userId: string, printerIds: 
   saveState(branchCode, { ...state, userPrinters });
 }
 
+/**
+ * Assign exactly one printer of a given type to a user (Receipt / Kitchen / Bar).
+ * Other types already assigned to that user are kept. Pass null to clear that type.
+ */
+export function setUserPrinterForType(
+  branchCode: string,
+  userId: string,
+  printerType: PrinterType,
+  printerId: string | null,
+): void {
+  const state = loadPrinterRouting(branchCode);
+  if (printerId && !state.printers.some((p) => p.id === printerId && p.printerType === printerType)) {
+    return;
+  }
+  const current = state.userPrinters[userId] ?? [];
+  const keepOtherTypes = current.filter((id) => {
+    const profile = state.printers.find((p) => p.id === id);
+    return profile != null && profile.printerType !== printerType;
+  });
+  const next = printerId ? [...keepOtherTypes, printerId] : keepOtherTypes;
+  setUserPrinters(branchCode, userId, next);
+}
+
+/** Profiles of one type for easy dropdowns (My printers / waiter assign). */
+export function listPrintersByType(
+  branchCode: string | undefined,
+  printerType: PrinterType,
+): PrinterProfile[] {
+  if (!branchCode) return [];
+  return loadPrinterRouting(branchCode)
+    .printers.filter((p) => p.printerType === printerType && isDirectPrintableProfile(p))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** All printer profiles assigned to a user. */
 export function getPrintersForUser(
   branchCode: string | undefined,

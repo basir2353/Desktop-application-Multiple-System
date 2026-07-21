@@ -355,6 +355,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       width: 100%;
       border-collapse: collapse;
       margin: 0 0 10px;
+      table-layout: fixed;
     }
     thead th {
       font-size: 8.5px;
@@ -366,7 +367,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-bottom: 1px solid #d1d5db;
       text-align: left;
     }
-    thead th.qty { width: 32px; text-align: center; }
+    thead th.qty { width: 18%; text-align: left; padding-right: 12px; }
+    thead th.item { text-align: right; }
     thead th.price { text-align: right; }
     thead th.amt { text-align: right; }
     tbody td {
@@ -384,19 +386,22 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-kot table.items {
       margin: 0 0 0;
       width: 100%;
+      table-layout: fixed;
     }
     body.ticket-kot thead th { padding: 0 0 4px; }
     body.ticket-kot thead th.qty,
     body.ticket-kot td.qty {
-      width: 36px;
+      width: 22%;
       text-align: left;
-      padding-right: 16px; /* space in the middle between Qty and Item */
+      padding-right: 20px; /* clear gap between Qty and Item */
       vertical-align: middle;
+      white-space: nowrap;
     }
     body.ticket-kot thead th.item,
     body.ticket-kot td.item-name {
-      text-align: left;
-      width: auto;
+      text-align: right; /* Item sits on the right, like Total items / Total quantity values */
+      width: 78%;
+      padding-left: 12px;
     }
     body.ticket-kot tbody td {
       padding: 3px 0;
@@ -424,15 +429,32 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: 10.5px;
       font-weight: 500;
       color: #111827;
+      text-align: right;
+      padding-left: 12px;
       padding-right: 0;
+      word-break: break-word;
     }
     td.qty {
-      width: 32px;
-      text-align: center;
+      width: 18%;
+      text-align: left;
       font-size: 10px;
       font-weight: 600;
       color: #374151;
       font-variant-numeric: tabular-nums;
+      padding-right: 20px;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    /* Customer receipt with price columns: keep Item left of Price, but still gap after Qty */
+    body.ticket-receipt table.items.has-amounts thead th.item,
+    body.ticket-receipt table.items.has-amounts td.item-name {
+      text-align: left;
+      padding-left: 8px;
+    }
+    body.ticket-receipt table.items.has-amounts td.qty,
+    body.ticket-receipt table.items.has-amounts thead th.qty {
+      width: 36px;
+      padding-right: 14px;
     }
     td.price {
       text-align: right;
@@ -587,7 +609,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       : ""}
   ${!isReceipt ? `<div class="kot-mid-space" aria-hidden="true"></div>` : ""}
   ${showItemTable
-    ? `<table class="items">
+    ? `<table class="items${showAmtCol ? " has-amounts" : ""}">
     ${showItemHeaders
       ? `<thead>
       <tr>

@@ -7,9 +7,19 @@ export type MenuItemOptions = {
   askForPrice: boolean;
   askForQty: boolean;
   allowManualDiscount: boolean;
+  /** Urdu / secondary name for kitchen tickets and bills. */
+  secondaryName: string;
+  /** Default % when Item Manual Discount is enabled. */
+  defaultDiscountPct: number;
 };
 
 const STORAGE_PREFIX = "pops.menuItemOptions.v1.";
+
+function clampDiscountPct(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
 
 export function defaultMenuItemOptions(): MenuItemOptions {
   return {
@@ -19,6 +29,8 @@ export function defaultMenuItemOptions(): MenuItemOptions {
     askForPrice: false,
     askForQty: false,
     allowManualDiscount: false,
+    secondaryName: "",
+    defaultDiscountPct: 0,
   };
 }
 
@@ -27,13 +39,18 @@ export function normalizeMenuItemOptions(input: Partial<MenuItemOptions> | null 
   if (!input) return base;
   const discountable = input.discountable ?? base.discountable;
   const nonDiscountable = input.nonDiscountable ?? base.nonDiscountable;
+  const nonTaxable = Boolean(input.nonTaxable);
+  const allowManualDiscount =
+    Boolean(input.allowManualDiscount) && discountable && !nonDiscountable && !nonTaxable;
   return {
     discountable: discountable && !nonDiscountable,
     nonDiscountable: nonDiscountable || !discountable,
-    nonTaxable: Boolean(input.nonTaxable),
+    nonTaxable,
     askForPrice: Boolean(input.askForPrice),
     askForQty: Boolean(input.askForQty),
-    allowManualDiscount: Boolean(input.allowManualDiscount),
+    allowManualDiscount,
+    secondaryName: String(input.secondaryName ?? "").trim(),
+    defaultDiscountPct: allowManualDiscount ? clampDiscountPct(input.defaultDiscountPct) : 0,
   };
 }
 
@@ -64,53 +81,60 @@ export function saveMenuItemOptions(
 ): void {
   if (!branchCode || !itemId || typeof localStorage === "undefined") return;
   const map = loadMenuItemOptionsMap(branchCode);
-  map[itemId] = normalizeMenuItemOptions(options);
+  map[itemId] = normalizeMenuItemOptions({ ...map[itemId], ...options });
   localStorage.setItem(storageKey(branchCode), JSON.stringify(map));
 }
 
-/** True when the API payload already includes persisted option columns. */
-export function menuApiSupportsItemOptions(item: Partial<MenuItem> | null | undefined): boolean {
-  if (!item) return false;
+/**
+ * True when the API response itself included POS flag columns (before zod defaults).
+ * Pass the raw JSON item, not the parsed MenuItem.
+ */
+export function menuApiSupportsItemOptions(raw: Record<string, unknown> | null | undefined): boolean {
+  if (!raw) return false;
   return (
-    typeof item.discountable === "boolean" ||
-    typeof item.nonDiscountable === "boolean" ||
-    typeof item.nonTaxable === "boolean" ||
-    typeof item.askForPrice === "boolean" ||
-    typeof item.askForQty === "boolean" ||
-    typeof item.allowManualDiscount === "boolean"
+    typeof raw.discountable === "boolean" ||
+    typeof raw.nonDiscountable === "boolean" ||
+    typeof raw.nonTaxable === "boolean" ||
+    typeof raw.askForPrice === "boolean" ||
+    typeof raw.askForQty === "boolean" ||
+    typeof raw.allowManualDiscount === "boolean" ||
+    typeof raw.secondaryName === "string" ||
+    typeof raw.defaultDiscountPct === "number"
   );
+}
+
+function mergeItemWithOptions(item: MenuItem, overlay: MenuItemOptions | undefined): MenuItem {
+  const fromApi = normalizeMenuItemOptions(item);
+  if (!overlay) {
+    return {
+      ...item,
+      ...fromApi,
+      // Prefer API secondary name when present; otherwise keep parsed/default.
+      secondaryName: item.secondaryName?.trim() || fromApi.secondaryName || null,
+      defaultDiscountPct: item.defaultDiscountPct ?? fromApi.defaultDiscountPct,
+    };
+  }
+  // Local overlay wins for desktop fields (Railway may not persist them yet).
+  return {
+    ...item,
+    ...overlay,
+    secondaryName: overlay.secondaryName || item.secondaryName?.trim() || null,
+    defaultDiscountPct: overlay.allowManualDiscount
+      ? overlay.defaultDiscountPct
+      : (item.defaultDiscountPct ?? 0),
+  };
 }
 
 /**
  * Merge server menu items with local option overrides.
- * Local wins when API does not yet persist these columns (common on older Railway deploys).
+ * Local wins for secondary name / default discount / flags when stored.
  */
 export function applyMenuItemOptions(
   branchCode: string | undefined | null,
   items: MenuItem[],
 ): MenuItem[] {
   const local = loadMenuItemOptionsMap(branchCode);
-  return items.map((item) => {
-    const overlay = local[item.id];
-    const apiHas = menuApiSupportsItemOptions(item);
-    if (!overlay && apiHas) {
-      return {
-        ...item,
-        ...normalizeMenuItemOptions(item),
-      };
-    }
-    if (!overlay) {
-      return {
-        ...item,
-        ...defaultMenuItemOptions(),
-      };
-    }
-    // Prefer local overlay so desktop options keep working even if API strips/ignores them.
-    return {
-      ...item,
-      ...overlay,
-    };
-  });
+  return items.map((item) => mergeItemWithOptions(item, local[item.id]));
 }
 
 export function optionsFromForm(form: MenuItemOptions): MenuItemOptions {

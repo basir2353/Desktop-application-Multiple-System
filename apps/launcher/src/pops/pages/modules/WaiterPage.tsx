@@ -15,17 +15,19 @@ import {
   type PrintTicketInput,
 } from "../../lib/printTicket";
 import {
+  getPrintersForUser,
   groupCartLinesBySection,
+  listPrintersByType,
+  PRINTER_ROUTING_CHANGED_EVENT,
   resolveKotPrinter,
   resolveReceiptPrinter,
+  setUserPrinterForType,
 } from "../../lib/printerRouting";
 import { loadPrinterSections } from "../../lib/printerSections";
 import type { PosCartLine } from "../../lib/posCart";
 import {
   getWaiterPrinter,
-  loadWaiterPrinterMap,
   setWaiterPrinter,
-  WAITER_PRINTER_PRESETS,
   WAITER_PRINTER_SETTINGS_CHANGED_EVENT,
 } from "../../lib/waiterPrinterSettings";
 import { Badge } from "../../ui/Badge";
@@ -186,7 +188,7 @@ export function WaiterPage(): JSX.Element {
   const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
-  const [printerMap, setPrinterMap] = useState<Record<string, { printerName: string }>>({});
+  const [printerRevision, setPrinterRevision] = useState(0);
   const [printerPanelOpen, setPrinterPanelOpen] = useState(false);
   const [waiterLoginsOpen, setWaiterLoginsOpen] = useState(true);
   const [waiterName, setWaiterName] = useState("");
@@ -204,19 +206,27 @@ export function WaiterPage(): JSX.Element {
   useEffect(() => {
     if (!branchCode) return;
     setDrafts(loadDrafts(branchCode));
-    setPrinterMap(loadWaiterPrinterMap(branchCode));
   }, [branchCode]);
 
   useEffect(() => {
-    function onPrinterSettingsChanged(event: Event): void {
-      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
-      if (!branchCode || detail?.branchCode === branchCode) {
-        setPrinterMap(loadWaiterPrinterMap(branchCode));
+    function refreshPrinters(event?: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }> | undefined)?.detail;
+      if (!branchCode || !detail?.branchCode || detail.branchCode === branchCode) {
+        setPrinterRevision((n) => n + 1);
       }
     }
-    window.addEventListener(WAITER_PRINTER_SETTINGS_CHANGED_EVENT, onPrinterSettingsChanged);
-    return () => window.removeEventListener(WAITER_PRINTER_SETTINGS_CHANGED_EVENT, onPrinterSettingsChanged);
+    window.addEventListener(WAITER_PRINTER_SETTINGS_CHANGED_EVENT, refreshPrinters);
+    window.addEventListener(PRINTER_ROUTING_CHANGED_EVENT, refreshPrinters);
+    return () => {
+      window.removeEventListener(WAITER_PRINTER_SETTINGS_CHANGED_EVENT, refreshPrinters);
+      window.removeEventListener(PRINTER_ROUTING_CHANGED_EVENT, refreshPrinters);
+    };
   }, [branchCode]);
+
+  const receiptPrinterOptions = useMemo(() => {
+    void printerRevision;
+    return listPrintersByType(branchCode, "receipt");
+  }, [branchCode, printerRevision]);
 
   const waitersQuery = useQuery({
     queryKey: ["billing", "waiters", branchCode],
@@ -884,34 +894,68 @@ export function WaiterPage(): JSX.Element {
             {canManagePrinters && waiters.length > 0 ? (
               <SectionPanel
                 title="Printer assignments"
-                subtitle="Receipt printer per waiter"
+                subtitle="Pick printer by waiter name — each waiter prints to their own receipt printer"
                 open={printerPanelOpen}
                 onToggle={() => setPrinterPanelOpen((v) => !v)}
               >
                 <div className="space-y-3">
-                  <datalist id="waiter-printer-presets">
-                    {WAITER_PRINTER_PRESETS.map((name) => (
-                      <option key={name} value={name} />
-                    ))}
-                  </datalist>
-                  {waiters.map((w) => (
-                    <label key={w.id} className={`block text-xs ${mutedClass}`}>
-                      <span className="font-medium text-slate-700 dark:text-slate-300">{w.name}</span>
-                      <input
-                        list="waiter-printer-presets"
-                        className={`mt-1.5 ${fieldInputClass}`}
-                        placeholder="e.g. Waiter station 2"
-                        value={printerMap[w.id]?.printerName ?? ""}
-                        onChange={(e) => {
-                          setPrinterMap((prev) => ({ ...prev, [w.id]: { printerName: e.target.value } }));
-                        }}
-                        onBlur={(e) => {
-                          if (!branchCode) return;
-                          setWaiterPrinter(branchCode, w.id, e.target.value);
-                        }}
-                      />
-                    </label>
-                  ))}
+                  {receiptPrinterOptions.length === 0 ? (
+                    <p className={`text-xs ${mutedClass}`}>
+                      No receipt printer profiles yet. Add them under Printer → Printer Profiles, then assign here by
+                      waiter name.
+                    </p>
+                  ) : null}
+                  {waiters.map((w) => {
+                    void printerRevision;
+                    const assignedIds = getPrintersForUser(branchCode, w.id)
+                      .filter((p) => p.printerType === "receipt")
+                      .map((p) => p.id);
+                    const currentId = assignedIds[0] ?? "";
+                    const current = getWaiterPrinter(branchCode, w.id);
+                    return (
+                      <label key={w.id} className={`block text-xs ${mutedClass}`}>
+                        <span className="font-medium text-slate-700 dark:text-slate-300">{w.name}</span>
+                        <select
+                          className={`mt-1.5 ${fieldSelectClass}`}
+                          value={currentId}
+                          onChange={(e) => {
+                            if (!branchCode) return;
+                            const printerId = e.target.value || null;
+                            setUserPrinterForType(branchCode, w.id, "receipt", printerId);
+                            const profile = receiptPrinterOptions.find((p) => p.id === printerId);
+                            // Keep legacy map in sync for older reprint paths (OS name only).
+                            setWaiterPrinter(
+                              branchCode,
+                              w.id,
+                              profile?.systemPrinterName?.trim() || "",
+                            );
+                            setNotice(
+                              printerId
+                                ? `${w.name} → ${profile?.name ?? "printer"}`
+                                : `${w.name} printer cleared`,
+                            );
+                          }}
+                        >
+                          <option value="">Branch default / unassigned</option>
+                          {receiptPrinterOptions.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.systemPrinterName ? ` · ${p.systemPrinterName}` : ""}
+                              {p.assignedCounter ? ` · ${p.assignedCounter}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {current?.printerName ? (
+                          <span className="mt-1 block text-[10px] text-amber-700 dark:text-amber-300">
+                            Active: {current.printerName}
+                            {current.systemPrinterName && current.systemPrinterName !== current.printerName
+                              ? ` (${current.systemPrinterName})`
+                              : ""}
+                          </span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
                 </div>
               </SectionPanel>
             ) : null}

@@ -1507,7 +1507,9 @@ function PrinterAssignmentTab({
           Assign printers to users / waiters
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          One user can have Kitchen + Bar + Receipt. One printer can be shared by many users. Branch:{" "}
+          One user can have Kitchen + Bar + Receipt. One printer can be shared by many users. Cashiers can also
+          change their own printers on POS → <span className="text-amber-300">My printers</span>. Waiters: assign
+          by name on Waiter page → Printer assignments. Branch:{" "}
           <span className="font-mono text-slate-300">{branchCode}</span>
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">

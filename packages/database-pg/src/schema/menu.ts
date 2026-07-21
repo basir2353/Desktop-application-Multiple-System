@@ -30,6 +30,8 @@ export const popsMenuItems = pgTable("pops_menu_items", {
     .notNull()
     .references(() => popsMenuCategories.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  /** Secondary / Urdu name for kitchen tickets and bills. */
+  secondaryName: text("secondary_name"),
   /** Public URL path served by the API, e.g. /uploads/menu/... */
   imageUrl: text("image_url"),
   /** Serving size: full, half, plate, etc. */
@@ -53,6 +55,8 @@ export const popsMenuItems = pgTable("pops_menu_items", {
   askForQty: boolean("ask_for_qty").notNull().default(false),
   /** POS allows a per-line manual discount (% or PKR) on this item. */
   allowManualDiscount: boolean("allow_manual_discount").notNull().default(false),
+  /** Default line discount % when allowManualDiscount is enabled. */
+  defaultDiscountPct: integer("default_discount_pct").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

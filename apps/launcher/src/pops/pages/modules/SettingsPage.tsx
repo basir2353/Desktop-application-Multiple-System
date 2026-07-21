@@ -42,7 +42,10 @@ export function SettingsPage(): JSX.Element {
   const preview = useMemo(() => {
     const sampleSubtotal = 10_000;
     const taxPct = draft.taxByPaymentMethod ? draft.cashTaxPct : draft.taxEnabled ? draft.taxPct : 0;
-    return computeTicketTotals(sampleSubtotal, 0, draft.servicePct, taxPct);
+    const autoDisc = draft.autoDiscountEnabled
+      ? Math.round(sampleSubtotal * (draft.autoDiscountPct / 100))
+      : 0;
+    return computeTicketTotals(sampleSubtotal, autoDisc, draft.servicePct, taxPct);
   }, [draft]);
 
   function apply(): void {
@@ -88,7 +91,8 @@ export function SettingsPage(): JSX.Element {
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">POS charges & tax</div>
         <p className="mt-1 text-xs text-slate-500">
-          Current: service {saved.servicePct}%, tax {saved.taxEnabled ? `${saved.taxPct}%` : "off"}.
+          Current: service {saved.servicePct}%, tax {saved.taxEnabled ? `${saved.taxPct}%` : "off"}
+          {saved.autoDiscountEnabled ? `, auto discount ${saved.autoDiscountPct}%` : ""}.
         </p>
 
         <label className="mt-4 flex items-center gap-2 text-xs text-slate-400">
@@ -109,6 +113,20 @@ export function SettingsPage(): JSX.Element {
           Different tax rates by payment method (cash 16%, card 8%)
         </label>
 
+        <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={draft.autoDiscountEnabled}
+            onChange={(e) => setDraft((prev) => ({ ...prev, autoDiscountEnabled: e.target.checked }))}
+          />
+          Automatic discount on every sale
+        </label>
+        <p className="mt-1 text-[10px] text-slate-500">
+          When enabled, this discount applies to every ticket automatically (discountable items only).
+          Original item prices stay visible; the discounted amount shows separately in the totals.
+        </p>
+
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="block text-xs text-slate-400">
             Service charge (%)
@@ -122,6 +140,21 @@ export function SettingsPage(): JSX.Element {
                 setDraft((prev) => ({ ...prev, servicePct: Number(e.target.value) || 0 }))
               }
               className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+            />
+          </label>
+          <label className="block text-xs text-slate-400">
+            Automatic discount (%)
+            <input
+              type="number"
+              min={0}
+              max={50}
+              step={1}
+              value={draft.autoDiscountPct}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, autoDiscountPct: Number(e.target.value) || 0 }))
+              }
+              disabled={!draft.autoDiscountEnabled}
+              className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
             />
           </label>
           <label className="block text-xs text-slate-400">
@@ -164,8 +197,13 @@ export function SettingsPage(): JSX.Element {
         </div>
 
         <p className="mt-4 text-xs text-slate-500">
-          Example on Rs 10,000 subtotal: service Rs {preview.service.toLocaleString()}, tax Rs{" "}
-          {preview.tax.toLocaleString()}, total Rs {preview.total.toLocaleString()}.
+          Example on Rs 10,000 subtotal
+          {draft.autoDiscountEnabled
+            ? ` with ${draft.autoDiscountPct}% auto discount`
+            : ""}
+          : service Rs {preview.service.toLocaleString()}, tax Rs {preview.tax.toLocaleString()}
+          {preview.discount > 0 ? `, discount −Rs ${preview.discount.toLocaleString()}` : ""}, total
+          Rs {preview.total.toLocaleString()}.
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2">

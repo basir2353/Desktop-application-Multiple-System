@@ -46,6 +46,21 @@ export function formatMenuItemLabel(item: {
   return `${item.name} (${menuPortionLabel(item.portion)})`;
 }
 
+/** Kitchen ticket / bill print name — prefers Urdu secondary name when set. */
+export function formatMenuItemPrintLabel(item: {
+  name: string;
+  secondaryName?: string | null;
+  portion?: MenuPortion | null;
+  variantLabel?: string | null;
+}): string {
+  const printName = item.secondaryName?.trim() || item.name;
+  return formatMenuItemLabel({
+    name: printName,
+    portion: item.portion,
+    variantLabel: item.variantLabel,
+  });
+}
+
 export const menuCategorySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -75,6 +90,8 @@ export const menuItemSchema = z.object({
   id: z.string().uuid(),
   categoryId: z.string().uuid(),
   name: z.string(),
+  /** Secondary name (Urdu) used on kitchen tickets and bills. */
+  secondaryName: z.string().nullable().default(null),
   imageUrl: z.string().nullable(),
   portion: menuPortionSchema.nullable(),
   price: z.number(),
@@ -96,6 +113,8 @@ export const menuItemSchema = z.object({
   askForQty: z.boolean().default(false),
   /** POS allows a per-line manual discount (% or PKR) on this item. */
   allowManualDiscount: z.boolean().default(false),
+  /** Default line discount % applied when allowManualDiscount is enabled. */
+  defaultDiscountPct: z.number().min(0).max(100).default(0),
 });
 
 export function activeMenuVariants(item: Pick<MenuItem, "variants">): MenuItemVariant[] {
@@ -138,6 +157,7 @@ export const createMenuItemSchema = z.object({
   branchCode: z.string().min(1),
   categoryId: z.string().uuid(),
   name: z.string().min(1).max(120),
+  secondaryName: z.string().max(120).nullable().optional(),
   imageUrl: z.string().max(512).optional(),
   portion: menuPortionSchema.optional(),
   price: z.number().int().positive().optional(),
@@ -152,6 +172,7 @@ export const createMenuItemSchema = z.object({
   askForPrice: z.boolean().optional(),
   askForQty: z.boolean().optional(),
   allowManualDiscount: z.boolean().optional(),
+  defaultDiscountPct: z.number().min(0).max(100).optional(),
 }).refine(
   (data) => (data.variants?.length ?? 0) > 0 || data.price != null,
   { message: "Provide a price or at least one sub-category" },
@@ -160,6 +181,7 @@ export const createMenuItemSchema = z.object({
 export const updateMenuItemSchema = z.object({
   categoryId: z.string().uuid().optional(),
   name: z.string().min(1).max(120).optional(),
+  secondaryName: z.string().max(120).nullable().optional(),
   imageUrl: z.string().max(512).nullable().optional(),
   portion: menuPortionSchema.nullable().optional(),
   price: z.number().int().positive().optional(),
@@ -175,6 +197,7 @@ export const updateMenuItemSchema = z.object({
   askForPrice: z.boolean().optional(),
   askForQty: z.boolean().optional(),
   allowManualDiscount: z.boolean().optional(),
+  defaultDiscountPct: z.number().min(0).max(100).optional(),
 });
 
 export type MenuCategory = z.infer<typeof menuCategorySchema>;

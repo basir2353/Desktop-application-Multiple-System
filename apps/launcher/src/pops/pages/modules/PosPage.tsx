@@ -1,5 +1,6 @@
 import {
   formatMenuItemLabel,
+  formatMenuItemPrintLabel,
   menuItemDisplayPrice,
   type Bill,
   type KitchenTicket,
@@ -11,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
+import { useThemeStore } from "../../../stores/themeStore";
 import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../../api/billing";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
 import { fetchClosingStatus, resumeOrders } from "../../api/closing";
@@ -81,6 +83,7 @@ import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCh
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/ChangeOrderTableModal";
 import { PosPayOutModal } from "../../components/PosPayOutModal";
+import { PosMyPrintersModal } from "../../components/PosMyPrintersModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
 import { createStaffFoodRecord, fetchEmployees } from "../../api/hr";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
@@ -96,6 +99,11 @@ import {
   POS_SETTINGS_CHANGED_EVENT,
   type PosSettings,
 } from "../../lib/posSettings";
+import {
+  isTypingTarget,
+  matchPosShortcut,
+  POS_SHORTCUTS,
+} from "../../lib/posShortcuts";
 import {
   loadPosHeaderVisible,
   setPosHeaderVisible,
@@ -250,12 +258,17 @@ export function PosPage(): JSX.Element {
   const markOrderTypeModalShown = useSessionStore((s) => s.markOrderTypeModalShown);
   const seatingModalShown = useSessionStore((s) => s.seatingModalShown);
   const markSeatingModalShown = useSessionStore((s) => s.markSeatingModalShown);
+  const sessionUserId = useSessionStore((s) => s.claims?.sub) ?? "pos-local";
+  const sessionUserLabel = sessionUserId.includes("@")
+    ? sessionUserId.split("@")[0]
+    : sessionUserId;
   const [orderTypeModalOpen, setOrderTypeModalOpen] = useState(!orderTypeModalShown);
   const [modeConfirmed, setModeConfirmed] = useState(orderTypeModalShown);
   const [editingOrder, setEditingOrder] = useState<PosEditingOrder>(null);
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
   const [payOutModalOpen, setPayOutModalOpen] = useState(false);
+  const [myPrintersOpen, setMyPrintersOpen] = useState(false);
   const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
   const [zoomIndex, setZoomIndex] = useState(loadPosZoomIndex);
   const [headerVisible, setHeaderVisible] = useState(loadPosHeaderVisible);
@@ -859,29 +872,6 @@ export function PosPage(): JSX.Element {
     // ArrowLeft / ArrowRight are left untouched so the text cursor still moves within the input.
   }
 
-  useEffect(() => {
-    function onGlobalKeyDown(e: KeyboardEvent): void {
-      if (e.key !== "F9") return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable) &&
-        target !== searchInputRef.current
-      ) {
-        // Still allow F9 from other fields to jump to menu search.
-      }
-      e.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-      setSearchDropdownOpen(true);
-    }
-    window.addEventListener("keydown", onGlobalKeyDown);
-    return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, []);
-
   function setQty(lineKey: string, qty: number): void {
     setCart((prev) => {
       if (qty <= 0) return prev.filter((l) => l.key !== lineKey);
@@ -967,21 +957,46 @@ export function PosPage(): JSX.Element {
   );
   const showTaxRow = itemEligibility.taxableSubtotal > 0;
 
+  const autoDiscountEnabled = posSettings.autoDiscountEnabled;
+  const autoDiscountPct = posSettings.autoDiscountPct;
+  const autoDiscountAmount = useMemo(() => {
+    if (!autoDiscountEnabled || itemEligibility.discountableSubtotal <= 0) return 0;
+    return discountAmountFromPct(autoDiscountPct, itemEligibility.discountableSubtotal);
+  }, [autoDiscountEnabled, autoDiscountPct, itemEligibility.discountableSubtotal]);
+
   useEffect(() => {
+    if (autoDiscountEnabled) {
+      // Keep manual inputs in sync with the automatic discount for display/checkout.
+      setDiscountEditedAs("pct");
+      setDiscountPctInput(autoDiscountPct);
+      setDiscountAmountInput(autoDiscountAmount);
+      return;
+    }
     if (!showTicketDiscount) {
       setDiscountPctInput(0);
       setDiscountAmountInput(0);
       return;
     }
     setDiscountAmountInput((prev) => clampDiscountPkr(prev, itemEligibility.discountableSubtotal));
-  }, [itemEligibility.discountableSubtotal, showTicketDiscount, selectedCartKey]);
+  }, [
+    autoDiscountEnabled,
+    autoDiscountPct,
+    autoDiscountAmount,
+    itemEligibility.discountableSubtotal,
+    showTicketDiscount,
+    selectedCartKey,
+  ]);
 
   const ticketTotals = useMemo(() => {
-    const discountSeed = !showTicketDiscount
-      ? 0
-      : discountEditedAs === "pct"
-        ? discountAmountFromPct(discountPctInput, itemEligibility.discountableSubtotal)
-        : clampDiscountPkr(discountAmountInput, itemEligibility.discountableSubtotal);
+    let discountSeed = 0;
+    if (autoDiscountEnabled) {
+      discountSeed = autoDiscountAmount;
+    } else if (showTicketDiscount) {
+      discountSeed =
+        discountEditedAs === "pct"
+          ? discountAmountFromPct(discountPctInput, itemEligibility.discountableSubtotal)
+          : clampDiscountPkr(discountAmountInput, itemEligibility.discountableSubtotal);
+    }
     const charge = mode === "delivery" ? deliveryChargePkr : 0;
     return computeTicketTotals(subtotal, discountSeed, ticketServicePct, taxPct, charge, itemEligibility);
   }, [
@@ -995,6 +1010,8 @@ export function PosPage(): JSX.Element {
     deliveryChargePkr,
     itemEligibility,
     showTicketDiscount,
+    autoDiscountEnabled,
+    autoDiscountAmount,
   ]);
 
   const { discount, discountPct, service, tax, deliveryCharge, total } = ticketTotals;
@@ -1052,7 +1069,12 @@ export function PosPage(): JSX.Element {
       notes: orderNotes,
       waiterName: mode === "staff-food" && staffFoodPersonName ? staffFoodPersonName : undefined,
       lines: lines.map((line) => ({
-        label: line.lineLabel,
+        label: formatMenuItemPrintLabel({
+          name: line.item.name,
+          secondaryName: line.item.secondaryName,
+          portion: line.item.portion,
+          variantLabel: line.variant?.label ?? null,
+        }),
         qty: line.qty,
         unitPrice: line.unitPrice,
       })),
@@ -1070,7 +1092,12 @@ export function PosPage(): JSX.Element {
 
   const kitchenLines = () =>
     printOrderedCart().map((line) => ({
-      label: line.lineLabel,
+      label: formatMenuItemPrintLabel({
+        name: line.item.name,
+        secondaryName: line.item.secondaryName,
+        portion: line.item.portion,
+        variantLabel: line.variant?.label ?? null,
+      }),
       qty: line.qty,
       unitPrice: line.unitPrice,
       menuItemId: line.item.id,
@@ -1400,7 +1427,7 @@ export function PosPage(): JSX.Element {
       } else {
         setPrintNotice({
           tone: "error",
-          message: `Order saved, but KOT print failed — ${printErrors.join("; ")}. Check Printer → Assign Users / OS link.`,
+          message: `Order saved, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers (or Printer → Assign Users) and link an OS printer.`,
         });
       }
     },
@@ -1698,7 +1725,16 @@ export function PosPage(): JSX.Element {
       return attachKotProfile(
         {
           ...basePayload,
-          lines: orderedLines.map((line) => ({ label: line.lineLabel, qty: line.qty, unitPrice: 0 })),
+          lines: orderedLines.map((line) => ({
+            label: formatMenuItemPrintLabel({
+              name: line.item.name,
+              secondaryName: line.item.secondaryName,
+              portion: line.item.portion,
+              variantLabel: line.variant?.label ?? null,
+            }),
+            qty: line.qty,
+            unitPrice: 0,
+          })),
           printerName: label,
         },
         sectionId,
@@ -1732,6 +1768,89 @@ export function PosPage(): JSX.Element {
     }
     setSplitModalOpen(true);
   }
+
+  const posShortcutBusy =
+    Boolean(checkoutModal) ||
+    Boolean(cashierModal) ||
+    payOutModalOpen ||
+    myPrintersOpen ||
+    splitModalOpen ||
+    orderTypeModalOpen ||
+    seatingModalOpen ||
+    Boolean(variantPickerItem) ||
+    Boolean(itemPrompt);
+
+  const posShortcutActionsRef = useRef({
+    search: () => {},
+    qtyIncrease: () => {},
+    orderType: () => {},
+    quickOrder: () => {},
+    pay: () => {},
+    cashierIn: () => {},
+    cashierOut: () => {},
+    printBill: () => {},
+    payOut: () => {},
+    theme: () => {},
+  });
+
+  posShortcutActionsRef.current = {
+    search: () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+      setSearchDropdownOpen(true);
+    },
+    qtyIncrease: () => {
+      const line =
+        displayCart.find((l) => l.key === selectedCartKey) ?? displayCart[0] ?? null;
+      if (!line) return;
+      setSelectedCartKey(line.key);
+      setQty(line.key, line.qty + 1);
+    },
+    orderType: () => {
+      if (editingOrder) return;
+      setOrderTypeModalOpen(true);
+    },
+    quickOrder: () => {
+      if (cart.length === 0 || !branch?.code) return;
+      if (editingOrder?.kind === "held-bill") {
+        if (updateHeldBillMutation.isPending) return;
+        updateHeldBillMutation.mutate();
+        return;
+      }
+      if (createOrderMutation.isPending) return;
+      createOrderMutation.mutate();
+    },
+    pay: () => {
+      if (cart.length === 0 || checkoutMutation.isPending) return;
+      onPay();
+    },
+    cashierIn: () => setCashierModal("in"),
+    cashierOut: () => {
+      if (!cashSessionQuery.data) return;
+      setCashierModal("out");
+    },
+    printBill: () => {
+      if (cart.length === 0 || checkoutMutation.isPending) return;
+      runPrintInvoice();
+    },
+    payOut: () => setPayOutModalOpen(true),
+    theme: () => useThemeStore.getState().toggle(),
+  };
+
+  useEffect(() => {
+    function onGlobalKeyDown(e: KeyboardEvent): void {
+      const id = matchPosShortcut(e);
+      if (!id) return;
+      // + / = only when not typing in an input
+      if ((e.key === "+" || e.key === "=") && isTypingTarget(e.target)) return;
+      // F-keys still work while typing (e.g. F9 search). Block action keys when a modal is open.
+      if (posShortcutBusy && id !== "theme" && id !== "search") return;
+      e.preventDefault();
+      posShortcutActionsRef.current[id]();
+    }
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, [posShortcutBusy]);
 
   const seatingLabel =
     mode === "dine-in" && selectedTable && selectedFloorSection
@@ -1835,6 +1954,7 @@ export function PosPage(): JSX.Element {
           <button
             type="button"
             className={POS_TOOLBAR_BTN}
+            title={`${POS_SHORTCUTS.cashierIn.label} (${POS_SHORTCUTS.cashierIn.key})`}
             onClick={() => setCashierModal("in")}
           >
             Cashier in
@@ -1842,6 +1962,7 @@ export function PosPage(): JSX.Element {
           <button
             type="button"
             className={POS_TOOLBAR_BTN}
+            title={`${POS_SHORTCUTS.cashierOut.label} (${POS_SHORTCUTS.cashierOut.key})`}
             onClick={() => setCashierModal("out")}
             disabled={!cashSessionQuery.data}
           >
@@ -1853,8 +1974,21 @@ export function PosPage(): JSX.Element {
           <button type="button" className={POS_TOOLBAR_BTN} onClick={openSplitBill}>
             Merge / split
           </button>
-          <button type="button" className={POS_TOOLBAR_BTN} onClick={() => setPayOutModalOpen(true)}>
+          <button
+            type="button"
+            className={POS_TOOLBAR_BTN}
+            title={`${POS_SHORTCUTS.payOut.label} (${POS_SHORTCUTS.payOut.key})`}
+            onClick={() => setPayOutModalOpen(true)}
+          >
             Paying out
+          </button>
+          <button
+            type="button"
+            className={POS_TOOLBAR_BTN}
+            title="Assign your receipt / kitchen / bar printer"
+            onClick={() => setMyPrintersOpen(true)}
+          >
+            My printers
           </button>
           <div className="ml-1 flex items-center gap-1.5 border-l border-slate-700/80 pl-2">
             <button
@@ -1876,6 +2010,27 @@ export function PosPage(): JSX.Element {
             >
               Zoom in
             </button>
+            <details className="relative">
+              <summary
+                className={`${POS_ZOOM_BTN} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}
+                title="Keyboard shortcuts"
+              >
+                Keys
+              </summary>
+              <div className="absolute right-0 z-40 mt-1 w-56 rounded-md border border-slate-700 bg-slate-950 p-2 text-[10px] text-slate-300 shadow-xl">
+                {(Object.keys(POS_SHORTCUTS) as (keyof typeof POS_SHORTCUTS)[]).map((id) => (
+                  <div key={id} className="flex justify-between gap-2 py-0.5">
+                    <span>{POS_SHORTCUTS[id].label}</span>
+                    <kbd className="rounded bg-slate-800 px-1 font-mono text-amber-300">
+                      {POS_SHORTCUTS[id].key}
+                    </kbd>
+                  </div>
+                ))}
+                <div className="mt-1 border-t border-slate-800 pt-1 text-slate-500">
+                  Qty + also works with <kbd className="font-mono text-amber-300/90">+</kbd>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -2166,7 +2321,7 @@ export function PosPage(): JSX.Element {
           </div>
 
           <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800/80 dark:bg-slate-900/30">
-            <div className={POS_MODE_BAR}>
+            <div className={POS_MODE_BAR} title={`Order type (${POS_SHORTCUTS.orderType.key})`}>
               {visiblePosOrderModes.map(({ id, label }) => (
                 <button
                   key={id}
@@ -2512,6 +2667,7 @@ export function PosPage(): JSX.Element {
                         <button
                           type="button"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                          title={`Qty + (${POS_SHORTCUTS.qtyIncrease.key} or +)`}
                           onClick={() => {
                             setSelectedCartKey(line.key);
                             setQty(line.key, line.qty + 1);
@@ -2571,7 +2727,22 @@ export function PosPage(): JSX.Element {
 
           <div className="mt-auto shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
-              {showTicketDiscount ? (
+              {autoDiscountEnabled && autoDiscountAmount > 0 ? (
+                <div className="mb-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                      Auto discount {autoDiscountPct}%
+                    </span>
+                    <span className="text-[11px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+                      − {autoDiscountAmount.toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-emerald-800/80 dark:text-emerald-200/70">
+                    Applied automatically on every sale. Item prices stay at original; discount is
+                    shown in the total below.
+                  </p>
+                </div>
+              ) : showTicketDiscount ? (
                 <>
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
@@ -2621,17 +2792,29 @@ export function PosPage(): JSX.Element {
                   selected — Disc % / Disc Rs hidden. Tap a normal item to show discount.
                 </p>
               ) : null}
-              <div className={`${showTicketDiscount ? "mt-3" : ""} space-y-1.5 text-xs`}>
+              <div
+                className={`${autoDiscountEnabled || showTicketDiscount ? "mt-3" : ""} space-y-1.5 text-xs`}
+              >
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                  <span>Subtotal</span>
+                  <span>Subtotal (original)</span>
                   <span className="tabular-nums text-slate-900 dark:text-slate-300">
                     {subtotal.toLocaleString()}
                   </span>
                 </div>
                 {discount > 0 ? (
                   <div className="flex justify-between text-emerald-700 dark:text-emerald-400/90">
-                    <span>Discount</span>
+                    <span>
+                      {autoDiscountEnabled ? `Discount ${autoDiscountPct}%` : "Discount"}
+                    </span>
                     <span className="tabular-nums">− {discount.toLocaleString()}</span>
+                  </div>
+                ) : null}
+                {discount > 0 ? (
+                  <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                    <span>After discount</span>
+                    <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                      {(subtotal - discount).toLocaleString()}
+                    </span>
                   </div>
                 ) : null}
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
@@ -2675,6 +2858,7 @@ export function PosPage(): JSX.Element {
                 <button
                   type="button"
                   className={`${POS_PRIMARY_ORDER_BTN} col-span-2`}
+                  title={`${POS_SHORTCUTS.quickOrder.label} (${POS_SHORTCUTS.quickOrder.key})`}
                   disabled={cart.length === 0 || updateHeldBillMutation.isPending || !branch?.code}
                   onClick={() => updateHeldBillMutation.mutate()}
                 >
@@ -2684,6 +2868,7 @@ export function PosPage(): JSX.Element {
                 <button
                   type="button"
                   className={POS_PRIMARY_ORDER_BTN}
+                  title={`${POS_SHORTCUTS.quickOrder.label} (${POS_SHORTCUTS.quickOrder.key})`}
                   disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                   onClick={() => createOrderMutation.mutate()}
                 >
@@ -2697,6 +2882,7 @@ export function PosPage(): JSX.Element {
               <button
                 type="button"
                 className={`${POS_PRIMARY_PAY_BTN}${editingOrder?.kind === "held-bill" ? " col-span-2" : ""}`}
+                title={`${POS_SHORTCUTS.pay.label} (${POS_SHORTCUTS.pay.key})`}
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => onPay()}
               >
@@ -2715,6 +2901,7 @@ export function PosPage(): JSX.Element {
               <button
                 type="button"
                 className={POS_SECONDARY_BTN}
+                title={`${POS_SHORTCUTS.printBill.label} (${POS_SHORTCUTS.printBill.key})`}
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => runPrintInvoice()}
               >
@@ -2810,6 +2997,15 @@ export function PosPage(): JSX.Element {
         <PosPayOutModal
           onClose={() => setPayOutModalOpen(false)}
           onSuccess={(message) => setPrintNotice({ message, tone: "success" })}
+        />
+      ) : null}
+
+      {myPrintersOpen && branch?.code ? (
+        <PosMyPrintersModal
+          branchCode={branch.code}
+          userId={sessionUserId}
+          userLabel={sessionUserLabel}
+          onClose={() => setMyPrintersOpen(false)}
         />
       ) : null}
 
