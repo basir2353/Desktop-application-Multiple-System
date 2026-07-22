@@ -105,13 +105,15 @@ export function getSystemHomePath(_id: BusinessSystemId): string {
 
 /** First ERP screen after auth — skips redirect-only `/pops` hop. */
 export function getErpEntryPath(systemId: BusinessSystemId, hasBranch: boolean): string {
+  if (!hasBranch) return "/pops/branches";
   if (systemId === "pharmacy") {
-    return hasBranch ? "/pops/pharmacy/dashboard" : "/pops/branches";
+    return "/pops/pharmacy/pos";
   }
   if (systemId === "general-store") {
-    return hasBranch ? "/pops/store/dashboard" : "/pops/branches";
+    return "/pops/store/pos";
   }
-  return hasBranch ? "/pops/dashboard" : "/pops/branches";
+  // Restaurant dashboard is admin-only; callers with a role should use erpEntryPathForRole.
+  return "/pops/pos";
 }
 
 const SHARED_ERP_PATHS = new Set(["auth", "notifications", "settings"]);

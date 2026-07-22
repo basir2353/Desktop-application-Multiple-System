@@ -3,6 +3,8 @@ import { formatMenuItemLabel, type MenuItem as ApiMenuItem } from "@platform/con
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
+import { useSessionStore } from "../../../stores/sessionStore";
+import { sessionCanManageFloor, sessionCanManageUsers } from "../../lib/roleAccess";
 import { createBill, createWaiter, fetchWaiters, updateWaiter } from "../../api/billing";
 import { fetchKitchenTickets, createKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
@@ -180,8 +182,8 @@ function StatTile({
 export function WaiterPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
-  const displayRole = usePopsStore((s) => s.displayRole);
-  const canManagePrinters = displayRole === "admin" || displayRole === "manager";
+  const claims = useSessionStore((s) => s.claims);
+  const canManagePrinters = sessionCanManageFloor(claims);
   const [tableId, setTableId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [search, setSearch] = useState("");
@@ -201,7 +203,7 @@ export function WaiterPage(): JSX.Element {
   const [editPin, setEditPin] = useState("");
 
   const branchCode = branch?.code ?? "";
-  const canManageWaiters = displayRole === "admin" || displayRole === "manager";
+  const canManageWaiters = sessionCanManageUsers(claims);
 
   useEffect(() => {
     if (!branchCode) return;

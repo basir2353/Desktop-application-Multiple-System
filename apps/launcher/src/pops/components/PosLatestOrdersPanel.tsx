@@ -21,6 +21,7 @@ import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
+import { sessionCanManageFloor } from "../lib/roleAccess";
 import { loadPosSettings } from "../lib/posSettings";
 import {
   loadPosOrderModeVisibility,
@@ -47,9 +48,9 @@ function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
 export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPayOrder }: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
-  const displayRole = usePopsStore((s) => s.displayRole);
+  const claims = useSessionStore((s) => s.claims);
   const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
-  const canManageTables = displayRole === "admin" || displayRole === "manager";
+  const canManageTables = sessionCanManageFloor(claims);
 
   const [orderModeVisibility, setOrderModeVisibility] = useState(() =>
     loadPosOrderModeVisibility(branch?.code),

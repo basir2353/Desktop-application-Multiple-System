@@ -2,6 +2,12 @@ export type AccessTokenClaims = {
   sub: string;
   organizationId: string;
   permissions: string[];
+  /** Membership role from the control plane (admin, cashier, …). */
+  role?: string;
+  /** `all` or a branch code. */
+  branchScope?: string;
+  /** null/undefined = all permission-gated paths; otherwise only listed paths. */
+  navAllowlist?: string[] | null;
   exp?: number;
 };
 

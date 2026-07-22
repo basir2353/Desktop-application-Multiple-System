@@ -89,7 +89,7 @@ export function PopsShell(): JSX.Element {
   function signOut(): void {
     clearSession();
     clearBranch();
-    navigate("/", { replace: true });
+    navigate("/role", { replace: true });
   }
 
   return (

@@ -6,6 +6,7 @@ import {
 } from "../lib/businessSystems";
 import { getLockedSystemId } from "../lib/edition";
 import { useActiveSystemId } from "../hooks/useActiveSystemId";
+import { erpEntryPathForRole } from "../pops/lib/roleAccess";
 import { usePopsStore } from "../stores/popsStore";
 
 /**
@@ -17,7 +18,14 @@ export function SystemRouteGuard(): JSX.Element {
   const { pathname } = useLocation();
   const systemId = useActiveSystemId();
   const lockedSystemId = getLockedSystemId();
-  const hasBranch = Boolean(usePopsStore((s) => s.branch));
+  const branch = usePopsStore((s) => s.branch);
+  const displayRole = usePopsStore((s) => s.displayRole);
+  const hasBranch = Boolean(branch);
+
+  function homePath(targetSystemId: typeof systemId): string {
+    if (!hasBranch) return getErpEntryPath(targetSystemId, false);
+    return erpEntryPathForRole(targetSystemId, displayRole);
+  }
 
   if (lockedSystemId) {
     const routeSystem = resolveBusinessSystemFromPath(pathname);
@@ -27,13 +35,13 @@ export function SystemRouteGuard(): JSX.Element {
     const restaurantLeak =
       lockedSystemId !== "restaurant" && isRestaurantExclusivePath(pathname);
     if (crossSystem || restaurantLeak) {
-      return <Navigate to={getErpEntryPath(lockedSystemId, hasBranch)} replace />;
+      return <Navigate to={homePath(lockedSystemId)} replace />;
     }
     return <Outlet />;
   }
 
   if (systemId !== "restaurant" && isRestaurantExclusivePath(pathname)) {
-    return <Navigate to={getErpEntryPath(systemId, hasBranch)} replace />;
+    return <Navigate to={homePath(systemId)} replace />;
   }
 
   return <Outlet />;

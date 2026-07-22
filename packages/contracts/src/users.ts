@@ -32,6 +32,13 @@ export const orgUserSchema = z.object({
   branchScope: z.string(),
   pinRequired: z.boolean(),
   permissions: z.array(z.string()),
+  /** When false, the user cannot sign in. */
+  active: z.boolean(),
+  /**
+   * Allowed ERP nav paths (e.g. `pos`, `inventory/stock`).
+   * `null` = all paths allowed by the user's permissions.
+   */
+  navAllowlist: z.array(z.string()).nullable(),
   lastActivityAt: z.string().nullable(),
 });
 
@@ -50,6 +57,11 @@ export const updateOrgUserSchema = z.object({
   pinRequired: z.boolean().optional(),
   password: z.string().min(8).max(128).optional(),
   staffPin: z.string().regex(/^\d{4}$/).optional(),
+  /** Replace membership permissions (module access). */
+  permissions: z.array(z.string()).optional(),
+  active: z.boolean().optional(),
+  /** Pass `null` to clear and allow all permission-gated paths. */
+  navAllowlist: z.array(z.string()).nullable().optional(),
 });
 
 export const resetUserPasswordSchema = z.object({
@@ -240,3 +252,38 @@ export function permissionsForPopsRole(role: string): string[] {
 export function canManageOrgUsers(permissions: readonly string[]): boolean {
   return permissions.includes("*") || permissions.includes("pops.users.manage");
 }
+
+/** Module toggles for Head Office access control (maps to JWT permission strings). */
+export const POPS_MODULE_ACCESS: { id: string; label: string; description: string }[] = [
+  { id: "pops.read", label: "ERP access", description: "Sign in and use basic restaurant modules" },
+  { id: "pops.users.manage", label: "Users & access", description: "Create and edit other users" },
+  { id: "pops.menu.manage", label: "Menu", description: "Edit menu, categories, and pricing" },
+  { id: "pops.inventory.manage", label: "Inventory", description: "Stock, purchases, and adjustments" },
+  { id: "pops.accounting.manage", label: "Accounting", description: "Ledgers, expenses, and finance reports" },
+  { id: "pops.hr.manage", label: "HR & payroll", description: "Employees, attendance, and payroll" },
+  { id: "pops.multi_branch.manage", label: "Multi-branch", description: "Network monitoring, transfers, pricing" },
+  { id: "pops.notifications.manage", label: "Notifications", description: "Templates and notification settings" },
+  { id: "pops.closing.report", label: "Day closing", description: "Z-report and business day close" },
+  { id: "pops.pos.void", label: "POS void", description: "Void lines on the register" },
+  { id: "pops.pos.discount", label: "POS discount", description: "Apply discounts on the register" },
+  { id: "pops.kitchen.bump", label: "Kitchen / waiter", description: "KOT bump and floor service tools" },
+  { id: "pops.delivery.manage", label: "Delivery", description: "Riders and delivery orders" },
+];
+
+export function hasModuleAccess(permissions: readonly string[], moduleId: string): boolean {
+  if (permissions.includes("*")) return true;
+  return permissions.includes(moduleId);
+}
+
+export function toggleModulePermission(
+  permissions: readonly string[],
+  moduleId: string,
+  enabled: boolean,
+): string[] {
+  const next = new Set(permissions.filter((p) => p !== "*"));
+  if (enabled) next.add(moduleId);
+  else next.delete(moduleId);
+  if (!next.has("pops.read") && enabled) next.add("pops.read");
+  return [...next];
+}
+

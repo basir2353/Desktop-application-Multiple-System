@@ -125,6 +125,17 @@ export class AuthService implements OnModuleInit {
 
     const m = membership[0];
     if (!m) throw new UnauthorizedException("No organization membership");
+    if (m.active === false) {
+      await this.security.logEvent({
+        organizationId: m.organizationId,
+        eventType: "login_failed",
+        userEmail: normalizedEmail,
+        userId: user.id,
+        action: "Login failed",
+        detail: "Account deactivated",
+      });
+      throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+    }
 
     await this.touchLastActivity(m.organizationId, user.id);
 
@@ -143,6 +154,7 @@ export class AuthService implements OnModuleInit {
       normalizePermissions(m.permissions, m.role),
       m.role,
       m.branchScope ?? "all",
+      Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
     );
   }
 
@@ -164,6 +176,8 @@ export class AuthService implements OnModuleInit {
         role: organizationMemberships.role,
         branchScope: organizationMemberships.branchScope,
         staffPinHash: organizationMemberships.staffPinHash,
+        active: organizationMemberships.active,
+        navAllowlist: organizationMemberships.navAllowlist,
         email: users.email,
       })
       .from(organizationMemberships)
@@ -177,6 +191,7 @@ export class AuthService implements OnModuleInit {
 
     const eligible = memberships.filter(
       (row) =>
+        row.active !== false &&
         row.staffPinHash &&
         (row.branchScope === "all" || row.branchScope.toUpperCase() === code),
     );
@@ -203,6 +218,7 @@ export class AuthService implements OnModuleInit {
         normalizePermissions(row.permissions, row.role),
         row.role,
         row.branchScope ?? "all",
+        Array.isArray(row.navAllowlist) ? row.navAllowlist : null,
       );
     }
 
@@ -236,6 +252,7 @@ export class AuthService implements OnModuleInit {
 
     const m = membership[0];
     if (!m) throw new UnauthorizedException("No organization membership");
+    if (m.active === false) throw new UnauthorizedException("Account deactivated. Contact an administrator.");
 
     await this.db.delete(refreshTokens).where(eq(refreshTokens.id, rt.id));
     return this.issueTokens(
@@ -244,6 +261,7 @@ export class AuthService implements OnModuleInit {
       normalizePermissions(m.permissions, m.role),
       m.role,
       m.branchScope ?? "all",
+      Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
     );
   }
 
@@ -272,6 +290,7 @@ export class AuthService implements OnModuleInit {
     permissions: string[],
     role: string,
     branchScope: string,
+    navAllowlist: string[] | null = null,
   ) {
     let riderId: string | undefined;
     if (role === "rider") {
@@ -289,6 +308,7 @@ export class AuthService implements OnModuleInit {
       permissions,
       role,
       branchScope,
+      navAllowlist,
       ...(riderId ? { riderId } : {}),
     };
 

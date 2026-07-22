@@ -1,14 +1,20 @@
 import { Button } from "@platform/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { canManageOrgUsers } from "@platform/contracts";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
-import { getBusinessSystem, getErpEntryPath } from "../../lib/businessSystems";
+import { getBusinessSystem } from "../../lib/businessSystems";
 import { PHARMACY_ROLE_LABELS } from "../../pharmacy/spec/nav";
 import { STORE_ROLE_LABELS } from "../../store/spec/nav";
-import { createPopsBranch, fetchPopsBranches } from "../api/operations";
+import { fetchPopsBranches } from "../api/operations";
 import { isMonitoringBranch } from "../lib/branchScope";
+import {
+  erpEntryPathForRole,
+  filterBranchesByScope,
+} from "../lib/roleAccess";
+import { normalizeMembershipRole } from "../../lib/loginRoles";
 import { usePopsStore, type PopsBranch, type PopsRole } from "../../stores/popsStore";
 
 const restaurantRoles: { id: PopsRole; label: string }[] = [
@@ -45,9 +51,9 @@ function toPopsBranch(row: { id: string; code: string; name: string; city: strin
 export function BranchSelectPage(): JSX.Element {
   const navigate = useNavigate();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
   const persistedBranch = usePopsStore((s) => s.branch);
   const setBranch = usePopsStore((s) => s.setBranch);
-  const queryClient = useQueryClient();
   const setDisplayRole = usePopsStore((s) => s.setDisplayRole);
   const setPinSession = usePopsStore((s) => s.setPinSession);
   const displayRole = usePopsStore((s) => s.displayRole);
@@ -55,6 +61,9 @@ export function BranchSelectPage(): JSX.Element {
   const systemId = useActiveSystemId();
   const system = getBusinessSystem(systemId);
   const roles = systemId === "pharmacy" ? pharmacyRoles : systemId === "general-store" ? storeRoles : restaurantRoles;
+  const permissions = claims?.permissions ?? [];
+  const canManageUsers = canManageOrgUsers(permissions);
+  const assignedRole = normalizeMembershipRole(claims?.role) ?? displayRole;
 
   const branchesQuery = useQuery({
     queryKey: ["operations", "branches", accessToken],
@@ -63,8 +72,8 @@ export function BranchSelectPage(): JSX.Element {
   });
 
   const apiBranches = useMemo(
-    () => (branchesQuery.data ?? []).map(toPopsBranch),
-    [branchesQuery.data],
+    () => filterBranchesByScope((branchesQuery.data ?? []).map(toPopsBranch), claims?.branchScope),
+    [branchesQuery.data, claims?.branchScope],
   );
 
   const allBranches = apiBranches;
@@ -72,10 +81,6 @@ export function BranchSelectPage(): JSX.Element {
   const [selected, setSelected] = useState<PopsBranch | null>(
     allBranches.find((b) => !isMonitoringBranch(b.code)) ?? allBranches[0] ?? null,
   );
-  const [newName, setNewName] = useState("");
-  const [newCity, setNewCity] = useState("");
-  const [newCode, setNewCode] = useState("");
-  const [addError, setAddError] = useState<string | null>(null);
 
   useEffect(() => {
     if (persistedBranch?.id.startsWith("custom-")) {
@@ -84,46 +89,19 @@ export function BranchSelectPage(): JSX.Element {
   }, [persistedBranch?.id, setBranch]);
 
   useEffect(() => {
+    const role = normalizeMembershipRole(claims?.role);
+    if (role) setDisplayRole(role);
+  }, [claims?.role, setDisplayRole]);
+
+  useEffect(() => {
     if (selected && !allBranches.some((b) => b.id === selected.id)) {
       setSelected(allBranches.find((b) => !isMonitoringBranch(b.code)) ?? allBranches[0] ?? null);
     }
   }, [allBranches, selected]);
 
-  const createBranchMutation = useMutation({
-    mutationFn: () =>
-      createPopsBranch({
-        name: newName.trim(),
-        city: newCity.trim(),
-        code: newCode.trim() || undefined,
-      }),
-    onSuccess: (created) => {
-      void queryClient.invalidateQueries({ queryKey: ["operations", "branches"] });
-      setSelected(toPopsBranch(created));
-      setNewName("");
-      setNewCity("");
-      setNewCode("");
-      setAddError(null);
-    },
-    onError: (err: Error) => setAddError(err.message),
-  });
-
-  function onAddBranch(e: React.FormEvent): void {
-    e.preventDefault();
-    setAddError(null);
-    if (!newName.trim()) {
-      setAddError("Enter a branch name.");
-      return;
-    }
-    if (!newCity.trim()) {
-      setAddError("Enter a city.");
-      return;
-    }
-    createBranchMutation.mutate();
-  }
-
   function continueToDashboard(): void {
     if (selected) setBranch(selected);
-    navigate(getErpEntryPath(systemId, true));
+    navigate(erpEntryPathForRole(systemId, assignedRole));
   }
 
   return (
@@ -151,8 +129,8 @@ export function BranchSelectPage(): JSX.Element {
               ) : null}
               {!branchesQuery.isLoading && !branchesQuery.isError && apiBranches.length === 0 ? (
                 <p className="mt-3 text-xs text-slate-500">
-                  No branches in your organization yet. Add one below or run the API seed (`pnpm dev:api` after `pnpm
-                  db:push`).
+                  No branches in your organization yet. Ask an admin to add one from Multi-branch, or run the API seed
+                  (`pnpm dev:api` after `pnpm db:push`).
                 </p>
               ) : null}
               <div className="mt-4 space-y-2">
@@ -184,71 +162,31 @@ export function BranchSelectPage(): JSX.Element {
                 ))}
               </div>
             </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
-              <h2 className="text-sm font-semibold text-slate-200">Add branch</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Branches load from your organization when the API is available; custom entries stay on this device until
-                synced.
-              </p>
-              <form className="mt-4 space-y-3" onSubmit={onAddBranch}>
-                <label className="block text-xs text-slate-400">
-                  Branch name
-                  <input
-                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="e.g. POPS F-7"
-                    autoComplete="organization"
-                  />
-                </label>
-                <label className="block text-xs text-slate-400">
-                  City
-                  <input
-                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
-                    value={newCity}
-                    onChange={(e) => setNewCity(e.target.value)}
-                    placeholder="e.g. Islamabad"
-                    autoComplete="address-level2"
-                  />
-                </label>
-                <label className="block text-xs text-slate-400">
-                  Branch code{" "}
-                  <span className="font-normal text-slate-600">(optional — letters, numbers, dashes)</span>
-                  <input
-                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
-                    value={newCode}
-                    onChange={(e) => setNewCode(e.target.value)}
-                    placeholder="e.g. ISB-F7"
-                  />
-                </label>
-                {addError ? <p className="text-xs text-red-400">{addError}</p> : null}
-                <Button type="submit" className="w-full" disabled={createBranchMutation.isPending}>
-                  {createBranchMutation.isPending ? "Adding…" : "Add branch"}
-                </Button>
-              </form>
-            </div>
           </div>
 
           <div className="space-y-6">
             <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
-              <h2 className="text-sm font-semibold text-slate-200">Workspace role</h2>
-              <p className="mt-1 text-xs text-slate-500">JWT permissions apply for API calls; this labels the ERP workspace.</p>
+              <h2 className="text-sm font-semibold text-slate-200">Signed-in role</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                You signed in as this role. Menus and actions follow its permissions
+                {canManageUsers ? ". Manage other users in Users & access." : ". Only an admin can change your role."}
+              </p>
               <div className="mt-4 flex flex-wrap gap-2">
-                {roles.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => setDisplayRole(r.id)}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                      displayRole === r.id
-                        ? "bg-amber-500 text-slate-950"
-                        : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                    }`}
-                  >
-                    {r.label}
-                  </button>
-                ))}
+                {roles.map((r) => {
+                  const active = assignedRole === r.id || displayRole === r.id;
+                  return (
+                    <span
+                      key={r.id}
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        active
+                          ? "bg-amber-500 text-slate-950"
+                          : "bg-slate-900 text-slate-600"
+                      }`}
+                    >
+                      {r.label}
+                    </span>
+                  );
+                })}
               </div>
               <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-slate-300">
                 <input
@@ -259,6 +197,19 @@ export function BranchSelectPage(): JSX.Element {
                 />
                 PIN-based session (shorter re-auth prompts)
               </label>
+              {canManageUsers ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="mt-4 w-full"
+                  onClick={() => {
+                    if (selected) setBranch(selected);
+                    navigate("/pops/auth");
+                  }}
+                >
+                  Manage users & access
+                </Button>
+              ) : null}
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">

@@ -8,6 +8,8 @@ import {
 } from "../lib/businessSystems";
 import { getAvailableSystems, getLockedSystemId } from "../lib/edition";
 import { mutedClass } from "../pops/lib/themeClasses";
+import { erpEntryPathForRole } from "../pops/lib/roleAccess";
+import { roleSelectPath } from "../lib/loginRoles";
 import { useSessionStore } from "../stores/sessionStore";
 import { usePopsStore } from "../stores/popsStore";
 import { useSystemStore } from "../stores/systemStore";
@@ -64,15 +66,21 @@ export function SystemSelectPage(): JSX.Element {
   const navigate = useNavigate();
   const accessToken = useSessionStore((s) => s.accessToken);
   const branch = usePopsStore((s) => s.branch);
+  const displayRole = usePopsStore((s) => s.displayRole);
   const setSystem = useSystemStore((s) => s.setSystem);
   const lockedSystemId = getLockedSystemId();
   const availableSystems = getAvailableSystems();
+
+  function entryPath(id: BusinessSystemId): string {
+    if (!branch) return getErpEntryPath(id, false);
+    return erpEntryPathForRole(id, displayRole);
+  }
 
   // Single-system installers skip the picker entirely and boot into the system.
   if (lockedSystemId) {
     return (
       <Navigate
-        to={accessToken ? getErpEntryPath(lockedSystemId, Boolean(branch)) : "/login"}
+        to={accessToken ? entryPath(lockedSystemId) : roleSelectPath(lockedSystemId)}
         replace
       />
     );
@@ -80,11 +88,10 @@ export function SystemSelectPage(): JSX.Element {
 
   function onSelect(id: BusinessSystemId): void {
     setSystem(id);
-    if (accessToken) {
-      navigate(getErpEntryPath(id, Boolean(branch)));
-    } else {
-      navigate("/login");
-    }
+    // Full assign so Tauri/webview cannot keep a stale module graph that previously
+    // crashed on /role (broken loginRoles imports) and silently bounce back here.
+    const next = accessToken ? entryPath(id) : roleSelectPath(id);
+    window.location.assign(next);
   }
 
   return (
@@ -108,7 +115,7 @@ export function SystemSelectPage(): JSX.Element {
               Module runtime
             </Button>
           ) : (
-            <Button variant="ghost" className="text-xs" onClick={() => navigate("/login")}>
+            <Button variant="ghost" className="text-xs" onClick={() => navigate("/role")}>
               Sign in
             </Button>
           )}

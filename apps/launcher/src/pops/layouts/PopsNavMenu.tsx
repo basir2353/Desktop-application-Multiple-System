@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { canManageOrgUsers, permissionsForPopsRole } from "@platform/contracts";
 import { getNavItemsForSystem } from "../../lib/businessSystems";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
+import { useSessionStore } from "../../stores/sessionStore";
+import { usePopsStore } from "../../stores/popsStore";
 import { amberPillActiveClass, pillInactiveClass } from "../lib/themeClasses";
+import { filterNavItemsByPermissions } from "../lib/roleAccess";
 import { type PopsNavGroup, type PopsNavItem } from "../spec/modules";
 import { PopsNavIcon } from "./popsNavIcons";
 
@@ -146,7 +150,18 @@ function renderMobileItem(item: PopsNavItem): JSX.Element {
 
 function useSystemNavItems(): PopsNavItem[] {
   const systemId = useActiveSystemId();
-  return useMemo(() => getNavItemsForSystem(systemId), [systemId]);
+  const jwtPermissions = useSessionStore((s) => s.claims?.permissions ?? []);
+  const navAllowlist = useSessionStore((s) => s.claims?.navAllowlist);
+  const displayRole = usePopsStore((s) => s.displayRole);
+  return useMemo(() => {
+    const items = getNavItemsForSystem(systemId);
+    // Admins can preview another role's workspace; everyone else is locked to JWT permissions.
+    const isAdminPreview = jwtPermissions.includes("*") || canManageOrgUsers(jwtPermissions);
+    const permissions = isAdminPreview ? permissionsForPopsRole(displayRole) : jwtPermissions;
+    // Path allowlist only applies to the signed-in membership (not admin role preview).
+    const allowlist = isAdminPreview ? null : navAllowlist;
+    return filterNavItemsByPermissions(items, permissions, allowlist);
+  }, [systemId, jwtPermissions, displayRole, navAllowlist]);
 }
 
 export function PopsSidebarNav(): JSX.Element {

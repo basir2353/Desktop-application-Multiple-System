@@ -5,10 +5,12 @@ import { createPopsBranch } from "../../../api/operations";
 import { fetchMultiBranchOverview } from "../../../api/multi-branch";
 import { formatPkr, mbInputClass, useMultiBranchAccess } from "../../../hooks/useMultiBranch";
 import { usePopsStore, type PopsBranch } from "../../../../stores/popsStore";
+import { erpEntryPathForRole } from "../../../lib/roleAccess";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { MbError, MbLoading } from "./MultiBranchUi";
+import { HqUserAccessPanel } from "./HqUserAccessPanel";
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -23,7 +25,7 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
 export function MultiBranchDashboardPage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { setBranch } = usePopsStore();
+  const { setBranch, displayRole } = usePopsStore();
   const { canManage } = useMultiBranchAccess();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", city: "", code: "" });
@@ -60,7 +62,7 @@ export function MultiBranchDashboardPage(): JSX.Element {
       city: row.city,
     };
     setBranch(b);
-    navigate("/pops/dashboard");
+    navigate(erpEntryPathForRole("restaurant", displayRole));
   }
 
   return (
@@ -206,6 +208,8 @@ export function MultiBranchDashboardPage(): JSX.Element {
           </Link>
         ))}
       </div>
+
+      <HqUserAccessPanel />
     </div>
   );
 }

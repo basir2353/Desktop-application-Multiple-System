@@ -1,6 +1,11 @@
 import { Button } from "@platform/ui";
 import {
+  canManageOrgUsers,
+  hasModuleAccess,
+  permissionsForPopsRole,
+  POPS_MODULE_ACCESS,
   POPS_ROLE_TEMPLATES,
+  toggleModulePermission,
   type CreateOrgUser,
   type InviteOrgUser,
   type InviteOrgUserResult,
@@ -27,6 +32,11 @@ import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
 import { usePopsStore } from "../../../stores/popsStore";
 import { getUserPin, setUserPin } from "../../lib/posPinAuth";
+import { popsNavItems } from "../../spec/modules";
+import {
+  allRestaurantNavPaths,
+  primaryPermissionForNavPath,
+} from "../../lib/roleAccess";
 
 function formatLastActivity(iso: string | null): string {
   if (!iso) return "—";
@@ -50,6 +60,10 @@ type UserFormState = {
   branchScope: string;
   pinRequired: boolean;
   staffPin: string;
+  active: boolean;
+  permissions: string[];
+  /** null = all pages allowed by module permissions. */
+  navAllowlist: string[] | null;
 };
 
 const defaultForm = (): UserFormState => ({
@@ -59,7 +73,63 @@ const defaultForm = (): UserFormState => ({
   branchScope: "all",
   pinRequired: true,
   staffPin: "",
+  active: true,
+  permissions: permissionsForPopsRole("cashier"),
+  navAllowlist: null,
 });
+
+function pathIsOn(allowlist: string[] | null, path: string): boolean {
+  if (allowlist == null) return true;
+  return allowlist.includes(path);
+}
+
+function materializeAllowlist(current: string[] | null): string[] {
+  if (current != null) return [...current];
+  return allRestaurantNavPaths(popsNavItems);
+}
+
+function toggleNavPath(
+  form: UserFormState,
+  path: string,
+  enabled: boolean,
+): Pick<UserFormState, "navAllowlist" | "permissions"> {
+  let next = materializeAllowlist(form.navAllowlist);
+  if (enabled) {
+    if (!next.includes(path)) next.push(path);
+  } else {
+    next = next.filter((p) => p !== path);
+  }
+  let permissions = form.permissions;
+  if (enabled) {
+    const needed = primaryPermissionForNavPath(path);
+    if (!hasModuleAccess(permissions, needed) && needed !== "*") {
+      permissions = toggleModulePermission(permissions, needed, true);
+    }
+  }
+  return { navAllowlist: next, permissions };
+}
+
+function toggleNavGroup(
+  form: UserFormState,
+  paths: string[],
+  enabled: boolean,
+): Pick<UserFormState, "navAllowlist" | "permissions"> {
+  let next = materializeAllowlist(form.navAllowlist);
+  let permissions = form.permissions;
+  if (enabled) {
+    for (const path of paths) {
+      if (!next.includes(path)) next.push(path);
+      const needed = primaryPermissionForNavPath(path);
+      if (!hasModuleAccess(permissions, needed) && needed !== "*") {
+        permissions = toggleModulePermission(permissions, needed, true);
+      }
+    }
+  } else {
+    const remove = new Set(paths);
+    next = next.filter((p) => !remove.has(p));
+  }
+  return { navAllowlist: next, permissions };
+}
 
 function UserFormModal({
   title,
@@ -68,6 +138,7 @@ function UserFormModal({
   roleOptions,
   requirePassword,
   showPassword = true,
+  showAccessControls = false,
   emailHint,
   submitLabel,
   error,
@@ -81,6 +152,8 @@ function UserFormModal({
   roleOptions: { id: PopsRole; label: string }[];
   requirePassword: boolean;
   showPassword?: boolean;
+  /** Account on/off + module permission toggles (edit / add). */
+  showAccessControls?: boolean;
   emailHint?: string;
   submitLabel: string;
   error: string | null;
@@ -89,11 +162,14 @@ function UserFormModal({
   onSubmit: (values: UserFormState) => void;
 }): JSX.Element {
   const [form, setForm] = useState<UserFormState>(initial);
+  const isAdminAccount = form.role === "admin" || form.permissions.includes("*");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60">
       <div
-        className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl"
+        className={`w-full rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl ${
+          showAccessControls ? "max-w-2xl max-h-[90vh] overflow-y-auto" : "max-w-md"
+        }`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="user-form-title"
@@ -139,7 +215,15 @@ function UserFormModal({
             <select
               className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
               value={form.role}
-              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as PopsRole }))}
+              onChange={(e) => {
+                const role = e.target.value as PopsRole;
+                setForm((f) => ({
+                  ...f,
+                  role,
+                  permissions: permissionsForPopsRole(role),
+                  navAllowlist: null,
+                }));
+              }}
             >
               {roleOptions.map((r) => (
                 <option key={r.id} value={r.id}>
@@ -185,6 +269,163 @@ function UserFormModal({
               placeholder="••••"
             />
           </label>
+
+          {showAccessControls ? (
+            <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium text-slate-100">System access</div>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    Modules control API capabilities. Menu pages control what appears in the sidebar. Changing role
+                    resets both to that role&apos;s defaults.
+                  </p>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    className="accent-amber-500"
+                    checked={form.active}
+                    disabled={isAdminAccount}
+                    title={isAdminAccount ? "Admin accounts stay active" : undefined}
+                    onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
+                  />
+                  Account enabled
+                </label>
+              </div>
+
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Modules</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {POPS_MODULE_ACCESS.map((mod) => {
+                    const on = hasModuleAccess(form.permissions, mod.id);
+                    const lockAdminManage = isAdminAccount && mod.id === "pops.users.manage";
+                    return (
+                      <label
+                        key={mod.id}
+                        className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs ${
+                          on
+                            ? "border-amber-500/40 bg-amber-500/10 text-slate-100"
+                            : "border-slate-800 bg-slate-900/60 text-slate-400"
+                        } ${lockAdminManage ? "opacity-60" : ""}`}
+                        title={mod.description}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 accent-amber-500"
+                          checked={on}
+                          disabled={lockAdminManage}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              permissions: toggleModulePermission(f.permissions, mod.id, e.target.checked),
+                            }))
+                          }
+                        />
+                        <span>
+                          <span className="block font-medium">{mod.label}</span>
+                          <span className="mt-0.5 block text-[11px] text-slate-500">{mod.description}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Menu pages</div>
+                  <button
+                    type="button"
+                    className="text-[11px] text-sky-400 hover:text-sky-300"
+                    onClick={() => setForm((f) => ({ ...f, navAllowlist: null }))}
+                  >
+                    Allow all pages for modules
+                  </button>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {popsNavItems.map((item) => {
+                    if (item.type === "link") {
+                      const on = pathIsOn(form.navAllowlist, item.path);
+                      return (
+                        <label
+                          key={item.path}
+                          className={`flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-xs ${
+                            on
+                              ? "border-sky-500/40 bg-sky-500/10 text-slate-100"
+                              : "border-slate-800 bg-slate-900/60 text-slate-400"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-sky-500"
+                            checked={on}
+                            onChange={(e) =>
+                              setForm((f) => ({ ...f, ...toggleNavPath(f, item.path, e.target.checked) }))
+                            }
+                          />
+                          <span className="font-medium">{item.label}</span>
+                        </label>
+                      );
+                    }
+
+                    const childPaths = item.children.map((c) => c.path);
+                    const allOn = childPaths.every((p) => pathIsOn(form.navAllowlist, p));
+                    const someOn = childPaths.some((p) => pathIsOn(form.navAllowlist, p));
+                    return (
+                      <div key={item.label} className="rounded-md border border-slate-800 bg-slate-900/40 p-2.5">
+                        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-100">
+                          <input
+                            type="checkbox"
+                            className="accent-sky-500"
+                            checked={allOn}
+                            ref={(el) => {
+                              if (el) el.indeterminate = someOn && !allOn;
+                            }}
+                            onChange={(e) =>
+                              setForm((f) => ({ ...f, ...toggleNavGroup(f, childPaths, e.target.checked) }))
+                            }
+                          />
+                          {item.label}
+                          <span className="font-normal text-slate-500">
+                            ({childPaths.filter((p) => pathIsOn(form.navAllowlist, p)).length}/{childPaths.length})
+                          </span>
+                        </label>
+                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                          {item.children.map((child) => {
+                            const on = pathIsOn(form.navAllowlist, child.path);
+                            return (
+                              <label
+                                key={child.path}
+                                className={`flex cursor-pointer items-center gap-2 rounded border px-2 py-1.5 text-[11px] ${
+                                  on
+                                    ? "border-sky-500/30 bg-sky-500/5 text-slate-200"
+                                    : "border-slate-800/80 text-slate-500"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="accent-sky-500"
+                                  checked={on}
+                                  onChange={(e) =>
+                                    setForm((f) => ({
+                                      ...f,
+                                      ...toggleNavPath(f, child.path, e.target.checked),
+                                    }))
+                                  }
+                                />
+                                {child.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {error ? <p className="text-xs text-red-400">{error}</p> : null}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" className="text-xs" onClick={onClose} disabled={loading}>
@@ -204,8 +445,7 @@ export function AuthPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
-  const canManage =
-    claims?.permissions.includes("*") || claims?.permissions.includes("pops.users.manage");
+  const canManage = canManageOrgUsers(claims?.permissions ?? []);
 
   const [modal, setModal] = useState<"add" | "invite" | "edit" | "reset" | null>(null);
   const [selected, setSelected] = useState<OrgUser | null>(null);
@@ -308,13 +548,18 @@ export function AuthPage(): JSX.Element {
     const roleId =
       POPS_ROLE_TEMPLATES.find((r) => r.label === user.role)?.id ??
       (user.role.toLowerCase() as PopsRole);
+    const role = roleId === "admin" ? "admin" : roleId;
     return {
       email: user.email,
       password: "",
-      role: roleId === "admin" ? "admin" : roleId,
+      role,
       branchScope: user.branchScope === "All" ? "all" : user.branchScope,
       pinRequired: user.pinRequired,
       staffPin: branch?.code ? (getUserPin(branch.code, user.id) ?? "") : "",
+      active: user.active !== false,
+      permissions:
+        user.permissions?.length > 0 ? [...user.permissions] : permissionsForPopsRole(role),
+      navAllowlist: user.navAllowlist ?? null,
     };
   }
 
@@ -466,6 +711,12 @@ export function AuthPage(): JSX.Element {
           { key: "role", header: "Role", render: (r) => <Badge tone="neutral">{r.role}</Badge> },
           { key: "branchScope", header: "Branch scope" },
           {
+            key: "active",
+            header: "Access",
+            render: (r) =>
+              r.active ? <Badge tone="success">On</Badge> : <Badge tone="neutral">Off</Badge>,
+          },
+          {
             key: "pinRequired",
             header: "PIN",
             id: "pin",
@@ -503,6 +754,7 @@ export function AuthPage(): JSX.Element {
           roleOptions={roleOptions}
           requirePassword
           showPassword
+          showAccessControls
           emailHint="Creates the account immediately with this password."
           submitLabel="Create user"
           error={formError}
@@ -517,14 +769,21 @@ export function AuthPage(): JSX.Element {
               pinRequired: values.pinRequired,
               ...(values.staffPin ? { staffPin: values.staffPin } : {}),
             };
-            void createOrgUser(input).then((user) => {
-              if (branch?.code && values.staffPin) {
-                setUserPin(branch.code, user.id, values.staffPin);
-              }
-              invalidate();
-              setModal(null);
-              setFormError(null);
-            }).catch((err: Error) => setFormError(err.message));
+            void createOrgUser(input)
+              .then(async (user) => {
+                await updateOrgUser(user.id, {
+                  permissions: values.permissions,
+                  active: values.active,
+                  navAllowlist: values.navAllowlist,
+                });
+                if (branch?.code && values.staffPin) {
+                  setUserPin(branch.code, user.id, values.staffPin);
+                }
+                invalidate();
+                setModal(null);
+                setFormError(null);
+              })
+              .catch((err: Error) => setFormError(err.message));
           }}
         />
       ) : null}
@@ -561,6 +820,7 @@ export function AuthPage(): JSX.Element {
           branchOptions={branchOptions}
           roleOptions={roleOptions}
           requirePassword={false}
+          showAccessControls
           submitLabel="Save changes"
           error={formError}
           loading={updateMutation.isPending}
@@ -570,6 +830,9 @@ export function AuthPage(): JSX.Element {
               role: values.role,
               branchScope: values.branchScope,
               pinRequired: values.pinRequired,
+              permissions: values.permissions,
+              active: values.active,
+              navAllowlist: values.navAllowlist,
             };
             if (values.password.trim()) input.password = values.password;
             if (values.staffPin) input.staffPin = values.staffPin;

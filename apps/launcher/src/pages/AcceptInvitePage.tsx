@@ -40,7 +40,7 @@ export function AcceptInvitePage(): JSX.Element {
     setLoading(true);
     try {
       await acceptInvite(token, password);
-      navigate("/login", { replace: true, state: { message: "Account created. Sign in with your new password." } });
+      navigate("/role", { replace: true, state: { message: "Account created. Sign in with your new password." } });
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Could not activate account");
     } finally {
@@ -105,7 +105,7 @@ export function AcceptInvitePage(): JSX.Element {
         )}
 
         <p className="mt-6 text-center text-xs text-slate-500">
-          <Link to="/login" className="text-amber-400/90 hover:text-amber-300">
+          <Link to="/role" className="text-amber-400/90 hover:text-amber-300">
             Back to sign in
           </Link>
         </p>

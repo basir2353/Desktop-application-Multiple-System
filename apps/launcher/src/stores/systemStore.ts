@@ -28,10 +28,18 @@ export const useSystemStore = create<SystemState>()(
       name: "platform-system-v1",
       partialize: (s) => ({ systemId: s.systemId }),
       merge: (persisted, current) => {
-        const merged = { ...current, ...(persisted as Partial<SystemState>) };
+        const p = (persisted ?? {}) as Partial<SystemState>;
         // A locked edition always wins over any previously persisted selection.
-        if (lockedSystemId) merged.systemId = lockedSystemId;
-        return merged;
+        if (lockedSystemId) {
+          return { ...current, ...p, systemId: lockedSystemId };
+        }
+        // Prefer an in-memory selection set before rehydration finishes; otherwise
+        // async hydrate can overwrite setSystem() and bounce the user back to "/".
+        return {
+          ...current,
+          ...p,
+          systemId: current.systemId ?? p.systemId ?? null,
+        };
       },
     },
   ),

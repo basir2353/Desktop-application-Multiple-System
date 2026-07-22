@@ -90,7 +90,7 @@ export function DashboardPage(): JSX.Element {
             variant="ghost"
             onClick={() => {
               clear();
-              navigate("/login", { replace: true });
+              navigate("/role", { replace: true });
             }}
           >
             Sign out

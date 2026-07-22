@@ -4,6 +4,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePopsStore } from "../../../stores/popsStore";
+import { useSessionStore } from "../../../stores/sessionStore";
+import { sessionCanManageFloor, sessionCanManageUsers } from "../../lib/roleAccess";
 import { fetchCompletedOrders, completeBill, deleteBill } from "../../api/billing";
 import { fetchKitchenTickets } from "../../api/kitchen";
 import { loadBusinessDaySettings } from "../../lib/businessDay";
@@ -88,9 +90,9 @@ function OrdersSummaryCard({
 export function OrdersPage(): JSX.Element {
   const navigate = useNavigate();
   const branch = usePopsStore((s) => s.branch);
-  const displayRole = usePopsStore((s) => s.displayRole);
-  const canManageTables = displayRole === "admin" || displayRole === "manager";
-  const canBulkDelete = displayRole === "admin";
+  const claims = useSessionStore((s) => s.claims);
+  const canManageTables = sessionCanManageFloor(claims);
+  const canBulkDelete = sessionCanManageUsers(claims);
   const businessDay = useMemo(
     () => loadBusinessDaySettings(branch?.code),
     [branch?.code],

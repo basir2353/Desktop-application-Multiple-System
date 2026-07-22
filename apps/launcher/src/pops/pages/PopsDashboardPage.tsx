@@ -24,6 +24,7 @@ import {
   timeToMinutes,
 } from "../lib/orderSales";
 import { PageHeader } from "../ui/PageHeader";
+import { erpEntryPathForRole, sessionCanManageUsers } from "../lib/roleAccess";
 
 function formatPkr(amount: number): string {
   return `Rs ${amount.toLocaleString("en-PK")}`;
@@ -315,6 +316,15 @@ export function PopsDashboardPage(): JSX.Element {
   const claims = useSessionStore((s) => s.claims);
   const accessToken = useSessionStore((s) => s.accessToken);
   const branch = usePopsStore((s) => s.branch);
+  const displayRole = usePopsStore((s) => s.displayRole);
+  const canViewDashboard = sessionCanManageUsers(claims);
+
+  useEffect(() => {
+    if (!canViewDashboard) {
+      navigate(erpEntryPathForRole("restaurant", displayRole), { replace: true });
+    }
+  }, [canViewDashboard, displayRole, navigate]);
+
   const [businessDay, setBusinessDay] = useState<BusinessDaySettings>(() =>
     loadBusinessDaySettings(branch?.code),
   );
@@ -412,7 +422,7 @@ export function PopsDashboardPage(): JSX.Element {
     const expired =
       isSessionExpiredError(dashboardQuery.error) || isSessionExpiredError(ordersQuery.error);
     if (expired) {
-      navigate("/login", { replace: true });
+      navigate("/role", { replace: true });
     }
   }, [dashboardQuery.error, ordersQuery.error, navigate]);
 
@@ -453,6 +463,10 @@ export function PopsDashboardPage(): JSX.Element {
 
   const showInsights = !ordersQuery.isLoading && !ordersQuery.isError;
   const showPulse = Boolean(branch?.code);
+
+  if (!canViewDashboard) {
+    return <p className="text-sm text-slate-400">Redirecting…</p>;
+  }
 
   return (
     <div className="space-y-8">

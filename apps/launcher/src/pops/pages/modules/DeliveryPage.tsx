@@ -4,6 +4,8 @@ import { DELIVERY_STATUS_LABELS, DELIVERY_STATUS_VALUES } from "@platform/contra
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
+import { useSessionStore } from "../../../stores/sessionStore";
+import { sessionCanManageUsers } from "../../lib/roleAccess";
 import { fetchCompletedOrders } from "../../api/billing";
 import {
   createRider,
@@ -160,6 +162,8 @@ function deliveryStatusTone(status: DeliveryStatus | null): "warning" | "info" |
 export function DeliveryPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
+  const claims = useSessionStore((s) => s.claims);
+  const canManageRiderLogins = sessionCanManageUsers(claims);
   const [tab, setTab] = useState<DeliveryTab>("orders");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"all" | "active">("all");
@@ -480,6 +484,7 @@ export function DeliveryPage(): JSX.Element {
 
       {tab === "riders" ? (
         <div className="space-y-4">
+          {canManageRiderLogins ? (
           <div className={`max-w-3xl ${cardClass} p-4`}>
             <div className={panelTitleClass}>Add rider</div>
             <p className={`mt-1 text-xs ${mutedClass}`}>
@@ -580,6 +585,11 @@ export function DeliveryPage(): JSX.Element {
               {createRiderMutation.isPending ? "…" : "Add rider"}
             </Button>
           </div>
+          ) : (
+            <p className={`text-xs ${mutedClass}`}>
+              Only admins can create rider logins. Ask an admin in Users & access, or open Delivery as admin.
+            </p>
+          )}
 
           <ModuleFilterBar>
             <label className={`flex items-center gap-2 text-xs ${mutedClass}`}>
@@ -652,7 +662,7 @@ export function DeliveryPage(): JSX.Element {
                   id: "actions",
                   render: (r) => (
                     <span className="flex items-center gap-2">
-                      {!r.email ? (
+                      {!r.email && canManageRiderLogins ? (
                         <Button
                           type="button"
                           variant="ghost"

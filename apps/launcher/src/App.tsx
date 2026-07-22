@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SystemSelectPage } from "./pages/SystemSelectPage";
 import { AcceptInvitePage } from "./pages/AcceptInvitePage";
+import { RoleSelectPage } from "./pages/RoleSelectPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SystemGate } from "./components/SystemGate";
 import { useSessionStore } from "./stores/sessionStore";
@@ -37,7 +38,7 @@ function Protected({ children }: { children: JSX.Element }): JSX.Element {
   if (!sessionReady) {
     return <div className={screenCenterClass}>Restoring session…</div>;
   }
-  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!accessToken) return <Navigate to="/role" replace />;
   return children;
 }
 
@@ -67,6 +68,7 @@ export function App(): JSX.Element {
           <ConnectivityBanner />
           <RootErrorBoundary>
           <Routes>
+          <Route path="/role" element={<RoleSelectPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
           <Route path="/" element={<SystemSelectPage />} />
