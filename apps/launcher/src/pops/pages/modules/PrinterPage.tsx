@@ -74,7 +74,6 @@ const SECTION_COLOR_CHOICES = [
   "#f59e0b", "#8b5cf6", "#38bdf8", "#ef4444", "#f472b6",
   "#22d3ee", "#a3e635", "#fb923c", "#34d399", "#94a3b8",
 ];
-const PAPER_SIZES: PrinterPaperSize[] = ["58mm", "80mm", "A4"];
 const PRINTER_TYPES = Object.keys(PRINTER_TYPE_LABELS) as PrinterType[];
 
 const TABS = [
@@ -1417,12 +1416,11 @@ function PrinterProfilesTab({
                             })
                           }
                           className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          title="Thermal paper width"
                         >
-                          {PAPER_SIZES.map((size) => (
-                            <option key={size} value={size}>
-                              {size}
-                            </option>
-                          ))}
+                          <option value="58mm">58mm roll</option>
+                          <option value="80mm">80mm roll</option>
+                          <option value="A4">A4</option>
                         </select>
                       </div>
                     </td>

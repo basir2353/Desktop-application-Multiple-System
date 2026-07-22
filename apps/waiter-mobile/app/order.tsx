@@ -54,7 +54,7 @@ import {
   type MobileOrderMode,
 } from "../src/lib/orderMode";
 import { resolveStaffRole, isCashierRole } from "../src/lib/roles";
-import { printBillReceipt, printCartOrder, printKitchenOrder } from "../src/lib/printBill";
+import { printBillReceipt, printCartBill, printCartOrder, printKitchenOrder } from "../src/lib/printBill";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 const SERVICE_PCT = 10;
@@ -451,9 +451,7 @@ export default function OrderScreen() {
         riderId: orderMode === "delivery" ? deliveryRiderId || undefined : undefined,
         deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : undefined,
       });
-      if (editingOrder?.kind === "ticket") {
-        await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
-      }
+      // Do not mark kitchen ticket done from waiter app — close only via cashier/POS payment.
       return bill;
     },
     onSuccess: async (bill) => {
@@ -801,6 +799,39 @@ export default function OrderScreen() {
                     total,
                   });
                   setNotice(ok ? "Print order sent." : "Could not print order.");
+                })();
+              }}
+            />
+          ) : null}
+
+          {cart.length > 0 ? (
+            <Button
+              label="Print bill"
+              variant="ghost"
+              disabled={Boolean(validateOrderTarget())}
+              onPress={() => {
+                void (async () => {
+                  const ok = await printCartBill({
+                    branchName: branch.name,
+                    branchCode: branch.code,
+                    orderRef,
+                    tableLabel: stationLabelForMode(orderMode, activeTableId),
+                    waiterName: waiterEmail,
+                    lines: cartLines().map((l) => ({
+                      label: l.label,
+                      qty: l.qty,
+                      unitPrice: l.unitPrice ?? 0,
+                    })),
+                    subtotal,
+                    service,
+                    servicePct: SERVICE_PCT,
+                    tax,
+                    taxPct: 15,
+                    total,
+                    deliveryChargePkr:
+                      orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
+                  });
+                  setNotice(ok ? "Bill sent to printer." : "Could not print bill.");
                 })();
               }}
             />

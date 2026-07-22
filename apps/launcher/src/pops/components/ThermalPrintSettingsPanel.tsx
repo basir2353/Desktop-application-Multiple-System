@@ -14,8 +14,6 @@ import { buildThermalPlainText, printTestPageAsync, type PrintTicketInput } from
 import { listSystemPrintersDetailed } from "../lib/systemPrinters";
 import { DEFAULT_BILL_PRINT_SETTINGS } from "../lib/billPrintSettings";
 
-const PAPER_CHOICES: PrinterPaperSize[] = ["58mm", "80mm", "A4"];
-
 type Props = {
   branchCode: string;
   notify?: (message: string) => void;
@@ -32,7 +30,7 @@ function sampleReceiptInput(
     orderRef: "ORD-6",
     billRef: "BILL-SAMPLE",
     modeLabel: "Takeaway",
-    tableLabel: "Takeaway counter",
+    tableLabel: "Takeaway",
     waiterName: "POS Counter",
     paperSize,
     lines: [
@@ -167,20 +165,51 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
             </span>
           </label>
 
-          <label className="block space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <span className="text-xs font-medium text-slate-300">Default paper size</span>
-            <select
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-              value={draft.defaultPaperSize}
-              onChange={(e) => patch({ defaultPaperSize: e.target.value as PrinterPaperSize })}
-            >
-              {PAPER_CHOICES.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <span className="text-xs font-medium text-slate-300">Thermal paper size</span>
+            <div className="grid grid-cols-2 gap-2">
+              {(["58mm", "80mm"] as const).map((size) => {
+                const active = draft.defaultPaperSize === size;
+                return (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() =>
+                      patch({
+                        defaultPaperSize: size,
+                        // Both rolls use table columns on Pay receipt (QTY | ITEM | PRICE | AMT).
+                        receiptLayout: "columns",
+                        showUnitPrice: true,
+                      })
+                    }
+                    className={`rounded-lg border px-3 py-3 text-sm font-semibold transition ${
+                      active
+                        ? "border-amber-500/60 bg-amber-500/15 text-amber-200"
+                        : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500"
+                    }`}
+                  >
+                    {size}
+                    <span className="mt-0.5 block text-[10px] font-normal text-slate-500">
+                      {size === "58mm" ? "Narrow roll" : "Wide roll"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={draft.defaultPaperSize === "A4"}
+                onChange={(e) =>
+                  patch({
+                    defaultPaperSize: e.target.checked ? "A4" : "80mm",
+                    receiptLayout: e.target.checked ? "columns" : "columns",
+                  })
+                }
+              />
+              Use A4 (office printer) instead of thermal roll
+            </label>
+          </div>
 
           <label className="block space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
             <span className="text-xs font-medium text-slate-300">Side margin (mm)</span>
@@ -198,13 +227,28 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
             <input
               type="checkbox"
               className="mt-0.5"
+              checked={draft.showCurrencyPrefix}
+              onChange={(e) => patch({ showCurrencyPrefix: e.target.checked })}
+            />
+            <span>
+              <span className="block text-xs font-medium text-slate-300">Show “Rs” on amounts</span>
+              <span className="mt-1 block text-[11px] text-slate-500">
+                Off by default — prints 3200 not Rs3200.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <input
+              type="checkbox"
+              className="mt-0.5"
               checked={draft.compactMoney}
               onChange={(e) => patch({ compactMoney: e.target.checked })}
             />
             <span>
-              <span className="block text-xs font-medium text-slate-300">Compact money (Rs1430)</span>
+              <span className="block text-xs font-medium text-slate-300">Compact numbers (no commas)</span>
               <span className="mt-1 block text-[11px] text-slate-500">
-                Keeps full totals on narrow paper.
+                1430 instead of 1,430 — better on narrow paper.
               </span>
             </span>
           </label>

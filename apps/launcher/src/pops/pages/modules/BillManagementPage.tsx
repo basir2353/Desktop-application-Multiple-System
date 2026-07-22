@@ -26,6 +26,7 @@ import {
   saveBillPrintSettings,
   type BillPrintSettings,
 } from "../../lib/billPrintSettings";
+import { resolveBillPrintSettingsForReceipt } from "../../lib/billReceiptTemplateAssignments";
 import { resolveReceiptPrinter } from "../../lib/printerRouting";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { BillCustomizationPanel } from "../../components/BillCustomizationPanel";
@@ -334,7 +335,7 @@ export function BillManagementPage(): JSX.Element {
     return printBillAsync(branchName, branchCode, bill, {
       printerName: profile?.name ?? assigned?.printerName,
       systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
-      billPrintSettings: settings,
+      billPrintSettings: resolveBillPrintSettingsForReceipt(branchCode, profile?.id) ?? settings,
       paperSize: profile?.paperSize,
       copies: profile?.copies,
     });
@@ -444,6 +445,7 @@ export function BillManagementPage(): JSX.Element {
           branchCode={branch.code}
           settings={billPrintSettings}
           onChange={setBillPrintSettings}
+          onNotice={setNotice}
           onSave={() => {
             persistBillSettings(billPrintSettings);
             setNotice("Bill customization saved for this branch.");

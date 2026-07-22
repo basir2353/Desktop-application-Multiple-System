@@ -21,6 +21,20 @@ export class KitchenController {
     return this.kitchen.listTickets(user.organizationId, branchCode?.trim() ?? "");
   }
 
+  @Get("cancellations")
+  @RequirePermissions("pops.read")
+  listCancellations(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.kitchen.listCancellations(user.organizationId, branchCode?.trim() ?? "", {
+      from: from?.trim() || undefined,
+      to: to?.trim() || undefined,
+    });
+  }
+
   @Post("tickets")
   @RequirePermissions("pops.read")
   createTicket(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {

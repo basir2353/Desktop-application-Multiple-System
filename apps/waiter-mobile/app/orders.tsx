@@ -24,11 +24,14 @@ import {
   orderRefFromTicket,
 } from "../src/lib/orderDisplay";
 import { kitchenTicketTotal } from "../src/lib/orderHistory";
-import { printKitchenOrder } from "../src/lib/printBill";
+import { printCartBill, printKitchenOrder } from "../src/lib/printBill";
 import { inferOrderModeFromStation } from "../src/lib/orderMode";
 import { resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
+
+const SERVICE_PCT = 10;
+const TAX_PCT = 15;
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -93,6 +96,43 @@ export default function OrdersScreen() {
     );
   }
 
+  async function handlePrintBill(ticket: KitchenTicket): Promise<void> {
+    if (!branch) return;
+    setPrintingId(`bill-${ticket.id}`);
+    setNotice(null);
+    const lines = (ticket.lines ?? []).map((line) => ({
+      label: line.label,
+      qty: line.qty,
+      unitPrice: line.unitPrice ?? 0,
+    }));
+    const subtotal =
+      lines.length > 0
+        ? lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0)
+        : kitchenTicketTotal(ticket, menuItems) ?? 0;
+    const service = Math.round(subtotal * (SERVICE_PCT / 100));
+    const tax = Math.round((subtotal + service) * (TAX_PCT / 100));
+    const total = subtotal + service + tax;
+    const ok = await printCartBill({
+      branchName: branch.name,
+      branchCode: branch.code,
+      orderRef: orderRefFromTicket(ticket),
+      tableLabel: ticket.stationLabel,
+      waiterName: ticket.createdByName,
+      lines:
+        lines.length > 0
+          ? lines
+          : [{ label: ticket.itemsSummary || "Order", qty: 1, unitPrice: subtotal }],
+      subtotal,
+      service,
+      servicePct: SERVICE_PCT,
+      tax,
+      taxPct: TAX_PCT,
+      total,
+    });
+    setPrintingId(null);
+    setNotice(ok ? `Bill sent for ${orderRefFromTicket(ticket)}.` : `Could not print bill.`);
+  }
+
   return (
     <Screen style={{ paddingBottom: 0 }}>
       <ScrollView
@@ -145,6 +185,7 @@ export default function OrdersScreen() {
             const canTransfer = canTransferKitchenTicket(ticket, claims?.sub);
             const isDineIn = inferOrderModeFromStation(ticket.stationLabel) === "dine-in";
             const isPrinting = printingId === ticket.id;
+            const isPrintingBill = printingId === `bill-${ticket.id}`;
             return (
               <Card key={ticket.id}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -178,7 +219,7 @@ export default function OrdersScreen() {
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
                   <Pressable
                     onPress={() => void handlePrint(ticket)}
-                    disabled={isPrinting}
+                    disabled={isPrinting || isPrintingBill}
                     style={{
                       borderRadius: 8,
                       borderWidth: 1,
@@ -191,6 +232,23 @@ export default function OrdersScreen() {
                   >
                     <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>
                       {isPrinting ? "Printing…" : "Print order"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void handlePrintBill(ticket)}
+                    disabled={isPrinting || isPrintingBill}
+                    style={{
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: "rgba(16, 185, 129, 0.45)",
+                      backgroundColor: "rgba(16, 185, 129, 0.12)",
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      opacity: isPrintingBill ? 0.6 : 1,
+                    }}
+                  >
+                    <Text style={{ color: colors.success, fontWeight: "700", fontSize: 13 }}>
+                      {isPrintingBill ? "Printing…" : "Print bill"}
                     </Text>
                   </Pressable>
                   {canEdit ? (

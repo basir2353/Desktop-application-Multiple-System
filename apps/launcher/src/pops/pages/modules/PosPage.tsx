@@ -17,7 +17,7 @@ import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../.
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
 import { fetchClosingStatus } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
-import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
+import { createKitchenTicket, fetchKitchenTickets, isKitchenTicketMissingError, updateKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
 import { fetchBranchFloor } from "../../api/tables";
 import { PosDishVariantModal } from "../../components/PosDishVariantModal";
@@ -122,6 +122,7 @@ import {
   resolveKotPrinter,
   resolveReceiptPrinter,
 } from "../../lib/printerRouting";
+import { resolveBillPrintSettingsForReceipt } from "../../lib/billReceiptTemplateAssignments";
 import { logPrintEvent } from "../../lib/printHistory";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
@@ -1358,16 +1359,29 @@ export function PosPage(): JSX.Element {
   }
 
   const createOrderMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const err = validateKitchenOrder();
       if (err) throw new Error(err);
       if (editingOrder?.kind === "ticket") {
-        return updateKitchenTicket(editingOrder.ticketId, {
-          stationLabel,
-          lines: kitchenLines(),
-          notes: orderNotes ?? null,
-          ...deliveryExtras(),
-        });
+        try {
+          return await updateKitchenTicket(editingOrder.ticketId, {
+            stationLabel,
+            lines: kitchenLines(),
+            notes: orderNotes ?? null,
+            ...deliveryExtras(),
+          });
+        } catch (updateErr) {
+          // Stale / closed / offline ticket — create a fresh KOT so Print/Update still works.
+          if (!isKitchenTicketMissingError(updateErr)) throw updateErr;
+          return createKitchenTicket({
+            branchCode: branch!.code,
+            orderRef: orderRef || nextOrderRef(branch!.code),
+            stationLabel,
+            lines: kitchenLines(),
+            notes: orderNotes,
+            ...deliveryExtras(),
+          });
+        }
       }
       return createKitchenTicket({
         branchCode: branch!.code,
@@ -1380,23 +1394,9 @@ export function PosPage(): JSX.Element {
     },
     onSuccess: async () => {
       const wasTicketEdit = editingOrder?.kind === "ticket";
-      const payloads = buildRoutedKotPrintPayloads();
-      let kotOk = true;
-      const printErrors: string[] = [];
-      for (const payload of payloads) {
-        const result = await printKotDetailed(payload);
-        const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
-        logPrintEvent(branch?.code, {
-          kind: "kot",
-          printerName: target,
-          orderRef: payload.orderRef,
-          ok: result.ok,
-        });
-        if (!result.ok) {
-          kotOk = false;
-          printErrors.push(`${target}: ${result.error ?? "print failed"}`);
-        }
-      }
+      const printed = await printKitchenKotsOnPay(orderRef);
+      const kotOk = printed.errors.length === 0;
+      const printErrors = printed.errors;
       if (!wasTicketEdit) {
         await persistStaffFoodRecord();
       }
@@ -1492,25 +1492,8 @@ export function PosPage(): JSX.Element {
         });
         kotSent = true;
 
-        for (const payload of buildRoutedKotPrintPayloads(sharedOrderRef)) {
-          // Pay already opens the receipt dialog — do not also open KOT print dialogs
-          // (copies / multi-section routing was stacking 2–3 identical windows).
-          // Named OS kitchen printers still get a silent KOT job.
-          if (!payload.systemPrinterName?.trim()) {
-            continue;
-          }
-          const result = await printKotDetailed(payload);
-          const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
-          logPrintEvent(branch?.code, {
-            kind: "kot",
-            printerName: target,
-            orderRef: payload.orderRef,
-            ok: result.ok,
-          });
-          if (!result.ok) {
-            kotPrintErrors.push(`${target}: ${result.error ?? "print failed"}`);
-          }
-        }
+        const printed = await printKitchenKotsOnPay(sharedOrderRef);
+        kotPrintErrors.push(...printed.errors);
       }
 
       if (editingOrder?.kind === "held-bill") {
@@ -1564,7 +1547,11 @@ export function PosPage(): JSX.Element {
         ...deliveryExtras(),
       });
       if (editingOrder?.kind === "ticket") {
-        await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
+        try {
+          await updateKitchenTicket(editingOrder.ticketId, { status: "done" });
+        } catch (doneErr) {
+          if (!isKitchenTicketMissingError(doneErr)) throw doneErr;
+        }
       }
       return {
         bill,
@@ -1605,6 +1592,7 @@ export function PosPage(): JSX.Element {
       // One receipt dialog only — never re-open from profile copies when using the OS dialog.
       const result = await printReceiptDetailed({
         ...payload,
+        billPrintSettings: resolveBillPrintSettingsForReceipt(branch?.code, receiptProfile?.id),
         copies: payload.systemPrinterName?.trim() ? Math.max(1, payload.copies ?? 1) : 1,
       });
       const target = payload.systemPrinterName ?? payload.printerName ?? "Receipt";
@@ -1663,18 +1651,7 @@ export function PosPage(): JSX.Element {
           notes: orderNotes,
           ...deliveryExtras(),
         });
-        for (const payload of buildRoutedKotPrintPayloads(groupRef)) {
-          if (!payload.systemPrinterName?.trim()) {
-            continue;
-          }
-          const result = await printKotDetailed(payload);
-          logPrintEvent(branch?.code, {
-            kind: "kot",
-            printerName: payload.systemPrinterName ?? payload.printerName ?? "Kitchen",
-            orderRef: payload.orderRef,
-            ok: result.ok,
-          });
-        }
+        await printKitchenKotsOnPay(groupRef);
       }
 
       const bills = [];
@@ -1740,7 +1717,10 @@ export function PosPage(): JSX.Element {
           },
           receiptProfile,
         );
-        const result = await printReceiptDetailed(payload);
+        const result = await printReceiptDetailed({
+          ...payload,
+          billPrintSettings: resolveBillPrintSettingsForReceipt(branch?.code, receiptProfile?.id),
+        });
         logPrintEvent(branch?.code, {
           kind: "receipt",
           printerName: payload.systemPrinterName ?? payload.printerName ?? "Receipt",
@@ -1774,6 +1754,67 @@ export function PosPage(): JSX.Element {
       // Edited kitchen tickets print as UPDATE so kitchen can spot revisions.
       isOrderUpdate: editingOrder?.kind === "ticket",
     };
+  }
+
+  /**
+   * Kitchen KOT jobs for Order / Pay:
+   * - Real OS printers: one silent job per section
+   * - Anything without a real OS printer: ONE dialog KOT with those lines
+   *   (section splits into multiple dialogs were dropping items + needing 2–3 Cancels)
+   */
+  async function printKitchenKotsOnPay(
+    orderRefOverride?: string,
+  ): Promise<{ errors: string[] }> {
+    const errors: string[] = [];
+    const sessionUserId = useSessionStore.getState().claims?.sub;
+    const routed = buildRoutedKotPrintPayloads(orderRefOverride);
+    const named = routed.filter((p) => Boolean(p.systemPrinterName?.trim()));
+    const dialogParts = routed.filter((p) => !p.systemPrinterName?.trim());
+
+    for (const payload of named) {
+      const result = await printKotDetailed({
+        ...payload,
+        copies: Math.max(1, payload.copies ?? 1),
+      });
+      const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
+      logPrintEvent(branch?.code, {
+        kind: "kot",
+        printerName: target,
+        orderRef: payload.orderRef,
+        ok: result.ok,
+      });
+      if (!result.ok) {
+        errors.push(`${target}: ${result.error ?? "print failed"}`);
+      }
+    }
+
+    if (dialogParts.length > 0 || named.length === 0) {
+      const profile = resolveKotPrinter(branch?.code, null, sessionUserId, "kitchen");
+      // Full cart when nothing has an OS printer — never lose lines across sections.
+      const lines =
+        named.length === 0
+          ? buildKotPrintPayload(orderRefOverride).lines
+          : dialogParts.flatMap((p) => p.lines);
+      const dialogPayload = {
+        ...withPrinterProfile(buildKotPrintPayload(orderRefOverride), profile),
+        lines,
+        copies: 1 as const,
+        systemPrinterName: undefined,
+      };
+      const result = await printKotDetailed(dialogPayload);
+      const target = dialogPayload.printerName ?? "Kitchen";
+      logPrintEvent(branch?.code, {
+        kind: "kot",
+        printerName: target,
+        orderRef: dialogPayload.orderRef,
+        ok: result.ok,
+      });
+      if (!result.ok) {
+        errors.push(`${target}: ${result.error ?? "print failed"}`);
+      }
+    }
+
+    return { errors };
   }
 
   /**

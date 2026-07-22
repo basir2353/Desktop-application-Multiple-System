@@ -8,7 +8,7 @@ export const MOBILE_ORDER_MODES: { id: MobileOrderMode; label: string }[] = [
 
 export function stationLabelForMode(mode: MobileOrderMode, tableNumber?: string | null): string {
   if (mode === "dine-in") return tableNumber ? `Table ${tableNumber}` : "Dine-in";
-  if (mode === "takeaway") return "Takeaway counter";
+  if (mode === "takeaway") return "Takeaway";
   return "Delivery";
 }
 

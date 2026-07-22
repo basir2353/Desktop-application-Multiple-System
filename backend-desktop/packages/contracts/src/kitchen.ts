@@ -77,9 +77,44 @@ export const updateKitchenTicketSchema = z.object({
     .min(1)
     .optional(),
   notes: z.string().max(500).nullable().optional(),
+  /**
+   * When true with status "done", log remaining unpaid kitchen lines as cancellations
+   * (Latest orders → Close). Kitchen "mark done" must omit this.
+   */
+  recordAsCancellation: z.boolean().optional(),
 });
 
 export type KitchenTicket = z.infer<typeof kitchenTicketSchema>;
 export type KitchenTicketStatus = z.infer<typeof kitchenTicketStatusSchema>;
 export type CreateKitchenTicket = z.infer<typeof createKitchenTicketSchema>;
 export type UpdateKitchenTicket = z.infer<typeof updateKitchenTicketSchema>;
+
+/** Line canceled after it was already sent to kitchen (qty reduced or removed on KOT edit). */
+export const kitchenLineCancellationSchema = z.object({
+  id: z.string().uuid(),
+  ticketId: z.string().uuid(),
+  ticketRef: z.string(),
+  orderRef: z.string().nullable(),
+  stationLabel: z.string(),
+  menuItemId: z.string().uuid().nullable(),
+  label: z.string(),
+  qtyCanceled: z.number().int().positive(),
+  unitPricePkr: z.number().int().nonnegative(),
+  amountPkr: z.number().int().nonnegative(),
+  ticketStatusAtCancel: kitchenTicketStatusSchema,
+  canceledByName: z.string().nullable(),
+  source: z.string(),
+  canceledAt: z.string(),
+});
+
+export const kitchenLineCancellationListSchema = z.object({
+  branchCode: z.string(),
+  from: z.string().nullable(),
+  to: z.string().nullable(),
+  totalQtyCanceled: z.number().int().nonnegative(),
+  totalAmountPkr: z.number().int().nonnegative(),
+  cancellations: z.array(kitchenLineCancellationSchema),
+});
+
+export type KitchenLineCancellation = z.infer<typeof kitchenLineCancellationSchema>;
+export type KitchenLineCancellationList = z.infer<typeof kitchenLineCancellationListSchema>;

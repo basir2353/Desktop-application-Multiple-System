@@ -148,6 +148,9 @@ const ConsolidatedReportsPage = lazy(() =>
 );
 const SyncPage = lazy(() => import("../pops/pages/modules/SyncPage").then((m) => ({ default: m.SyncPage })));
 const ReportsPage = lazy(() => import("../pops/pages/modules/ReportsPage").then((m) => ({ default: m.ReportsPage })));
+const KitchenCancellationsPage = lazy(() =>
+  import("../pops/pages/modules/KitchenCancellationsPage").then((m) => ({ default: m.KitchenCancellationsPage })),
+);
 const ManufacturingPage = lazy(() =>
   import("../pops/pages/modules/ManufacturingPage").then((m) => ({ default: m.ManufacturingPage })),
 );
@@ -215,6 +218,7 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="multi-branch/reports" element={<ConsolidatedReportsPage />} />
       <Route path="sync" element={<SyncPage />} />
       <Route path="reports" element={<ReportsPage />} />
+      <Route path="reports/kitchen-cancellations" element={<KitchenCancellationsPage />} />
       <Route path="manufacturing" element={<ManufacturingPage />} />
       <Route path="content" element={<ContentPage />} />
     </>

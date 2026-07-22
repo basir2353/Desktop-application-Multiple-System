@@ -3,10 +3,14 @@ import { billChannelLabel } from "./orderSales";
 import { parseItemsSummary, type PosRecentOrder } from "./recentOrders";
 import {
   billReceiptFontSizes,
+  getBlockStyle,
+  isBillSystemBlock,
   DEFAULT_BILL_PRINT_SETTINGS,
   loadBillPrintSettings,
+  resolveBlockFontSize,
   type BillPrintSettings,
 } from "./billPrintSettings";
+import { resolveBillPrintSettingsForReceipt } from "./billReceiptTemplateAssignments";
 import {
   DEFAULT_KOT_PRINT_SETTINGS,
   loadKotPrintSettings,
@@ -92,9 +96,57 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function formatMoney(pkr: number, compact = false): string {
-  if (compact) return `Rs${Math.round(pkr).toLocaleString("en-PK").replace(/,/g, "")}`;
-  return `Rs ${pkr.toLocaleString("en-PK")}`;
+function renderCustomLineHtml(
+  settings: BillPrintSettings,
+  lineId: string,
+  align: "center" | "left",
+  fallbackPx: number,
+): string {
+  const line = settings.customLines.find((row) => row.id === lineId);
+  if (!line || !line.enabled || !line.text.trim()) return "";
+  const size = resolveBlockFontSize(settings, lineId, fallbackPx);
+  const weight = line.bold ? 600 : 400;
+  const cls = line.bold ? "custom-line custom-line-bold" : "custom-line";
+  return `<div class="${cls}" style="text-align:${align};font-size:${size}px;font-weight:${weight}">${escapeHtml(line.text.trim())}</div>`;
+}
+
+function blockStyleInline(
+  settings: BillPrintSettings,
+  blockId: string,
+  fallbackPx: number,
+): string {
+  const size = resolveBlockFontSize(settings, blockId, fallbackPx);
+  const bold = isBillSystemBlock(blockId)
+    ? getBlockStyle(settings, blockId).bold
+    : Boolean(settings.customLines.find((l) => l.id === blockId)?.bold);
+  return `font-size:${size}px;font-weight:${bold ? 600 : 400}`;
+}
+
+function pushCustomLinePlain(
+  out: string[],
+  settings: BillPrintSettings,
+  lineId: string,
+  width: number,
+  align: "center" | "left",
+): void {
+  const line = settings.customLines.find((row) => row.id === lineId);
+  if (!line || !line.enabled || !line.text.trim()) return;
+  const text = line.bold ? line.text.trim().toUpperCase() : line.text.trim();
+  for (const w of wrapWords(text, width)) {
+    out.push(align === "left" ? padRight(w, width).slice(0, width) : centerLine(w, width));
+  }
+}
+
+/** Set per print job from thermal settings — keeps call sites simple. */
+let activeShowCurrencyPrefix = false;
+
+function formatMoney(pkr: number, compact = false, showRs = false): string {
+  const digits = compact
+    ? `${Math.round(pkr).toLocaleString("en-PK").replace(/,/g, "")}`
+    : pkr.toLocaleString("en-PK");
+  // Thermal receipts: numbers only by default (no "Rs" prefix).
+  if (!(showRs || activeShowCurrencyPrefix)) return digits;
+  return compact ? `Rs${digits}` : `Rs ${digits}`;
 }
 
 function resolvePaperSize(
@@ -105,20 +157,76 @@ function resolvePaperSize(
 }
 
 function padRight(text: string, width: number): string {
-  const t = text.slice(0, width);
+  const t = text.slice(0, Math.max(0, width));
   return t + " ".repeat(Math.max(0, width - t.length));
 }
 
 function padLeft(text: string, width: number): string {
-  const t = text.slice(0, width);
+  const t = text.slice(0, Math.max(0, width));
   return " ".repeat(Math.max(0, width - t.length)) + t;
 }
 
 function centerLine(text: string, width: number): string {
-  const t = text.slice(0, width);
+  const t = text.slice(0, Math.max(0, width));
   const pad = Math.max(0, width - t.length);
   const left = Math.floor(pad / 2);
   return " ".repeat(left) + t + " ".repeat(pad - left);
+}
+
+/**
+ * Column widths that always sum to `width` (gaps included).
+ * Amount column is reserved first so totals never clip on the right.
+ */
+function receiptPlainColumns(
+  width: number,
+  wantPrice: boolean,
+  amountSamples: string[],
+): { qtyW: number; itemW: number; priceW: number; amtW: number; showPrice: boolean } {
+  const qtyW = 3;
+  const longestAmt = amountSamples.reduce((m, s) => Math.max(m, s.length), 4);
+  // Keep enough room for amount; cap so item still fits.
+  const amtW = Math.min(Math.max(longestAmt, 5), Math.max(5, Math.floor(width * 0.34)));
+  const minItem = 8;
+  const gapQtyItem = 1;
+  const gapBeforeAmt = 1;
+
+  let showPrice = wantPrice;
+  let priceW = 0;
+  let gapItemPrice = 0;
+
+  const baseUsed = qtyW + gapQtyItem + gapBeforeAmt + amtW;
+  let itemW = width - baseUsed;
+  if (showPrice && itemW >= minItem + 1 + 5) {
+    priceW = Math.min(7, Math.max(5, Math.floor((itemW - minItem) * 0.45)));
+    gapItemPrice = 1;
+    itemW = width - (qtyW + gapQtyItem + priceW + gapItemPrice + gapBeforeAmt + amtW);
+  } else {
+    showPrice = false;
+    priceW = 0;
+    itemW = width - baseUsed;
+  }
+
+  if (itemW < minItem) {
+    showPrice = false;
+    priceW = 0;
+    itemW = width - (qtyW + gapQtyItem + gapBeforeAmt + amtW);
+  }
+
+  // Final exact fit (guard float/rounding).
+  const used =
+    qtyW + gapQtyItem + Math.max(itemW, 0) + (showPrice ? gapItemPrice + priceW : 0) + gapBeforeAmt + amtW;
+  if (used !== width) {
+    itemW = Math.max(4, itemW + (width - used));
+  }
+
+  return { qtyW, itemW: Math.max(4, itemW), priceW, amtW, showPrice };
+}
+
+/** Label left, value right — value is never truncated. */
+function plainLabelValueLine(label: string, value: string, width: number): string {
+  const val = value.slice(0, Math.max(1, width - 4));
+  const leftW = Math.max(1, width - val.length - 1);
+  return `${padRight(label, leftW)} ${val}`;
 }
 
 function wrapWords(text: string, width: number): string[] {
@@ -158,13 +266,15 @@ export function buildThermalPlainText(
   const paper = resolvePaperSize(input, thermal);
   const width = thermalCharsPerLine(paper, thermal);
   const compact = thermal.compactMoney;
+  activeShowCurrencyPrefix = thermal.showCurrencyPrefix === true;
   const isReceipt = input.kind === "receipt";
   const billSettings =
     input.billPrintSettings ??
-    (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
+    (input.branchCode
+      ? resolveBillPrintSettingsForReceipt(input.branchCode)
+      : DEFAULT_BILL_PRINT_SETTINGS);
   const fields = isReceipt ? billSettings.fields : null;
-  const useClearLayout =
-    !isReceipt || thermal.receiptLayout === "clear" || paper === "58mm";
+  const useClearLayout = isReceipt && thermal.receiptLayout === "clear";
   const showPrice =
     isReceipt &&
     !useClearLayout &&
@@ -229,6 +339,22 @@ export function buildThermalPlainText(
     pushBlank();
     for (const w of wrapWords(`Note: ${input.notes}`, width)) out.push(w);
   }
+  const plainAlign =
+    isReceipt && billSettings.headerAlign === "left" ? ("left" as const) : ("center" as const);
+  const pushCustomsBetween = (afterId: string, beforeId: string) => {
+    if (!isReceipt) return;
+    const order = billSettings.blockOrder;
+    const a = order.indexOf(afterId);
+    const b = order.indexOf(beforeId);
+    if (a < 0 || b < 0 || b <= a) return;
+    for (const id of order.slice(a + 1, b)) {
+      if (!isBillSystemBlock(id)) pushCustomLinePlain(out, billSettings, id, width, plainAlign);
+    }
+  };
+  pushCustomsBetween("documentTitle", "meta");
+  pushCustomsBetween("meta", "notes");
+  pushCustomsBetween("notes", "timestamp");
+  pushCustomsBetween("timestamp", "items");
   out.push(dash);
 
   if (isReceipt && showAmt && useClearLayout) {
@@ -246,15 +372,15 @@ export function buildThermalPlainText(
     }
     if (out[out.length - 1] === "") out.pop();
   } else if (isReceipt && showAmt) {
-    const qtyW = 3;
-    const amtW = Math.min(10, Math.max(7, Math.floor(width * 0.28)));
-    const priceW = showPrice ? Math.min(8, Math.max(6, Math.floor(width * 0.2))) : 0;
-    const itemW = Math.max(8, width - qtyW - 1 - (showPrice ? priceW + 1 : 0) - amtW);
+    // Prefer no unit-price on very narrow rolls so AMOUNT never clips.
+    const wantPrice = showPrice && width >= 36;
+    const amountSamples = input.lines.map((row) => formatMoney(row.unitPrice * row.qty, compact));
+    const cols = receiptPlainColumns(width, wantPrice, amountSamples);
     if (fields?.itemHeaders !== false) {
       out.push(
-        `${padRight("Qty", qtyW)} ${padRight("Item", itemW)}${
-          showPrice ? ` ${padLeft("Price", priceW)}` : ""
-        } ${padLeft("Amt", amtW)}`.slice(0, width),
+        `${padRight("Qty", cols.qtyW)} ${padRight("Item", cols.itemW)}${
+          cols.showPrice ? ` ${padLeft("Price", cols.priceW)}` : ""
+        } ${padLeft("Amt", cols.amtW)}`,
       );
       out.push(dash);
     }
@@ -262,50 +388,53 @@ export function buildThermalPlainText(
       const amt = formatMoney(row.unitPrice * row.qty, compact);
       const price = formatMoney(row.unitPrice, compact);
       const qty = String(row.qty);
-      const nameLines = wrapWords(row.label, itemW);
+      const nameLines = wrapWords(row.label, cols.itemW);
       nameLines.forEach((name, idx) => {
         if (idx === 0) {
           out.push(
-            `${padRight(qty, qtyW)} ${padRight(name, itemW)}${
-              showPrice ? ` ${padLeft(price, priceW)}` : ""
-            } ${padLeft(amt, amtW)}`.slice(0, width),
+            `${padRight(qty, cols.qtyW)} ${padRight(name, cols.itemW)}${
+              cols.showPrice ? ` ${padLeft(price, cols.priceW)}` : ""
+            } ${padLeft(amt, cols.amtW)}`,
           );
         } else {
           out.push(
-            `${padRight("", qtyW)} ${padRight(name, itemW)}${
-              showPrice ? ` ${padLeft("", priceW)}` : ""
-            } ${padLeft("", amtW)}`.slice(0, width),
+            `${padRight("", cols.qtyW)} ${padRight(name, cols.itemW)}${
+              cols.showPrice ? ` ${padLeft("", cols.priceW)}` : ""
+            } ${padLeft("", cols.amtW)}`,
           );
         }
       });
     }
   } else {
     const qtyW = 4;
-    const itemW = width - qtyW - 1;
-    out.push(`${padRight("Qty", qtyW)} ${padRight("Item", itemW)}`.slice(0, width));
+    const itemW = Math.max(6, width - qtyW - 1);
+    out.push(`${padRight("Qty", qtyW)} ${padRight("Item", itemW)}`);
     out.push(dash);
     for (const row of input.lines) {
       const nameLines = wrapWords(row.label, itemW);
       nameLines.forEach((name, idx) => {
         out.push(
-          `${padRight(idx === 0 ? String(row.qty) : "", qtyW)} ${padRight(name, itemW)}`.slice(
-            0,
-            width,
-          ),
+          `${padRight(idx === 0 ? String(row.qty) : "", qtyW)} ${padRight(name, itemW)}`,
         );
       });
     }
   }
 
+  if (isReceipt) {
+    const order = billSettings.blockOrder;
+    const a = order.indexOf("items");
+    const b = order.indexOf("totals");
+    if (a >= 0 && b > a) {
+      for (const id of order.slice(a + 1, b)) {
+        if (!isBillSystemBlock(id)) pushCustomLinePlain(out, billSettings, id, width, plainAlign);
+      }
+    }
+  }
+
   if (isReceipt && fields) {
     out.push(dash);
-    const pushTotal = (label: string, value: string, strong = false) => {
-      const left = Math.max(6, width - value.length - 1);
-      const row = `${padRight(label, left)} ${value}`.slice(0, width);
-      out.push(row);
-      if (strong) {
-        // Second pass visual weight for TOTAL on plain text
-      }
+    const pushTotal = (label: string, value: string) => {
+      out.push(plainLabelValueLine(label, value, width));
     };
     if (fields.subtotal) pushTotal("Subtotal", formatMoney(input.subtotal, compact));
     if (fields.discount && input.discount > 0) {
@@ -325,7 +454,7 @@ export function buildThermalPlainText(
     }
     if (fields.total) {
       out.push(equals);
-      pushTotal("TOTAL", formatMoney(input.total, compact), true);
+      pushTotal("TOTAL", formatMoney(input.total, compact));
       out.push(equals);
     }
   } else if (!isReceipt) {
@@ -348,6 +477,18 @@ export function buildThermalPlainText(
     for (const w of wrapWords(billSettings.footerText || "THANK YOU --- VISIT AGAIN", width)) {
       out.push(centerLine(w.toUpperCase(), width));
     }
+    if (fields?.footerSecondary && billSettings.footerSecondaryText.trim()) {
+      for (const w of wrapWords(billSettings.footerSecondaryText.trim(), width)) {
+        out.push(centerLine(w, width));
+      }
+    }
+  }
+  if (isReceipt) {
+    const order = billSettings.blockOrder;
+    const a = Math.max(order.indexOf("footer"), order.indexOf("footerSecondary"));
+    for (const id of order.slice(a + 1)) {
+      if (!isBillSystemBlock(id)) pushCustomLinePlain(out, billSettings, id, width, plainAlign);
+    }
   } else if (!isReceipt) {
     pushBlank();
     out.push(centerLine(input.isOrderUpdate ? "KITCHEN COPY - UPDATE" : "KITCHEN COPY", width));
@@ -364,7 +505,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     (input.branchCode ? loadKotPrintSettings(input.branchCode) : DEFAULT_KOT_PRINT_SETTINGS);
   const billSettings =
     input.billPrintSettings ??
-    (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
+    (input.branchCode
+      ? resolveBillPrintSettingsForReceipt(input.branchCode)
+      : DEFAULT_BILL_PRINT_SETTINGS);
   const thermal =
     input.branchCode
       ? loadThermalPrintSettings(input.branchCode)
@@ -374,6 +517,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const marginMm = thermal.marginMm;
   const contentWidthMm = thermalContentWidthMm(paperSize, marginMm);
   const moneyCompact = thermal.compactMoney;
+  activeShowCurrencyPrefix = thermal.showCurrencyPrefix === true;
   const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
   const fields = isReceipt ? billSettings.fields : null;
   const isOrderUpdate = !isReceipt && Boolean(input.isOrderUpdate);
@@ -390,11 +534,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalItems = input.lines.length;
   const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
 
-  const useClearLayout =
-    isReceipt && (thermal.receiptLayout === "clear" || narrowPaper);
+  // Pay / invoice receipt: columns (QTY | ITEM | PRICE | AMOUNT) unless user chose Clear.
+  // On 58mm, drop unit PRICE so AMOUNT fits the printable width.
+  const useClearLayout = isReceipt && thermal.receiptLayout === "clear";
   const showAmtColEarly = isReceipt && Boolean(fields?.itemAmount);
   const showPriceCol =
-    showAmtColEarly && thermal.showUnitPrice && !useClearLayout;
+    showAmtColEarly &&
+    !useClearLayout &&
+    !narrowPaper &&
+    (thermal.showUnitPrice || thermal.receiptLayout === "columns");
 
   const clearItemBlocks =
     useClearLayout && showAmtColEarly
@@ -533,6 +681,79 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     isReceipt && fields!.footerSecondary && billSettings.footerSecondaryText.trim().length > 0;
   const showHeaderBlock =
     isReceipt && fields && (fields.branchName || fields.documentTitle || showHeaderSubtitle);
+
+  const itemsHtml = showClearItems
+    ? `<div class="clear-items">${clearItemBlocks}</div>`
+    : showItemTable
+      ? `<table class="items${showAmtCol ? " has-amounts" : ""}">
+    ${showItemHeaders
+      ? `<thead>
+      <tr>
+        ${showQtyCol ? '<th class="qty">QTY</th>' : ""}
+        <th class="item">ITEM</th>
+        ${showPriceCol ? '<th class="price">PRICE</th>' : ""}
+        ${showAmtCol ? `<th class="amt">${narrowPaper ? "AMT" : "AMOUNT"}</th>` : ""}
+      </tr>
+    </thead>`
+      : ""}
+    <tbody>${lineRows}</tbody>
+  </table>`
+      : "";
+
+  const receiptBodyHtml = isReceipt && fields
+    ? billSettings.blockOrder
+        .map((blockId) => {
+          if (!isBillSystemBlock(blockId)) {
+            return renderCustomLineHtml(billSettings, blockId, headerAlign, receiptFonts.notes);
+          }
+          switch (blockId) {
+            case "branchName":
+              return fields.branchName
+                ? `<div class="branch-name" style="text-align:${headerAlign};${blockStyleInline(billSettings, "branchName", receiptFonts.branchName)}">${escapeHtml(displayBusinessName)}</div>`
+                : "";
+            case "headerSubtitle":
+              return showHeaderSubtitle
+                ? `<div class="header-subtitle" style="text-align:${headerAlign};${blockStyleInline(billSettings, "headerSubtitle", receiptFonts.headerSubtitle)}">${escapeHtml(billSettings.headerSubtitle.trim())}</div>`
+                : "";
+            case "documentTitle":
+              return fields.documentTitle
+                ? `<div class="doc-type" style="text-align:${headerAlign};${blockStyleInline(billSettings, "documentTitle", receiptFonts.docType)}">${escapeHtml(title)}</div>`
+                : "";
+            case "meta":
+              return metaRows ? `<div class="meta">${metaRows}</div>` : "";
+            case "notes":
+              return fields.notes && input.notes
+                ? `<p class="notes" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(input.notes)}</p>`
+                : "";
+            case "timestamp":
+              return fields.timestamp || fields.branchCode
+                ? `<div class="timestamp" style="text-align:${headerAlign};${blockStyleInline(billSettings, "timestamp", receiptFonts.timestamp)}">${[
+                    fields.branchCode ? escapeHtml(input.branchCode) : "",
+                    fields.timestamp ? escapeHtml(printedAt) : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}</div>`
+                : "";
+            case "items":
+              return itemsHtml;
+            case "totals":
+              return totalsBlock;
+            case "footer":
+              return showFooterPrimary
+                ? `<div class="footer" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footer", receiptFonts.footer)}">${escapeHtml(billSettings.footerText)}</div>`
+                : "";
+            case "footerSecondary":
+              return showFooterSecondary
+                ? `<div class="footer-secondary" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footerSecondary", receiptFonts.footerSecondary)}">${escapeHtml(billSettings.footerSecondaryText.trim())}</div>`
+                : "";
+            default:
+              return "";
+          }
+        })
+        .filter(Boolean)
+        .join("\n  ")
+    : "";
+
   const receiptCss = isReceipt
     ? `
     body { padding: ${compact ? "8px 10px 12px" : "16px 14px 20px"}; line-height: ${compact ? "1.35" : "1.5"}; }
@@ -558,6 +779,18 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .footer { font-size: ${receiptFonts.footer}px; }
     .header-subtitle { font-size: ${receiptFonts.headerSubtitle}px; }
     .footer-secondary { font-size: ${receiptFonts.footerSecondary}px; }
+    .custom-line {
+      margin: 3px 0;
+      font-size: ${receiptFonts.notes}px;
+      font-weight: 400;
+      color: #374151;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .custom-line-bold {
+      font-weight: 600;
+      color: #111827;
+    }
     .clear-items { margin: 4px 0 8px; }
     .clear-item { margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px dashed #d1d5db; }
     .clear-item:last-child { border-bottom: none; margin-bottom: 2px; }
@@ -604,9 +837,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       color: #111827;
       background: #fff;
       margin: 0 auto;
-      padding: ${narrowPaper ? "8px 4px 12px" : "12px 6px 16px"};
+      padding: ${narrowPaper ? "6px 2px 10px" : "10px 4px 14px"};
       width: ${contentWidthMm}mm;
       max-width: ${contentWidthMm}mm;
+      overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -683,6 +917,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     table {
       width: 100%;
+      max-width: 100%;
       border-collapse: collapse;
       margin: 0 0 10px;
       table-layout: fixed;
@@ -690,17 +925,17 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     thead th {
       font-size: ${isReceipt ? receiptFonts.th : Math.max(11, kotSettings.baseFontSize - 1)}px;
       font-weight: 700;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
       color: #6b7280;
       padding: 0 0 6px;
       border-bottom: 1px solid #d1d5db;
       text-align: left;
     }
-    thead th.qty { width: ${narrowPaper ? "28px" : "36px"}; text-align: left; padding-right: 6px; }
-    thead th.item { text-align: right; }
-    thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; }
-    thead th.amt { width: ${narrowPaper ? "28%" : "22%"}; text-align: right; }
+    thead th.qty { width: ${narrowPaper ? "11%" : "12%"}; text-align: left; padding-left: 0; padding-right: 4px; }
+    thead th.item { text-align: left; width: auto; }
+    thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; padding-left: 2px; }
+    thead th.amt { width: ${narrowPaper ? "30%" : "24%"}; text-align: right; padding-left: 2px; }
     tbody td {
       padding: 5px 0;
       vertical-align: top;
@@ -759,33 +994,38 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${isReceipt ? receiptFonts.itemName : kotItemFont}px;
       font-weight: ${isReceipt ? "500" : "700"};
       color: #111827;
-      text-align: right;
-      padding-left: 12px;
-      padding-right: 0;
+      text-align: ${isReceipt ? "left" : "right"};
+      padding-left: ${isReceipt ? "0" : "12px"};
+      padding-right: ${isReceipt ? "4px" : "0"};
       word-break: break-word;
+      overflow-wrap: anywhere;
       line-height: 1.35;
     }
     td.qty {
-      width: 18%;
-      text-align: left;
+      width: ${narrowPaper ? "11%" : "12%"};
+      text-align: left !important;
       font-size: ${isReceipt ? receiptFonts.qty : kotQtyFont}px;
       font-weight: 700;
       color: #111827;
       font-variant-numeric: tabular-nums;
-      padding-right: 20px;
+      padding-left: 0;
+      padding-right: 4px;
       white-space: nowrap;
       vertical-align: middle;
     }
-    /* Customer receipt with price columns: keep Item left of Price, but still gap after Qty */
+    /* Customer receipt with amounts: keep QTY left, ITEM left, AMT fully visible */
     body.ticket-receipt table.items.has-amounts thead th.item,
     body.ticket-receipt table.items.has-amounts td.item-name {
       text-align: left;
-      padding-left: 8px;
+      padding-left: 2px;
+      padding-right: 4px;
     }
     body.ticket-receipt table.items.has-amounts td.qty,
     body.ticket-receipt table.items.has-amounts thead th.qty {
-      width: ${narrowPaper ? "28px" : "36px"};
-      padding-right: ${narrowPaper ? "6px" : "10px"};
+      width: ${narrowPaper ? "11%" : "12%"};
+      text-align: left !important;
+      padding-left: 0;
+      padding-right: 4px;
     }
     td.price {
       text-align: right;
@@ -794,7 +1034,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-weight: 400;
       font-variant-numeric: tabular-nums;
       color: #6b7280;
-      padding-right: 4px;
+      padding-right: 2px;
       width: ${showPriceCol ? "18%" : "0"};
     }
     td.amt {
@@ -803,7 +1043,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${receiptFonts.amt}px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
-      width: ${narrowPaper ? "28%" : "22%"};
+      width: ${narrowPaper ? "30%" : "24%"};
+      padding-left: 2px;
+      padding-right: 0;
+      overflow: visible;
       color: #111827;
     }
     .totals {
@@ -816,12 +1059,17 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       justify-content: space-between;
       align-items: baseline;
       margin: 3px 0;
-      gap: 12px;
+      gap: 6px;
+      max-width: 100%;
     }
     .row .label {
       font-size: ${isReceipt ? receiptFonts.rowLabel : kotSettings.baseFontSize}px;
       font-weight: 500;
       color: #4b5563;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .row .value {
       font-size: ${isReceipt ? receiptFonts.rowValue : kotSettings.baseFontSize + 1}px;
@@ -829,6 +1077,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-variant-numeric: tabular-nums;
       color: #111827;
       white-space: nowrap;
+      flex: 0 0 auto;
+      text-align: right;
     }
     .row .value.discount { color: #dc2626; }
     .row.grand {
@@ -907,10 +1157,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       margin: 8px 0 4px;
     }
     @media print {
-      body { padding: 0; width: ${contentWidthMm}mm; max-width: ${contentWidthMm}mm; }
+      body {
+        padding: 0 1px;
+        width: ${contentWidthMm}mm;
+        max-width: ${contentWidthMm}mm;
+        overflow-x: hidden;
+      }
       .meta-chip { background: transparent; padding: 0; }
       @page {
-        margin: ${marginMm}mm;
+        margin: ${Math.max(1, marginMm)}mm;
         size: ${paperSize === "58mm" ? "58mm" : paperSize === "A4" ? "A4" : "80mm"} auto;
       }
     }
@@ -918,60 +1173,40 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   </style>
 </head>
 <body class="${isReceipt ? "ticket-receipt" : "ticket-kot"}">
-  ${showHeaderBlock
+  ${
+    isReceipt
+      ? receiptBodyHtml
+      : `${showHeaderBlock
     ? `<header class="header">
     ${fields!.branchName ? `<div class="branch-name">${escapeHtml(displayBusinessName)}</div>` : ""}
     ${showHeaderSubtitle ? `<div class="header-subtitle">${escapeHtml(billSettings.headerSubtitle.trim())}</div>` : ""}
     ${fields!.documentTitle ? `<div class="doc-type">${escapeHtml(title)}</div>` : ""}
   </header>`
-    : !isReceipt
-      ? `<header class="header">
+    : `<header class="header">
     <div class="branch-name">${escapeHtml(input.branchName)}</div>
     <div class="doc-type">${escapeHtml(title)}</div>
-  </header>`
-      : ""}
+  </header>`}
   ${metaRows ? `<div class="meta">${metaRows}</div>` : ""}
   ${kotUpdateBanner}
-  ${isReceipt && fields?.notes && input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : !isReceipt && input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
-  ${isReceipt && fields && (fields.timestamp || fields.branchCode)
-    ? `<div class="timestamp">${[
-        fields.branchCode ? escapeHtml(input.branchCode) : "",
-        fields.timestamp ? escapeHtml(printedAt) : "",
-      ]
-        .filter(Boolean)
-        .join(" · ")}</div>`
-    : !isReceipt
-      ? `<div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>`
-      : ""}
-  ${!isReceipt ? `<div class="kot-mid-space" aria-hidden="true"></div>` : ""}
-  ${showClearItems ? `<div class="clear-items">${clearItemBlocks}</div>` : ""}
+  ${input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
+  <div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>
+  <div class="kot-mid-space" aria-hidden="true"></div>
   ${showItemTable
-    ? `<table class="items${showAmtCol ? " has-amounts" : ""}">
-    ${showItemHeaders
-      ? `<thead>
+    ? `<table class="items">
+    <thead>
       <tr>
-        ${showQtyCol ? '<th class="qty">Qty</th>' : ""}
-        <th class="item">Item</th>
-        ${showPriceCol ? '<th class="price">Price</th>' : ""}
-        ${showAmtCol ? `<th class="amt">${narrowPaper ? "Amt" : "Amount"}</th>` : ""}
+        <th class="qty">QTY</th>
+        <th class="item">ITEM</th>
       </tr>
-    </thead>`
-      : ""}
+    </thead>
     <tbody>${lineRows}</tbody>
   </table>`
     : ""}
   ${kotTotalsBlock}
-  ${totalsBlock}
-  ${showFooterPrimary || showFooterSecondary
-    ? `<div class="footer">
-    ${showFooterPrimary ? escapeHtml(billSettings.footerText) : ""}
-    ${showFooterSecondary ? `<div class="footer-secondary">${escapeHtml(billSettings.footerSecondaryText.trim())}</div>` : ""}
-  </div>`
-    : !isReceipt
-      ? `<div class="footer"><div class="kot-banner${isOrderUpdate ? " kot-banner-update" : ""}">${
-          isOrderUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"
-        }</div></div>`
-      : ""}
+  <div class="footer"><div class="kot-banner${isOrderUpdate ? " kot-banner-update" : ""}">${
+    isOrderUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"
+  }</div></div>`
+  }
 </body>
 </html>`;
 }
@@ -1044,17 +1279,25 @@ export function printHtmlDocumentAndWait(
         }
 
         let settled = false;
+        let dialogOpened = false;
         let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+        let focusTimer: ReturnType<typeof setTimeout> | undefined;
 
-        const finish = (): void => {
-          if (settled) return;
-          settled = true;
-          if (safetyTimer !== undefined) clearTimeout(safetyTimer);
+        const cleanupListeners = (): void => {
+          window.removeEventListener("focus", onWindowFocus);
           try {
             win.onafterprint = null;
           } catch {
             /* ignore */
           }
+        };
+
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          if (safetyTimer !== undefined) clearTimeout(safetyTimer);
+          if (focusTimer !== undefined) clearTimeout(focusTimer);
+          cleanupListeners();
           // Remove only after the dialog has closed — early removal breaks Cancel.
           setTimeout(() => {
             try {
@@ -1062,36 +1305,39 @@ export function printHtmlDocumentAndWait(
             } catch {
               /* ignore */
             }
-          }, 300);
+          }, 400);
           resolve(true);
         };
 
-        win.onafterprint = finish;
+        // Cancel/Print both fire afterprint in Chromium/WebView2.
+        win.onafterprint = () => finish();
+        win.addEventListener("beforeprint", () => {
+          dialogOpened = true;
+        });
 
-        // Some WebViews fire media-query changes instead of / in addition to afterprint.
-        try {
-          const mql = win.matchMedia("print");
-          const onPrintMedia = (event: MediaQueryListEvent): void => {
-            if (!event.matches) finish();
-          };
-          if (typeof mql.addEventListener === "function") {
-            mql.addEventListener("change", onPrintMedia);
-          } else if (typeof mql.addListener === "function") {
-            mql.addListener(onPrintMedia);
-          }
-        } catch {
-          /* ignore */
+        // Fallback: after the dialog has opened, focus returning means it closed.
+        // Do NOT finish on focus before beforeprint — that re-opens / stacks dialogs.
+        function onWindowFocus(): void {
+          if (!dialogOpened || settled) return;
+          if (focusTimer !== undefined) clearTimeout(focusTimer);
+          focusTimer = setTimeout(() => {
+            if (dialogOpened && !settled) finish();
+          }, 600);
         }
+        window.addEventListener("focus", onWindowFocus);
 
         requestAnimationFrame(() => {
           try {
             win.focus();
             win.print();
+            // Some WebViews never fire beforeprint — treat print() return as opened.
+            setTimeout(() => {
+              dialogOpened = true;
+            }, 300);
           } catch {
             finish();
             return;
           }
-          // Safety: never leave the queue blocked forever.
           safetyTimer = setTimeout(finish, 180_000);
         });
       }),
@@ -1399,7 +1645,10 @@ export async function printBillAsync(
     systemPrinterName,
     paperSize: options?.paperSize,
     copies: options?.copies,
-    billPrintSettings: options?.billPrintSettings ?? loadBillPrintSettings(branchCode),
+    billPrintSettings:
+      options?.billPrintSettings ??
+      resolveBillPrintSettingsForReceipt(branchCode) ??
+      loadBillPrintSettings(branchCode),
   });
 }
 

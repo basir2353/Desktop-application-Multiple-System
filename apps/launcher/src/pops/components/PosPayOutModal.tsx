@@ -10,6 +10,7 @@ import { fetchEmployees } from "../api/hr";
 import { fetchBranchInventory } from "../api/inventory";
 import { formatPkr } from "../hooks/useAccounting";
 import { fieldInputClass, modalBackdropRaisedClass } from "../lib/themeClasses";
+import { printCashMovementSlip } from "../lib/printCashMovement";
 import { usePopsStore } from "../../stores/popsStore";
 
 type Props = {
@@ -255,10 +256,28 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
         reason: linked,
       });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       void queryClient.invalidateQueries({ queryKey: ["accounting"] });
-      const who = selectedAccount ? ` → ${PARTY_LABEL[selectedAccount.kind]} ${selectedAccount.name}` : "";
-      onSuccess?.(`Paid out ${Number(amount).toLocaleString()} PKR${who}.`);
+      const amountNum = Number(amount);
+      const who = selectedAccount
+        ? `${PARTY_LABEL[selectedAccount.kind]} · ${selectedAccount.name}`
+        : null;
+      try {
+        await printCashMovementSlip({
+          branchName: branch?.name ?? "POPS",
+          branchCode: branch?.code,
+          sessionRef: sessionQuery.data?.sessionRef,
+          type: "paid_out",
+          amountPkr: amountNum,
+          partyLabel: who,
+          reason: reason.trim(),
+        });
+      } catch {
+        /* print is best-effort — payout already saved */
+      }
+      onSuccess?.(
+        `Paid out ${amountNum.toLocaleString()} PKR${who ? ` → ${who}` : ""}. Slip sent to printer.`,
+      );
       onClose();
     },
     onError: (err: Error) => setError(err.message),

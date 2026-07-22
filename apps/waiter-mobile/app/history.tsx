@@ -27,11 +27,12 @@ import {
 } from "../src/components/ui";
 import { CloseOrderModal } from "../src/components/CloseOrderModal";
 import { formatPkr, formatTimeAgo, formatWhen, isToday } from "../src/lib/orderDisplay";
-import { printBillReceipt, printKitchenOrder } from "../src/lib/printBill";
-import { canCloseOrders } from "../src/lib/roles";
+import { printBillReceipt, printCartBill, printKitchenOrder } from "../src/lib/printBill";
+import { canCloseOrders, isWaiterRole } from "../src/lib/roles";
 import {
   buildUnifiedOrders,
   canEditUnifiedOrder,
+  kitchenTicketTotal,
   matchesOrderSearch,
   orderStatusAccent,
   unifiedOrderOwnerLabel,
@@ -65,7 +66,7 @@ export default function HistoryScreen() {
   const [search, setSearch] = useState("");
   const [closeBill, setCloseBill] = useState<Bill | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const cashierCanClose = canCloseOrders(claims);
+  const cashierCanClose = canCloseOrders(claims) && !isWaiterRole(claims);
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
@@ -110,10 +111,6 @@ export default function HistoryScreen() {
 
   const kitchenCount = filtered.filter((order) => order.source === "kitchen").length;
   const billCount = filtered.filter((order) => order.source === "bill").length;
-  const totalAmount = filtered.reduce(
-    (sum, order) => sum + (unifiedOrderTotal(order, menuItems) ?? 0),
-    0,
-  );
   const loading = ordersQuery.isLoading || kitchenQuery.isLoading;
   const refreshing = ordersQuery.isFetching || kitchenQuery.isFetching;
   const queryError =
@@ -161,7 +158,7 @@ export default function HistoryScreen() {
   async function handlePrint(bill: Bill): Promise<void> {
     if (!branch) return;
     const ok = await printBillReceipt(branch.name, branch.code, bill);
-    setNotice(ok ? `Receipt for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
+    setNotice(ok ? `Bill for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
   }
 
   async function handlePrintKitchen(ticket: KitchenTicket): Promise<void> {
@@ -171,6 +168,44 @@ export default function HistoryScreen() {
       ok
         ? `Print order sent for ${ticket.orderRef ?? ticket.ticketRef}.`
         : `Could not print ${ticket.orderRef ?? ticket.ticketRef}.`,
+    );
+  }
+
+  async function handlePrintKitchenBill(ticket: KitchenTicket): Promise<void> {
+    if (!branch) return;
+    const lines = (ticket.lines ?? []).map((line) => ({
+      label: line.label,
+      qty: line.qty,
+      unitPrice: line.unitPrice ?? 0,
+    }));
+    const subtotal =
+      lines.length > 0
+        ? lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0)
+        : kitchenTicketTotal(ticket, menuItems) ?? 0;
+    const service = Math.round(subtotal * (SERVICE_PCT / 100));
+    const tax = Math.round((subtotal + service) * (TAX_PCT / 100));
+    const total = subtotal + service + tax;
+    const ok = await printCartBill({
+      branchName: branch.name,
+      branchCode: branch.code,
+      orderRef: ticket.orderRef ?? ticket.ticketRef,
+      tableLabel: ticket.stationLabel,
+      waiterName: ticket.createdByName,
+      lines:
+        lines.length > 0
+          ? lines
+          : [{ label: ticket.itemsSummary || "Order", qty: 1, unitPrice: subtotal }],
+      subtotal,
+      service,
+      servicePct: SERVICE_PCT,
+      tax,
+      taxPct: TAX_PCT,
+      total,
+    });
+    setNotice(
+      ok
+        ? `Bill sent for ${ticket.orderRef ?? ticket.ticketRef}.`
+        : `Could not print bill for ${ticket.orderRef ?? ticket.ticketRef}.`,
     );
   }
 
@@ -214,11 +249,6 @@ export default function HistoryScreen() {
 
         <View style={styles.statsRow}>
           <StatCard label="Showing" value={filtered.length} hint={`${kitchenCount} kitchen · ${billCount} bills`} />
-          <StatCard
-            label={filter === "held" ? "Held value" : "Sales"}
-            value={formatPkr(totalAmount)}
-            accent={colors.accent}
-          />
         </View>
 
         <View style={styles.searchWrap}>
@@ -288,6 +318,11 @@ export default function HistoryScreen() {
                     ? () => void handlePrint(order.bill)
                     : () => void handlePrintKitchen(order.ticket)
                 }
+                onPrintBill={
+                  order.source === "kitchen"
+                    ? () => void handlePrintKitchenBill(order.ticket)
+                    : undefined
+                }
               />
             ))}
           </View>
@@ -316,6 +351,7 @@ function OrderHistoryCard({
   onEdit,
   onClose,
   onPrint,
+  onPrintBill,
 }: {
   order: UnifiedOrder;
   menuItems: MenuItem[];
@@ -323,6 +359,7 @@ function OrderHistoryCard({
   onEdit: (order: UnifiedOrder) => void;
   onClose?: () => void;
   onPrint?: () => void;
+  onPrintBill?: () => void;
 }) {
   const total = unifiedOrderTotal(order, menuItems);
   const accent = orderStatusAccent(order);
@@ -373,8 +410,13 @@ function OrderHistoryCard({
         {onPrint ? (
           <Pressable onPress={onPrint} style={styles.printBtn}>
             <Text style={styles.printBtnText}>
-              {order.source === "bill" ? "Print" : "Print order"}
+              {order.source === "bill" ? "Print bill" : "Print order"}
             </Text>
+          </Pressable>
+        ) : null}
+        {onPrintBill ? (
+          <Pressable onPress={onPrintBill} style={styles.printBtn}>
+            <Text style={styles.printBtnText}>Print bill</Text>
           </Pressable>
         ) : null}
         {onClose ? (

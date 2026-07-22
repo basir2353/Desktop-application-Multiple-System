@@ -96,7 +96,14 @@ export const popsNavItems: PopsNavItem[] = [
     ],
   },
   { type: "link", path: "sync", label: "Sync & backup" },
-  { type: "link", path: "reports", label: "Reports" },
+  {
+    type: "group",
+    label: "Reports",
+    children: [
+      { path: "reports", label: "Overview" },
+      { path: "reports/kitchen-cancellations", label: "Kitchen cancellations" },
+    ],
+  },
   {
     type: "group",
     label: "Notifications",

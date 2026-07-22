@@ -208,6 +208,72 @@ export async function printBillReceipt(
   return printHtml(buildReceiptHtml(branchName, branchCode, bill));
 }
 
+/** Print a customer bill from cart / ticket lines (before or without a saved bill). */
+export async function printCartBill(input: {
+  branchName: string;
+  branchCode: string;
+  orderRef: string;
+  tableLabel: string;
+  waiterName?: string | null;
+  lines: Array<{ label: string; qty: number; unitPrice: number }>;
+  subtotal: number;
+  service: number;
+  servicePct: number;
+  tax: number;
+  taxPct: number;
+  total: number;
+  deliveryChargePkr?: number;
+}): Promise<boolean> {
+  const printedAt = new Date().toLocaleString("en-PK", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const lineRows = input.lines
+    .map(
+      (line) => `<tr>
+        <td>${escapeHtml(line.label)}</td>
+        <td style="text-align:center">${line.qty}</td>
+        <td style="text-align:right">${formatPkr(line.unitPrice * line.qty)}</td>
+      </tr>`,
+    )
+    .join("");
+  const delivery = input.deliveryChargePkr ?? 0;
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: system-ui, sans-serif; font-size: 12px; color: #111; margin: 0; padding: 16px; }
+    h1 { font-size: 16px; margin: 0 0 4px; text-align: center; }
+    .meta { text-align: center; color: #555; margin-bottom: 12px; font-size: 11px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th, td { padding: 4px 2px; border-bottom: 1px solid #ddd; }
+    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #666; }
+    .totals { margin-top: 8px; }
+    .totals div { display: flex; justify-content: space-between; padding: 2px 0; }
+    .total { font-weight: 700; font-size: 14px; border-top: 2px solid #111; margin-top: 6px; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(input.branchName)}</h1>
+  <div class="meta">${escapeHtml(input.branchCode)} · ${escapeHtml(input.orderRef)}<br/>${escapeHtml(input.tableLabel)}${input.waiterName ? ` · ${escapeHtml(input.waiterName)}` : ""}<br/>${printedAt}</div>
+  <table>
+    <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>${lineRows || `<tr><td colspan="3">No items</td></tr>`}</tbody>
+  </table>
+  <div class="totals">
+    <div><span>Subtotal</span><span>${formatPkr(input.subtotal)}</span></div>
+    <div><span>Service (${input.servicePct}%)</span><span>${formatPkr(input.service)}</span></div>
+    <div><span>Tax (${input.taxPct}%)</span><span>${formatPkr(input.tax)}</span></div>
+    ${delivery > 0 ? `<div><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
+    <div class="total"><span>Total</span><span>${formatPkr(input.total)}</span></div>
+  </div>
+  <p style="text-align:center;margin-top:16px;font-weight:600">*** BILL ***</p>
+</body>
+</html>`;
+  return printHtml(html);
+}
+
 /** Print kitchen / dine-in / delivery order ticket (KOT). */
 export async function printKitchenOrder(
   branchName: string,

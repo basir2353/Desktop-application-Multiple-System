@@ -14,11 +14,12 @@ import {
   type PosRecentOrderModeFilter,
 } from "../lib/recentOrders";
 import { updateKitchenTicket } from "../api/kitchen";
+import { removeOfflineKot } from "../lib/popsOfflineOrders";
 import { printPosRecentOrderAsync } from "../lib/printTicket";
 import { resolveKotPrinter, resolveReceiptPrinter } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { useSessionStore } from "../../stores/sessionStore";
-import { POS_ORDER_MODES } from "../lib/posOrderMode";
+import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { loadPosSettings } from "../lib/posSettings";
 import {
@@ -120,14 +121,34 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   const closeOrderMutation = useMutation({
     mutationFn: async (order: PosRecentOrder) => {
-      if (order.kind === "pending" && order.pendingTicket) {
-        await updateKitchenTicket(order.pendingTicket.id, { status: "done" });
-        return;
-      }
+      // Always hide from Latest orders immediately (local dismiss).
       if (branch?.code) dismissPosOrder(branch.code, order.id);
+
+      if (order.kind === "pending" && order.pendingTicket) {
+        const ticketId = order.pendingTicket.id;
+        // Offline / local-only tickets never exist on the API.
+        try {
+          removeOfflineKot(ticketId);
+        } catch {
+          /* ignore */
+        }
+        try {
+          await updateKitchenTicket(ticketId, { status: "done", recordAsCancellation: true });
+        } catch {
+          // Still closed in the panel via dismiss — API may be old / offline.
+        }
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["kitchen", branch?.code] });
+      void queryClient.invalidateQueries({ queryKey: ["kitchen", "cancellations"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
+      void queryClient.invalidateQueries({ queryKey: ["tables", branch?.code] });
+      setDismissedRevision((n) => n + 1);
+      setSelectedId(null);
+    },
+    onError: () => {
+      // Dismiss already applied — refresh UI filter.
       setDismissedRevision((n) => n + 1);
       setSelectedId(null);
     },
@@ -157,6 +178,10 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
+    // Hide card right away — mutation also persists dismiss + marks ticket done.
+    if (branch?.code) dismissPosOrder(branch.code, order.id);
+    setDismissedRevision((n) => n + 1);
+    setSelectedId(null);
     closeOrderMutation.mutate(order);
   }
 
@@ -342,7 +367,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                       </div>
 
                       <p className="mt-1 truncate text-sm font-semibold leading-tight text-slate-200">
-                        {order.stationLabel}
+                        {formatPosStationDisplay(order.stationLabel, order.orderMode)}
                       </p>
 
                       <div className="mt-1.5 border-t border-slate-800/80 pt-1">

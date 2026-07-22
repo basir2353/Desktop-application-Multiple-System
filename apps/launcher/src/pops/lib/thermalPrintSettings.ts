@@ -16,8 +16,10 @@ export type ThermalPrintSettings = {
   receiptLayout: ThermalReceiptLayout;
   /** Show unit Price column (columns layout / wide paper only). */
   showUnitPrice: boolean;
-  /** Compact money: Rs1430 instead of Rs 1,430 */
+  /** Compact money: 1430 instead of 1,430 (no thousand separators). */
   compactMoney: boolean;
+  /** When true, prefix amounts with "Rs". Default off for thermal receipts. */
+  showCurrencyPrefix: boolean;
   /** Plain-text wrap width for 58mm named-printer jobs. */
   charsPerLine58: number;
   /** Plain-text wrap width for 80mm named-printer jobs. */
@@ -26,17 +28,19 @@ export type ThermalPrintSettings = {
 
 export const DEFAULT_THERMAL_PRINT_SETTINGS: ThermalPrintSettings = {
   defaultPaperSize: "58mm",
-  marginMm: 1,
-  receiptLayout: "clear",
-  showUnitPrice: false,
+  marginMm: 2,
+  receiptLayout: "columns",
+  showUnitPrice: true,
   compactMoney: true,
-  charsPerLine58: 32,
+  showCurrencyPrefix: false,
+  /** Conservative — many 58mm heads clip past ~30–32 glyphs. */
+  charsPerLine58: 30,
   charsPerLine80: 42,
 };
 
 export const THERMAL_PRINT_SETTINGS_CHANGED_EVENT = "pops-thermal-print-settings-changed";
 
-const STORAGE_KEY = "pops-thermal-print-settings-v1";
+const STORAGE_KEY = "pops-thermal-print-settings-v2";
 
 function clamp(n: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
@@ -61,6 +65,7 @@ export function normalizeThermalPrintSettings(
     receiptLayout: layout,
     showUnitPrice: input?.showUnitPrice ?? base.showUnitPrice,
     compactMoney: input?.compactMoney ?? base.compactMoney,
+    showCurrencyPrefix: input?.showCurrencyPrefix ?? base.showCurrencyPrefix,
     charsPerLine58: clamp(Number(input?.charsPerLine58), 24, 40, base.charsPerLine58),
     charsPerLine80: clamp(Number(input?.charsPerLine80), 32, 56, base.charsPerLine80),
   };
@@ -73,9 +78,22 @@ function storageKey(branchCode: string): string {
 export function loadThermalPrintSettings(branchCode: string | undefined | null): ThermalPrintSettings {
   if (!branchCode || typeof localStorage === "undefined") return DEFAULT_THERMAL_PRINT_SETTINGS;
   try {
-    const raw = localStorage.getItem(storageKey(branchCode));
+    const raw =
+      localStorage.getItem(storageKey(branchCode)) ??
+      // Migrate v1 → v2 (v1 forced Clear on 58mm; Pay receipt should use columns).
+      localStorage.getItem(`pops-thermal-print-settings-v1.${branchCode.trim().toUpperCase()}`);
     if (!raw) return DEFAULT_THERMAL_PRINT_SETTINGS;
-    return normalizeThermalPrintSettings(JSON.parse(raw) as Partial<ThermalPrintSettings>);
+    const parsed = normalizeThermalPrintSettings(JSON.parse(raw) as Partial<ThermalPrintSettings>);
+    // Prefer columns for customer Pay receipts unless user explicitly kept Clear in v2.
+    if (!localStorage.getItem(storageKey(branchCode)) && parsed.receiptLayout === "clear") {
+      return normalizeThermalPrintSettings({
+        ...parsed,
+        receiptLayout: "columns",
+        showUnitPrice: true,
+        showCurrencyPrefix: false,
+      });
+    }
+    return parsed;
   } catch {
     return DEFAULT_THERMAL_PRINT_SETTINGS;
   }
@@ -100,7 +118,9 @@ export function saveThermalPrintSettings(
 
 export function thermalContentWidthMm(paper: PrinterPaperSize, marginMm: number): number {
   const page = paper === "58mm" ? 58 : paper === "A4" ? 190 : 80;
-  return Math.max(40, page - marginMm * 2);
+  // Extra ~2mm safety: many ESC/POS / Windows drivers keep a non-printable edge.
+  const hardwareSafe = paper === "58mm" ? 4 : paper === "80mm" ? 4 : 2;
+  return Math.max(36, page - marginMm * 2 - hardwareSafe);
 }
 
 export function thermalCharsPerLine(

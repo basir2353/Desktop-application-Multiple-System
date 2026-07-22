@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePopsStore } from "../../../../stores/popsStore";
 import { BillCustomizationPanel } from "../../../components/BillCustomizationPanel";
+import { CashSlipCustomizationPanel } from "../../../components/CashSlipCustomizationPanel";
 import {
   loadBillPrintSettings,
   saveBillPrintSettings,
@@ -27,15 +28,19 @@ export function BillManagementCustomizationPanel({ onNotice }: Props): JSX.Eleme
   }
 
   return (
-    <BillCustomizationPanel
-      branchName={branch.name}
-      branchCode={branch.code}
-      settings={settings}
-      onChange={setSettings}
-      onSave={() => {
-        saveBillPrintSettings(branch.code, settings);
-        onNotice?.("Bill print layout saved for this branch.");
-      }}
-    />
+    <div className="space-y-6">
+      <BillCustomizationPanel
+        branchName={branch.name}
+        branchCode={branch.code}
+        settings={settings}
+        onChange={setSettings}
+        onNotice={onNotice}
+        onSave={() => {
+          saveBillPrintSettings(branch.code, settings);
+          onNotice?.("Bill print layout saved for this branch.");
+        }}
+      />
+      <CashSlipCustomizationPanel branchCode={branch.code} onNotice={onNotice} />
+    </div>
   );
 }

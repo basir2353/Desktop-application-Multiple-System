@@ -32,7 +32,7 @@ import {
   waiterDisplayName,
 } from "../src/lib/orderDisplay";
 import { buildUnifiedOrders, kitchenTicketTotal } from "../src/lib/orderHistory";
-import { resolveStaffRole, canCloseOrders } from "../src/lib/roles";
+import { resolveStaffRole, canCloseOrders, isWaiterRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -104,8 +104,6 @@ export default function HomeScreen() {
   const readyCount = activeTickets.filter((t) => t.status === "ready").length;
   const cookingCount = activeTickets.filter((t) => t.status === "cooking").length;
   const todayOrders = unified.filter((order) => isToday(order.createdAt));
-  const todayBills = bills.filter((b) => isToday(b.createdAt) && b.status === "completed");
-  const todaySales = todayBills.reduce((sum, bill) => sum + bill.total, 0);
   const tableCount = (floorQuery.data?.tables ?? []).filter((t) => t.isActive).length;
   const bookedTableCount = (floorQuery.data?.tables ?? []).filter(
     (t) => t.isActive && t.bookingStatus === "booked",
@@ -156,7 +154,7 @@ export default function HomeScreen() {
       icon: "◷",
       route: "/history",
     },
-    ...(cashierMode
+    ...(cashierMode && !isWaiterRole(claims)
       ? [
           {
             id: "close",
@@ -220,8 +218,8 @@ export default function HomeScreen() {
           />
           <StatCard
             label="Today"
-            value={formatPkr(todaySales)}
-            hint={`${todayOrders.length} orders`}
+            value={todayOrders.length}
+            hint="Orders"
           />
         </View>
 

@@ -14,6 +14,7 @@ import {
   useAccountingAccess,
 } from "../../hooks/useAccounting";
 import { noticeErrorClass } from "../../lib/themeClasses";
+import { parseCashMovementReason, printCashMovementSlip } from "../../lib/printCashMovement";
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
@@ -84,11 +85,26 @@ export function CashDrawerPage(): JSX.Element {
         amountPkr: Number(paidAmount),
         reason: paidReason.trim(),
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
+      const amountNum = Number(paidAmount);
+      const reasonText = paidReason.trim();
+      const type = paidType;
       invalidate();
       setPaidAmount("");
       setPaidReason("");
       setError(null);
+      try {
+        await printCashMovementSlip({
+          branchName: branch?.name ?? "POPS",
+          branchCode: branch?.code,
+          sessionRef: openSession?.sessionRef,
+          type,
+          amountPkr: amountNum,
+          reason: reasonText,
+        });
+      } catch {
+        /* best-effort */
+      }
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -217,18 +233,114 @@ export function CashDrawerPage(): JSX.Element {
           </div>
 
           {(movementsQuery.data ?? []).length > 0 ? (
-            <ul className="mt-4 space-y-1 border-t border-emerald-500/20 pt-4 text-xs text-slate-600 dark:text-slate-400">
-              {(movementsQuery.data ?? []).map((m) => (
-                <li key={m.id}>
-                  {m.type === "paid_in" ? "+" : "−"}
-                  {formatPkr(m.amountPkr)} — {m.reason}
-                  <span className="ml-2 text-slate-400">
-                    {new Date(m.createdAt).toLocaleTimeString()}
+            <div className="mt-4 space-y-3 border-t border-emerald-500/20 pt-4">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Pay in / Pay out log
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Kis ko kitna diya (Pay out) · Kis se kitna liya (Pay in)
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3 text-[11px]">
+                  <span className="font-medium text-emerald-700 dark:text-emerald-300">
+                    Received:{" "}
+                    {formatPkr(
+                      (movementsQuery.data ?? [])
+                        .filter((m) => m.type === "paid_in")
+                        .reduce((s, m) => s + m.amountPkr, 0),
+                    )}
                   </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+                  <span className="font-medium text-red-600 dark:text-red-300">
+                    Given:{" "}
+                    {formatPkr(
+                      (movementsQuery.data ?? [])
+                        .filter((m) => m.type === "paid_out")
+                        .reduce((s, m) => s + m.amountPkr, 0),
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-950/60 dark:text-slate-400">
+                    <tr>
+                      <th className="px-2.5 py-2 font-semibold">Type</th>
+                      <th className="px-2.5 py-2 font-semibold">Party (kis ko / kis se)</th>
+                      <th className="px-2.5 py-2 font-semibold text-right">Diya</th>
+                      <th className="px-2.5 py-2 font-semibold text-right">Liya</th>
+                      <th className="px-2.5 py-2 font-semibold">Reason</th>
+                      <th className="px-2.5 py-2 font-semibold">Time</th>
+                      <th className="px-2.5 py-2 font-semibold">Print</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {[...(movementsQuery.data ?? [])]
+                      .slice()
+                      .reverse()
+                      .map((m) => {
+                        const parsed = parseCashMovementReason(m.reason);
+                        const isOut = m.type === "paid_out";
+                        return (
+                          <tr key={m.id} className="text-slate-700 dark:text-slate-300">
+                            <td className="px-2.5 py-2">
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                  isOut
+                                    ? "bg-red-500/15 text-red-600 dark:text-red-300"
+                                    : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                }`}
+                              >
+                                {isOut ? "Pay out" : "Pay in"}
+                              </span>
+                            </td>
+                            <td className="max-w-[160px] truncate px-2.5 py-2 font-medium text-slate-900 dark:text-white">
+                              {parsed.party ?? "—"}
+                            </td>
+                            <td className="px-2.5 py-2 text-right tabular-nums text-red-600 dark:text-red-300">
+                              {isOut ? formatPkr(m.amountPkr) : "—"}
+                            </td>
+                            <td className="px-2.5 py-2 text-right tabular-nums text-emerald-700 dark:text-emerald-300">
+                              {!isOut ? formatPkr(m.amountPkr) : "—"}
+                            </td>
+                            <td className="max-w-[180px] truncate px-2.5 py-2 text-slate-500">
+                              {parsed.note}
+                            </td>
+                            <td className="whitespace-nowrap px-2.5 py-2 text-slate-400">
+                              {new Date(m.createdAt).toLocaleString()}
+                            </td>
+                            <td className="px-2.5 py-2">
+                              <button
+                                type="button"
+                                className="text-[10px] font-medium text-amber-600 hover:text-amber-500 dark:text-amber-300"
+                                onClick={() => {
+                                  void printCashMovementSlip({
+                                    branchName: branch?.name ?? "POPS",
+                                    branchCode: branch?.code,
+                                    sessionRef: openSession.sessionRef,
+                                    type: m.type,
+                                    amountPkr: m.amountPkr,
+                                    partyLabel: parsed.party,
+                                    reason: m.reason,
+                                  });
+                                }}
+                              >
+                                Reprint
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 border-t border-emerald-500/20 pt-4 text-xs text-slate-500">
+              No pay in / pay out recorded for this shift yet.
+            </p>
+          )}
 
           {canOperateDrawer ? (
             <AccountingFormPanel

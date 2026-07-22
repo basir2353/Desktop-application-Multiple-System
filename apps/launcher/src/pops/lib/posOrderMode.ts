@@ -37,7 +37,7 @@ export function posStationLabel(
   staffConsumerType: StaffFoodConsumerType = "staff",
 ): string {
   if (mode === "dine-in") return tableLabel?.trim() || "Dine-in";
-  if (mode === "takeaway") return "Takeaway counter";
+  if (mode === "takeaway") return "Takeaway";
   if (mode === "delivery") return "Delivery";
   if (mode === "online") return "Online order";
   if (mode === "staff-food") {
@@ -119,13 +119,29 @@ export function posPrintTableLabel(
   staffConsumerType: StaffFoodConsumerType = "staff",
 ): string {
   if (mode === "dine-in") return tableLabel?.trim() || "No table";
-  if (mode === "takeaway") return "Takeaway counter";
+  if (mode === "takeaway") return "Takeaway";
   if (mode === "delivery") return "Delivery";
   if (mode === "online") return "Online order";
   if (mode === "staff-food") {
     return posStationLabel(mode, tableLabel, staffPerson, staffConsumerType);
   }
   return "Foodpanda order";
+}
+
+/** Short label for Latest orders cards (hides truncated "Takeaway counter"). */
+export function formatPosStationDisplay(
+  stationLabel: string,
+  orderMode?: string,
+): string {
+  const raw = stationLabel.trim();
+  const lower = raw.toLowerCase();
+  if (orderMode === "Takeaway" || lower === "takeaway" || lower.startsWith("takeaway ")) {
+    return "Takeaway";
+  }
+  if (orderMode === "Delivery" || lower === "delivery" || lower.startsWith("delivery ")) {
+    return "Delivery";
+  }
+  return raw;
 }
 
 /** Infer POS mode from a stored station/table label. */

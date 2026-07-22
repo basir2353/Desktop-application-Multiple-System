@@ -5,11 +5,12 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { and, asc, desc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, ne } from "drizzle-orm";
 import type { CreateBill, CreateKitchenTicket, KitchenTicketStatus, UpdateKitchenTicket } from "@platform/contracts";
 import {
   popsBills,
   popsBranches,
+  popsKitchenLineCancellations,
   popsKitchenTickets,
   popsMenuItems,
   users,
@@ -188,6 +189,12 @@ export class KitchenService {
 
     let linesJson: string | undefined;
     let itemsSummary: string | undefined;
+    let pendingCancellations: Array<{
+      menuItemId: string | null;
+      label: string;
+      qtyCanceled: number;
+      unitPricePkr: number;
+    }> = [];
     if (input.lines !== undefined) {
       if (input.lines.length === 0) {
         throw new BadRequestException("Order must include at least one item");
@@ -199,6 +206,8 @@ export class KitchenService {
         ...(l.menuItemId ? { menuItemId: l.menuItemId } : {}),
       }));
       const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, storedLines);
+      const previousLines = this.linesFromTicket(existing);
+      pendingCancellations = diffCanceledLines(previousLines, enrichedLines);
       linesJson = JSON.stringify(
         enrichedLines.map((l) => ({
           label: l.label,
@@ -226,53 +235,22 @@ export class KitchenService {
     const nextStatus = input.status ?? existing.status;
 
     let billId = existing.billId;
-    if (nextStatus === "done" && !billId) {
-      const branchRows = await this.db
-        .select({ code: popsBranches.code })
-        .from(popsBranches)
-        .where(eq(popsBranches.id, existing.branchId))
+    // When marking done, only *link* an existing completed bill (e.g. already paid on POS).
+    // Do not invent a new completed sale here — that blocked Close when day-close was
+    // paused or payments were missing. Billing stays on Pay / Invoice.
+    if (nextStatus === "done" && !billId && existing.orderRef) {
+      const existingBill = await this.db
+        .select({ id: popsBills.id })
+        .from(popsBills)
+        .where(
+          and(
+            eq(popsBills.branchId, existing.branchId),
+            eq(popsBills.orderRef, existing.orderRef),
+            eq(popsBills.status, "completed"),
+          ),
+        )
         .limit(1);
-      const branchCode = branchRows[0]?.code;
-      if (!branchCode) throw new NotFoundException("Branch not found");
-
-      if (existing.orderRef) {
-        const existingBill = await this.db
-          .select({ id: popsBills.id })
-          .from(popsBills)
-          .where(
-            and(
-              eq(popsBills.branchId, existing.branchId),
-              eq(popsBills.orderRef, existing.orderRef),
-              eq(popsBills.status, "completed"),
-            ),
-          )
-          .limit(1);
-        billId = existingBill[0]?.id ?? null;
-      }
-
-      if (!billId) {
-        let lines = this.linesFromTicket(existing);
-        if (lines.length === 0) {
-          lines = [
-            {
-              label: existing.itemsSummary?.trim() || existing.ticketRef,
-              qty: 1,
-              unitPrice: 0,
-            },
-          ];
-        }
-        lines = await this.enrichLinesFromMenu(existing.branchId, lines);
-        const bill = await this.billing.createBill(organizationId, {
-          branchCode,
-          orderRef: existing.orderRef ?? undefined,
-          tableLabel: existing.stationLabel,
-          waiterName: "Kitchen",
-          lines,
-          riderId: existing.riderId ?? undefined,
-          deliveryChargePkr: existing.deliveryChargePkr,
-        });
-        billId = bill.id;
-      }
+      billId = existingBill[0]?.id ?? null;
     }
 
     let deliveryStatus = input.deliveryStatus;
@@ -286,7 +264,12 @@ export class KitchenService {
 
     const nextStationLabel = input.stationLabel?.trim() ?? existing.stationLabel;
     const nextRiderId = input.riderId !== undefined ? input.riderId : existing.riderId;
-    if (nextStationLabel.toLowerCase().includes("delivery") && !nextRiderId) {
+    // Allow Close / Done without a rider — still require rider when keeping the ticket open.
+    if (
+      nextStatus !== "done" &&
+      nextStationLabel.toLowerCase().includes("delivery") &&
+      !nextRiderId
+    ) {
       throw new BadRequestException("A rider is required for delivery orders.");
     }
 
@@ -314,7 +297,121 @@ export class KitchenService {
       .returning();
 
     if (!row) throw new NotFoundException("Kitchen ticket not found");
+
+    // Latest orders → Close sends recordAsCancellation. Kitchen "mark done" does not.
+    const closingOpenTicket =
+      existing.status !== "done" &&
+      nextStatus === "done" &&
+      input.lines === undefined &&
+      input.recordAsCancellation === true;
+    if (closingOpenTicket && pendingCancellations.length === 0) {
+      const hasCompletedBill = Boolean(billId);
+      if (!hasCompletedBill) {
+        const openLines = this.linesFromTicket(existing);
+        pendingCancellations = openLines
+          .filter((l) => l.qty > 0)
+          .map((l) => ({
+            menuItemId: l.menuItemId ?? null,
+            label: l.label,
+            qtyCanceled: l.qty,
+            unitPricePkr: Math.max(0, Math.round(l.unitPrice ?? 0)),
+          }));
+      }
+    }
+
+    if (pendingCancellations.length > 0) {
+      let canceledByName: string | null = null;
+      if (editor?.userId) {
+        const userRows = await this.db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, editor.userId))
+          .limit(1);
+        const email = userRows[0]?.email;
+        if (email) canceledByName = waiterDisplayName(email);
+      }
+      const source =
+        closingOpenTicket && input.lines === undefined
+          ? "order_close"
+          : editor?.role === "waiter" || editor?.role === "rider"
+            ? "waiter_edit"
+            : "pos_edit";
+      await this.db.insert(popsKitchenLineCancellations).values(
+        pendingCancellations.map((c) => ({
+          organizationId,
+          branchId: existing.branchId,
+          ticketId: existing.id,
+          ticketRef: existing.ticketRef,
+          orderRef: existing.orderRef,
+          stationLabel: nextStationLabel,
+          menuItemId: c.menuItemId,
+          label: c.label,
+          qtyCanceled: c.qtyCanceled,
+          unitPricePkr: c.unitPricePkr,
+          ticketStatusAtCancel: existing.status,
+          canceledByUserId: editor?.userId ?? null,
+          canceledByName,
+          source,
+        })),
+      );
+    }
+
     return this.mapTicketForResponse(row);
+  }
+
+  async listCancellations(
+    organizationId: string,
+    branchCode: string,
+    opts?: { from?: string; to?: string },
+  ) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const conditions = [
+      eq(popsKitchenLineCancellations.organizationId, organizationId),
+      eq(popsKitchenLineCancellations.branchId, branch.id),
+    ];
+    if (opts?.from) {
+      const fromDate = parseDayStart(opts.from);
+      if (fromDate) conditions.push(gte(popsKitchenLineCancellations.canceledAt, fromDate));
+    }
+    if (opts?.to) {
+      const toDate = parseDayEnd(opts.to);
+      if (toDate) conditions.push(lte(popsKitchenLineCancellations.canceledAt, toDate));
+    }
+
+    const rows = await this.db
+      .select()
+      .from(popsKitchenLineCancellations)
+      .where(and(...conditions))
+      .orderBy(desc(popsKitchenLineCancellations.canceledAt));
+
+    const cancellations = rows.map((row) => {
+      const amountPkr = row.qtyCanceled * row.unitPricePkr;
+      return {
+        id: row.id,
+        ticketId: row.ticketId,
+        ticketRef: row.ticketRef,
+        orderRef: row.orderRef,
+        stationLabel: row.stationLabel,
+        menuItemId: row.menuItemId,
+        label: row.label,
+        qtyCanceled: row.qtyCanceled,
+        unitPricePkr: row.unitPricePkr,
+        amountPkr,
+        ticketStatusAtCancel: row.ticketStatusAtCancel as KitchenTicketStatus,
+        canceledByName: row.canceledByName,
+        source: row.source,
+        canceledAt: row.canceledAt.toISOString(),
+      };
+    });
+
+    return {
+      branchCode: branch.code,
+      from: opts?.from?.trim() || null,
+      to: opts?.to?.trim() || null,
+      totalQtyCanceled: cancellations.reduce((sum, c) => sum + c.qtyCanceled, 0),
+      totalAmountPkr: cancellations.reduce((sum, c) => sum + c.amountPkr, 0),
+      cancellations,
+    };
   }
 
   async bumpPriority(organizationId: string, branchCode: string) {
@@ -454,6 +551,72 @@ export class KitchenService {
 
 function normalizeMenuLabel(label: string): string {
   return label.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function lineKey(line: { label: string; menuItemId?: string }): string {
+  return line.menuItemId ? `id:${line.menuItemId}` : `label:${normalizeMenuLabel(line.label)}`;
+}
+
+function aggregateLines(
+  lines: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+): Map<string, { label: string; qty: number; unitPrice: number; menuItemId?: string }> {
+  const map = new Map<string, { label: string; qty: number; unitPrice: number; menuItemId?: string }>();
+  for (const line of lines) {
+    const key = lineKey(line);
+    const prev = map.get(key);
+    if (prev) {
+      prev.qty += line.qty;
+      if (prev.unitPrice <= 0 && line.unitPrice > 0) prev.unitPrice = line.unitPrice;
+    } else {
+      map.set(key, {
+        label: line.label,
+        qty: line.qty,
+        unitPrice: line.unitPrice ?? 0,
+        ...(line.menuItemId ? { menuItemId: line.menuItemId } : {}),
+      });
+    }
+  }
+  return map;
+}
+
+function diffCanceledLines(
+  previous: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+  next: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+): Array<{ menuItemId: string | null; label: string; qtyCanceled: number; unitPricePkr: number }> {
+  const oldMap = aggregateLines(previous);
+  const newMap = aggregateLines(next);
+  const canceled: Array<{
+    menuItemId: string | null;
+    label: string;
+    qtyCanceled: number;
+    unitPricePkr: number;
+  }> = [];
+  for (const [key, oldLine] of oldMap) {
+    const newQty = newMap.get(key)?.qty ?? 0;
+    const qtyCanceled = oldLine.qty - newQty;
+    if (qtyCanceled > 0) {
+      canceled.push({
+        menuItemId: oldLine.menuItemId ?? null,
+        label: oldLine.label,
+        qtyCanceled,
+        unitPricePkr: Math.max(0, Math.round(oldLine.unitPrice ?? 0)),
+      });
+    }
+  }
+  return canceled;
+}
+
+function parseDayStart(value: string): Date | null {
+  const day = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  // Pakistan business day (UTC+5) so "today" matches restaurant calendar.
+  return new Date(`${day}T00:00:00.000+05:00`);
+}
+
+function parseDayEnd(value: string): Date | null {
+  const day = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  return new Date(`${day}T23:59:59.999+05:00`);
 }
 
 function waiterDisplayName(email: string): string {
