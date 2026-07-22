@@ -16,6 +16,7 @@ import { useThemeStore } from "../../../stores/themeStore";
 import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../../api/billing";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
 import { fetchClosingStatus, resumeOrders } from "../../api/closing";
+import { karachiDateKey } from "../../lib/orderSales";
 import { fetchRiders } from "../../api/delivery";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
@@ -539,9 +540,39 @@ export function PosPage(): JSX.Element {
       setPrintNotice({ message: "Orders resumed — you can take new orders again.", tone: "success" });
     },
     onError: (err: Error) => {
+      // Don't spam cashiers with "Cannot POST /v1/closing/resume-orders" from old servers.
+      if (/cannot post|not found|404|not available on this server/i.test(err.message)) {
+        void queryClient.invalidateQueries({ queryKey: ["closing"] });
+        return;
+      }
       setPrintNotice({ message: err.message, tone: "error" });
     },
   });
+
+  // Abandoned day-close left ordersPaused on an old business date (e.g. 2026-07-14).
+  // Auto-resume against the live API so the red banner does not stick forever.
+  const stalePauseClearedRef = useRef(false);
+  useEffect(() => {
+    if (!branch?.code || stalePauseClearedRef.current) return;
+    const status = closingStatusQuery.data;
+    if (!status?.ordersPaused) return;
+    const today = karachiDateKey(new Date());
+    if (status.businessDate >= today) return;
+    stalePauseClearedRef.current = true;
+    void resumeOrders(branch.code)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["closing"] });
+      })
+      .catch(() => {
+        // Missing resume route on older Railway builds — banner already hidden for stale dates.
+        stalePauseClearedRef.current = false;
+      });
+  }, [branch?.code, closingStatusQuery.data, queryClient]);
+
+  const ordersPausedForToday = Boolean(
+    closingStatusQuery.data?.ordersPaused &&
+      closingStatusQuery.data.businessDate >= karachiDateKey(new Date()),
+  );
 
   useEffect(() => {
     if (!branch?.code || cashSessionQuery.isLoading || cashierPromptShown.current) return;
@@ -2035,11 +2066,11 @@ export function PosPage(): JSX.Element {
         </div>
       </div>
 
-      {closingStatusQuery.data?.ordersPaused ? (
+      {ordersPausedForToday ? (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-100">
           <span>
             New orders are paused for day closing (business date{" "}
-            {closingStatusQuery.data.businessDate}). Resume to continue, or switch to another branch.
+            {closingStatusQuery.data?.businessDate}). Resume to continue, or switch to another branch.
           </span>
           <button
             type="button"

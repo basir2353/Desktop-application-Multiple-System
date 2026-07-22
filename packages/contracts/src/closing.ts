@@ -65,6 +65,8 @@ export const closeDayResultSchema = z.object({
 
 export const branchCodeBodySchema = z.object({
   branchCode: z.string().min(1),
+  /** When true, pause-orders acts as resume (compat for older clients / missing resume route). */
+  resume: z.boolean().optional(),
 });
 
 export type ClosingStatus = z.infer<typeof closingStatusSchema>;

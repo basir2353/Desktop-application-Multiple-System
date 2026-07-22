@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@platform/ui";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { closeCashSession } from "../../api/accounting";
 import {
   closeDay,
@@ -13,6 +13,7 @@ import {
   verifyBackup,
 } from "../../api/closing";
 import { formatPkr, useAccountingAccess } from "../../hooks/useAccounting";
+import { karachiDateKey } from "../../lib/orderSales";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { PageHeader } from "../../ui/PageHeader";
 
@@ -41,6 +42,28 @@ export function ClosingPage(): JSX.Element {
     queryFn: () => fetchClosingStatus(branch!.code),
     refetchInterval: 30_000,
   });
+
+  const stalePauseClearedRef = useRef(false);
+  useEffect(() => {
+    if (!branch?.code || !canClose || stalePauseClearedRef.current) return;
+    const status = statusQuery.data;
+    if (!status?.ordersPaused) return;
+    if (status.businessDate >= karachiDateKey(new Date())) return;
+    stalePauseClearedRef.current = true;
+    void resumeOrders(branch.code)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["closing"] });
+        setMessage("Stale day-close pause cleared — orders are open again.");
+      })
+      .catch(() => {
+        stalePauseClearedRef.current = false;
+      });
+  }, [branch?.code, canClose, statusQuery.data, queryClient]);
+
+  const status = statusQuery.data;
+  const ordersPausedForToday = Boolean(
+    status?.ordersPaused && status.businessDate >= karachiDateKey(new Date()),
+  );
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["closing"] });
@@ -116,7 +139,6 @@ export function ClosingPage(): JSX.Element {
     },
   });
 
-  const status = statusQuery.data;
   const openSession = status?.openCashSession;
 
   return (
@@ -134,10 +156,10 @@ export function ClosingPage(): JSX.Element {
         }
       />
 
-      {status?.ordersPaused ? (
+      {ordersPausedForToday ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
           <div>
-            New POS and kitchen orders are paused for day closing. Business date: {status.businessDate}
+            New POS and kitchen orders are paused for day closing. Business date: {status?.businessDate}
           </div>
           {canClose ? (
             <Button

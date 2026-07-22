@@ -150,7 +150,15 @@ export class ClosingService {
     };
   }
 
-  async pauseOrders(organizationId: string, branchCode: string, userEmail: string) {
+  async pauseOrders(
+    organizationId: string,
+    branchCode: string,
+    userEmail: string,
+    options?: { resume?: boolean },
+  ) {
+    if (options?.resume) {
+      return this.resumeOrders(organizationId, branchCode, userEmail);
+    }
     const branch = await this.resolveBranch(organizationId, branchCode);
     const state = await this.ensureClosingState(organizationId, branch.id);
     if (state.ordersPaused) {
@@ -446,21 +454,8 @@ export class ClosingService {
     const state = rows[0];
     if (!state?.ordersPaused) return;
 
-    // Abandoned day-close left orders paused on an old business date — clear it
-    // so POS is not stuck forever when close-day was never finished.
-    const today = karachiDateKey(new Date());
-    if (state.businessDate < today) {
-      await this.db
-        .update(popsBranchClosingState)
-        .set({
-          ordersPaused: false,
-          ordersPausedAt: null,
-          ordersPausedBy: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(popsBranchClosingState.branchId, branchId));
-      return;
-    }
+    const reconciled = await this.reconcileStaleClosingState(state);
+    if (!reconciled.ordersPaused) return;
 
     throw new BadRequestException(
       "New orders are paused for day closing. Complete closing or ask a manager to resume.",
@@ -473,19 +468,74 @@ export class ClosingService {
       .from(popsBranchClosingState)
       .where(eq(popsBranchClosingState.branchId, branchId))
       .limit(1);
-    if (existing[0]) return existing[0];
+    if (!existing[0]) {
+      const businessDate = karachiDateKey(new Date());
+      const [row] = await this.db
+        .insert(popsBranchClosingState)
+        .values({
+          branchId,
+          organizationId,
+          businessDate,
+        })
+        .returning();
+      if (!row) throw new BadRequestException("Failed to initialize closing state");
+      return row;
+    }
 
-    const businessDate = karachiDateKey(new Date());
-    const [row] = await this.db
-      .insert(popsBranchClosingState)
-      .values({
-        branchId,
-        organizationId,
-        businessDate,
+    // Abandoned day-close (pause never finished / day never closed) must not
+    // block POS forever after the calendar moves past that business date.
+    return this.reconcileStaleClosingState(existing[0]);
+  }
+
+  /**
+   * When businessDate is older than today (Karachi), or orders stayed paused too long,
+   * clear order pause and roll the business date forward so POS is not stuck forever.
+   */
+  private async reconcileStaleClosingState(
+    state: typeof popsBranchClosingState.$inferSelect,
+  ): Promise<typeof popsBranchClosingState.$inferSelect> {
+    const today = karachiDateKey(new Date());
+    const dateStale = state.businessDate < today;
+    const pausedMs = state.ordersPausedAt
+      ? Date.now() - new Date(state.ordersPausedAt).getTime()
+      : state.ordersPaused
+        ? Number.POSITIVE_INFINITY
+        : 0;
+    // Abandoned mid-close (resume never clicked / resume API missing on old deploys)
+    const pauseAbandoned = state.ordersPaused && pausedMs > 30 * 60 * 1000;
+
+    if (!dateStale && !pauseAbandoned) return state;
+
+    const [updated] = await this.db
+      .update(popsBranchClosingState)
+      .set({
+        businessDate: dateStale ? today : state.businessDate,
+        ordersPaused: false,
+        ordersPausedAt: null,
+        ordersPausedBy: null,
+        ...(dateStale
+          ? {
+              lastZReportAt: null,
+              lastZReportRef: null,
+              lastZReportJson: null,
+              lastBackupAt: null,
+              lastBackupRef: null,
+            }
+          : {}),
+        updatedAt: new Date(),
       })
+      .where(eq(popsBranchClosingState.branchId, state.branchId))
       .returning();
-    if (!row) throw new BadRequestException("Failed to initialize closing state");
-    return row;
+
+    return (
+      updated ?? {
+        ...state,
+        businessDate: dateStale ? today : state.businessDate,
+        ordersPaused: false,
+        ordersPausedAt: null,
+        ordersPausedBy: null,
+      }
+    );
   }
 
   private async resolveBranch(organizationId: string, branchCode: string) {

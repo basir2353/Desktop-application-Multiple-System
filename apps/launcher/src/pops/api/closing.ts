@@ -29,14 +29,44 @@ export async function pauseOrders(branchCode: string): Promise<ClosingStatus> {
   return closingStatusSchema.parse(await res.json());
 }
 
+/**
+ * Resume orders after day-close pause.
+ * Live Railway builds may be missing /resume-orders (404) — fall back to
+ * pause-orders?resume / unpause-orders.
+ */
 export async function resumeOrders(branchCode: string): Promise<ClosingStatus> {
-  const res = await authFetch("/v1/closing/resume-orders", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branchCode }),
-  });
-  if (!res.ok) await parseError(res, "Resume orders failed");
-  return closingStatusSchema.parse(await res.json());
+  const attempts: Array<{ path: string; body: Record<string, unknown> }> = [
+    { path: "/v1/closing/resume-orders", body: { branchCode } },
+    { path: "/v1/closing/unpause-orders", body: { branchCode } },
+    { path: "/v1/closing/pause-orders", body: { branchCode, resume: true } },
+  ];
+
+  let lastStatus = 0;
+  let lastMessage = "Resume orders failed";
+
+  for (const attempt of attempts) {
+    const res = await authFetch(attempt.path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(attempt.body),
+    });
+    if (res.ok) {
+      return closingStatusSchema.parse(await res.json());
+    }
+    lastStatus = res.status;
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    lastMessage = err?.message ?? `${attempt.path}: ${res.status}`;
+    // Try next fallback on missing route; stop on auth/permission errors.
+    if (res.status !== 404) {
+      throw new Error(lastMessage);
+    }
+  }
+
+  throw new Error(
+    lastStatus === 404
+      ? "Resume is not available on this server yet. Orders will auto-unblock shortly after the API update — or wait for the day-close pause to expire."
+      : lastMessage,
+  );
 }
 
 export async function closeKitchenAtDayEnd(branchCode: string): Promise<ClosingStatus> {

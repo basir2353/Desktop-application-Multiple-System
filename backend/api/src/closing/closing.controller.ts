@@ -21,13 +21,23 @@ export class ClosingController {
   @Post("pause-orders")
   @RequirePermissions("pops.closing.report", "pops.accounting.manage")
   pauseOrders(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    const { branchCode } = branchCodeBodySchema.parse(body);
-    return this.closing.pauseOrders(user.organizationId, branchCode, user.sub);
+    const parsed = branchCodeBodySchema.parse(body);
+    return this.closing.pauseOrders(user.organizationId, parsed.branchCode, user.sub, {
+      resume: parsed.resume === true,
+    });
   }
 
   @Post("resume-orders")
   @RequirePermissions("pops.closing.report", "pops.accounting.manage")
   resumeOrders(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    const { branchCode } = branchCodeBodySchema.parse(body);
+    return this.closing.resumeOrders(user.organizationId, branchCode, user.sub);
+  }
+
+  /** Alias for older clients / proxies that block "resume-orders". */
+  @Post("unpause-orders")
+  @RequirePermissions("pops.closing.report", "pops.accounting.manage")
+  unpauseOrders(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     const { branchCode } = branchCodeBodySchema.parse(body);
     return this.closing.resumeOrders(user.organizationId, branchCode, user.sub);
   }
