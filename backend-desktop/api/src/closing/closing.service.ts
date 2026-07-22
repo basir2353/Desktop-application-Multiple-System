@@ -454,12 +454,20 @@ export class ClosingService {
     const state = rows[0];
     if (!state?.ordersPaused) return;
 
+    // Never permanently brick POS (old Railway builds lacked /resume-orders).
+    // Clear pause on the first order attempt; Closing checklist can pause again if needed.
     const reconciled = await this.reconcileStaleClosingState(state);
     if (!reconciled.ordersPaused) return;
 
-    throw new BadRequestException(
-      "New orders are paused for day closing. Complete closing or ask a manager to resume.",
-    );
+    await this.db
+      .update(popsBranchClosingState)
+      .set({
+        ordersPaused: false,
+        ordersPausedAt: null,
+        ordersPausedBy: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(popsBranchClosingState.branchId, branchId));
   }
 
   private async ensureClosingState(organizationId: string, branchId: string) {
