@@ -59,6 +59,11 @@ export type PrinterRoutingState = {
    * One user can have Kitchen + Bar + Receipt; one printer can be shared by many users.
    */
   userPrinters: Record<string, string[]>;
+  /**
+   * sectionId → user / waiter ids assigned to that section.
+   * Users in a section prefer that section's printers when printing KOTs.
+   */
+  sectionUsers: Record<string, string[]>;
 };
 
 function emptyState(): PrinterRoutingState {
@@ -69,6 +74,7 @@ function emptyState(): PrinterRoutingState {
     byItem: {},
     receiptPrinterId: null,
     userPrinters: {},
+    sectionUsers: {},
   };
 }
 
@@ -120,6 +126,7 @@ function normalizeState(raw: Partial<PrinterRoutingState> | undefined): PrinterR
     byItem: raw.byItem ?? {},
     receiptPrinterId: raw.receiptPrinterId ?? null,
     userPrinters: migrateUserPrinters(printers, raw.userPrinters),
+    sectionUsers: raw.sectionUsers ?? {},
   };
 }
 
@@ -175,26 +182,29 @@ export function addPrinterProfile(
     assignedCounter?: string;
   },
 ): PrinterProfile {
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    throw new Error("Enter a printer name.");
+  }
   const state = loadPrinterRouting(branchCode);
+  const requestedOs = extra?.systemPrinterName?.trim() || undefined;
   const systemPrinterName =
-    extra?.systemPrinterName?.trim() && !isVirtualSystemPrinter(extra.systemPrinterName)
-      ? extra.systemPrinterName.trim()
-      : undefined;
-  if (extra?.systemPrinterName && !systemPrinterName) {
+    requestedOs && !isVirtualSystemPrinter(requestedOs) ? requestedOs : undefined;
+  if (requestedOs && !systemPrinterName) {
     throw new Error(
-      `"${extra.systemPrinterName}" is a virtual printer (Fax/PDF/OneNote). Choose a real OS printer.`,
+      `"${requestedOs}" is a virtual Windows printer (XPS / PDF / Fax / OneNote). Choose a real USB or network printer.`,
     );
   }
   const profile: PrinterProfile = {
-    id: newPrinterId(name),
-    name: name.trim(),
+    id: newPrinterId(trimmedName),
+    name: trimmedName,
     printerType: extra?.printerType ?? "kitchen",
     status: "online",
     notes: extra?.notes,
     systemPrinterName,
     assignedCounter: extra?.assignedCounter,
     copies: 1,
-    paperSize: "80mm",
+    paperSize: "58mm",
     autoCut: true,
   };
   saveState(branchCode, { ...state, printers: [...state.printers, profile] });
@@ -363,9 +373,20 @@ export function resolvePrimaryPrinterForSection(
   if (ids.length === 0) return null;
 
   const byId = (id: string) => state.printers.find((p) => p.id === id);
+  const sectionUserSet = new Set(state.sectionUsers[sectionId] ?? []);
+  const userInSection = Boolean(userId && sectionUserSet.has(userId));
   const userSet = userId ? new Set(state.userPrinters[userId] ?? []) : null;
 
   const ordered: PrinterProfile[] = [];
+  // Users assigned to this section use the section printer list directly (primary first).
+  if (userInSection) {
+    for (const id of ids) {
+      const p = byId(id);
+      if (p) ordered.push(p);
+    }
+    return pickOnlineThenAny(ordered.filter(isDirectPrintableProfile));
+  }
+
   // 1) Section printers also assigned to this user (online first later).
   if (userSet) {
     for (const id of ids) {
@@ -381,7 +402,6 @@ export function resolvePrimaryPrinterForSection(
   }
 
   const candidates = ordered.filter(isDirectPrintableProfile);
-  // Prefer online among user-matched, then online among all, then any.
   if (userSet && candidates.length > 0) {
     const userMatched = candidates.filter((p) => userSet.has(p.id));
     const onlineUser = userMatched.find((p) => p.status === "online");
@@ -468,9 +488,19 @@ export function updatePrinterProfile(
   patch: Partial<Omit<PrinterProfile, "id">>,
 ): void {
   const state = loadPrinterRouting(branchCode);
+  const nextPatch = { ...patch };
+  if (nextPatch.systemPrinterName !== undefined) {
+    const os = nextPatch.systemPrinterName?.trim() || undefined;
+    if (os && isVirtualSystemPrinter(os)) {
+      throw new Error(
+        `"${os}" is a virtual Windows printer (XPS / PDF / Fax). Choose a real printer.`,
+      );
+    }
+    nextPatch.systemPrinterName = os;
+  }
   saveState(branchCode, {
     ...state,
-    printers: state.printers.map((p) => (p.id === printerId ? { ...p, ...patch } : p)),
+    printers: state.printers.map((p) => (p.id === printerId ? { ...p, ...nextPatch } : p)),
   });
 }
 
@@ -539,6 +569,68 @@ export function movePrinterPriority(branchCode: string, sectionId: string, print
   if (index === -1 || target < 0 || target >= current.length) return;
   [current[index], current[target]] = [current[target], current[index]];
   setSectionPrinters(branchCode, sectionId, current);
+}
+
+/** User / waiter ids assigned to a print section. */
+export function getUsersForSection(
+  branchCode: string | undefined,
+  sectionId: string | undefined,
+): string[] {
+  if (!branchCode || !sectionId) return [];
+  return loadPrinterRouting(branchCode).sectionUsers[sectionId] ?? [];
+}
+
+export function setSectionUsers(branchCode: string, sectionId: string, userIds: string[]): void {
+  const state = loadPrinterRouting(branchCode);
+  const unique = [...new Set(userIds.filter(Boolean))];
+  const sectionUsers = { ...state.sectionUsers };
+  if (unique.length === 0) delete sectionUsers[sectionId];
+  else sectionUsers[sectionId] = unique;
+  saveState(branchCode, { ...state, sectionUsers });
+}
+
+/** Remove section printer + user assignments (call when deleting a section). */
+export function clearSectionRouting(branchCode: string, sectionId: string): void {
+  const state = loadPrinterRouting(branchCode);
+  const sectionPrinters = { ...state.sectionPrinters };
+  const sectionUsers = { ...state.sectionUsers };
+  delete sectionPrinters[sectionId];
+  delete sectionUsers[sectionId];
+  saveState(branchCode, { ...state, sectionPrinters, sectionUsers });
+}
+
+/** Assign or remove a user/waiter from a section. */
+export function toggleUserForSection(
+  branchCode: string,
+  sectionId: string,
+  userId: string,
+  assign: boolean,
+): void {
+  const current = getUsersForSection(branchCode, sectionId);
+  const next = assign
+    ? current.includes(userId)
+      ? current
+      : [...current, userId]
+    : current.filter((id) => id !== userId);
+  setSectionUsers(branchCode, sectionId, next);
+
+  // Keep user↔printer map in sync so POS resolve prefers this section's devices.
+  const printerIds = loadPrinterRouting(branchCode).sectionPrinters[sectionId] ?? [];
+  for (const printerId of printerIds) {
+    toggleUserPrinter(branchCode, userId, printerId, assign);
+  }
+}
+
+/** Printer profiles currently linked to a section (primary first). */
+export function getPrintersForSection(
+  branchCode: string | undefined,
+  sectionId: string | undefined,
+): PrinterProfile[] {
+  if (!branchCode || !sectionId) return [];
+  const state = loadPrinterRouting(branchCode);
+  return (state.sectionPrinters[sectionId] ?? [])
+    .map((id) => state.printers.find((p) => p.id === id))
+    .filter((p): p is PrinterProfile => Boolean(p));
 }
 
 // --- Category / item -> sections ---------------------------------------

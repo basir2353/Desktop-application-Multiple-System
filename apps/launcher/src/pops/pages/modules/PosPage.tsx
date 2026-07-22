@@ -1427,7 +1427,7 @@ export function PosPage(): JSX.Element {
       } else {
         setPrintNotice({
           tone: "error",
-          message: `Order saved, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers (or Printer → Assign Users) and link an OS printer.`,
+          message: `Order saved, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers, or Printer → All Printers / Printer by Section, and link a real OS printer.`,
         });
       }
     },

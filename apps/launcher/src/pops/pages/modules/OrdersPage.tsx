@@ -218,6 +218,8 @@ export function OrdersPage(): JSX.Element {
       const ok = await printBillAsync(branch?.name ?? "POPS", branchCode ?? "—", bill, {
         printerName: profile?.name ?? assigned?.printerName,
         systemPrinterName,
+        paperSize: profile?.paperSize,
+        copies: profile?.copies,
       });
       setNotice(
         ok

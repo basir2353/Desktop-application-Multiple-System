@@ -61,7 +61,13 @@ import {
 import { printTestPageAsync } from "../../lib/printTicket";
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { fetchOrgUsers } from "../../api/users";
+import { fetchWaiters } from "../../api/billing";
 import { PageHeader } from "../../ui/PageHeader";
+import {
+  PrinterBySectionPanel,
+  type AssignablePerson,
+} from "../../components/PrinterBySectionPanel";
+import { ThermalPrintSettingsPanel } from "../../components/ThermalPrintSettingsPanel";
 
 const SECTION_ICON_CHOICES = ["🍳", "🍸", "🧑‍🍳", "🔥", "🍰", "🥤", "🧾", "📦", "🛵", "☕", "🥖", "🖨️"];
 const SECTION_COLOR_CHOICES = [
@@ -72,11 +78,11 @@ const PAPER_SIZES: PrinterPaperSize[] = ["58mm", "80mm", "A4"];
 const PRINTER_TYPES = Object.keys(PRINTER_TYPE_LABELS) as PrinterType[];
 
 const TABS = [
-  { id: "sections", label: "Sections" },
+  { id: "printers", label: "All Printers" },
+  { id: "by-section", label: "Printer by Section" },
+  { id: "settings", label: "Print Settings" },
   { id: "categories", label: "Categories" },
   { id: "items", label: "Items" },
-  { id: "profiles", label: "Printer Profiles" },
-  { id: "assign", label: "Assign Users" },
   { id: "preview", label: "Routing Preview" },
   { id: "queue", label: "Print Queue" },
 ] as const;
@@ -420,7 +426,7 @@ function PrinterSectionsTab({
                       className="text-[11px] text-amber-400 hover:text-amber-300"
                       onClick={() => {
                         void (async () => {
-                          const ok = await printTestPageAsync(printer.name);
+                          const ok = await printTestPageAsync(printer.name, { branchCode });
                           logPrintEvent(branchCode, { kind: "test", printerName: printer.name, ok });
                           notify(
                             ok
@@ -717,7 +723,10 @@ function PrinterSectionsTab({
                                   notify("Link an OS printer on this profile before Test Print.");
                                   return;
                                 }
-                                const ok = await printTestPageAsync(target);
+                                const ok = await printTestPageAsync(target, {
+                                  branchCode,
+                                  paperSize: printer.paperSize,
+                                });
                                 logPrintEvent(branchCode, { kind: "test", printerName: target, ok });
                                 notify(
                                   ok
@@ -1143,6 +1152,39 @@ function PrinterProfilesTab({
 }): JSX.Element {
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<PrinterType>("kitchen");
+  const [newOsPrinter, setNewOsPrinter] = useState("");
+
+  const usableOsPrinters = useMemo(
+    () => systemPrinters.filter((p) => !p.isVirtual),
+    [systemPrinters],
+  );
+  const virtualOsPrinters = useMemo(
+    () => systemPrinters.filter((p) => p.isVirtual),
+    [systemPrinters],
+  );
+
+  function handleAddProfile(): void {
+    const name = newName.trim();
+    if (!name) {
+      notify("Enter a printer name first.");
+      return;
+    }
+    try {
+      const profile = addPrinterProfile(branchCode, name, {
+        printerType: newType,
+        systemPrinterName: newOsPrinter || undefined,
+      });
+      setNewName("");
+      setNewOsPrinter("");
+      notify(
+        profile.systemPrinterName
+          ? `Printer “${profile.name}” added and linked to ${profile.systemPrinterName}.`
+          : `Printer “${profile.name}” added. Link a real OS printer before POS can print.`,
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Could not add printer profile.");
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -1167,10 +1209,10 @@ function PrinterProfilesTab({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">Printer profiles</div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">All printers</div>
         <p className="mt-1 text-xs text-slate-500">
-          Printer Name, Type (Kitchen/Bar/Receipt), OS link, Counter/User, Status, and Test Print. Assign profiles to
-          sections so POS KOTs route to the correct device.
+          Add a name, type (Kitchen / Bar / Receipt), and link a real Windows printer. Do not use XPS, PDF, Fax, or
+          OneNote — those cannot print POS tickets. Then assign the profile under Printer by Section.
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -1179,6 +1221,12 @@ function PrinterProfilesTab({
             placeholder="Printer name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAddProfile();
+              }
+            }}
           />
           <select
             className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
@@ -1192,41 +1240,42 @@ function PrinterProfilesTab({
             ))}
           </select>
           <select
-            className="min-w-[10rem] rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-            id="new-profile-os-printer"
-            defaultValue=""
+            className="min-w-[12rem] max-w-sm flex-1 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+            value={newOsPrinter}
+            onChange={(e) => setNewOsPrinter(e.target.value)}
           >
-            <option value="">Link OS printer (required for direct print)</option>
-            {systemPrinters.map((sp) => (
+            <option value="">Link OS printer (optional now)</option>
+            {usableOsPrinters.map((sp) => (
               <option key={sp.name} value={sp.name}>
                 {sp.name}
                 {sp.isDefault ? " (default)" : ""}
               </option>
             ))}
+            {virtualOsPrinters.length > 0 ? (
+              <optgroup label="Virtual — not for POS">
+                {virtualOsPrinters.map((sp) => (
+                  <option key={sp.name} value={sp.name} disabled>
+                    {sp.name} (XPS/PDF/Fax)
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
           </select>
           <Button
             type="button"
             className="shrink-0 text-xs"
             disabled={!newName.trim()}
-            onClick={() => {
-              const osSelect = document.getElementById("new-profile-os-printer") as HTMLSelectElement | null;
-              const systemPrinterName = osSelect?.value?.trim() || undefined;
-              addPrinterProfile(branchCode, newName.trim(), {
-                printerType: newType,
-                systemPrinterName,
-              });
-              setNewName("");
-              if (osSelect) osSelect.value = "";
-              notify(
-                systemPrinterName
-                  ? `Profile added and linked to ${systemPrinterName}.`
-                  : "Profile added — link an OS printer before POS can print directly.",
-              );
-            }}
+            onClick={handleAddProfile}
           >
             Add profile
           </Button>
         </div>
+        {usableOsPrinters.length === 0 ? (
+          <p className="mt-2 text-[11px] text-amber-300">
+            No real Windows printers found. Install/connect a USB or network printer, then refresh. You can still add a
+            profile name now and link the OS printer later.
+          </p>
+        ) : null}
 
         <div className="mt-4 overflow-x-auto rounded-lg border border-slate-800">
           <table className="w-full min-w-[56rem] text-left text-xs">
@@ -1283,19 +1332,29 @@ function PrinterProfilesTab({
                       <select
                         className="max-w-[12rem] rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
                         value={printer.systemPrinterName ?? ""}
-                        onChange={(e) =>
-                          updatePrinterProfile(branchCode, printer.id, {
-                            systemPrinterName: e.target.value || undefined,
-                          })
-                        }
+                        onChange={(e) => {
+                          try {
+                            updatePrinterProfile(branchCode, printer.id, {
+                              systemPrinterName: e.target.value || undefined,
+                            });
+                          } catch (err) {
+                            notify(err instanceof Error ? err.message : "Could not link printer.");
+                          }
+                        }}
                       >
                         <option value="">Not linked</option>
-                        {systemPrinters.map((sp) => (
+                        {usableOsPrinters.map((sp) => (
                           <option key={sp.name} value={sp.name}>
                             {sp.name}
                             {sp.isDefault ? " (default)" : ""}
                           </option>
                         ))}
+                        {printer.systemPrinterName &&
+                        !usableOsPrinters.some((sp) => sp.name === printer.systemPrinterName) ? (
+                          <option value={printer.systemPrinterName}>
+                            {printer.systemPrinterName} (invalid)
+                          </option>
+                        ) : null}
                       </select>
                     </td>
                     <td className="px-2.5 py-2">
@@ -1379,7 +1438,11 @@ function PrinterProfilesTab({
                                 notify("Link an OS printer on this profile before Test Print.");
                                 return;
                               }
-                              const ok = await printTestPageAsync(target, { copies: printer.copies });
+                              const ok = await printTestPageAsync(target, {
+                                copies: printer.copies,
+                                branchCode,
+                                paperSize: printer.paperSize,
+                              });
                               logPrintEvent(branchCode, { kind: "test", printerName: target, ok });
                               notify(
                                 ok
@@ -1941,7 +2004,7 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
 }
 
 function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element {
-  const [activeTab, setActiveTab] = useState<TabId>("sections");
+  const [activeTab, setActiveTab] = useState<TabId>("printers");
   const [notice, setNotice] = useState<string | null>(null);
   const { sections, routing } = usePrinterConfig(branchCode);
 
@@ -1967,6 +2030,37 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
   });
   const users = usersQuery.data ?? [];
 
+  const waitersQuery = useQuery({
+    queryKey: ["billing", "waiters", branchCode, "printer-management"],
+    queryFn: () => fetchWaiters(branchCode),
+  });
+  const waiters = waitersQuery.data ?? [];
+
+  const assignablePeople = useMemo((): AssignablePerson[] => {
+    const fromUsers: AssignablePerson[] = users.map((u) => ({
+      id: u.id,
+      label: u.email,
+      role: u.role,
+      kind: "user",
+    }));
+    const userIds = new Set(fromUsers.map((u) => u.id));
+    const fromWaiters: AssignablePerson[] = waiters
+      .filter((w) => !userIds.has(w.id))
+      .map((w) => ({
+        id: w.id,
+        label: w.name,
+        role: "waiter",
+        kind: "waiter" as const,
+      }));
+    // Prefer waiter display name when the same id exists as an org user.
+    const merged = fromUsers.map((u) => {
+      const waiter = waiters.find((w) => w.id === u.id);
+      if (!waiter) return u;
+      return { ...u, label: waiter.name, kind: "waiter" as const, role: "waiter" };
+    });
+    return [...merged, ...fromWaiters].sort((a, b) => a.label.localeCompare(b.label));
+  }, [users, waiters]);
+
   function notify(message: string): void {
     setNotice(message);
   }
@@ -1990,8 +2084,15 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
             onClick={() => {
               void (async () => {
                 let sent = 0;
+                const routingState = loadPrinterRouting(branchCode);
                 for (const p of systemPrinters) {
-                  const ok = await printTestPageAsync(p.name);
+                  const paperSize = routingState.printers.find(
+                    (pr) => pr.systemPrinterName === p.name,
+                  )?.paperSize;
+                  const ok = await printTestPageAsync(p.name, {
+                    branchCode,
+                    paperSize,
+                  });
                   logPrintEvent(branchCode, { kind: "test", printerName: p.name, ok });
                   if (ok) sent += 1;
                 }
@@ -2042,7 +2143,13 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
       </div>
 
       {notice ? (
-        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+        <p
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            /virtual|could not|enter a|xps|failed|invalid/i.test(notice)
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+          }`}
+        >
           {notice}
         </p>
       ) : null}
@@ -2069,20 +2176,26 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
         ))}
       </div>
 
-      {activeTab === "sections" ? (
-        <PrinterSectionsTab
+      {activeTab === "printers" ? (
+        <PrinterProfilesTab
+          branchCode={branchCode}
+          routing={routing}
+          systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
+          users={users}
+          notify={notify}
+        />
+      ) : null}
+      {activeTab === "by-section" ? (
+        <PrinterBySectionPanel
           branchCode={branchCode}
           sections={sections}
           routing={routing}
-          systemPrinters={systemPrinters}
-          allSystemPrinters={allSystemPrinters}
-          systemPrintersLoading={systemPrintersQuery.isFetching}
-          systemPrintersError={systemPrintersError}
-          onRefreshSystemPrinters={() => void systemPrintersQuery.refetch()}
-          categories={categories}
-          items={items}
+          people={assignablePeople}
           notify={notify}
         />
+      ) : null}
+      {activeTab === "settings" ? (
+        <ThermalPrintSettingsPanel branchCode={branchCode} notify={notify} />
       ) : null}
       {activeTab === "categories" ? (
         <PrinterCategoriesTab branchCode={branchCode} sections={sections} routing={routing} categories={categories} />
@@ -2095,18 +2208,6 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
           categories={categories}
           items={items}
         />
-      ) : null}
-      {activeTab === "profiles" ? (
-        <PrinterProfilesTab
-          branchCode={branchCode}
-          routing={routing}
-          systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
-          users={users}
-          notify={notify}
-        />
-      ) : null}
-      {activeTab === "assign" ? (
-        <PrinterAssignmentTab branchCode={branchCode} routing={routing} users={users} notify={notify} />
       ) : null}
       {activeTab === "preview" ? (
         <PrinterRoutingPreviewTab sections={sections} routing={routing} categories={categories} items={items} />
@@ -2121,6 +2222,7 @@ export function PrinterPage(): JSX.Element {
   const [kotSaved, setKotSaved] = useState<KotPrintSettings>(DEFAULT_KOT_PRINT_SETTINGS);
   const [kotDraft, setKotDraft] = useState<KotPrintSettings>(DEFAULT_KOT_PRINT_SETTINGS);
   const [notice, setNotice] = useState<string | null>(null);
+  const [legacyOpen, setLegacyOpen] = useState(false);
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
@@ -2221,92 +2323,119 @@ export function PrinterPage(): JSX.Element {
         </div>
       </div>
 
-      <div className="max-w-2xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">Printer assignment (legacy)</div>
-        <p className="mt-1 text-xs text-slate-500">
-          Original single-printer-name assignment by user, category, or item. The Sections/Categories/Items/Users
-          tabs above are the newer, richer way to route prints — this panel still works independently.
-        </p>
-
-        <div className="mt-4 space-y-4">
-          <div>
-            <div className="text-xs font-medium text-slate-400">User-wise</div>
-            <ul className="mt-2 space-y-2">
-              {users.slice(0, 8).map((u) => (
-                <li key={u.id} className="flex items-center gap-2">
-                  <span className="w-40 truncate text-xs text-slate-300">{u.email}</span>
-                  <select
-                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
-                    value={printerMap.byUser[u.id]?.printerName ?? ""}
-                    onChange={(e) => {
-                      setUserPrinter(branch.code, u.id, e.target.value);
-                      setNotice(`Printer updated for ${u.email}`);
-                    }}
-                  >
-                    <option value="">Default</option>
-                    {PRINTER_PRESETS.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                </li>
-              ))}
-            </ul>
+      <div className="max-w-2xl overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-slate-900 dark:text-white">Advanced</div>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Legacy single-name printer assignment — only needed for older setups.
+            </p>
           </div>
-
-          <div>
-            <div className="text-xs font-medium text-slate-400">Category-wise</div>
-            <ul className="mt-2 space-y-2">
-              {categories.map((c) => (
-                <li key={c.id} className="flex items-center gap-2">
-                  <span className="w-40 truncate text-xs text-slate-300">{c.name}</span>
-                  <select
-                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
-                    value={printerMap.byCategory[c.id]?.printerName ?? ""}
-                    onChange={(e) => {
-                      setCategoryPrinter(branch.code, c.id, e.target.value);
-                      setNotice(`Printer updated for category ${c.name}`);
-                    }}
-                  >
-                    <option value="">Default</option>
-                    {PRINTER_PRESETS.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <div className="text-xs font-medium text-slate-400">Item-wise</div>
-            <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
-              {items.slice(0, 20).map((item) => (
-                <li key={item.id} className="flex items-center gap-2">
-                  <span className="w-40 truncate text-xs text-slate-300">{item.name}</span>
-                  <select
-                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
-                    value={printerMap.byItem[item.id]?.printerName ?? ""}
-                    onChange={(e) => {
-                      setItemPrinter(branch.code, item.id, e.target.value);
-                      setNotice(`Printer updated for ${item.name}`);
-                    }}
-                  >
-                    <option value="">Default</option>
-                    {PRINTER_PRESETS.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-900"
+            aria-expanded={legacyOpen}
+            onClick={() => setLegacyOpen((v) => !v)}
+          >
+            {legacyOpen ? "Hide legacy assignment" : "Show legacy assignment"}
+            <span className="text-[10px] text-slate-400" aria-hidden>
+              {legacyOpen ? "▴" : "▾"}
+            </span>
+          </button>
         </div>
+
+        {legacyOpen ? (
+          <div className="p-4">
+            <div className="text-sm font-semibold text-slate-900 dark:text-white">
+              Printer assignment (legacy)
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Original single-printer-name assignment by user, category, or item. Prefer{" "}
+              <span className="text-slate-300">All Printers</span> and{" "}
+              <span className="text-slate-300">Printer by Section</span> above for new setups.
+            </p>
+
+            <div className="mt-4 space-y-4">
+              <div>
+                <div className="text-xs font-medium text-slate-400">User-wise</div>
+                <ul className="mt-2 space-y-2">
+                  {users.slice(0, 8).map((u) => (
+                    <li key={u.id} className="flex items-center gap-2">
+                      <span className="w-40 truncate text-xs text-slate-300">{u.email}</span>
+                      <select
+                        className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
+                        value={printerMap.byUser[u.id]?.printerName ?? ""}
+                        onChange={(e) => {
+                          setUserPrinter(branch.code, u.id, e.target.value);
+                          setNotice(`Printer updated for ${u.email}`);
+                        }}
+                      >
+                        <option value="">Default</option>
+                        {PRINTER_PRESETS.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <div className="text-xs font-medium text-slate-400">Category-wise</div>
+                <ul className="mt-2 space-y-2">
+                  {categories.map((c) => (
+                    <li key={c.id} className="flex items-center gap-2">
+                      <span className="w-40 truncate text-xs text-slate-300">{c.name}</span>
+                      <select
+                        className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
+                        value={printerMap.byCategory[c.id]?.printerName ?? ""}
+                        onChange={(e) => {
+                          setCategoryPrinter(branch.code, c.id, e.target.value);
+                          setNotice(`Printer updated for category ${c.name}`);
+                        }}
+                      >
+                        <option value="">Default</option>
+                        {PRINTER_PRESETS.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <div className="text-xs font-medium text-slate-400">Item-wise</div>
+                <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+                  {items.slice(0, 20).map((item) => (
+                    <li key={item.id} className="flex items-center gap-2">
+                      <span className="w-40 truncate text-xs text-slate-300">{item.name}</span>
+                      <select
+                        className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
+                        value={printerMap.byItem[item.id]?.printerName ?? ""}
+                        onChange={(e) => {
+                          setItemPrinter(branch.code, item.id, e.target.value);
+                          setNotice(`Printer updated for ${item.name}`);
+                        }}
+                      >
+                        <option value="">Default</option>
+                        {PRINTER_PRESETS.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

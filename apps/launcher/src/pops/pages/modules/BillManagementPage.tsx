@@ -335,6 +335,8 @@ export function BillManagementPage(): JSX.Element {
       printerName: profile?.name ?? assigned?.printerName,
       systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
       billPrintSettings: settings,
+      paperSize: profile?.paperSize,
+      copies: profile?.copies,
     });
   }
 

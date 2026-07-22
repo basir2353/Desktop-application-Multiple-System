@@ -14,6 +14,13 @@ import {
 } from "./kotPrintSettings";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
 import { isVirtualSystemPrinter, printToSystemPrinter } from "./systemPrinters";
+import {
+  DEFAULT_THERMAL_PRINT_SETTINGS,
+  loadThermalPrintSettings,
+  thermalCharsPerLine,
+  thermalContentWidthMm,
+  type ThermalPrintSettings,
+} from "./thermalPrintSettings";
 
 export type PrintLine = {
   label: string;
@@ -85,8 +92,269 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function formatMoney(pkr: number): string {
+function formatMoney(pkr: number, compact = false): string {
+  if (compact) return `Rs${Math.round(pkr).toLocaleString("en-PK").replace(/,/g, "")}`;
   return `Rs ${pkr.toLocaleString("en-PK")}`;
+}
+
+function resolvePaperSize(
+  input: Pick<PrintTicketInput, "paperSize" | "branchCode">,
+  thermal: ThermalPrintSettings,
+): PrinterPaperSize {
+  return input.paperSize ?? thermal.defaultPaperSize;
+}
+
+function padRight(text: string, width: number): string {
+  const t = text.slice(0, width);
+  return t + " ".repeat(Math.max(0, width - t.length));
+}
+
+function padLeft(text: string, width: number): string {
+  const t = text.slice(0, width);
+  return " ".repeat(Math.max(0, width - t.length)) + t;
+}
+
+function centerLine(text: string, width: number): string {
+  const t = text.slice(0, width);
+  const pad = Math.max(0, width - t.length);
+  const left = Math.floor(pad / 2);
+  return " ".repeat(left) + t + " ".repeat(pad - left);
+}
+
+function wrapWords(text: string, width: number): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [""];
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (!current) {
+      current = word.slice(0, width);
+      continue;
+    }
+    if (`${current} ${word}`.length <= width) {
+      current = `${current} ${word}`;
+    } else {
+      lines.push(current);
+      current = word.slice(0, width);
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/**
+ * Fixed-width plain text for physical thermal printers (named OS spooler path).
+ * "clear" layout stacks item + amount so nothing clips on 58mm paper.
+ */
+export function buildThermalPlainText(
+  input: PrintTicketInput,
+  thermalOverride?: ThermalPrintSettings,
+): string {
+  const thermal =
+    thermalOverride ??
+    (input.branchCode
+      ? loadThermalPrintSettings(input.branchCode)
+      : DEFAULT_THERMAL_PRINT_SETTINGS);
+  const paper = resolvePaperSize(input, thermal);
+  const width = thermalCharsPerLine(paper, thermal);
+  const compact = thermal.compactMoney;
+  const isReceipt = input.kind === "receipt";
+  const billSettings =
+    input.billPrintSettings ??
+    (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
+  const fields = isReceipt ? billSettings.fields : null;
+  const useClearLayout =
+    !isReceipt || thermal.receiptLayout === "clear" || paper === "58mm";
+  const showPrice =
+    isReceipt &&
+    !useClearLayout &&
+    Boolean(fields?.itemAmount) &&
+    thermal.showUnitPrice;
+  const showAmt = isReceipt && Boolean(fields?.itemAmount);
+  const dash = "-".repeat(width);
+  const equals = "=".repeat(width);
+  const out: string[] = [];
+
+  const pushBlank = () => out.push("");
+
+  const business =
+    isReceipt && billSettings.headerBusinessName.trim()
+      ? billSettings.headerBusinessName.trim()
+      : input.branchName;
+  if (!isReceipt || fields?.branchName !== false) {
+    for (const w of wrapWords(business, width)) out.push(centerLine(w, width));
+  }
+  if (isReceipt && fields?.headerSubtitle && billSettings.headerSubtitle.trim()) {
+    for (const w of wrapWords(billSettings.headerSubtitle.trim(), width)) {
+      out.push(centerLine(w, width));
+    }
+  }
+  const title = isReceipt
+    ? billSettings.documentTitle
+    : input.isOrderUpdate
+      ? "KITCHEN ORDER - UPDATE"
+      : "KITCHEN ORDER";
+  if (!isReceipt || fields?.documentTitle !== false) {
+    out.push(centerLine(title.toUpperCase(), width));
+  }
+  out.push(equals);
+
+  if (!isReceipt || fields?.orderRef !== false) {
+    out.push(input.orderRef.slice(0, width));
+  }
+  if (!isReceipt || fields?.orderType !== false) {
+    out.push(input.modeLabel.slice(0, width));
+  }
+  if (input.tableLabel && (!isReceipt || fields?.tableLabel !== false)) {
+    out.push(input.tableLabel.slice(0, width));
+  }
+  if (input.billRef && (!isReceipt || fields?.billRef !== false)) {
+    out.push(`Bill: ${input.billRef}`.slice(0, width));
+  }
+  if (input.waiterName && (!isReceipt || fields?.waiterName !== false)) {
+    out.push(`Waiter: ${input.waiterName}`.slice(0, width));
+  }
+  const printedAt = new Date().toLocaleString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  if (!isReceipt || fields?.timestamp !== false) {
+    out.push(printedAt.slice(0, width));
+  }
+  if (input.notes && (!isReceipt || fields?.notes !== false)) {
+    pushBlank();
+    for (const w of wrapWords(`Note: ${input.notes}`, width)) out.push(w);
+  }
+  out.push(dash);
+
+  if (isReceipt && showAmt && useClearLayout) {
+    // Clear stacked layout: each item is fully readable on narrow paper.
+    for (const row of input.lines) {
+      const lineTotal = formatMoney(row.unitPrice * row.qty, compact);
+      const unit = formatMoney(row.unitPrice, compact);
+      const head = `${row.qty} x ${row.label}`;
+      for (const w of wrapWords(head, width)) out.push(w);
+      if (row.qty > 1) {
+        out.push(padLeft(`@ ${unit}`, width));
+      }
+      out.push(padLeft(lineTotal, width));
+      pushBlank();
+    }
+    if (out[out.length - 1] === "") out.pop();
+  } else if (isReceipt && showAmt) {
+    const qtyW = 3;
+    const amtW = Math.min(10, Math.max(7, Math.floor(width * 0.28)));
+    const priceW = showPrice ? Math.min(8, Math.max(6, Math.floor(width * 0.2))) : 0;
+    const itemW = Math.max(8, width - qtyW - 1 - (showPrice ? priceW + 1 : 0) - amtW);
+    if (fields?.itemHeaders !== false) {
+      out.push(
+        `${padRight("Qty", qtyW)} ${padRight("Item", itemW)}${
+          showPrice ? ` ${padLeft("Price", priceW)}` : ""
+        } ${padLeft("Amt", amtW)}`.slice(0, width),
+      );
+      out.push(dash);
+    }
+    for (const row of input.lines) {
+      const amt = formatMoney(row.unitPrice * row.qty, compact);
+      const price = formatMoney(row.unitPrice, compact);
+      const qty = String(row.qty);
+      const nameLines = wrapWords(row.label, itemW);
+      nameLines.forEach((name, idx) => {
+        if (idx === 0) {
+          out.push(
+            `${padRight(qty, qtyW)} ${padRight(name, itemW)}${
+              showPrice ? ` ${padLeft(price, priceW)}` : ""
+            } ${padLeft(amt, amtW)}`.slice(0, width),
+          );
+        } else {
+          out.push(
+            `${padRight("", qtyW)} ${padRight(name, itemW)}${
+              showPrice ? ` ${padLeft("", priceW)}` : ""
+            } ${padLeft("", amtW)}`.slice(0, width),
+          );
+        }
+      });
+    }
+  } else {
+    const qtyW = 4;
+    const itemW = width - qtyW - 1;
+    out.push(`${padRight("Qty", qtyW)} ${padRight("Item", itemW)}`.slice(0, width));
+    out.push(dash);
+    for (const row of input.lines) {
+      const nameLines = wrapWords(row.label, itemW);
+      nameLines.forEach((name, idx) => {
+        out.push(
+          `${padRight(idx === 0 ? String(row.qty) : "", qtyW)} ${padRight(name, itemW)}`.slice(
+            0,
+            width,
+          ),
+        );
+      });
+    }
+  }
+
+  if (isReceipt && fields) {
+    out.push(dash);
+    const pushTotal = (label: string, value: string, strong = false) => {
+      const left = Math.max(6, width - value.length - 1);
+      const row = `${padRight(label, left)} ${value}`.slice(0, width);
+      out.push(row);
+      if (strong) {
+        // Second pass visual weight for TOTAL on plain text
+      }
+    };
+    if (fields.subtotal) pushTotal("Subtotal", formatMoney(input.subtotal, compact));
+    if (fields.discount && input.discount > 0) {
+      pushTotal(
+        `Discount${input.discountPct > 0 ? ` ${input.discountPct}%` : ""}`,
+        `-${formatMoney(input.discount, compact)}`,
+      );
+    }
+    if (fields.service) {
+      pushTotal(`Service ${input.servicePct}%`, formatMoney(input.service, compact));
+    }
+    if (fields.tax) {
+      pushTotal(`Tax ${input.taxPct ?? 15}%`, formatMoney(input.tax, compact));
+    }
+    if (fields.delivery && (input.deliveryCharge ?? 0) > 0) {
+      pushTotal("Delivery", formatMoney(input.deliveryCharge!, compact));
+    }
+    if (fields.total) {
+      out.push(equals);
+      pushTotal("TOTAL", formatMoney(input.total, compact), true);
+      out.push(equals);
+    }
+  } else if (!isReceipt) {
+    const kotSettings =
+      input.kotSettings ??
+      (input.branchCode ? loadKotPrintSettings(input.branchCode) : DEFAULT_KOT_PRINT_SETTINGS);
+    if (kotSettings.showItemTotals) {
+      out.push(dash);
+      out.push(
+        `Items: ${input.lines.length}   Qty: ${input.lines.reduce((s, l) => s + l.qty, 0)}`.slice(
+          0,
+          width,
+        ),
+      );
+    }
+  }
+
+  if (isReceipt && fields?.footer !== false) {
+    pushBlank();
+    for (const w of wrapWords(billSettings.footerText || "THANK YOU --- VISIT AGAIN", width)) {
+      out.push(centerLine(w.toUpperCase(), width));
+    }
+  } else if (!isReceipt) {
+    pushBlank();
+    out.push(centerLine(input.isOrderUpdate ? "KITCHEN COPY - UPDATE" : "KITCHEN COPY", width));
+  }
+  out.push("");
+  out.push("");
+  return out.join("\n");
 }
 
 export function buildTicketHtml(input: PrintTicketInput): string {
@@ -97,7 +365,18 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const billSettings =
     input.billPrintSettings ??
     (input.branchCode ? loadBillPrintSettings(input.branchCode) : DEFAULT_BILL_PRINT_SETTINGS);
-  const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
+  const thermal =
+    input.branchCode
+      ? loadThermalPrintSettings(input.branchCode)
+      : DEFAULT_THERMAL_PRINT_SETTINGS;
+  const paperSize = resolvePaperSize(input, thermal);
+  const narrowPaper = paperSize === "58mm";
+  const marginMm = thermal.marginMm;
+  const contentWidthMm = thermalContentWidthMm(paperSize, marginMm);
+  const moneyCompact = thermal.compactMoney;
+  const receiptFonts = billReceiptFontSizes(
+    narrowPaper ? Math.min(billSettings.baseFontSize, 10) : billSettings.baseFontSize,
+  );
   const fields = isReceipt ? billSettings.fields : null;
   const isOrderUpdate = !isReceipt && Boolean(input.isOrderUpdate);
   const title = isReceipt
@@ -113,25 +392,49 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalItems = input.lines.length;
   const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
 
+  const useClearLayout =
+    isReceipt && (thermal.receiptLayout === "clear" || narrowPaper);
+  const showAmtColEarly = isReceipt && Boolean(fields?.itemAmount);
+  const showPriceCol =
+    showAmtColEarly && thermal.showUnitPrice && !useClearLayout;
+
+  const clearItemBlocks =
+    useClearLayout && showAmtColEarly
+      ? input.lines
+          .map((line) => {
+            const lineTotal = line.unitPrice * line.qty;
+            return `<div class="clear-item">
+        <div class="clear-item-name">${escapeHtml(`${line.qty} x ${line.label}`)}</div>
+        ${
+          line.qty > 1
+            ? `<div class="clear-item-unit">@ ${formatMoney(line.unitPrice, moneyCompact)}</div>`
+            : ""
+        }
+        <div class="clear-item-amt">${formatMoney(lineTotal, moneyCompact)}</div>
+      </div>`;
+          })
+          .join("")
+      : "";
+
   const lineRows = input.lines
     .map((line) => {
       const lineTotal = line.unitPrice * line.qty;
       const kotSepClass = !isReceipt && kotSettings.itemUnderlineSeparator ? ' class="kot-item-sep"' : "";
       if (!isReceipt) {
-        // Match header order: Qty | Item (including last row underline when enabled)
         return `<tr${kotSepClass}>
         <td class="qty">${line.qty}</td>
         <td class="item-name">${escapeHtml(line.label)}</td>
       </tr>`;
       }
+      if (useClearLayout) return "";
       const showQty = fields!.itemQty;
       const showAmt = fields!.itemAmount;
-      const colCount = 1 + (showQty ? 1 : 0) + (showAmt ? 2 : 0);
+      const colCount = 1 + (showQty ? 1 : 0) + (showAmt ? (showPriceCol ? 2 : 1) : 0);
       return `<tr>
         ${showQty ? `<td class="qty">${line.qty}</td>` : ""}
         <td class="item-name" colspan="${showQty || showAmt ? 1 : colCount}">${escapeHtml(line.label)}</td>
-        ${showAmt ? `<td class="price">${formatMoney(line.unitPrice)}</td>` : ""}
-        ${showAmt ? `<td class="amt">${formatMoney(lineTotal)}</td>` : ""}
+        ${showPriceCol ? `<td class="price">${formatMoney(line.unitPrice, moneyCompact)}</td>` : ""}
+        ${showAmt ? `<td class="amt">${formatMoney(lineTotal, moneyCompact)}</td>` : ""}
       </tr>`;
     })
     .join("");
@@ -139,22 +442,22 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalsRows = isReceipt && fields
     ? [
         fields.subtotal
-          ? `<div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal)}</span></div>`
+          ? `<div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal, moneyCompact)}</span></div>`
           : "",
         fields.discount && input.discount > 0
-          ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount)}</span></div>`
+          ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount, moneyCompact)}</span></div>`
           : "",
         fields.service
-          ? `<div class="row"><span class="label">Service charge (${input.servicePct}%)</span><span class="value">${formatMoney(input.service)}</span></div>`
+          ? `<div class="row"><span class="label">Service (${input.servicePct}%)</span><span class="value">${formatMoney(input.service, moneyCompact)}</span></div>`
           : "",
         fields.tax
-          ? `<div class="row"><span class="label">Tax (${input.taxPct ?? 15}%)</span><span class="value">${formatMoney(input.tax)}</span></div>`
+          ? `<div class="row"><span class="label">Tax (${input.taxPct ?? 15}%)</span><span class="value">${formatMoney(input.tax, moneyCompact)}</span></div>`
           : "",
         fields.delivery && (input.deliveryCharge ?? 0) > 0
-          ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!)}</span></div>`
+          ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!, moneyCompact)}</span></div>`
           : "",
         fields.total
-          ? `<div class="row grand"><span class="label">Total</span><span class="value">${formatMoney(input.total)}</span></div>`
+          ? `<div class="row grand"><span class="label">Total</span><span class="value">${formatMoney(input.total, moneyCompact)}</span></div>`
           : "",
       ].filter(Boolean)
     : [];
@@ -213,7 +516,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const emphasizeMeta = isReceipt || kotSettings.emphasizeOrderMeta;
   const compact = isReceipt && billSettings.layout === "compact";
   const headerAlign = isReceipt && billSettings.headerAlign === "left" ? "left" : "center";
-  const showItemTable = !isReceipt || fields!.itemQty || fields!.itemAmount || input.lines.length > 0;
+  const showItemTable = !isReceipt || (!useClearLayout && (fields!.itemQty || fields!.itemAmount || input.lines.length > 0));
+  const showClearItems = Boolean(clearItemBlocks);
   const showQtyCol = !isReceipt || fields!.itemQty;
   // Price/Amount are receipt-only — kitchen tickets never show pricing to kitchen staff.
   const showAmtCol = isReceipt && fields!.itemAmount;
@@ -254,6 +558,31 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .footer { font-size: ${receiptFonts.footer}px; }
     .header-subtitle { font-size: ${receiptFonts.headerSubtitle}px; }
     .footer-secondary { font-size: ${receiptFonts.footerSecondary}px; }
+    .clear-items { margin: 4px 0 8px; }
+    .clear-item { margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px dashed #d1d5db; }
+    .clear-item:last-child { border-bottom: none; margin-bottom: 2px; }
+    .clear-item-name {
+      font-size: ${receiptFonts.itemName}px;
+      font-weight: 600;
+      color: #111827;
+      word-break: break-word;
+      line-height: 1.35;
+      text-align: left;
+    }
+    .clear-item-unit {
+      margin-top: 2px;
+      font-size: ${receiptFonts.amt}px;
+      color: #6b7280;
+      text-align: right;
+    }
+    .clear-item-amt {
+      margin-top: 2px;
+      font-size: ${Math.max(receiptFonts.amt, 11)}px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #111827;
+      text-align: right;
+    }
     `
     : "";
 
@@ -275,8 +604,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       color: #111827;
       background: #fff;
       margin: 0 auto;
-      padding: 16px 14px 20px;
-      max-width: 80mm;
+      padding: ${narrowPaper ? "8px 4px 12px" : "12px 6px 16px"};
+      width: ${contentWidthMm}mm;
+      max-width: ${contentWidthMm}mm;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -367,10 +697,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-bottom: 1px solid #d1d5db;
       text-align: left;
     }
-    thead th.qty { width: 18%; text-align: left; padding-right: 12px; }
+    thead th.qty { width: ${narrowPaper ? "28px" : "36px"}; text-align: left; padding-right: 6px; }
     thead th.item { text-align: right; }
-    thead th.price { text-align: right; }
-    thead th.amt { text-align: right; }
+    thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; }
+    thead th.amt { width: ${narrowPaper ? "28%" : "22%"}; text-align: right; }
     tbody td {
       padding: 5px 0;
       vertical-align: top;
@@ -453,24 +783,26 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt table.items.has-amounts td.qty,
     body.ticket-receipt table.items.has-amounts thead th.qty {
-      width: 36px;
-      padding-right: 14px;
+      width: ${narrowPaper ? "28px" : "36px"};
+      padding-right: ${narrowPaper ? "6px" : "10px"};
     }
     td.price {
       text-align: right;
       white-space: nowrap;
-      font-size: 10px;
+      font-size: ${narrowPaper ? "9px" : "10px"};
       font-weight: 400;
       font-variant-numeric: tabular-nums;
       color: #6b7280;
-      padding-right: 8px;
+      padding-right: 4px;
+      width: ${showPriceCol ? "18%" : "0"};
     }
     td.amt {
       text-align: right;
       white-space: nowrap;
-      font-size: 10px;
+      font-size: ${narrowPaper ? "9px" : "10px"};
       font-weight: 500;
       font-variant-numeric: tabular-nums;
+      width: ${narrowPaper ? "28%" : "22%"};
       color: #111827;
     }
     .totals {
@@ -574,9 +906,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       margin: 8px 0 4px;
     }
     @media print {
-      body { padding: 0; }
+      body { padding: 0; width: ${contentWidthMm}mm; max-width: ${contentWidthMm}mm; }
       .meta-chip { background: transparent; padding: 0; }
-      @page { margin: 4mm; size: ${input.paperSize === "58mm" ? "58mm" : input.paperSize === "A4" ? "A4" : "80mm"} auto; }
+      @page {
+        margin: ${marginMm}mm;
+        size: ${paperSize === "58mm" ? "58mm" : paperSize === "A4" ? "A4" : "80mm"} auto;
+      }
     }
     ${receiptCss}
   </style>
@@ -608,6 +943,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       ? `<div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>`
       : ""}
   ${!isReceipt ? `<div class="kot-mid-space" aria-hidden="true"></div>` : ""}
+  ${showClearItems ? `<div class="clear-items">${clearItemBlocks}</div>` : ""}
   ${showItemTable
     ? `<table class="items${showAmtCol ? " has-amounts" : ""}">
     ${showItemHeaders
@@ -615,8 +951,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       <tr>
         ${showQtyCol ? '<th class="qty">Qty</th>' : ""}
         <th class="item">Item</th>
-        ${showAmtCol ? '<th class="price">Price</th>' : ""}
-        ${showAmtCol ? '<th class="amt">Amount</th>' : ""}
+        ${showPriceCol ? '<th class="price">Price</th>' : ""}
+        ${showAmtCol ? `<th class="amt">${narrowPaper ? "Amt" : "Amount"}</th>` : ""}
       </tr>
     </thead>`
       : ""}
@@ -793,13 +1129,34 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
     : input.kind === "receipt"
       ? "Receipt"
       : "KOT";
-  // When an OS printer is assigned, require it — do not silently use another device.
-  return printHtmlDocumentDetailed(html, {
-    systemPrinterName: input.systemPrinterName,
-    copies: input.copies,
-    jobTitle: docTitle,
-    requireNamedPrinter: Boolean(input.systemPrinterName?.trim()),
-  });
+  const systemPrinterName = input.systemPrinterName?.trim();
+  const copies = Math.max(1, input.copies ?? 1);
+
+  // Named OS printers receive fixed-width thermal text (avoids right-edge cutoff).
+  if (systemPrinterName) {
+    const thermal = input.branchCode
+      ? loadThermalPrintSettings(input.branchCode)
+      : DEFAULT_THERMAL_PRINT_SETTINGS;
+    const plain = buildThermalPlainText(input, thermal);
+    if (!plain.trim()) {
+      return { ok: false, usedNamedPrinter: false, error: "Print content was empty after conversion." };
+    }
+    const result = await printToSystemPrinter({
+      printerName: systemPrinterName,
+      content: `${plain}\n\n`,
+      jobName: docTitle,
+      copies,
+    });
+    if (result.ok) return { ok: true, usedNamedPrinter: true };
+    return { ok: false, usedNamedPrinter: false, error: result.error };
+  }
+
+  for (let i = 0; i < copies; i++) {
+    if (!printHtmlDocument(html, docTitle)) {
+      return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
+    }
+  }
+  return { ok: true, usedNamedPrinter: false };
 }
 
 /** Test page — targets the named OS printer when available. */
@@ -810,32 +1167,81 @@ export function printTestPage(printerName: string): boolean {
 
 export async function printTestPageAsync(
   printerName: string,
-  options?: { copies?: number },
+  options?: {
+    copies?: number;
+    branchCode?: string;
+    paperSize?: PrinterPaperSize;
+    thermal?: ThermalPrintSettings;
+  },
 ): Promise<boolean> {
+  const thermal =
+    options?.thermal ??
+    (options?.branchCode
+      ? loadThermalPrintSettings(options.branchCode)
+      : DEFAULT_THERMAL_PRINT_SETTINGS);
+  const paper = options?.paperSize ?? thermal.defaultPaperSize;
+  const width = thermalCharsPerLine(paper, thermal);
+  const line = "-".repeat(width);
+  const stamped = new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
+  const plain = [
+    centerLine("TEST PRINT", width),
+    line,
+    `Printer: ${printerName}`.slice(0, width),
+    `Paper: ${paper}`.slice(0, width),
+    stamped.slice(0, width),
+    line,
+    ...wrapWords("If this printed correctly, the printer is connected and working.", width),
+    line,
+    centerLine("1234567890".repeat(Math.ceil(width / 10)).slice(0, width), width),
+    "",
+    "",
+  ].join("\n");
+
+  const contentWidthMm = thermalContentWidthMm(paper, thermal.marginMm);
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
 <title>Test print · ${escapeHtml(printerName)}</title>
 <style>
-  body { font-family: monospace; width: 280px; margin: 0 auto; padding: 16px 0; text-align: center; }
+  body {
+    font-family: ui-monospace, Consolas, monospace;
+    width: ${contentWidthMm}mm;
+    max-width: ${contentWidthMm}mm;
+    margin: 0 auto;
+    padding: 8px 0;
+    text-align: center;
+    font-size: 11px;
+  }
   h1 { font-size: 14px; margin: 0 0 8px; }
-  p { font-size: 11px; margin: 4px 0; }
+  p { font-size: 11px; margin: 4px 0; word-break: break-word; }
   hr { border: none; border-top: 1px dashed #000; margin: 10px 0; }
+  @page { margin: ${thermal.marginMm}mm; size: ${paper === "58mm" ? "58mm" : paper === "A4" ? "A4" : "80mm"} auto; }
 </style>
 </head>
 <body>
   <h1>TEST PRINT</h1>
   <hr />
   <p>Printer: ${escapeHtml(printerName)}</p>
-  <p>${escapeHtml(new Date().toLocaleString())}</p>
+  <p>Paper: ${escapeHtml(paper)}</p>
+  <p>${escapeHtml(stamped)}</p>
   <hr />
   <p>If this printed correctly, the printer is connected and working.</p>
+  <hr />
+  <p>${escapeHtml("1234567890".repeat(Math.ceil(width / 10)).slice(0, width))}</p>
 </body>
 </html>`;
+
+  const copies = Math.max(1, options?.copies ?? 1);
+  const named = await printToSystemPrinter({
+    printerName,
+    content: `${plain}\n\n`,
+    jobName: `Test print · ${printerName}`,
+    copies,
+  });
+  if (named.ok) return true;
   return printHtmlDocumentAsync(html, {
-    systemPrinterName: printerName,
-    copies: options?.copies ?? 1,
+    copies,
     jobTitle: `Test print · ${printerName}`,
     requireNamedPrinter: false,
   });
@@ -890,7 +1296,13 @@ export function printBill(
   branchName: string,
   branchCode: string,
   bill: Bill,
-  options?: { printerName?: string; systemPrinterName?: string; billPrintSettings?: BillPrintSettings },
+  options?: {
+    printerName?: string;
+    systemPrinterName?: string;
+    billPrintSettings?: BillPrintSettings;
+    paperSize?: PrinterPaperSize;
+    copies?: number;
+  },
 ): boolean {
   void printBillAsync(branchName, branchCode, bill, options);
   return true;
@@ -900,7 +1312,13 @@ export async function printBillAsync(
   branchName: string,
   branchCode: string,
   bill: Bill,
-  options?: { printerName?: string; systemPrinterName?: string; billPrintSettings?: BillPrintSettings },
+  options?: {
+    printerName?: string;
+    systemPrinterName?: string;
+    billPrintSettings?: BillPrintSettings;
+    paperSize?: PrinterPaperSize;
+    copies?: number;
+  },
 ): Promise<boolean> {
   // Never treat display/profile names as OS spooler names.
   const systemPrinterName = options?.systemPrinterName?.trim() || undefined;
@@ -908,6 +1326,8 @@ export async function printBillAsync(
     ...billToPrintInput(branchName, branchCode, bill),
     printerName: options?.printerName ?? systemPrinterName,
     systemPrinterName,
+    paperSize: options?.paperSize,
+    copies: options?.copies,
     billPrintSettings: options?.billPrintSettings ?? loadBillPrintSettings(branchCode),
   });
 }
