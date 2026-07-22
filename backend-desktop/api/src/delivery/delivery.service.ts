@@ -277,6 +277,20 @@ export class DeliveryService implements OnApplicationBootstrap {
         lastActivityAt: null,
       });
       linkedUserId = user.id;
+    } else if (input.pin) {
+      const userId = linkedUserId ?? rider.userId;
+      if (!userId) {
+        throw new BadRequestException("Add a mobile login before setting a PIN.");
+      }
+      await this.db
+        .update(organizationMemberships)
+        .set({ staffPinHash: await bcrypt.hash(input.pin, 10) })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            eq(organizationMemberships.userId, userId),
+          ),
+        );
     }
 
     const pinUserId = linkedUserId ?? rider.userId;

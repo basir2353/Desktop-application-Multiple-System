@@ -7,6 +7,8 @@ export const seatingSectionSchema = z.object({
   isActive: z.boolean(),
 });
 
+export const tableBookingStatusSchema = z.enum(["free", "booked"]);
+
 export const restaurantTableSchema = z.object({
   id: z.string().uuid(),
   sectionId: z.string().uuid(),
@@ -14,6 +16,9 @@ export const restaurantTableSchema = z.object({
   seats: z.number().int().positive(),
   sortOrder: z.number(),
   isActive: z.boolean(),
+  /** Present on floor reads — table is booked while an open order occupies it. */
+  bookingStatus: tableBookingStatusSchema.optional().default("free"),
+  bookedOrderRef: z.string().nullable().optional(),
 });
 
 export const branchFloorSchema = z.object({
@@ -52,6 +57,7 @@ export const updateRestaurantTableSchema = z.object({
 
 export type SeatingSection = z.infer<typeof seatingSectionSchema>;
 export type RestaurantTable = z.infer<typeof restaurantTableSchema>;
+export type TableBookingStatus = z.infer<typeof tableBookingStatusSchema>;
 export type BranchFloor = z.infer<typeof branchFloorSchema>;
 export type CreateSeatingSection = z.infer<typeof createSeatingSectionSchema>;
 export type UpdateSeatingSection = z.infer<typeof updateSeatingSectionSchema>;

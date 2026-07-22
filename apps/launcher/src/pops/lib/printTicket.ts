@@ -374,9 +374,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const marginMm = thermal.marginMm;
   const contentWidthMm = thermalContentWidthMm(paperSize, marginMm);
   const moneyCompact = thermal.compactMoney;
-  const receiptFonts = billReceiptFontSizes(
-    narrowPaper ? Math.min(billSettings.baseFontSize, 10) : billSettings.baseFontSize,
-  );
+  const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
   const fields = isReceipt ? billSettings.fields : null;
   const isOrderUpdate = !isReceipt && Boolean(input.isOrderUpdate);
   const title = isReceipt
@@ -510,10 +508,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         </div>`
       : "";
 
-  const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : receiptFonts.body;
-  // Order ref / type / table chips are always emphasized (bold, larger) on customer receipts;
-  // on kitchen tickets it stays behind the existing toggle.
   const emphasizeMeta = isReceipt || kotSettings.emphasizeOrderMeta;
+  const bodyFontSize = !isReceipt ? kotSettings.baseFontSize : receiptFonts.body;
+  const kotItemFont = kotSettings.baseFontSize + 3;
+  const kotQtyFont = kotSettings.baseFontSize + 4;
+  const kotMetaFont = emphasizeMeta ? kotSettings.baseFontSize + 2 : kotSettings.baseFontSize;
+  const kotBranchFont = kotSettings.baseFontSize + 5;
   const compact = isReceipt && billSettings.layout === "compact";
   const headerAlign = isReceipt && billSettings.headerAlign === "left" ? "left" : "center";
   const showItemTable = !isReceipt || (!useClearLayout && (fields!.itemQty || fields!.itemAmount || input.lines.length > 0));
@@ -617,7 +617,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       margin-bottom: 12px;
     }
     .branch-name {
-      font-size: 15px;
+      font-size: ${isReceipt ? receiptFonts.branchName : kotBranchFont}px;
       font-weight: 700;
       letter-spacing: -0.02em;
       line-height: 1.25;
@@ -625,15 +625,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     .doc-type {
       margin-top: 6px;
-      font-size: 9px;
-      font-weight: 600;
-      letter-spacing: 0.14em;
+      font-size: ${isReceipt ? receiptFonts.docType : kotSettings.baseFontSize}px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
       color: #4b5563;
     }
     .header-subtitle {
       margin-top: 4px;
-      font-size: 8.5px;
+      font-size: ${receiptFonts.headerSubtitle}px;
       font-weight: 500;
       color: #6b7280;
       line-height: 1.35;
@@ -647,12 +647,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     .meta-chip {
       display: inline-block;
-      font-size: 9.5px;
+      font-size: ${isReceipt ? receiptFonts.metaChip : kotSettings.baseFontSize}px;
       font-weight: 500;
       color: #374151;
       background: #f3f4f6;
       border-radius: 4px;
-      padding: 2px 6px;
+      padding: 3px 7px;
       line-height: 1.4;
     }
     .meta-chip.bill-ref {
@@ -661,7 +661,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       background: #e5e7eb;
     }
     .meta-chip.meta-primary {
-      font-size: ${emphasizeMeta ? "12px" : "9.5px"};
+      font-size: ${isReceipt ? (emphasizeMeta ? receiptFonts.metaChip + 2 : receiptFonts.metaChip) : kotMetaFont}px;
       font-weight: ${emphasizeMeta ? "700" : "500"};
       color: #111827;
       background: ${emphasizeMeta ? "#fde68a" : "#f3f4f6"};
@@ -669,13 +669,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .notes {
       margin: -6px 0 12px;
       text-align: center;
-      font-size: 9.5px;
+      font-size: ${isReceipt ? receiptFonts.notes : kotSettings.baseFontSize}px;
       font-style: italic;
       color: #6b7280;
     }
     .timestamp {
       text-align: center;
-      font-size: 9px;
+      font-size: ${isReceipt ? receiptFonts.timestamp : Math.max(11, kotSettings.baseFontSize - 1)}px;
       font-weight: 500;
       color: #9ca3af;
       margin-bottom: 14px;
@@ -688,8 +688,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       table-layout: fixed;
     }
     thead th {
-      font-size: 8.5px;
-      font-weight: 600;
+      font-size: ${isReceipt ? receiptFonts.th : Math.max(11, kotSettings.baseFontSize - 1)}px;
+      font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #6b7280;
@@ -756,20 +756,21 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-kot .footer { margin-top: 10px; padding-top: 8px; }
     body.ticket-kot .kot-banner { margin-top: 4px; padding: 4px 6px; }
     td.item-name {
-      font-size: 10.5px;
-      font-weight: 500;
+      font-size: ${isReceipt ? receiptFonts.itemName : kotItemFont}px;
+      font-weight: ${isReceipt ? "500" : "700"};
       color: #111827;
       text-align: right;
       padding-left: 12px;
       padding-right: 0;
       word-break: break-word;
+      line-height: 1.35;
     }
     td.qty {
       width: 18%;
       text-align: left;
-      font-size: 10px;
-      font-weight: 600;
-      color: #374151;
+      font-size: ${isReceipt ? receiptFonts.qty : kotQtyFont}px;
+      font-weight: 700;
+      color: #111827;
       font-variant-numeric: tabular-nums;
       padding-right: 20px;
       white-space: nowrap;
@@ -789,7 +790,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     td.price {
       text-align: right;
       white-space: nowrap;
-      font-size: ${narrowPaper ? "9px" : "10px"};
+      font-size: ${receiptFonts.amt}px;
       font-weight: 400;
       font-variant-numeric: tabular-nums;
       color: #6b7280;
@@ -799,8 +800,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     td.amt {
       text-align: right;
       white-space: nowrap;
-      font-size: ${narrowPaper ? "9px" : "10px"};
-      font-weight: 500;
+      font-size: ${receiptFonts.amt}px;
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
       width: ${narrowPaper ? "28%" : "22%"};
       color: #111827;
@@ -818,13 +819,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       gap: 12px;
     }
     .row .label {
-      font-size: 9.5px;
+      font-size: ${isReceipt ? receiptFonts.rowLabel : kotSettings.baseFontSize}px;
       font-weight: 500;
       color: #4b5563;
     }
     .row .value {
-      font-size: 10px;
-      font-weight: 500;
+      font-size: ${isReceipt ? receiptFonts.rowValue : kotSettings.baseFontSize + 1}px;
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
       color: #111827;
       white-space: nowrap;
@@ -836,13 +837,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-top: 1px solid #d1d5db;
     }
     .row.grand .label {
-      font-size: 12px;
+      font-size: ${receiptFonts.grandLabel}px;
       font-weight: 700;
       color: #111827;
       letter-spacing: -0.01em;
     }
     .row.grand .value {
-      font-size: 13px;
+      font-size: ${receiptFonts.grandValue}px;
       font-weight: 700;
       color: #111827;
       letter-spacing: -0.02em;
@@ -852,15 +853,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       padding-top: 12px;
       border-top: 1px solid #e5e7eb;
       text-align: center;
-      font-size: 9px;
-      font-weight: 500;
+      font-size: ${isReceipt ? receiptFonts.footer : kotSettings.baseFontSize}px;
+      font-weight: 700;
       letter-spacing: 0.06em;
       text-transform: uppercase;
-      color: #9ca3af;
+      color: #374151;
     }
     .footer-secondary {
       margin-top: 6px;
-      font-size: 8px;
+      font-size: ${receiptFonts.footerSecondary}px;
       font-weight: 400;
       letter-spacing: 0.02em;
       text-transform: none;
@@ -870,13 +871,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .kot-banner {
       margin-top: 8px;
       text-align: center;
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
+      font-size: ${kotSettings.baseFontSize}px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #111827;
-      border: 1.5px solid #111827;
-      padding: 6px 8px;
+      border: 2px solid #111827;
+      padding: 8px 10px;
     }
     .kot-banner.kot-banner-update {
       border-width: 2px;
@@ -892,7 +893,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .kot-update-banner {
       margin: 6px 0 8px;
       text-align: center;
-      font-size: 12px;
+      font-size: ${kotSettings.baseFontSize + 2}px;
       font-weight: 800;
       letter-spacing: 0.06em;
       text-transform: uppercase;
@@ -995,42 +996,111 @@ export function htmlToPlainText(html: string): string {
     .trim();
 }
 
-/** Opens the system print dialog with an arbitrary HTML document via a hidden iframe. */
+/**
+ * Serialize OS print dialogs. Overlapping `window.print()` calls (KOT then receipt,
+ * or multiple copies) leave Cancel stuck in WebView2 / Chromium.
+ */
+let printDialogChain: Promise<void> = Promise.resolve();
+
+function enqueuePrintDialog<T>(run: () => Promise<T>): Promise<T> {
+  const next = printDialogChain.then(run, run);
+  printDialogChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/**
+ * Open the system print dialog and wait until it closes (Print or Cancel).
+ * Resolves true when the dialog opened; false if the iframe could not be created.
+ */
+export function printHtmlDocumentAndWait(
+  html: string,
+  docTitle?: string,
+): Promise<boolean> {
+  return enqueuePrintDialog(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute("title", "print");
+        iframe.style.cssText =
+          "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+        document.body.appendChild(iframe);
+
+        const win = iframe.contentWindow;
+        const doc = win?.document;
+        if (!win || !doc) {
+          iframe.remove();
+          resolve(false);
+          return;
+        }
+
+        doc.open();
+        doc.write(html);
+        doc.close();
+        if (docTitle) {
+          doc.title = docTitle;
+        }
+
+        let settled = false;
+        let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          if (safetyTimer !== undefined) clearTimeout(safetyTimer);
+          try {
+            win.onafterprint = null;
+          } catch {
+            /* ignore */
+          }
+          // Remove only after the dialog has closed — early removal breaks Cancel.
+          setTimeout(() => {
+            try {
+              iframe.remove();
+            } catch {
+              /* ignore */
+            }
+          }, 300);
+          resolve(true);
+        };
+
+        win.onafterprint = finish;
+
+        // Some WebViews fire media-query changes instead of / in addition to afterprint.
+        try {
+          const mql = win.matchMedia("print");
+          const onPrintMedia = (event: MediaQueryListEvent): void => {
+            if (!event.matches) finish();
+          };
+          if (typeof mql.addEventListener === "function") {
+            mql.addEventListener("change", onPrintMedia);
+          } else if (typeof mql.addListener === "function") {
+            mql.addListener(onPrintMedia);
+          }
+        } catch {
+          /* ignore */
+        }
+
+        requestAnimationFrame(() => {
+          try {
+            win.focus();
+            win.print();
+          } catch {
+            finish();
+            return;
+          }
+          // Safety: never leave the queue blocked forever.
+          safetyTimer = setTimeout(finish, 180_000);
+        });
+      }),
+  );
+}
+
+/** Opens the system print dialog (fire-and-forget). Prefer printHtmlDocumentAndWait. */
 export function printHtmlDocument(html: string, docTitle?: string): boolean {
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("title", "print");
-  iframe.style.cssText =
-    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
-  document.body.appendChild(iframe);
-
-  const win = iframe.contentWindow;
-  const doc = win?.document;
-  if (!win || !doc) {
-    iframe.remove();
-    return false;
-  }
-
-  doc.open();
-  doc.write(html);
-  doc.close();
-
-  if (docTitle) {
-    doc.title = docTitle;
-  }
-
-  const cleanup = (): void => {
-    setTimeout(() => iframe.remove(), 500);
-  };
-
-  win.onafterprint = cleanup;
-
-  // Give layout a tick before print (WebKit / Tauri webview).
-  requestAnimationFrame(() => {
-    win.focus();
-    win.print();
-    setTimeout(cleanup, 30_000);
-  });
-
+  void printHtmlDocumentAndWait(html, docTitle);
   return true;
 }
 
@@ -1092,10 +1162,11 @@ export async function printHtmlDocumentDetailed(
     }
   }
 
-  for (let i = 0; i < copies; i++) {
-    if (!printHtmlDocument(html, jobTitle)) {
-      return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
-    }
+  // OS print dialog already has its own Copies control — open it once only.
+  // Looping here stacked 2–3 identical receipt dialogs on Pay.
+  const opened = await printHtmlDocumentAndWait(html, jobTitle);
+  if (!opened) {
+    return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
   }
   return { ok: true, usedNamedPrinter: false };
 }
@@ -1151,10 +1222,10 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
     return { ok: false, usedNamedPrinter: false, error: result.error };
   }
 
-  for (let i = 0; i < copies; i++) {
-    if (!printHtmlDocument(html, docTitle)) {
-      return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
-    }
+  // OS print dialog already has its own Copies control — open it once only.
+  const opened = await printHtmlDocumentAndWait(html, docTitle);
+  if (!opened) {
+    return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
   }
   return { ok: true, usedNamedPrinter: false };
 }

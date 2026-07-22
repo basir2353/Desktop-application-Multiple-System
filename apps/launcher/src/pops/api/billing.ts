@@ -16,6 +16,28 @@ import {
   type WaiterOption,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
+import {
+  enqueueOfflineBill,
+  isOnline,
+  isTransientOrderError,
+  loadOfflineBills,
+  markOrdersForceOpen,
+} from "../lib/popsOfflineOrders";
+import { resumeOrders } from "./closing";
+
+async function createBillRemote(input: CreateBill): Promise<Bill> {
+  const body = createBillSchema.parse(input);
+  const res = await authFetch("/v1/billing/bills", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Create bill failed: ${res.status}`);
+  }
+  return billSchema.parse(await res.json());
+}
 
 export async function fetchWaiters(branchCode?: string): Promise<WaiterOption[]> {
   const params = branchCode ? `?${new URLSearchParams({ branchCode })}` : "";
@@ -58,28 +80,49 @@ export async function updateWaiter(waiterId: string, input: UpdateWaiter): Promi
 }
 
 export async function fetchCompletedOrders(branchCode: string): Promise<Bill[]> {
-  const params = new URLSearchParams({ branchCode });
-  const res = await authFetch(`/v1/billing/orders?${params}`);
-  if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(err?.message ?? `Orders failed: ${res.status}`);
+  const offline = loadOfflineBills();
+  try {
+    const params = new URLSearchParams({ branchCode });
+    const res = await authFetch(`/v1/billing/orders?${params}`);
+    if (!res.ok) {
+      const err = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(err?.message ?? `Orders failed: ${res.status}`);
+    }
+    const json: unknown = await res.json();
+    const remote = orderListSchema.parse(json).orders;
+    const remoteIds = new Set(remote.map((b) => b.id));
+    return [...offline.filter((b) => !remoteIds.has(b.id)), ...remote];
+  } catch {
+    return offline;
   }
-  const json: unknown = await res.json();
-  return orderListSchema.parse(json).orders;
+}
+
+export async function createBillRemoteOnly(input: CreateBill): Promise<Bill> {
+  return createBillRemote(createBillSchema.parse(input));
 }
 
 export async function createBill(input: CreateBill): Promise<Bill> {
   const body = createBillSchema.parse(input);
-  const res = await authFetch("/v1/billing/bills", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(err?.message ?? `Create bill failed: ${res.status}`);
+
+  if (!isOnline()) {
+    return enqueueOfflineBill(body);
   }
-  return billSchema.parse(await res.json());
+
+  try {
+    return await createBillRemote(body);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!isTransientOrderError(message)) throw err;
+
+    markOrdersForceOpen();
+    // One silent resume attempt (covers missing /resume-orders via fallbacks).
+    try {
+      await resumeOrders(body.branchCode);
+      return await createBillRemote(body);
+    } catch {
+      return enqueueOfflineBill(body);
+    }
+  }
 }
 
 export async function completeBill(billId: string, input: CompleteBill): Promise<Bill> {

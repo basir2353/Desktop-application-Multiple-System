@@ -5,6 +5,7 @@ import { isOnline, subscribeConnectivity } from "@platform/connectivity";
 import { getApiBaseUrl } from "../../../lib/apiBase";
 import { countPendingOutbox, flushAllOfflineData } from "../../../lib/offlineSync";
 import { loadOfflineQueue } from "../../../store/lib/storePosSync";
+import { countOfflinePopsOrders } from "../../lib/popsOfflineOrders";
 import { useDataModeStore, type DataMode } from "../../../stores/dataModeStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { Badge } from "../../ui/Badge";
@@ -42,6 +43,7 @@ export function SyncPage(): JSX.Element {
     queryFn: async () => ({
       sales: loadOfflineQueue().length,
       outbox: await countPendingOutbox(),
+      popsOrders: countOfflinePopsOrders(),
     }),
     refetchInterval: 5000,
   });
@@ -53,8 +55,10 @@ export function SyncPage(): JSX.Element {
     },
     onSuccess: (summary) => {
       setNotice(
-        `Synced ${summary.salesSynced} sale(s), ${summary.outboxPushed} outbox batch(es)` +
-          (summary.salesFailed > 0 ? ` — ${summary.salesFailed} failed` : ""),
+        `Synced ${summary.salesSynced} sale(s), ${summary.popsOrdersSynced} POS order(s), ${summary.outboxPushed} outbox batch(es)` +
+          (summary.salesFailed + summary.popsOrdersFailed > 0
+            ? ` — ${summary.salesFailed + summary.popsOrdersFailed} failed`
+            : ""),
       );
       setError(null);
       void pendingQuery.refetch();
@@ -80,7 +84,8 @@ export function SyncPage(): JSX.Element {
 
   const pendingSales = pendingQuery.data?.sales ?? 0;
   const pendingOutbox = pendingQuery.data?.outbox ?? 0;
-  const pendingTotal = pendingSales + pendingOutbox;
+  const pendingPops = pendingQuery.data?.popsOrders ?? 0;
+  const pendingTotal = pendingSales + pendingOutbox + pendingPops;
 
   return (
     <div className="space-y-4">
@@ -106,7 +111,7 @@ export function SyncPage(): JSX.Element {
         <span className="text-slate-400">Last sync · {formatRelativeTime(lastSyncedAt)}</span>
         <span className="text-slate-600">|</span>
         <span className="text-slate-400">
-          Pending · {pendingTotal} ({pendingSales} sales, {pendingOutbox} outbox)
+          Pending · {pendingTotal} ({pendingSales} sales, {pendingPops} POS, {pendingOutbox} outbox)
         </span>
       </div>
 

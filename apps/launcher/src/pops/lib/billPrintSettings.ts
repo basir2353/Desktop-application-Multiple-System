@@ -69,7 +69,7 @@ export const DEFAULT_BILL_RECEIPT_FIELDS: BillReceiptFields = {
 };
 
 export const DEFAULT_BILL_PRINT_SETTINGS: BillPrintSettings = {
-  baseFontSize: 11,
+  baseFontSize: 14,
   layout: "standard",
   headerAlign: "center",
   headerBusinessName: "",
@@ -84,8 +84,8 @@ export const BILL_PRINT_SETTINGS_CHANGED_EVENT = "pops-bill-print-settings-chang
 
 const STORAGE_KEY = "pops-bill-print-settings-v2";
 
-export const BILL_FONT_SIZE_MIN = 9;
-export const BILL_FONT_SIZE_MAX = 18;
+export const BILL_FONT_SIZE_MIN = 12;
+export const BILL_FONT_SIZE_MAX = 20;
 
 export const BILL_FIELD_GROUPS: { label: string; keys: (keyof BillReceiptFields)[] }[] = [
   {
@@ -167,8 +167,11 @@ export function normalizeBillPrintSettings(input: Partial<BillPrintSettings>): B
   const footerText = (input.footerText ?? DEFAULT_BILL_PRINT_SETTINGS.footerText).trim()
     || DEFAULT_BILL_PRINT_SETTINGS.footerText;
   const footerSecondaryText = (input.footerSecondaryText ?? "").trim().slice(0, 120);
+  let baseFontSize = clampFontSize(input.baseFontSize ?? DEFAULT_BILL_PRINT_SETTINGS.baseFontSize);
+  // Migrate old tiny defaults (≤12) to the new readable receipt size.
+  if (baseFontSize <= 12) baseFontSize = DEFAULT_BILL_PRINT_SETTINGS.baseFontSize;
   return {
-    baseFontSize: clampFontSize(input.baseFontSize ?? DEFAULT_BILL_PRINT_SETTINGS.baseFontSize),
+    baseFontSize,
     layout,
     headerAlign,
     headerBusinessName,
@@ -214,7 +217,7 @@ export function saveBillPrintSettings(branchCode: string, settings: BillPrintSet
   }
 }
 
-/** Scale receipt typography relative to the default 11px body size. */
+/** Scale receipt typography relative to the default body size (readable on thermal). */
 export function billReceiptFontSizes(baseFontSize: number): {
   body: number;
   branchName: number;
@@ -239,22 +242,22 @@ export function billReceiptFontSizes(baseFontSize: number): {
   const px = (n: number) => Math.round(n * r * 10) / 10;
   return {
     body: baseFontSize,
-    branchName: px(15),
-    docType: px(9),
-    metaChip: px(9.5),
-    metaChipBillRef: px(9.5),
-    notes: px(9.5),
-    timestamp: px(9),
-    th: px(8.5),
-    itemName: px(10.5),
-    qty: px(10),
-    amt: px(10),
-    rowLabel: px(9.5),
-    rowValue: px(10),
-    grandLabel: px(12),
-    grandValue: px(13),
-    footer: px(9),
-    headerSubtitle: px(8.5),
-    footerSecondary: px(8),
+    branchName: px(20),
+    docType: px(12),
+    metaChip: px(13),
+    metaChipBillRef: px(13),
+    notes: px(12),
+    timestamp: px(12),
+    th: px(11),
+    itemName: px(15),
+    qty: px(15),
+    amt: px(14),
+    rowLabel: px(13),
+    rowValue: px(14),
+    grandLabel: px(16),
+    grandValue: px(18),
+    footer: px(12),
+    headerSubtitle: px(11),
+    footerSecondary: px(11),
   };
 }

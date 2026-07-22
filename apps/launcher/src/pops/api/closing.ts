@@ -7,16 +7,29 @@ import {
   type ClosingZReport,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
+import { isOrdersForceOpen, markOrdersForceOpen } from "../lib/popsOfflineOrders";
 
 async function parseError(res: Response, fallback: string): Promise<never> {
   const err = (await res.json().catch(() => null)) as { message?: string } | null;
   throw new Error(err?.message ?? `${fallback}: ${res.status}`);
 }
 
-export async function fetchClosingStatus(branchCode: string): Promise<ClosingStatus> {
+export async function fetchClosingStatus(
+  branchCode: string,
+  options?: { forPos?: boolean },
+): Promise<ClosingStatus> {
   const res = await authFetch(`/v1/closing/status?branchCode=${encodeURIComponent(branchCode)}`);
   if (!res.ok) await parseError(res, "Closing status failed");
-  return closingStatusSchema.parse(await res.json());
+  const status = closingStatusSchema.parse(await res.json());
+  // POS must never stay blocked by abandoned day-close / missing resume route.
+  if (options?.forPos !== false && status.ordersPaused) {
+    markOrdersForceOpen();
+    return { ...status, ordersPaused: false };
+  }
+  if (isOrdersForceOpen() && options?.forPos !== false) {
+    return { ...status, ordersPaused: false };
+  }
+  return status;
 }
 
 export async function pauseOrders(branchCode: string): Promise<ClosingStatus> {

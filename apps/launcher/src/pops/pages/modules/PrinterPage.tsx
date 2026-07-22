@@ -2302,14 +2302,14 @@ export function PrinterPage(): JSX.Element {
             Underline separator for each item
           </label>
           <label className="block text-xs text-slate-400">
-            Base font size (px)
+            Base font size (px) — larger is easier to read in kitchen
             <input
               type="number"
-              min={9}
-              max={14}
+              min={12}
+              max={20}
               value={kotDraft.baseFontSize}
               onChange={(e) =>
-                setKotDraft((p) => ({ ...p, baseFontSize: Number(e.target.value) || 11 }))
+                setKotDraft((p) => ({ ...p, baseFontSize: Number(e.target.value) || 15 }))
               }
               className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             />

@@ -15,8 +15,7 @@ import { useSessionStore } from "../../../stores/sessionStore";
 import { useThemeStore } from "../../../stores/themeStore";
 import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../../api/billing";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
-import { fetchClosingStatus, resumeOrders } from "../../api/closing";
-import { karachiDateKey } from "../../lib/orderSales";
+import { fetchClosingStatus } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
 import { fetchBranchMenu } from "../../api/menu";
@@ -526,53 +525,11 @@ export function PosPage(): JSX.Element {
     refetchInterval: 30_000,
   });
 
-  const closingStatusQuery = useQuery({
-    queryKey: ["closing", branch?.code],
-    enabled: Boolean(branch?.code),
-    queryFn: () => fetchClosingStatus(branch!.code),
-    refetchInterval: 30_000,
-  });
-
-  const resumeOrdersMutation = useMutation({
-    mutationFn: () => resumeOrders(branch!.code),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["closing"] });
-      setPrintNotice({ message: "Orders resumed — you can take new orders again.", tone: "success" });
-    },
-    onError: (err: Error) => {
-      // Don't spam cashiers with "Cannot POST /v1/closing/resume-orders" from old servers.
-      if (/cannot post|not found|404|not available on this server/i.test(err.message)) {
-        void queryClient.invalidateQueries({ queryKey: ["closing"] });
-        return;
-      }
-      setPrintNotice({ message: err.message, tone: "error" });
-    },
-  });
-
-  // Abandoned day-close left ordersPaused on an old business date (e.g. 2026-07-14).
-  // Auto-resume against the live API so the red banner does not stick forever.
-  const stalePauseClearedRef = useRef(false);
+  // Soft-clear day-close pause flag for this device (never show blocking banner).
   useEffect(() => {
-    if (!branch?.code || stalePauseClearedRef.current) return;
-    const status = closingStatusQuery.data;
-    if (!status?.ordersPaused) return;
-    const today = karachiDateKey(new Date());
-    if (status.businessDate >= today) return;
-    stalePauseClearedRef.current = true;
-    void resumeOrders(branch.code)
-      .then(() => {
-        void queryClient.invalidateQueries({ queryKey: ["closing"] });
-      })
-      .catch(() => {
-        // Missing resume route on older Railway builds — banner already hidden for stale dates.
-        stalePauseClearedRef.current = false;
-      });
-  }, [branch?.code, closingStatusQuery.data, queryClient]);
-
-  const ordersPausedForToday = Boolean(
-    closingStatusQuery.data?.ordersPaused &&
-      closingStatusQuery.data.businessDate >= karachiDateKey(new Date()),
-  );
+    if (!branch?.code) return;
+    void fetchClosingStatus(branch.code);
+  }, [branch?.code]);
 
   useEffect(() => {
     if (!branch?.code || cashSessionQuery.isLoading || cashierPromptShown.current) return;
@@ -1506,6 +1463,56 @@ export function PosPage(): JSX.Element {
     }) => {
       const err = validateBillCheckout();
       if (err) throw new Error(err);
+
+      /**
+       * Direct Pay / Invoice (no prior "Order"): create + print KOT first so kitchen
+       * still gets the ticket. Leave it open (do not mark done) — kitchen needs it.
+       * If cart already came from an open kitchen ticket, skip create (mark done after pay).
+       */
+      const needsKotOnPay =
+        status === "completed" && editingOrder?.kind !== "ticket" && cart.length > 0;
+
+      let sharedOrderRef: string | undefined;
+      const kotPrintErrors: string[] = [];
+      let kotSent = false;
+
+      if (needsKotOnPay) {
+        sharedOrderRef =
+          editingOrder?.kind === "held-bill"
+            ? orderRef || nextOrderRef(branch!.code)
+            : nextOrderRef(branch!.code);
+
+        await createKitchenTicket({
+          branchCode: branch!.code,
+          orderRef: sharedOrderRef,
+          stationLabel,
+          lines: kitchenLines(),
+          notes: orderNotes,
+          ...deliveryExtras(),
+        });
+        kotSent = true;
+
+        for (const payload of buildRoutedKotPrintPayloads(sharedOrderRef)) {
+          // Pay already opens the receipt dialog — do not also open KOT print dialogs
+          // (copies / multi-section routing was stacking 2–3 identical windows).
+          // Named OS kitchen printers still get a silent KOT job.
+          if (!payload.systemPrinterName?.trim()) {
+            continue;
+          }
+          const result = await printKotDetailed(payload);
+          const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
+          logPrintEvent(branch?.code, {
+            kind: "kot",
+            printerName: target,
+            orderRef: payload.orderRef,
+            ok: result.ok,
+          });
+          if (!result.ok) {
+            kotPrintErrors.push(`${target}: ${result.error ?? "print failed"}`);
+          }
+        }
+      }
+
       if (editingOrder?.kind === "held-bill") {
         const updated = await updateBill(editingOrder.billId, {
           tableLabel: billTableLabel,
@@ -1518,18 +1525,31 @@ export function PosPage(): JSX.Element {
           deliveryChargePkr: mode === "delivery" ? deliveryChargePkr : 0,
         });
         if (status === "held") {
-          return { bill: updated, intent, skipStaffFoodLog: true };
+          return {
+            bill: updated,
+            intent,
+            skipStaffFoodLog: true,
+            kotSent,
+            kotPrintErrors,
+          };
         }
         const completed = await completeBill(editingOrder.billId, {
           payments,
           servicePct: checkoutServicePct,
           taxPct: checkoutTaxPct,
         });
-        return { bill: completed, intent, skipStaffFoodLog: true };
+        return {
+          bill: completed,
+          intent,
+          skipStaffFoodLog: true,
+          kotSent,
+          kotPrintErrors,
+        };
       }
+
       const bill = await createBill({
         branchCode: branch!.code,
-        orderRef: nextOrderRef(branch!.code),
+        orderRef: sharedOrderRef ?? nextOrderRef(branch!.code),
         tableLabel: billTableLabel,
         waiterName:
           mode === "staff-food" && staffFoodPersonName ? staffFoodPersonName : "POS Counter",
@@ -1551,9 +1571,11 @@ export function PosPage(): JSX.Element {
         intent,
         // Kitchen Order already logged HR; avoid a second record on Pay.
         skipStaffFoodLog: editingOrder?.kind === "ticket",
+        kotSent,
+        kotPrintErrors,
       };
     },
-    onSuccess: async ({ bill, intent, skipStaffFoodLog }) => {
+    onSuccess: async ({ bill, intent, skipStaffFoodLog, kotSent, kotPrintErrors }) => {
       setCheckoutModal(null);
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
@@ -1574,12 +1596,17 @@ export function PosPage(): JSX.Element {
       const payload = withPrinterProfile(
         {
           ...buildPrintPayload(),
+          orderRef: bill.orderRef ?? orderRef,
           billRef: bill.billRef,
           waiterName: bill.waiterName,
         },
         receiptProfile,
       );
-      const result = await printReceiptDetailed(payload);
+      // One receipt dialog only — never re-open from profile copies when using the OS dialog.
+      const result = await printReceiptDetailed({
+        ...payload,
+        copies: payload.systemPrinterName?.trim() ? Math.max(1, payload.copies ?? 1) : 1,
+      });
       const target = payload.systemPrinterName ?? payload.printerName ?? "Receipt";
       logPrintEvent(branch?.code, {
         kind: "receipt",
@@ -1588,13 +1615,20 @@ export function PosPage(): JSX.Element {
         ok: result.ok,
       });
       resetAfterBill();
+
+      const kotHint = kotSent
+        ? kotPrintErrors.length > 0
+          ? ` KOT saved but print failed (${kotPrintErrors.join("; ")}).`
+          : " Kitchen ticket sent."
+        : "";
+
       if (result.ok) {
         setPrintNotice(
           noticeFromPrintResult(
             true,
             intent === "invoice"
-              ? `Invoice printed to ${target} — ${bill.billRef}`
-              : `${modeLabel} paid — printed to ${target} (${bill.billRef})`,
+              ? `Invoice printed to ${target} — ${bill.billRef}.${kotHint}`
+              : `${modeLabel} paid — printed to ${target} (${bill.billRef}).${kotHint}`,
           ),
         );
       } else {
@@ -1602,7 +1636,7 @@ export function PosPage(): JSX.Element {
           tone: "error",
           message: `Bill ${bill.billRef} saved, but print to ${target} failed${
             result.error ? `: ${result.error}` : ""
-          }. Link an OS printer on Printer Profiles.`,
+          }.${kotHint} Link an OS printer on Printer Profiles.`,
         });
       }
       const phone = phoneFromBillNotes(bill.notes);
@@ -1618,6 +1652,31 @@ export function PosPage(): JSX.Element {
       const err = validateBillCheckout();
       if (err) throw new Error(err);
       const groupRef = nextOrderRef(branch!.code);
+
+      // Same as direct Pay: kitchen must get a KOT even when splitting payment.
+      if (editingOrder?.kind !== "ticket") {
+        await createKitchenTicket({
+          branchCode: branch!.code,
+          orderRef: groupRef,
+          stationLabel,
+          lines: kitchenLines(),
+          notes: orderNotes,
+          ...deliveryExtras(),
+        });
+        for (const payload of buildRoutedKotPrintPayloads(groupRef)) {
+          if (!payload.systemPrinterName?.trim()) {
+            continue;
+          }
+          const result = await printKotDetailed(payload);
+          logPrintEvent(branch?.code, {
+            kind: "kot",
+            printerName: payload.systemPrinterName ?? payload.printerName ?? "Kitchen",
+            orderRef: payload.orderRef,
+            ok: result.ok,
+          });
+        }
+      }
+
       const bills = [];
       for (let i = 0; i < splits.length; i++) {
         const split = splits[i];
@@ -1701,10 +1760,11 @@ export function PosPage(): JSX.Element {
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
 
-  function buildKotPrintPayload(): Omit<PrintTicketInput, "kind"> {
+  function buildKotPrintPayload(orderRefOverride?: string): Omit<PrintTicketInput, "kind"> {
     const payload = buildPrintPayload();
     return {
       ...payload,
+      orderRef: orderRefOverride ?? payload.orderRef,
       lines: payload.lines.map((line) => ({ ...line, unitPrice: 0 })),
       subtotal: 0,
       discount: 0,
@@ -1721,8 +1781,8 @@ export function PosPage(): JSX.Element {
    * have a "Print to" assignment configured. Falls back to a single combined KOT — the
    * original behavior — when no routing is set up for anything in the cart.
    */
-  function buildRoutedKotPrintPayloads(): Omit<PrintTicketInput, "kind">[] {
-    const basePayload = buildKotPrintPayload();
+  function buildRoutedKotPrintPayloads(orderRefOverride?: string): Omit<PrintTicketInput, "kind">[] {
+    const basePayload = buildKotPrintPayload(orderRefOverride);
     const sessionUserId = useSessionStore.getState().claims?.sub;
     const enabledSections = loadPrinterSections(branch?.code).filter((s) => s.enabled);
 
@@ -2066,23 +2126,6 @@ export function PosPage(): JSX.Element {
         </div>
       </div>
 
-      {ordersPausedForToday ? (
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-          <span>
-            New orders are paused for day closing (business date{" "}
-            {closingStatusQuery.data?.businessDate}). Resume to continue, or switch to another branch.
-          </span>
-          <button
-            type="button"
-            className="shrink-0 rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
-            disabled={resumeOrdersMutation.isPending}
-            onClick={() => resumeOrdersMutation.mutate()}
-          >
-            {resumeOrdersMutation.isPending ? "Resuming…" : "Resume orders"}
-          </button>
-        </div>
-      ) : null}
-
       {menuQuery.isError ? (
         <p className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           Could not load menu — {(menuQuery.error as Error).message}
@@ -2152,14 +2195,14 @@ export function PosPage(): JSX.Element {
         <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           {/* Category pills — bar background only; amber on selected */}
           {categories.length > 0 ? (
-            <div className="no-scrollbar mb-1.5 flex shrink-0 gap-1.5 overflow-x-auto rounded-xl bg-amber-50 p-1.5 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
+            <div className="mb-1.5 grid shrink-0 grid-cols-4 gap-1.5 rounded-xl bg-amber-50 p-1.5 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
               <button
                 type="button"
                 onClick={() => {
                   setMenuView("all");
                   setCategoryId(null);
                 }}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+                className={`min-w-0 rounded-full px-2 py-1.5 text-center text-[11px] font-semibold leading-tight transition ${
                   showAllItems
                     ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
                     : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"
@@ -2170,7 +2213,7 @@ export function PosPage(): JSX.Element {
               <button
                 type="button"
                 onClick={() => setMenuView("featured")}
-                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+                className={`inline-flex min-w-0 items-center justify-center gap-1 rounded-full px-2 py-1.5 text-[11px] font-semibold leading-tight transition ${
                   showFeaturedOnly
                     ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
                     : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-amber-200"
@@ -2179,10 +2222,10 @@ export function PosPage(): JSX.Element {
                 <span className={showFeaturedOnly ? "text-slate-950" : "text-amber-500"} aria-hidden>
                   ★
                 </span>
-                Featured
+                <span className="truncate">Featured</span>
                 {featuredCount > 0 ? (
                   <span
-                    className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
+                    className={`shrink-0 rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
                       showFeaturedOnly
                         ? "bg-slate-950/15 text-slate-950"
                         : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
@@ -2196,11 +2239,12 @@ export function PosPage(): JSX.Element {
                 <button
                   key={c.id}
                   type="button"
+                  title={c.name}
                   onClick={() => {
                     setMenuView("category");
                     setCategoryId(c.id);
                   }}
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+                  className={`min-w-0 break-words rounded-full px-2 py-1.5 text-center text-[11px] font-semibold leading-tight transition ${
                     menuView === "category" && activeCategoryId === c.id
                       ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
                       : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"

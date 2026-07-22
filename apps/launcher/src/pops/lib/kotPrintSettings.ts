@@ -13,7 +13,8 @@ export const DEFAULT_KOT_PRINT_SETTINGS: KotPrintSettings = {
   emphasizeOrderMeta: true,
   showItemTotals: true,
   itemUnderlineSeparator: true,
-  baseFontSize: 11,
+  /** Larger default so kitchen tickets stay readable on thermal printers. */
+  baseFontSize: 15,
 };
 
 export const KOT_PRINT_SETTINGS_CHANGED_EVENT = "pops-kot-print-settings-changed";
@@ -22,16 +23,19 @@ const STORAGE_KEY = "pops-kot-print-settings-v1";
 
 function clampFontSize(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_KOT_PRINT_SETTINGS.baseFontSize;
-  return Math.max(9, Math.min(14, Math.round(value)));
+  return Math.max(12, Math.min(20, Math.round(value)));
 }
 
 export function normalizeKotPrintSettings(input: Partial<KotPrintSettings>): KotPrintSettings {
+  let baseFontSize = clampFontSize(input.baseFontSize ?? DEFAULT_KOT_PRINT_SETTINGS.baseFontSize);
+  // Migrate old tiny defaults (≤12) to the new kitchen-readable size.
+  if (baseFontSize <= 12) baseFontSize = DEFAULT_KOT_PRINT_SETTINGS.baseFontSize;
   return {
     emphasizeOrderMeta: input.emphasizeOrderMeta ?? DEFAULT_KOT_PRINT_SETTINGS.emphasizeOrderMeta,
     showItemTotals: input.showItemTotals ?? DEFAULT_KOT_PRINT_SETTINGS.showItemTotals,
     itemUnderlineSeparator:
       input.itemUnderlineSeparator ?? DEFAULT_KOT_PRINT_SETTINGS.itemUnderlineSeparator,
-    baseFontSize: clampFontSize(input.baseFontSize ?? DEFAULT_KOT_PRINT_SETTINGS.baseFontSize),
+    baseFontSize,
   };
 }
 

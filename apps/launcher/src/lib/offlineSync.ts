@@ -10,16 +10,36 @@ import {
   loadOfflineQueue,
   removeOfflineSale,
 } from "../store/lib/storePosSync";
+import { createBillRemoteOnly } from "../pops/api/billing";
+import { createKitchenTicketRemoteOnly } from "../pops/api/kitchen";
+import { resumeOrders } from "../pops/api/closing";
+import {
+  bumpOfflineBillAttempt,
+  bumpOfflineKotAttempt,
+  clearOrdersForceOpen,
+  loadOfflineBillEntries,
+  loadOfflineKotEntries,
+  removeOfflineBill,
+  removeOfflineKot,
+} from "../pops/lib/popsOfflineOrders";
 
 export type SyncSummary = {
   outboxPushed: number;
   salesSynced: number;
   salesFailed: number;
+  popsOrdersSynced: number;
+  popsOrdersFailed: number;
 };
 
-/** Push outbox rows and replay queued store POS sales to the hosted API. */
+/** Push outbox rows and replay queued store POS + restaurant POS orders to the hosted API. */
 export async function flushAllOfflineData(accessToken: string): Promise<SyncSummary> {
-  const summary: SyncSummary = { outboxPushed: 0, salesSynced: 0, salesFailed: 0 };
+  const summary: SyncSummary = {
+    outboxPushed: 0,
+    salesSynced: 0,
+    salesFailed: 0,
+    popsOrdersSynced: 0,
+    popsOrdersFailed: 0,
+  };
 
   if (!isOnline()) return summary;
 
@@ -44,8 +64,52 @@ export async function flushAllOfflineData(accessToken: string): Promise<SyncSumm
     }
   }
 
-  if (summary.salesSynced > 0 || summary.outboxPushed > 0) {
+  // Clear day-close pause once before replaying restaurant orders.
+  const popsBills = loadOfflineBillEntries();
+  const popsKots = loadOfflineKotEntries();
+  if (popsBills.length > 0 || popsKots.length > 0) {
+    const branchCode =
+      popsBills[0]?.payload.branchCode ?? popsKots[0]?.payload.branchCode ?? "";
+    if (branchCode) {
+      try {
+        await resumeOrders(branchCode);
+      } catch {
+        /* older API may lack resume — create still may succeed after server fix */
+      }
+    }
+  }
+
+  for (const entry of popsBills) {
+    try {
+      await createBillRemoteOnly(entry.payload);
+      removeOfflineBill(entry.id);
+      summary.popsOrdersSynced += 1;
+    } catch {
+      bumpOfflineBillAttempt(entry.id);
+      summary.popsOrdersFailed += 1;
+    }
+  }
+
+  for (const entry of popsKots) {
+    try {
+      await createKitchenTicketRemoteOnly(entry.payload);
+      removeOfflineKot(entry.id);
+      summary.popsOrdersSynced += 1;
+    } catch {
+      bumpOfflineKotAttempt(entry.id);
+      summary.popsOrdersFailed += 1;
+    }
+  }
+
+  if (
+    summary.salesSynced > 0 ||
+    summary.outboxPushed > 0 ||
+    summary.popsOrdersSynced > 0
+  ) {
     useDataModeStore.getState().markSynced();
+    if (summary.popsOrdersFailed === 0 && loadOfflineBillEntries().length === 0) {
+      clearOrdersForceOpen();
+    }
   }
 
   return summary;
