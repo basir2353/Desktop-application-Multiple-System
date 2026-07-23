@@ -238,7 +238,6 @@ export function Chip({
   onPress,
   tone,
   sublabel,
-  disabled,
 }: {
   label: string;
   selected?: boolean;
@@ -246,7 +245,6 @@ export function Chip({
   /** "mine" = booked by me (green), "locked" = booked by another waiter (red). */
   tone?: "mine" | "locked";
   sublabel?: string;
-  disabled?: boolean;
 }) {
   return (
     <Pressable
@@ -258,7 +256,7 @@ export function Chip({
         tone === "locked" && styles.chipLocked,
         selected && styles.chipSelected,
         selected && tone === "locked" && styles.chipSelectedLocked,
-        pressed && styles.chipPressed,
+        pressed && !disabled && styles.chipPressed,
         disabled && styles.chipDisabled,
       ]}
     >

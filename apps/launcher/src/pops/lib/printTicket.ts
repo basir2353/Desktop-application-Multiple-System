@@ -290,7 +290,8 @@ export function buildThermalPlainText(
       ? resolveBillPrintSettingsForReceipt(input.branchCode)
       : DEFAULT_BILL_PRINT_SETTINGS);
   const fields = isReceipt ? billSettings.fields : null;
-  const useClearLayout = isReceipt && thermal.receiptLayout === "clear";
+  const useClearLayout =
+    isReceipt && (thermal.receiptLayout === "clear" || paper === "58mm");
   const showPrice =
     isReceipt &&
     !useClearLayout &&
@@ -567,8 +568,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
 
   // Pay / invoice receipt: columns (QTY | ITEM | PRICE | AMOUNT) unless user chose Clear.
-  // On 58mm, drop unit PRICE so AMOUNT fits the printable width.
-  const useClearLayout = isReceipt && thermal.receiptLayout === "clear";
+  // On 58mm, always use Clear — column layout leaves too little width for item names.
+  const useClearLayout =
+    isReceipt && (thermal.receiptLayout === "clear" || narrowPaper);
   const showAmtColEarly = isReceipt && Boolean(fields?.itemAmount);
   const showPriceCol =
     showAmtColEarly &&
@@ -582,12 +584,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
           .map((line) => {
             const lineTotal = line.unitPrice * line.qty;
             return `<div class="clear-item">
-        <div class="clear-item-name">${escapeHtml(`${line.qty} x ${line.label}`)}</div>
-        ${
-          line.qty > 1
-            ? `<div class="clear-item-unit">@ ${formatMoney(line.unitPrice, moneyCompact)}</div>`
-            : ""
-        }
+        <div class="clear-item-main">
+          <div class="clear-item-name">${escapeHtml(line.label)}</div>
+          <div class="clear-item-qty">${escapeHtml(`${line.qty} × ${formatMoney(line.unitPrice, moneyCompact)}`)}</div>
+        </div>
         <div class="clear-item-amt">${formatMoney(lineTotal, moneyCompact)}</div>
       </div>`;
           })
@@ -643,22 +643,24 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalsBlock =
     isReceipt && totalsRows.length > 0 ? `<div class="totals">${totalsRows.join("")}</div>` : "";
 
+  const metaRow = (label: string, value: string, emphasize = false) =>
+    `<div class="meta-row${emphasize ? " meta-row-strong" : ""}"><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${escapeHtml(value)}</span></div>`;
+
   const metaRows = isReceipt && fields
     ? [
-        fields.orderRef ? `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>` : null,
-        fields.orderType ? `<span class="meta-chip meta-primary">${escapeHtml(input.modeLabel)}</span>` : null,
-        fields.tableLabel && input.tableLabel
-          ? `<span class="meta-chip meta-primary">${escapeHtml(input.tableLabel)}</span>`
-          : null,
-        fields.billRef && input.billRef
-          ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>`
-          : null,
-        fields.waiterName && input.waiterName
-          ? `<span class="meta-chip">Waiter: ${escapeHtml(input.waiterName)}</span>`
-          : null,
-        fields.printerName && input.printerName
-          ? `<span class="meta-chip">Printer: ${escapeHtml(input.printerName)}</span>`
-          : null,
+        fields.orderRef
+          ? metaRow(
+              "Order",
+              [input.orderRef, fields.orderType ? input.modeLabel : ""].filter(Boolean).join(" · "),
+              true,
+            )
+          : fields.orderType
+            ? metaRow("Type", input.modeLabel, true)
+            : null,
+        fields.tableLabel && input.tableLabel ? metaRow("Table", input.tableLabel, true) : null,
+        fields.billRef && input.billRef ? metaRow("Bill No", input.billRef) : null,
+        fields.waiterName && input.waiterName ? metaRow("Waiter", input.waiterName) : null,
+        fields.printerName && input.printerName ? metaRow("Printer", input.printerName) : null,
       ]
         .filter(Boolean)
         .join("")
@@ -675,7 +677,6 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       ]
         .filter(Boolean)
         .join("");
-
   const kotUpdateBanner = isOrderUpdate
     ? `<div class="kot-update-banner">*** UPDATE — REVISED ORDER ***</div>`
     : "";
@@ -752,7 +753,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
                 ? `<div class="doc-type" style="text-align:${headerAlign};${blockStyleInline(billSettings, "documentTitle", receiptFonts.docType)}">${escapeHtml(title)}</div>`
                 : "";
             case "meta":
-              return metaRows ? `<div class="meta">${metaRows}</div>` : "";
+              return metaRows ? `<div class="meta-block">${metaRows}</div>` : "";
             case "notes":
               return fields.notes && input.notes
                 ? `<p class="notes" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(input.notes)}</p>`
@@ -767,7 +768,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
                     .join(" · ")}</div>`
                 : "";
             case "items":
-              return itemsHtml;
+              return itemsHtml ? `<div class="items-wrap">${itemsHtml}</div>` : "";
             case "totals":
               return totalsBlock;
             case "footer":
@@ -788,30 +789,167 @@ export function buildTicketHtml(input: PrintTicketInput): string {
 
   const receiptCss = isReceipt
     ? `
-    body { padding: ${compact ? "8px 10px 12px" : "16px 14px 20px"}; line-height: ${compact ? "1.35" : "1.5"}; }
-    .header { text-align: ${headerAlign}; padding-bottom: ${compact ? "8px" : "12px"}; margin-bottom: ${compact ? "8px" : "12px"}; }
-    .meta { justify-content: ${headerAlign === "left" ? "flex-start" : "center"}; margin: ${compact ? "8px 0 10px" : "12px 0 14px"}; }
-    .notes, .timestamp { text-align: ${headerAlign}; }
-    tbody td { padding: ${compact ? "3px 0" : "5px 0"}; }
-    .branch-name { font-size: ${receiptFonts.branchName}px; }
-    .doc-type { font-size: ${receiptFonts.docType}px; }
-    .meta-chip { font-size: ${receiptFonts.metaChip}px; }
-    .meta-chip.bill-ref { font-size: ${receiptFonts.metaChipBillRef}px; }
-    .notes { font-size: ${receiptFonts.notes}px; }
-    .timestamp { font-size: ${receiptFonts.timestamp}px; }
-    thead th { font-size: ${receiptFonts.th}px; }
-    td.item-name { font-size: ${receiptFonts.itemName}px; }
-    td.qty { font-size: ${receiptFonts.qty}px; }
-    td.price { font-size: ${receiptFonts.amt}px; }
-    td.amt { font-size: ${receiptFonts.amt}px; }
-    .row .label { font-size: ${receiptFonts.rowLabel}px; }
-    .row .value { font-size: ${receiptFonts.rowValue}px; }
-    .row.grand .label { font-size: ${receiptFonts.grandLabel}px; }
-    .row.grand .value { font-size: ${receiptFonts.grandValue}px; }
-    .footer { font-size: ${receiptFonts.footer}px; }
-    .header-subtitle { font-size: ${receiptFonts.headerSubtitle}px; }
-    .footer-secondary { font-size: ${receiptFonts.footerSecondary}px; }
-    .custom-line {
+    body.ticket-receipt {
+      padding: ${compact ? "10px 8px 14px" : "14px 10px 18px"};
+      line-height: ${compact ? "1.35" : "1.45"};
+      border-top: 3px double #111827;
+      border-bottom: 3px double #111827;
+    }
+    body.ticket-receipt .branch-name {
+      font-size: ${receiptFonts.branchName}px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+      text-align: ${headerAlign};
+      color: #111827;
+    }
+    body.ticket-receipt .header-subtitle {
+      margin-top: 4px;
+      font-size: ${receiptFonts.headerSubtitle}px;
+      font-weight: 500;
+      color: #6b7280;
+      text-align: ${headerAlign};
+      line-height: 1.35;
+    }
+    body.ticket-receipt .doc-type {
+      margin: ${compact ? "8px 0 10px" : "10px 0 12px"};
+      padding: 5px 0;
+      font-size: ${receiptFonts.docType}px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      text-align: ${headerAlign};
+      color: #111827;
+      border-top: 1px solid #111827;
+      border-bottom: 1px solid #111827;
+    }
+    body.ticket-receipt .meta-block {
+      margin: 0 0 ${compact ? "10px" : "12px"};
+      padding: 0;
+    }
+    body.ticket-receipt .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin: 2px 0;
+      font-size: ${receiptFonts.metaChip}px;
+      line-height: 1.4;
+    }
+    body.ticket-receipt .meta-label {
+      flex: 0 0 auto;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: ${Math.max(9, receiptFonts.metaChip - 2)}px;
+    }
+    body.ticket-receipt .meta-value {
+      flex: 1 1 auto;
+      text-align: right;
+      font-weight: 600;
+      color: #111827;
+      word-break: break-word;
+    }
+    body.ticket-receipt .meta-row-strong .meta-value {
+      font-weight: 800;
+      font-size: ${receiptFonts.metaChipBillRef}px;
+    }
+    body.ticket-receipt .notes,
+    body.ticket-receipt .timestamp {
+      text-align: ${headerAlign};
+    }
+    body.ticket-receipt .timestamp {
+      margin: 0 0 ${compact ? "8px" : "10px"};
+      padding-bottom: ${compact ? "8px" : "10px"};
+      border-bottom: 1px dashed #9ca3af;
+      font-size: ${receiptFonts.timestamp}px;
+      font-weight: 500;
+      color: #6b7280;
+      letter-spacing: 0.01em;
+    }
+    body.ticket-receipt .items-wrap {
+      margin: 0 0 4px;
+    }
+    body.ticket-receipt table.items {
+      margin: 0 0 6px;
+    }
+    body.ticket-receipt thead th {
+      font-size: ${receiptFonts.th}px;
+      padding: 0 0 5px;
+      border-bottom: 1.5px solid #111827;
+      color: #111827;
+      letter-spacing: 0.06em;
+    }
+    body.ticket-receipt tbody td {
+      padding: ${compact ? "4px 0" : "6px 0"};
+      border-bottom: 1px dotted #d1d5db;
+    }
+    body.ticket-receipt tbody tr:last-child td {
+      border-bottom: none;
+    }
+    body.ticket-receipt td.item-name {
+      font-size: ${receiptFonts.itemName}px;
+      font-weight: 600;
+      overflow-wrap: break-word;
+      word-break: normal;
+      hyphens: none;
+    }
+    body.ticket-receipt td.qty {
+      font-size: ${receiptFonts.qty}px;
+    }
+    body.ticket-receipt td.price,
+    body.ticket-receipt td.amt {
+      font-size: ${receiptFonts.amt}px;
+    }
+    body.ticket-receipt .totals {
+      border-top: 1.5px solid #111827;
+      padding-top: 8px;
+      margin-top: 6px;
+    }
+    body.ticket-receipt .row .label {
+      font-size: ${receiptFonts.rowLabel}px;
+    }
+    body.ticket-receipt .row .value {
+      font-size: ${receiptFonts.rowValue}px;
+    }
+    body.ticket-receipt .row.grand {
+      margin-top: 8px;
+      padding: 8px 0;
+      border-top: 2px solid #111827;
+      border-bottom: 2px solid #111827;
+      background: transparent;
+    }
+    body.ticket-receipt .row.grand .label,
+    body.ticket-receipt .row.grand .value {
+      color: #111827;
+      font-size: ${receiptFonts.grandValue}px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    body.ticket-receipt .footer {
+      margin-top: ${compact ? "12px" : "14px"};
+      padding-top: 10px;
+      border-top: 1px dashed #9ca3af;
+      font-size: ${receiptFonts.footer}px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #111827;
+      text-align: ${headerAlign};
+    }
+    body.ticket-receipt .header-subtitle { font-size: ${receiptFonts.headerSubtitle}px; }
+    body.ticket-receipt .footer-secondary {
+      margin-top: 4px;
+      font-size: ${receiptFonts.footerSecondary}px;
+      font-weight: 400;
+      letter-spacing: 0.01em;
+      text-transform: none;
+      color: #6b7280;
+      text-align: ${headerAlign};
+      line-height: 1.4;
+    }
+    body.ticket-receipt .custom-line {
       margin: 3px 0;
       font-size: ${receiptFonts.notes}px;
       font-weight: 400;
@@ -819,34 +957,50 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .custom-line-bold {
-      font-weight: 600;
+    body.ticket-receipt .custom-line-bold {
+      font-weight: 700;
       color: #111827;
     }
-    .clear-items { margin: 4px 0 8px; }
-    .clear-item { margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px dashed #d1d5db; }
-    .clear-item:last-child { border-bottom: none; margin-bottom: 2px; }
-    .clear-item-name {
+    body.ticket-receipt .clear-items { margin: 2px 0 8px; }
+    body.ticket-receipt .clear-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 0 0 8px;
+      padding-bottom: 7px;
+      border-bottom: 1px dotted #d1d5db;
+    }
+    body.ticket-receipt .clear-item:last-child { border-bottom: none; margin-bottom: 2px; padding-bottom: 2px; }
+    body.ticket-receipt .clear-item-main {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    body.ticket-receipt .clear-item-name {
       font-size: ${receiptFonts.itemName}px;
-      font-weight: 600;
+      font-weight: 700;
       color: #111827;
-      word-break: break-word;
-      line-height: 1.35;
+      overflow-wrap: break-word;
+      word-break: normal;
+      line-height: 1.3;
       text-align: left;
     }
-    .clear-item-unit {
+    body.ticket-receipt .clear-item-qty {
       margin-top: 2px;
       font-size: ${receiptFonts.amt}px;
+      font-weight: 500;
       color: #6b7280;
-      text-align: right;
+      font-variant-numeric: tabular-nums;
     }
-    .clear-item-amt {
-      margin-top: 2px;
-      font-size: ${Math.max(receiptFonts.amt, 11)}px;
-      font-weight: 700;
+    body.ticket-receipt .clear-item-amt {
+      flex: 0 0 auto;
+      font-size: ${Math.max(receiptFonts.amt, 12)}px;
+      font-weight: 800;
       font-variant-numeric: tabular-nums;
       color: #111827;
       text-align: right;
+      white-space: nowrap;
+      padding-top: 1px;
     }
     `
     : "";
@@ -856,20 +1010,17 @@ export function buildTicketHtml(input: PrintTicketInput): string {
 <head>
   <meta charset="utf-8" />
   <title>${escapeHtml(title)} — ${escapeHtml(input.orderRef)}${input.printerName ? ` · ${escapeHtml(input.printerName)}` : ""}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
       font-size: ${bodyFontSize}px;
       font-weight: 400;
-      line-height: 1.5;
+      line-height: 1.45;
       color: #111827;
       background: #fff;
       margin: 0 auto;
-      padding: ${narrowPaper ? "6px 2px 10px" : "10px 4px 14px"};
+      padding: ${narrowPaper ? "8px 4px 12px" : "12px 6px 16px"};
       width: ${contentWidthMm}mm;
       max-width: ${contentWidthMm}mm;
       overflow-x: hidden;
@@ -969,18 +1120,18 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       text-align: left;
     }
     thead th.qty {
-      width: ${narrowPaper ? "16%" : "12%"};
+      width: ${narrowPaper ? "14%" : "12%"};
       text-align: left;
       padding-left: 0;
-      padding-right: ${narrowPaper ? "10px" : "8px"};
+      padding-right: ${narrowPaper ? "6px" : "8px"};
       white-space: nowrap;
     }
-    thead th.item { text-align: left; width: auto; padding-left: ${narrowPaper ? "4px" : "6px"}; }
+    thead th.item { text-align: left; width: auto; padding-left: ${narrowPaper ? "2px" : "6px"}; }
     thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; padding-left: 4px; white-space: nowrap; }
     thead th.amt {
-      width: ${narrowPaper ? "24%" : "22%"};
+      width: ${narrowPaper ? "28%" : "22%"};
       text-align: right;
-      padding-left: 6px;
+      padding-left: 4px;
       white-space: nowrap;
     }
     tbody td {
@@ -1042,22 +1193,22 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-weight: ${isReceipt ? "500" : "700"};
       color: #111827;
       text-align: ${isReceipt ? "left" : "right"};
-      padding-left: ${isReceipt ? (narrowPaper ? "4px" : "6px") : "12px"};
+      padding-left: ${isReceipt ? (narrowPaper ? "2px" : "6px") : "12px"};
       padding-right: ${isReceipt ? "4px" : "0"};
-      word-break: break-word;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
+      word-break: normal;
       line-height: 1.3;
       vertical-align: top;
     }
     td.qty {
-      width: ${narrowPaper ? "16%" : "12%"};
+      width: ${narrowPaper ? "14%" : "12%"};
       text-align: left !important;
       font-size: ${isReceipt ? receiptFonts.qty : kotQtyFont}px;
       font-weight: 700;
       color: #111827;
       font-variant-numeric: tabular-nums;
       padding-left: 0;
-      padding-right: ${narrowPaper ? "10px" : "8px"};
+      padding-right: ${narrowPaper ? "6px" : "8px"};
       white-space: nowrap;
       vertical-align: top;
     }
@@ -1070,21 +1221,21 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-receipt table.items.has-amounts thead th.item,
     body.ticket-receipt table.items.has-amounts td.item-name {
       text-align: left;
-      padding-left: ${narrowPaper ? "4px" : "6px"};
+      padding-left: ${narrowPaper ? "2px" : "6px"};
       padding-right: 4px;
     }
     body.ticket-receipt table.items.has-amounts td.qty,
     body.ticket-receipt table.items.has-amounts thead th.qty {
-      width: ${narrowPaper ? "16%" : "12%"};
+      width: ${narrowPaper ? "14%" : "12%"};
       text-align: left !important;
       padding-left: 0;
-      padding-right: ${narrowPaper ? "10px" : "8px"};
+      padding-right: ${narrowPaper ? "6px" : "8px"};
       white-space: nowrap;
       vertical-align: top;
     }
     body.ticket-receipt table.items.has-amounts thead th.amt,
     body.ticket-receipt table.items.has-amounts td.amt {
-      width: ${narrowPaper ? "24%" : "22%"};
+      width: ${narrowPaper ? "28%" : "22%"};
       vertical-align: top;
     }
     td.price {
@@ -1104,8 +1255,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${receiptFonts.amt}px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
-      width: ${narrowPaper ? "24%" : "22%"};
-      padding-left: 6px;
+      width: ${narrowPaper ? "28%" : "22%"};
+      padding-left: 4px;
       padding-right: 0;
       overflow: visible;
       color: #111827;
@@ -1226,16 +1377,27 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       margin: 8px 0 4px;
     }
     @media print {
+      html, body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
       body {
         padding: 0 1px;
         width: ${contentWidthMm}mm;
         max-width: ${contentWidthMm}mm;
         overflow-x: hidden;
+        margin: 0 auto;
       }
       .meta-chip { background: transparent; padding: 0; }
       @page {
-        margin: ${Math.max(1, marginMm)}mm;
-        size: ${paperSize === "58mm" ? "58mm" : paperSize === "A4" ? "A4" : "80mm"} auto;
+        margin: ${Math.max(2, marginMm)}mm;
+        size: ${
+          paperSize === "A4"
+            ? "A4 portrait"
+            : paperSize === "58mm"
+              ? "58mm 200mm"
+              : "80mm 297mm"
+        };
       }
     }
     ${receiptCss}
@@ -1602,7 +1764,7 @@ export async function printTestPageAsync(
   h1 { font-size: 14px; margin: 0 0 8px; }
   p { font-size: 11px; margin: 4px 0; word-break: break-word; }
   hr { border: none; border-top: 1px dashed #000; margin: 10px 0; }
-  @page { margin: ${thermal.marginMm}mm; size: ${paper === "58mm" ? "58mm" : paper === "A4" ? "A4" : "80mm"} auto; }
+  @page { margin: ${thermal.marginMm}mm; size: ${paper === "58mm" ? "58mm 200mm" : paper === "A4" ? "A4 portrait" : "80mm 297mm"}; }
 </style>
 </head>
 <body>

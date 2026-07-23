@@ -27,10 +27,10 @@ export type ThermalPrintSettings = {
 };
 
 export const DEFAULT_THERMAL_PRINT_SETTINGS: ThermalPrintSettings = {
-  defaultPaperSize: "58mm",
+  defaultPaperSize: "80mm",
   marginMm: 2,
   receiptLayout: "columns",
-  showUnitPrice: true,
+  showUnitPrice: false,
   compactMoney: true,
   showCurrencyPrefix: false,
   /** Conservative — many 58mm heads clip past ~30–32 glyphs. */
