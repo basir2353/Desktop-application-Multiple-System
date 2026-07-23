@@ -21,6 +21,7 @@ export class KitchenController {
     return this.kitchen.listTickets(user.organizationId, branchCode?.trim() ?? "");
   }
 
+  // Kitchen cancellations report (must be deployed).
   @Get("cancellations")
   @RequirePermissions("pops.read")
   listCancellations(
