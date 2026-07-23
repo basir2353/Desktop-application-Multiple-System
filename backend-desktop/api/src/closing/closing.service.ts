@@ -454,11 +454,9 @@ export class ClosingService {
     const state = rows[0];
     if (!state?.ordersPaused) return;
 
-    // Never permanently brick POS (old Railway builds lacked /resume-orders).
-    // Clear pause on the first order attempt; Closing checklist can pause again if needed.
-    const reconciled = await this.reconcileStaleClosingState(state);
-    if (!reconciled.ordersPaused) return;
-
+    // Never brick POS / waiter app. Day-close pause is advisory for Closing checklist
+    // only — bill + kitchen create always proceed. Manager can pause again from Closing.
+    await this.reconcileStaleClosingState(state);
     await this.db
       .update(popsBranchClosingState)
       .set({

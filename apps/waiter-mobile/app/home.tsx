@@ -116,7 +116,7 @@ export default function HomeScreen() {
   const displayName = waiterDisplayName(waiterEmail);
 
   const heldBills = bills.filter((b) => b.status === "held");
-  const cashierMode = canCloseOrders(claims);
+  const cashierMode = canCloseOrders(claims) && !isWaiterRole(claims);
 
   function refreshAll(): void {
     void kitchenQuery.refetch();
@@ -154,7 +154,7 @@ export default function HomeScreen() {
       icon: "◷",
       route: "/history",
     },
-    ...(cashierMode && !isWaiterRole(claims)
+    ...(cashierMode
       ? [
           {
             id: "close",

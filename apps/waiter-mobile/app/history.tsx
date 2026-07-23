@@ -220,7 +220,8 @@ export default function HistoryScreen() {
   const filters: { id: HistoryFilter; label: string }[] = [
     { id: "today", label: "Today" },
     { id: "all", label: "All" },
-    { id: "held", label: "On hold" },
+    // Cashiers close held bills; waiters may view on-hold but cannot close.
+    { id: "held", label: cashierCanClose ? "On hold · close" : "On hold" },
   ];
 
   return (
@@ -241,6 +242,11 @@ export default function HistoryScreen() {
         </View>
 
         {queryError ? <Notice tone="warning">{queryError}</Notice> : null}
+        {!cashierCanClose && filter === "held" ? (
+          <Notice tone="warning">
+            Waiters cannot close orders. Cashier collects payment and closes held bills.
+          </Notice>
+        ) : null}
         {notice ? (
           <Notice tone={notice.includes("success") || notice.includes("closed") || notice.includes("printed") ? "success" : "warning"}>
             {notice}
@@ -248,7 +254,11 @@ export default function HistoryScreen() {
         ) : null}
 
         <View style={styles.statsRow}>
-          <StatCard label="Showing" value={filtered.length} hint={`${kitchenCount} kitchen · ${billCount} bills`} />
+          <StatCard
+            label="Showing"
+            value={filtered.length}
+            hint={`${kitchenCount} kitchen · ${billCount} bills`}
+          />
         </View>
 
         <View style={styles.searchWrap}>
