@@ -114,7 +114,6 @@ import {
   POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT,
   type PosOrderModeVisibility,
 } from "../../lib/posOrderModeVisibility";
-import { buildMenuItemOrderCounts, sortMenuByPopularity } from "../../lib/posMenuPopularity";
 import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
 import { loadPrinterSections } from "../../lib/printerSections";
 import {
@@ -719,11 +718,6 @@ export function PosPage(): JSX.Element {
     [menuItems],
   );
 
-  const menuItemOrderCounts = useMemo(
-    () => buildMenuItemOrderCounts(ordersQuery.data ?? []),
-    [ordersQuery.data],
-  );
-
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
 
   const filteredMenu = useMemo(() => {
@@ -744,10 +738,7 @@ export function PosPage(): JSX.Element {
         (categoryById.get(m.categoryId)?.toLowerCase().includes(q) ?? false);
       return catOk && searchOk;
     });
-    if (showAllItems && !isSearching) {
-      return sortMenuByPopularity(filtered, menuItemOrderCounts);
-    }
-    return filtered;
+    return [...filtered].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }, [
     menuItems,
     activeCategoryId,
@@ -756,7 +747,6 @@ export function PosPage(): JSX.Element {
     showFeaturedOnly,
     showAllItems,
     categoryById,
-    menuItemOrderCounts,
   ]);
 
   const searchDropdownItems = useMemo(() => filteredMenu.slice(0, 8), [filteredMenu]);
@@ -1583,9 +1573,26 @@ export function PosPage(): JSX.Element {
       const payload = withPrinterProfile(
         {
           ...buildPrintPayload(),
+          // Prefer saved bill totals/lines so auto print matches manual reprint.
           orderRef: bill.orderRef ?? orderRef,
           billRef: bill.billRef,
           waiterName: bill.waiterName,
+          lines: bill.lines.map((line) => ({
+            label: line.label,
+            qty: line.qty,
+            unitPrice: line.unitPrice,
+          })),
+          subtotal: bill.subtotal,
+          discount: bill.discount,
+          service: bill.service,
+          tax: bill.tax,
+          deliveryCharge:
+            typeof bill.deliveryChargePkr === "number" && bill.deliveryChargePkr > 0
+              ? bill.deliveryChargePkr
+              : undefined,
+          total: bill.total,
+          servicePct: bill.servicePct,
+          taxPct: bill.taxPct,
         },
         receiptProfile,
       );
@@ -2313,7 +2320,7 @@ export function PosPage(): JSX.Element {
             <p className="mb-1 shrink-0 text-[10px] text-slate-500">
               {filteredMenu.length === 0
                 ? "No menu items yet."
-                : `${filteredMenu.length} item${filteredMenu.length === 1 ? "" : "s"} · most ordered first`}
+                : `${filteredMenu.length} item${filteredMenu.length === 1 ? "" : "s"} · A–Z`}
             </p>
           ) : null}
 

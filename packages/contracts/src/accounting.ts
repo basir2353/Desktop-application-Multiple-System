@@ -139,6 +139,9 @@ export const popsCashMovementSchema = z.object({
   reason: z.string(),
   recordedBy: z.string().nullable(),
   createdAt: z.string(),
+  employeeId: z.string().uuid().nullable().optional(),
+  partyKind: z.enum(["supplier", "customer", "employee"]).nullable().optional(),
+  advanceId: z.string().uuid().nullable().optional(),
 });
 
 export const createPopsCashMovementSchema = z.object({
@@ -148,6 +151,13 @@ export const createPopsCashMovementSchema = z.object({
   amountPkr: z.number().min(1),
   reason: z.string().min(1),
   recordedBy: z.string().optional(),
+  /** When paying an employee, link to HR employee and optionally create a salary advance. */
+  employeeId: z.string().uuid().optional(),
+  partyKind: z.enum(["supplier", "customer", "employee"]).optional(),
+  /** Mark employee paid_out as salary advance (default true when partyKind=employee). */
+  asAdvance: z.boolean().optional(),
+  /** Offline/cloud sync idempotency — same id will not create a duplicate movement. */
+  clientRequestId: z.string().min(8).max(80).optional(),
 });
 
 export const vendorBillSchema = z.object({

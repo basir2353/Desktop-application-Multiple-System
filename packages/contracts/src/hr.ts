@@ -114,6 +114,11 @@ export const payrollLineSchema = z.object({
   deductionsPkr: z.number(),
   overtimePkr: z.number(),
   netPkr: z.number(),
+  /** Portion of deductions from prior salary advances (cash drawer pay-outs). */
+  advancePkr: z.number().int().nonnegative().optional(),
+  /** Statutory / other deductions (EOBI etc.) after advances. */
+  statutoryPkr: z.number().int().nonnegative().optional(),
+  baseSalaryPkr: z.number().int().nonnegative().optional(),
 });
 
 export const hrPayrollRunSchema = z.object({
@@ -136,8 +141,13 @@ export const payrollRunEmployeeInputSchema = z.object({
   /** Override base salary for this run; defaults to employee base salary. */
   grossPkr: z.number().int().nonnegative().optional(),
   overtimePkr: z.number().int().nonnegative().optional(),
-  /** Override deductions; defaults to ~7.27% of gross. */
+  /**
+   * Total deductions for this run (statutory + advances).
+   * When omitted, server uses ~7.27% statutory + open advances.
+   */
   deductionsPkr: z.number().int().nonnegative().optional(),
+  /** Explicit advance amount to deduct (from open cash advances). */
+  advancePkr: z.number().int().nonnegative().optional(),
 });
 
 export const createHrPayrollRunSchema = z.object({
@@ -146,6 +156,43 @@ export const createHrPayrollRunSchema = z.object({
   periodEnd: z.string(),
   /** Staff to include — admin picks who gets paid this run. */
   employees: z.array(payrollRunEmployeeInputSchema).min(1),
+  /** Offline/cloud sync idempotency — same id replays safely. */
+  clientRequestId: z.string().min(8).max(80).optional(),
+});
+
+export const employeeAdvanceSchema = z.object({
+  id: z.string().uuid(),
+  employeeId: z.string().uuid(),
+  employeeCode: z.string(),
+  employeeName: z.string(),
+  amountPkr: z.number().int().positive(),
+  reason: z.string().nullable(),
+  status: z.enum(["open", "reserved", "settled"]),
+  cashMovementId: z.string().uuid().nullable(),
+  payrollRunId: z.string().uuid().nullable(),
+  recordedBy: z.string().nullable(),
+  createdAt: z.string(),
+  settledAt: z.string().nullable(),
+});
+
+export const createEmployeeAdvanceSchema = z.object({
+  branchCode: z.string().min(1),
+  employeeId: z.string().uuid(),
+  amountPkr: z.number().int().positive(),
+  reason: z.string().max(500).optional(),
+  /** When set, also records a paid_out on this open cash session. */
+  sessionId: z.string().uuid().optional(),
+  clientRequestId: z.string().min(8).max(80).optional(),
+});
+
+export const employeeAdvanceSummarySchema = z.object({
+  employeeId: z.string().uuid(),
+  employeeCode: z.string(),
+  employeeName: z.string(),
+  baseSalaryPkr: z.number().int().nonnegative(),
+  openAdvancePkr: z.number().int().nonnegative(),
+  openAdvanceCount: z.number().int().nonnegative(),
+  advances: z.array(employeeAdvanceSchema),
 });
 
 export const salarySlipSchema = z.object({
@@ -243,3 +290,6 @@ export const staffFoodListSchema = z.object({
 export type StaffFoodRecord = z.infer<typeof staffFoodRecordSchema>;
 export type CreateStaffFood = z.infer<typeof createStaffFoodSchema>;
 export type StaffFoodList = z.infer<typeof staffFoodListSchema>;
+export type EmployeeAdvance = z.infer<typeof employeeAdvanceSchema>;
+export type CreateEmployeeAdvance = z.infer<typeof createEmployeeAdvanceSchema>;
+export type EmployeeAdvanceSummary = z.infer<typeof employeeAdvanceSummarySchema>;

@@ -247,21 +247,40 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
       const linked =
         selectedAccount && !baseReason.toLowerCase().includes(selectedAccount.name.toLowerCase())
           ? `${accountReasonPrefix(selectedAccount)} — ${baseReason}`
-          : baseReason;
+          : baseReason || (selectedAccount ? accountReasonPrefix(selectedAccount) : "Pay out");
+      const isEmployee = selectedAccount?.kind === "employee";
       return recordCashMovement({
         branchCode: branch!.code,
         sessionId: sessionQuery.data!.id,
         type: "paid_out",
         amountPkr: Number(amount),
-        reason: linked,
+        reason: isEmployee
+          ? `Employee advance: ${selectedAccount!.name} — ${linked.replace(/^Employee:\s*/i, "")}`
+          : linked,
+        partyKind: selectedAccount?.kind,
+        employeeId: isEmployee ? selectedAccount!.id : undefined,
+        asAdvance: isEmployee,
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (movement) => {
       void queryClient.invalidateQueries({ queryKey: ["accounting"] });
+      void queryClient.invalidateQueries({ queryKey: ["hr"] });
       const amountNum = Number(amount);
+      if (selectedAccount?.kind === "employee") {
+        const { recordLocalEmployeeAdvance } = await import("../lib/employeeAdvancesLocal");
+        recordLocalEmployeeAdvance({
+          branchCode: branch!.code,
+          employeeId: selectedAccount.id,
+          employeeName: selectedAccount.name,
+          amountPkr: amountNum,
+          reason: reason.trim() || "POS pay out",
+          clientRequestId: movement.id,
+        });
+      }
       const who = selectedAccount
         ? `${PARTY_LABEL[selectedAccount.kind]} · ${selectedAccount.name}`
         : null;
+      const queuedOffline = movement.id.startsWith("cash-");
       try {
         await printCashMovementSlip({
           branchName: branch?.name ?? "POPS",
@@ -276,7 +295,9 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
         /* print is best-effort — payout already saved */
       }
       onSuccess?.(
-        `Paid out ${amountNum.toLocaleString()} PKR${who ? ` → ${who}` : ""}. Slip sent to printer.`,
+        `Paid out ${amountNum.toLocaleString()} PKR${who ? ` → ${who}` : ""}${
+          selectedAccount?.kind === "employee" ? " (salary advance — will deduct on payroll)" : ""
+        }.${queuedOffline ? " Saved offline — will sync when online." : " Slip sent to printer."}`,
       );
       onClose();
     },

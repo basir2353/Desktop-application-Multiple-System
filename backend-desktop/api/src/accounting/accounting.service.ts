@@ -29,6 +29,8 @@ import {
   popsCashSessions,
   popsCustomerInvoices,
   popsCustomerPayments,
+  popsEmployeeAdvances,
+  popsEmployees,
   popsExpenses,
   popsGoodsReceipts,
   popsIngredients,
@@ -750,6 +752,36 @@ export class AccountingService implements OnApplicationBootstrap {
 
   async recordCashMovement(organizationId: string, userEmail: string, input: CreatePopsCashMovement) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const clientRequestId = input.clientRequestId?.trim() || undefined;
+
+    if (clientRequestId) {
+      const [existing] = await this.db
+        .select()
+        .from(popsCashMovements)
+        .where(
+          and(
+            eq(popsCashMovements.organizationId, organizationId),
+            eq(popsCashMovements.clientRequestId, clientRequestId),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        return {
+          id: existing.id,
+          sessionId: existing.sessionId,
+          type: existing.type as "paid_in" | "paid_out",
+          amountPkr: existing.amountPkr,
+          reason: existing.reason,
+          recordedBy: existing.recordedBy,
+          createdAt: existing.createdAt.toISOString(),
+          employeeId: existing.employeeId ?? null,
+          partyKind: (existing.partyKind as "supplier" | "customer" | "employee" | null) ?? null,
+          advanceId: null as string | null,
+          deduped: true,
+        };
+      }
+    }
+
     const [session] = await this.db
       .select()
       .from(popsCashSessions)
@@ -759,6 +791,23 @@ export class AccountingService implements OnApplicationBootstrap {
       throw new NotFoundException("Cash session not found");
     }
     if (session.status !== "open") throw new BadRequestException("Cash session is closed");
+
+    const partyKind = input.partyKind;
+    const employeeId = input.employeeId?.trim() || undefined;
+    if (employeeId) {
+      const [emp] = await this.db
+        .select()
+        .from(popsEmployees)
+        .where(and(eq(popsEmployees.id, employeeId), eq(popsEmployees.organizationId, organizationId)))
+        .limit(1);
+      if (!emp || emp.branchId !== branch.id) {
+        throw new BadRequestException("Employee not found on this branch");
+      }
+    }
+
+    const asAdvance =
+      input.type === "paid_out" &&
+      (input.asAdvance === true || (input.asAdvance !== false && partyKind === "employee" && Boolean(employeeId)));
 
     const [row] = await this.db
       .insert(popsCashMovements)
@@ -770,9 +819,31 @@ export class AccountingService implements OnApplicationBootstrap {
         amountPkr: input.amountPkr,
         reason: input.reason.trim(),
         recordedBy: input.recordedBy?.trim() || userEmail,
+        employeeId: employeeId ?? null,
+        partyKind: partyKind ?? null,
+        clientRequestId: clientRequestId ?? null,
       })
       .returning();
     if (!row) throw new BadRequestException("Failed to record cash movement");
+
+    let advanceId: string | null = null;
+    if (asAdvance && employeeId) {
+      const [advance] = await this.db
+        .insert(popsEmployeeAdvances)
+        .values({
+          organizationId,
+          branchId: branch.id,
+          employeeId,
+          amountPkr: input.amountPkr,
+          reason: input.reason.trim(),
+          cashMovementId: row.id,
+          status: "open",
+          clientRequestId: clientRequestId ? `adv-${clientRequestId}` : null,
+          recordedBy: input.recordedBy?.trim() || userEmail,
+        })
+        .returning();
+      advanceId = advance?.id ?? null;
+    }
 
     return {
       id: row.id,
@@ -782,6 +853,9 @@ export class AccountingService implements OnApplicationBootstrap {
       reason: row.reason,
       recordedBy: row.recordedBy,
       createdAt: row.createdAt.toISOString(),
+      employeeId: row.employeeId ?? null,
+      partyKind: (row.partyKind as "supplier" | "customer" | "employee" | null) ?? null,
+      advanceId,
     };
   }
 
@@ -814,6 +888,8 @@ export class AccountingService implements OnApplicationBootstrap {
       reason: r.reason,
       recordedBy: r.recordedBy,
       createdAt: r.createdAt.toISOString(),
+      employeeId: r.employeeId ?? null,
+      partyKind: (r.partyKind as "supplier" | "customer" | "employee" | null) ?? null,
     }));
   }
 

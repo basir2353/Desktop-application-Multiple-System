@@ -100,3 +100,32 @@ export const popsStaffFood = pgTable("pops_staff_food", {
   recordedBy: text("recorded_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Salary advances paid from cash drawer (POS Pay Out → employee).
+ * Open advances auto-deduct on the next payroll run.
+ */
+export const popsEmployeeAdvances = pgTable("pops_employee_advances", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => popsBranches.id, { onDelete: "cascade" }),
+  employeeId: uuid("employee_id")
+    .notNull()
+    .references(() => popsEmployees.id, { onDelete: "cascade" }),
+  amountPkr: integer("amount_pkr").notNull(),
+  reason: text("reason"),
+  /** Links to cash drawer paid_out row when created from POS. */
+  cashMovementId: uuid("cash_movement_id"),
+  /** open | reserved (on draft/approved payroll) | settled (after pay) */
+  status: text("status").notNull().default("open"),
+  payrollRunId: uuid("payroll_run_id").references(() => popsPayrollRuns.id, { onDelete: "set null" }),
+  /** Offline/cloud sync idempotency key — prevents duplicate advances on flush. */
+  clientRequestId: text("client_request_id"),
+  recordedBy: text("recorded_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  settledAt: timestamp("settled_at", { withTimezone: true }),
+});

@@ -6,12 +6,18 @@ import {
   approveHrPayrollRun,
   createHrPayrollRun,
   deleteHrPayrollRun,
+  fetchEmployeeAdvances,
   fetchEmployees,
   fetchHrPayrollRun,
   fetchHrPayrollRuns,
   payHrPayrollRun,
 } from "../../../api/hr";
 import { formatPkr, hrInputClass, useHrAccess } from "../../../hooks/useHr";
+import {
+  listOpenLocalAdvances,
+  openAdvanceTotalsByEmployee,
+  settleLocalAdvancesForEmployees,
+} from "../../../lib/employeeAdvancesLocal";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
@@ -19,24 +25,53 @@ import { HrError, HrLoading } from "./HrUi";
 
 const DEDUCTION_RATE = 0.0727;
 
+/** Prefer server open advances; fill gaps from local Pay Out ledger (offline / API missing). */
+function mergeAdvanceTotals(
+  branchCode: string,
+  apiRows: { employeeId: string; openAdvancePkr: number }[] | undefined,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of apiRows ?? []) {
+    if (row.openAdvancePkr > 0) map.set(row.employeeId, row.openAdvancePkr);
+  }
+  for (const [employeeId, amount] of openAdvanceTotalsByEmployee(branchCode)) {
+    if ((map.get(employeeId) ?? 0) === 0) map.set(employeeId, amount);
+  }
+  return map;
+}
+
 type StaffLine = {
   employeeId: string;
   selected: boolean;
   grossPkr: number;
   overtimePkr: number;
+  /** Statutory / EOBI-style portion */
+  statutoryPkr: number;
+  /** Open cash advances from Pay Out */
+  advancePkr: number;
   deductionsPkr: number;
 };
 
-function buildStaffLines(employees: Employee[]): StaffLine[] {
+function buildStaffLines(
+  employees: Employee[],
+  advanceByEmployee: Map<string, number>,
+): StaffLine[] {
   return employees
     .filter((e) => e.employmentStatus === "active" || e.employmentStatus === "on_leave")
-    .map((e) => ({
-      employeeId: e.id,
-      selected: true,
-      grossPkr: e.baseSalaryPkr,
-      overtimePkr: 0,
-      deductionsPkr: Math.round(e.baseSalaryPkr * DEDUCTION_RATE),
-    }));
+    .map((e) => {
+      const advancePkr = advanceByEmployee.get(e.id) ?? 0;
+      const statutoryPkr = Math.round(e.baseSalaryPkr * DEDUCTION_RATE);
+      const deductionsPkr = statutoryPkr + advancePkr;
+      return {
+        employeeId: e.id,
+        selected: true,
+        grossPkr: e.baseSalaryPkr,
+        overtimePkr: 0,
+        statutoryPkr,
+        advancePkr,
+        deductionsPkr,
+      };
+    });
 }
 
 export function HrPayrollPage(): JSX.Element {
@@ -59,6 +94,13 @@ export function HrPayrollPage(): JSX.Element {
     queryFn: () => fetchEmployees(branch!.code),
   });
 
+  const advancesQuery = useQuery({
+    queryKey: ["hr", "advances", branch?.code, "open"],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchEmployeeAdvances(branch!.code, "open"),
+    retry: false,
+  });
+
   const payrollQuery = useQuery({
     queryKey: ["hr", "payroll", branch?.code],
     enabled: Boolean(branch?.code),
@@ -71,27 +113,86 @@ export function HrPayrollPage(): JSX.Element {
     queryFn: () => fetchHrPayrollRun(selectedId!),
   });
 
-  useEffect(() => {
-    if (employeesQuery.data) {
-      setStaffLines(buildStaffLines(employeesQuery.data));
+  const openAdvancesBreakdown = useMemo(() => {
+    if (!branch?.code) return [];
+    type Row = {
+      employeeId: string;
+      employeeName: string;
+      employeeCode: string;
+      amountPkr: number;
+      count: number;
+      source: "server" | "local";
+    };
+    const byId = new Map<string, Row>();
+    for (const r of advancesQuery.data ?? []) {
+      if (r.openAdvancePkr <= 0) continue;
+      byId.set(r.employeeId, {
+        employeeId: r.employeeId,
+        employeeName: r.employeeName,
+        employeeCode: r.employeeCode,
+        amountPkr: r.openAdvancePkr,
+        count: r.openAdvanceCount,
+        source: "server",
+      });
     }
-  }, [employeesQuery.data]);
+    for (const row of listOpenLocalAdvances(branch.code)) {
+      const existing = byId.get(row.employeeId);
+      if (existing?.source === "server") continue;
+      if (!existing) {
+        byId.set(row.employeeId, {
+          employeeId: row.employeeId,
+          employeeName: row.employeeName,
+          employeeCode: row.employeeCode ?? "",
+          amountPkr: row.amountPkr,
+          count: 1,
+          source: "local",
+        });
+      } else {
+        existing.amountPkr += row.amountPkr;
+        existing.count += 1;
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  }, [branch?.code, advancesQuery.data]);
+
+  useEffect(() => {
+    if (!employeesQuery.data || !branch?.code) return;
+    const advanceByEmployee = mergeAdvanceTotals(branch.code, advancesQuery.data);
+    setStaffLines(buildStaffLines(employeesQuery.data, advanceByEmployee));
+  }, [employeesQuery.data, advancesQuery.data, branch?.code]);
 
   const selectedLines = useMemo(() => staffLines.filter((l) => l.selected), [staffLines]);
   const previewTotals = useMemo(() => {
     const gross = selectedLines.reduce((s, l) => s + l.grossPkr + l.overtimePkr, 0);
     const deductions = selectedLines.reduce((s, l) => s + l.deductionsPkr, 0);
-    return { gross, deductions, net: gross - deductions, count: selectedLines.length };
+    const advances = selectedLines.reduce((s, l) => s + l.advancePkr, 0);
+    return {
+      gross,
+      deductions,
+      advances,
+      net: Math.max(0, gross - deductions),
+      count: selectedLines.length,
+    };
   }, [selectedLines]);
 
   const createMutation = useMutation({
     mutationFn: createHrPayrollRun,
-    onSuccess: (run) => {
+    onSuccess: (run, variables) => {
+      if (branch?.code) {
+        settleLocalAdvancesForEmployees(
+          branch.code,
+          variables.employees.map((e) => e.employeeId),
+        );
+      }
       void queryClient.invalidateQueries({ queryKey: ["hr"] });
       void queryClient.invalidateQueries({ queryKey: ["accounting"] });
-      setSelectedId(run.id);
+      setSelectedId(run.id.startsWith("pay-") ? null : run.id);
       setShowCreate(false);
-      setNotice(`Created ${run.payrollRef} for ${run.staffCount} staff. Approve then Pay to finalize.`);
+      setNotice(
+        run.id.startsWith("pay-") || run.payrollRef.startsWith("OFFLINE")
+          ? `Payroll saved offline (${run.staffCount} staff) — will sync when online.`
+          : `Created ${run.payrollRef} for ${run.staffCount} staff. Advances deducted; Approve then Pay to finalize.`,
+      );
       setError(null);
     },
     onError: (err: Error) => setError(err.message),
@@ -133,7 +234,17 @@ export function HrPayrollPage(): JSX.Element {
 
   function updateLine(employeeId: string, patch: Partial<StaffLine>): void {
     setStaffLines((lines) =>
-      lines.map((l) => (l.employeeId === employeeId ? { ...l, ...patch } : l)),
+      lines.map((l) => {
+        if (l.employeeId !== employeeId) return l;
+        const next = { ...l, ...patch };
+        if (patch.grossPkr !== undefined && patch.statutoryPkr === undefined && patch.deductionsPkr === undefined) {
+          next.statutoryPkr = Math.round(next.grossPkr * DEDUCTION_RATE);
+        }
+        if (patch.statutoryPkr !== undefined || patch.advancePkr !== undefined || patch.grossPkr !== undefined) {
+          next.deductionsPkr = Math.max(0, next.statutoryPkr + next.advancePkr);
+        }
+        return next;
+      }),
     );
   }
 
@@ -150,9 +261,10 @@ export function HrPayrollPage(): JSX.Element {
       periodEnd,
       employees: selectedLines.map((l) => ({
         employeeId: l.employeeId,
-        grossPkr: l.grossPkr,
-        overtimePkr: l.overtimePkr,
-        deductionsPkr: l.deductionsPkr,
+        grossPkr: Number(l.grossPkr) || 0,
+        overtimePkr: Number(l.overtimePkr) || 0,
+        deductionsPkr: Number(l.deductionsPkr) || 0,
+        advancePkr: Number(l.advancePkr) || 0,
       })),
     });
   }
@@ -203,7 +315,9 @@ export function HrPayrollPage(): JSX.Element {
             <div>
               <div className="text-sm font-medium text-white">New payroll run</div>
               <p className="mt-0.5 text-xs text-slate-500">
-                Choose which staff to pay this period. Adjust gross, overtime, or deductions per person.
+                Pehle se liya hua advance auto deduct hota hai.{" "}
+                <span className="text-amber-300/90">Advance</span> = pehle Pay Out,{" "}
+                <span className="text-emerald-300/90">Baqaya</span> = final payable (salary + OT − statutory − advance).
               </p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
@@ -216,6 +330,30 @@ export function HrPayrollPage(): JSX.Element {
               </button>
             </div>
           </div>
+
+          {openAdvancesBreakdown.length > 0 ? (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
+              <div className="text-xs font-medium text-amber-200">Open advances (baqi qarz)</div>
+              <ul className="mt-1.5 space-y-1 text-xs text-slate-300">
+                {openAdvancesBreakdown.map((row) => (
+                  <li key={row.employeeId} className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span>
+                      {row.employeeName}
+                      {row.employeeCode ? (
+                        <span className="text-slate-500"> · {row.employeeCode}</span>
+                      ) : null}
+                      <span className="text-slate-500">
+                        {" "}
+                        ({row.count} advance{row.count === 1 ? "" : "s"}
+                        {row.source === "local" ? ", local" : ""})
+                      </span>
+                    </span>
+                    <span className="font-medium text-amber-300">{formatPkr(row.amountPkr)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <label className="text-xs text-slate-500">
@@ -253,18 +391,19 @@ export function HrPayrollPage(): JSX.Element {
                   <tr>
                     <th className="px-3 py-2">Pay</th>
                     <th className="px-3 py-2">Employee</th>
-                    <th className="px-3 py-2">Role</th>
-                    <th className="px-3 py-2">Gross (PKR)</th>
+                    <th className="px-3 py-2">Salary</th>
                     <th className="px-3 py-2">Overtime</th>
-                    <th className="px-3 py-2">Deductions</th>
-                    <th className="px-3 py-2">Net</th>
+                    <th className="px-3 py-2">Advance</th>
+                    <th className="px-3 py-2">Statutory</th>
+                    <th className="px-3 py-2">Total ded.</th>
+                    <th className="px-3 py-2">Baqaya</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80">
                   {staffLines.map((line) => {
                     const emp = employeeById.get(line.employeeId);
                     if (!emp) return null;
-                    const net = line.grossPkr - line.deductionsPkr + line.overtimePkr;
+                    const net = Math.max(0, line.grossPkr + line.overtimePkr - line.deductionsPkr);
                     return (
                       <tr key={line.employeeId} className={line.selected ? "" : "opacity-50"}>
                         <td className="px-3 py-2">
@@ -277,9 +416,10 @@ export function HrPayrollPage(): JSX.Element {
                         </td>
                         <td className="px-3 py-2">
                           <div className="font-medium text-slate-200">{emp.displayName}</div>
-                          <div className="text-xs text-slate-500">{emp.employeeCode}</div>
+                          <div className="text-xs text-slate-500">
+                            {emp.employeeCode} · base {formatPkr(emp.baseSalaryPkr)}
+                          </div>
                         </td>
-                        <td className="px-3 py-2 text-slate-400">{emp.jobTitle}</td>
                         <td className="px-3 py-2">
                           <input
                             type="number"
@@ -287,13 +427,9 @@ export function HrPayrollPage(): JSX.Element {
                             className={`${hrInputClass} w-28`}
                             value={line.grossPkr}
                             disabled={!line.selected}
-                            onChange={(e) => {
-                              const grossPkr = Number(e.target.value) || 0;
-                              updateLine(line.employeeId, {
-                                grossPkr,
-                                deductionsPkr: Math.round(grossPkr * DEDUCTION_RATE),
-                              });
-                            }}
+                            onChange={(e) =>
+                              updateLine(line.employeeId, { grossPkr: Number(e.target.value) || 0 })
+                            }
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -309,18 +445,34 @@ export function HrPayrollPage(): JSX.Element {
                           />
                         </td>
                         <td className="px-3 py-2">
+                          <div className="font-medium text-amber-300/90">{formatPkr(line.advancePkr)}</div>
+                          {line.advancePkr > 0 ? (
+                            <div className="text-[10px] text-slate-500">pehle se (Pay Out)</div>
+                          ) : (
+                            <div className="text-[10px] text-slate-600">koi advance nahi</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
                           <input
                             type="number"
                             min={0}
                             className={`${hrInputClass} w-24`}
-                            value={line.deductionsPkr}
+                            value={line.statutoryPkr}
                             disabled={!line.selected}
                             onChange={(e) =>
-                              updateLine(line.employeeId, { deductionsPkr: Number(e.target.value) || 0 })
+                              updateLine(line.employeeId, {
+                                statutoryPkr: Number(e.target.value) || 0,
+                              })
                             }
                           />
                         </td>
-                        <td className="px-3 py-2 font-medium text-emerald-300/90">{formatPkr(net)}</td>
+                        <td className="px-3 py-2 font-medium text-slate-300">
+                          {formatPkr(line.deductionsPkr)}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-emerald-300/90">{formatPkr(net)}</div>
+                          <div className="text-[10px] text-slate-500">baqaya / payable</div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -340,11 +492,15 @@ export function HrPayrollPage(): JSX.Element {
                 <dd className="text-sm font-semibold text-white">{formatPkr(previewTotals.gross)}</dd>
               </div>
               <div>
+                <dt>Advances (pehle se)</dt>
+                <dd className="text-sm font-semibold text-amber-300">{formatPkr(previewTotals.advances)}</dd>
+              </div>
+              <div>
                 <dt>Deductions</dt>
                 <dd className="text-sm font-semibold text-white">{formatPkr(previewTotals.deductions)}</dd>
               </div>
               <div>
-                <dt>Net pay</dt>
+                <dt>Baqaya (payable)</dt>
                 <dd className="text-sm font-semibold text-emerald-300">{formatPkr(previewTotals.net)}</dd>
               </div>
             </dl>
@@ -456,10 +612,25 @@ export function HrPayrollPage(): JSX.Element {
               columns={[
                 { key: "employeeCode", header: "ID" },
                 { key: "employeeName", header: "Name" },
+                {
+                  key: "baseSalaryPkr",
+                  header: "Base salary",
+                  render: (r) => formatPkr(Number(r.baseSalaryPkr ?? r.grossPkr)),
+                },
                 { key: "grossPkr", header: "Gross", render: (r) => formatPkr(Number(r.grossPkr)) },
-                { key: "deductionsPkr", header: "Deductions", render: (r) => formatPkr(Number(r.deductionsPkr)) },
-                { key: "overtimePkr", header: "Overtime", render: (r) => formatPkr(Number(r.overtimePkr)) },
-                { key: "netPkr", header: "Net", render: (r) => formatPkr(Number(r.netPkr)) },
+                { key: "overtimePkr", header: "OT", render: (r) => formatPkr(Number(r.overtimePkr)) },
+                {
+                  key: "advancePkr",
+                  header: "Advance",
+                  render: (r) => formatPkr(Number(r.advancePkr ?? 0)),
+                },
+                {
+                  key: "statutoryPkr",
+                  header: "Statutory",
+                  render: (r) => formatPkr(Number(r.statutoryPkr ?? 0)),
+                },
+                { key: "deductionsPkr", header: "Total ded.", render: (r) => formatPkr(Number(r.deductionsPkr)) },
+                { key: "netPkr", header: "Baqaya", render: (r) => formatPkr(Number(r.netPkr)) },
               ]}
             />
           </div>

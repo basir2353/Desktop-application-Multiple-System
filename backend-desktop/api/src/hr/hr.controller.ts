@@ -155,6 +155,20 @@ export class HrController {
     return this.hr.deletePayrollRun(user.organizationId, payrollId);
   }
 
+  @Get("advances")
+  @RequirePermissions("pops.read")
+  listAdvances(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("status") status?: string,
+  ) {
+    return this.hr.listEmployeeAdvances(
+      user.organizationId,
+      branchCode?.trim() ?? "",
+      status?.trim(),
+    );
+  }
+
   @Get("salary-slips")
   @RequirePermissions("pops.read")
   listSalarySlips(

@@ -6,7 +6,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type {
   CreateAttendance,
   CreateEmployee,
@@ -21,6 +21,7 @@ import {
   organizationMemberships,
   popsAttendance,
   popsBranches,
+  popsEmployeeAdvances,
   popsEmployees,
   popsLeaveRequests,
   popsPayrollLines,
@@ -467,8 +468,45 @@ export class HrService implements OnModuleInit {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     await this.seedBranchIfEmpty(branch);
 
+    // Idempotent replay for offline → cloud sync
+    const syncRef = input.clientRequestId?.trim()
+      ? `OFF-${input.clientRequestId.trim().replace(/[^a-zA-Z0-9]/g, "").slice(0, 20).toUpperCase()}`
+      : null;
+    if (syncRef) {
+      const [existing] = await this.db
+        .select()
+        .from(popsPayrollRuns)
+        .where(
+          and(
+            eq(popsPayrollRuns.organizationId, organizationId),
+            eq(popsPayrollRuns.branchId, branch.id),
+            eq(popsPayrollRuns.payrollRef, syncRef),
+          ),
+        )
+        .limit(1);
+      if (existing) return this.mapPayrollRun(existing, true);
+    }
+
     const allEmployees = await this.loadEmployees(branch.id);
     const employeeMap = new Map(allEmployees.map((e) => [e.id, e]));
+
+    const openAdvances = await this.db
+      .select()
+      .from(popsEmployeeAdvances)
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, organizationId),
+          eq(popsEmployeeAdvances.branchId, branch.id),
+          eq(popsEmployeeAdvances.status, "open"),
+        ),
+      );
+
+    const advancesByEmployee = new Map<string, typeof openAdvances>();
+    for (const adv of openAdvances) {
+      const list = advancesByEmployee.get(adv.employeeId) ?? [];
+      list.push(adv);
+      advancesByEmployee.set(adv.employeeId, list);
+    }
 
     const lines: {
       employeeId: string;
@@ -476,6 +514,9 @@ export class HrService implements OnModuleInit {
       deductions: number;
       overtime: number;
       net: number;
+      advance: number;
+      statutory: number;
+      advanceIds: string[];
     }[] = [];
 
     for (const pick of input.employees) {
@@ -490,11 +531,34 @@ export class HrService implements OnModuleInit {
         throw new BadRequestException(`${emp.displayName} belongs to another branch`);
       }
 
-      const gross = pick.grossPkr ?? emp.baseSalaryPkr;
-      const overtime = pick.overtimePkr ?? 0;
-      const deductions = pick.deductionsPkr ?? Math.round(gross * DEDUCTION_RATE);
-      const net = gross - deductions + overtime;
-      lines.push({ employeeId: emp.id, gross, deductions, overtime, net });
+      const gross = Number(pick.grossPkr ?? emp.baseSalaryPkr);
+      const overtime = Number(pick.overtimePkr ?? 0);
+      const empAdvances = advancesByEmployee.get(emp.id) ?? [];
+      const openAdvanceTotal = empAdvances.reduce((s, a) => s + a.amountPkr, 0);
+      const advance =
+        pick.advancePkr !== undefined ? Number(pick.advancePkr) : openAdvanceTotal;
+      const statutoryDefault = Math.round(gross * DEDUCTION_RATE);
+      let statutory: number;
+      let deductions: number;
+      if (pick.deductionsPkr !== undefined) {
+        deductions = Number(pick.deductionsPkr);
+        // Preserve advance portion inside total deductions when client sent a total.
+        statutory = Math.max(0, deductions - advance);
+      } else {
+        statutory = statutoryDefault;
+        deductions = statutory + advance;
+      }
+      const net = Math.max(0, gross + overtime - deductions);
+      lines.push({
+        employeeId: emp.id,
+        gross,
+        deductions,
+        overtime,
+        net,
+        advance,
+        statutory,
+        advanceIds: empAdvances.map((a) => a.id),
+      });
     }
 
     if (lines.length === 0) {
@@ -514,6 +578,13 @@ export class HrService implements OnModuleInit {
       staffCount: lines.length,
     });
 
+    if (syncRef) {
+      await this.db
+        .update(popsPayrollRuns)
+        .set({ payrollRef: syncRef })
+        .where(eq(popsPayrollRuns.id, payroll.id));
+    }
+
     await this.db.insert(popsPayrollLines).values(
       lines.map((l) => ({
         payrollRunId: payroll.id,
@@ -524,6 +595,20 @@ export class HrService implements OnModuleInit {
         netPkr: l.net,
       })),
     );
+
+    // Reserve open advances so they are not double-applied on another run.
+    for (const line of lines) {
+      if (line.advanceIds.length === 0) continue;
+      await this.db
+        .update(popsEmployeeAdvances)
+        .set({ status: "reserved", payrollRunId: payroll.id })
+        .where(
+          and(
+            eq(popsEmployeeAdvances.organizationId, organizationId),
+            inArray(popsEmployeeAdvances.id, line.advanceIds),
+          ),
+        );
+    }
 
     const runRows = await this.db
       .select()
@@ -550,6 +635,18 @@ export class HrService implements OnModuleInit {
       throw new BadRequestException("Only draft payroll runs can be deleted");
     }
 
+    // Re-open advances that were reserved for this draft.
+    await this.db
+      .update(popsEmployeeAdvances)
+      .set({ status: "open", payrollRunId: null })
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, organizationId),
+          eq(popsEmployeeAdvances.payrollRunId, payrollId),
+          eq(popsEmployeeAdvances.status, "reserved"),
+        ),
+      );
+
     await this.db.delete(popsPayrollLines).where(eq(popsPayrollLines.payrollRunId, payrollId));
     await this.db.delete(popsPayrollRuns).where(eq(popsPayrollRuns.id, payrollId));
     return { ok: true, payrollRef: run.payrollRef };
@@ -562,7 +659,113 @@ export class HrService implements OnModuleInit {
 
   async payPayroll(organizationId: string, userEmail: string, payrollId: string) {
     await this.accounting.payPayroll(organizationId, userEmail, payrollId);
+    await this.db
+      .update(popsEmployeeAdvances)
+      .set({ status: "settled", settledAt: new Date() })
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, organizationId),
+          eq(popsEmployeeAdvances.payrollRunId, payrollId),
+        ),
+      );
     return this.getPayrollRun(organizationId, payrollId);
+  }
+
+  /** Open (and optionally reserved) salary advances for payroll planning. */
+  async listEmployeeAdvances(organizationId: string, branchCode: string, status?: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    await this.seedBranchIfEmpty(branch);
+
+    const conditions = [
+      eq(popsEmployeeAdvances.organizationId, organizationId),
+      eq(popsEmployeeAdvances.branchId, branch.id),
+    ];
+    if (status === "open" || status === "reserved" || status === "settled") {
+      conditions.push(eq(popsEmployeeAdvances.status, status));
+    }
+
+    const rows = await this.db
+      .select({
+        advance: popsEmployeeAdvances,
+        employee: popsEmployees,
+      })
+      .from(popsEmployeeAdvances)
+      .innerJoin(popsEmployees, eq(popsEmployees.id, popsEmployeeAdvances.employeeId))
+      .where(and(...conditions))
+      .orderBy(desc(popsEmployeeAdvances.createdAt));
+
+    const byEmployee = new Map<
+      string,
+      {
+        employeeId: string;
+        employeeCode: string;
+        employeeName: string;
+        baseSalaryPkr: number;
+        openAdvancePkr: number;
+        openAdvanceCount: number;
+        advances: ReturnType<HrService["mapAdvance"]>[];
+      }
+    >();
+
+    for (const { advance, employee } of rows) {
+      const mapped = this.mapAdvance(advance, employee);
+      let summary = byEmployee.get(employee.id);
+      if (!summary) {
+        summary = {
+          employeeId: employee.id,
+          employeeCode: employee.employeeCode,
+          employeeName: employee.displayName,
+          baseSalaryPkr: employee.baseSalaryPkr,
+          openAdvancePkr: 0,
+          openAdvanceCount: 0,
+          advances: [],
+        };
+        byEmployee.set(employee.id, summary);
+      }
+      summary.advances.push(mapped);
+      if (advance.status === "open") {
+        summary.openAdvancePkr += advance.amountPkr;
+        summary.openAdvanceCount += 1;
+      }
+    }
+
+    // Ensure active employees appear even with zero advances (helps payroll UI).
+    const employees = await this.loadEmployees(branch.id);
+    for (const emp of employees) {
+      if (emp.employmentStatus === "terminated") continue;
+      if (byEmployee.has(emp.id)) continue;
+      byEmployee.set(emp.id, {
+        employeeId: emp.id,
+        employeeCode: emp.employeeCode,
+        employeeName: emp.displayName,
+        baseSalaryPkr: emp.baseSalaryPkr,
+        openAdvancePkr: 0,
+        openAdvanceCount: 0,
+        advances: [],
+      });
+    }
+
+    return [...byEmployee.values()].sort((a, b) => a.employeeCode.localeCompare(b.employeeCode));
+  }
+
+  private mapAdvance(
+    advance: typeof popsEmployeeAdvances.$inferSelect,
+    employee: typeof popsEmployees.$inferSelect,
+  ) {
+    return {
+      id: advance.id,
+      employeeId: employee.id,
+      employeeCode: employee.employeeCode,
+      employeeName: employee.displayName,
+      amountPkr: advance.amountPkr,
+      reason: advance.reason,
+      status: advance.status as "open" | "reserved" | "settled",
+      cashMovementId: advance.cashMovementId,
+      payrollRunId: advance.payrollRunId,
+      recordedBy: advance.recordedBy,
+      createdAt: advance.createdAt.toISOString(),
+      settledAt: advance.settledAt?.toISOString() ?? null,
+    };
   }
 
   async listSalarySlips(organizationId: string, branchCode: string, payrollRunId?: string) {
@@ -813,18 +1016,39 @@ export class HrService implements OnModuleInit {
       .innerJoin(popsEmployees, eq(popsEmployees.id, popsPayrollLines.employeeId))
       .where(eq(popsPayrollLines.payrollRunId, row.id));
 
+    const reservedAdvances = await this.db
+      .select()
+      .from(popsEmployeeAdvances)
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, row.organizationId),
+          eq(popsEmployeeAdvances.payrollRunId, row.id),
+        ),
+      );
+    const advanceByEmployee = new Map<string, number>();
+    for (const adv of reservedAdvances) {
+      advanceByEmployee.set(adv.employeeId, (advanceByEmployee.get(adv.employeeId) ?? 0) + adv.amountPkr);
+    }
+
     return {
       ...base,
-      lines: lineRows.map(({ line, employee }) => ({
-        id: line.id,
-        employeeId: employee.id,
-        employeeCode: employee.employeeCode,
-        employeeName: employee.displayName,
-        grossPkr: line.grossPkr,
-        deductionsPkr: line.deductionsPkr,
-        overtimePkr: line.overtimePkr,
-        netPkr: line.netPkr,
-      })),
+      lines: lineRows.map(({ line, employee }) => {
+        const advancePkr = advanceByEmployee.get(employee.id) ?? 0;
+        const statutoryPkr = Math.max(0, line.deductionsPkr - advancePkr);
+        return {
+          id: line.id,
+          employeeId: employee.id,
+          employeeCode: employee.employeeCode,
+          employeeName: employee.displayName,
+          grossPkr: line.grossPkr,
+          deductionsPkr: line.deductionsPkr,
+          overtimePkr: line.overtimePkr,
+          netPkr: line.netPkr,
+          advancePkr,
+          statutoryPkr,
+          baseSalaryPkr: employee.baseSalaryPkr,
+        };
+      }),
     };
   }
 

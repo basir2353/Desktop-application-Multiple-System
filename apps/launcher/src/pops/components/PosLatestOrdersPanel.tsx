@@ -16,7 +16,7 @@ import {
 import { updateKitchenTicket } from "../api/kitchen";
 import { removeOfflineKot } from "../lib/popsOfflineOrders";
 import { printPosRecentOrderAsync } from "../lib/printTicket";
-import { resolveKotPrinter, resolveReceiptPrinter } from "../lib/printerRouting";
+import { resolveReceiptPrinter } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
@@ -155,22 +155,25 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
     },
   });
 
+  /** Latest orders: always customer/order receipt — never kitchen KOT. */
+  async function printOrderReceipt(order: PosRecentOrder): Promise<void> {
+    if (!branch) return;
+    const sessionUserId = useSessionStore.getState().claims?.sub;
+    const profile = resolveReceiptPrinter(
+      branch.code,
+      order.bill?.waiterId ?? sessionUserId,
+    );
+    const assigned =
+      order.bill?.waiterId != null ? getWaiterPrinter(branch.code, order.bill.waiterId) : null;
+    await printPosRecentOrderAsync(branch.name, branch.code, order, {
+      printerName: profile?.name ?? assigned?.printerName,
+      systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
+    });
+  }
+
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    if (!branch) return;
-    void (async () => {
-      const sessionUserId = useSessionStore.getState().claims?.sub;
-      const isReceipt = order.kind === "paid" && order.bill != null;
-      const profile = isReceipt
-        ? resolveReceiptPrinter(branch.code, order.bill?.waiterId ?? sessionUserId)
-        : resolveKotPrinter(branch.code, null, sessionUserId, "kitchen");
-      const assigned =
-        order.bill?.waiterId != null ? getWaiterPrinter(branch.code, order.bill.waiterId) : null;
-      await printPosRecentOrderAsync(branch.name, branch.code, order, {
-        printerName: profile?.name ?? assigned?.printerName,
-        systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
-      });
-    })();
+    void printOrderReceipt(order);
   }
 
   function toggleSelected(order: PosRecentOrder): void {
@@ -179,11 +182,18 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    // Hide card right away — mutation also persists dismiss + marks ticket done.
-    if (branch?.code) dismissPosOrder(branch.code, order.id);
-    setDismissedRevision((n) => n + 1);
-    setSelectedId(null);
-    closeOrderMutation.mutate(order);
+    // Final customer receipt on Close, then dismiss the card.
+    void (async () => {
+      try {
+        await printOrderReceipt(order);
+      } catch {
+        /* still close even if print fails */
+      }
+      if (branch?.code) dismissPosOrder(branch.code, order.id);
+      setDismissedRevision((n) => n + 1);
+      setSelectedId(null);
+      closeOrderMutation.mutate(order);
+    })();
   }
 
   function handleOrderDoubleClick(order: PosRecentOrder, event: MouseEvent): void {

@@ -150,6 +150,10 @@ export const popsCashMovements = pgTable("pops_cash_movements", {
   amountPkr: integer("amount_pkr").notNull(),
   reason: text("reason").notNull(),
   recordedBy: text("recorded_by"),
+  /** Optional link when payout is to an employee (salary advance). */
+  employeeId: uuid("employee_id"),
+  partyKind: text("party_kind"), // supplier | customer | employee
+  clientRequestId: text("client_request_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

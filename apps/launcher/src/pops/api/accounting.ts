@@ -218,13 +218,36 @@ export async function fetchCashMovements(sessionId: string): Promise<PopsCashMov
 }
 
 export async function recordCashMovement(input: CreatePopsCashMovement): Promise<PopsCashMovement> {
-  const res = await authFetch("/v1/accounting/cash-movements", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) await parseError(res, "Record cash movement failed");
-  return popsCashMovementSchema.parse(await res.json());
+  const { isLikelyOfflineError, newClientRequestId, queueOfflineCashMovement } = await import(
+    "../lib/offlineCashQueue"
+  );
+  const payload: CreatePopsCashMovement = {
+    ...input,
+    clientRequestId: input.clientRequestId ?? newClientRequestId("cash"),
+  };
+  try {
+    const res = await authFetch("/v1/accounting/cash-movements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) await parseError(res, "Record cash movement failed");
+    return popsCashMovementSchema.parse(await res.json());
+  } catch (err) {
+    if (!isLikelyOfflineError(err)) throw err;
+    const queued = queueOfflineCashMovement(payload);
+    return {
+      id: queued.id,
+      sessionId: payload.sessionId,
+      type: payload.type,
+      amountPkr: payload.amountPkr,
+      reason: payload.reason,
+      recordedBy: payload.recordedBy ?? null,
+      createdAt: queued.createdAt,
+      employeeId: payload.employeeId ?? null,
+      partyKind: payload.partyKind ?? null,
+    };
+  }
 }
 
 export async function fetchBankAccounts(branchCode: string): Promise<BankAccount[]> {

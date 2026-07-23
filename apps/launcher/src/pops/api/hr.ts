@@ -12,6 +12,7 @@ import {
   salarySlipSchema,
   staffFoodListSchema,
   staffFoodRecordSchema,
+  employeeAdvanceSummarySchema,
   updateAttendanceSchema,
   updateEmployeeSchema,
   updateLeaveRequestSchema,
@@ -21,6 +22,7 @@ import {
   type CreateLeaveRequest,
   type CreateStaffFood,
   type Employee,
+  type EmployeeAdvanceSummary,
   type LeaveRequest,
   type SalarySlip,
   type StaffFoodList,
@@ -158,15 +160,59 @@ export async function fetchHrPayrollRun(payrollId: string) {
   return hrPayrollRunSchema.parse(await res.json());
 }
 
+export async function fetchEmployeeAdvances(
+  branchCode: string,
+  status?: "open" | "reserved" | "settled",
+): Promise<EmployeeAdvanceSummary[]> {
+  const params = new URLSearchParams({ branchCode });
+  if (status) params.set("status", status);
+  try {
+    const res = await authFetch(`/v1/hr/advances?${params}`);
+    // Older backends / missing migration: treat as empty so local ledger can fill in.
+    if (res.status === 404 || res.status === 501) return [];
+    if (!res.ok) throw new Error(await readError(res));
+    return employeeAdvanceSummarySchema.array().parse(await res.json());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/404|not found|failed to fetch|network/i.test(msg)) return [];
+    throw err;
+  }
+}
+
 export async function createHrPayrollRun(input: CreateHrPayrollRun) {
-  const body = createHrPayrollRunSchema.parse(input);
-  const res = await authFetch("/v1/hr/payroll/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  const { isLikelyOfflineError, newClientRequestId, queueOfflinePayrollRun } = await import(
+    "../lib/offlineCashQueue"
+  );
+  const body = createHrPayrollRunSchema.parse({
+    ...input,
+    clientRequestId: input.clientRequestId ?? newClientRequestId("pay"),
   });
-  if (!res.ok) throw new Error(await readError(res));
-  return hrPayrollRunSchema.parse(await res.json());
+  try {
+    const res = await authFetch("/v1/hr/payroll/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await readError(res));
+    return hrPayrollRunSchema.parse(await res.json());
+  } catch (err) {
+    if (!isLikelyOfflineError(err)) throw err;
+    const queued = queueOfflinePayrollRun(body);
+    return {
+      id: queued.id,
+      payrollRef: `OFFLINE-${queued.id.slice(-6).toUpperCase()}`,
+      periodStart: body.periodStart,
+      periodEnd: body.periodEnd,
+      totalGross: body.employees.reduce((s, e) => s + (e.grossPkr ?? 0) + (e.overtimePkr ?? 0), 0),
+      totalDeductions: body.employees.reduce((s, e) => s + (e.deductionsPkr ?? 0), 0),
+      totalNet: 0,
+      staffCount: body.employees.length,
+      status: "draft" as const,
+      createdBy: null,
+      createdAt: queued.createdAt,
+      lines: [],
+    };
+  }
 }
 
 export async function approveHrPayrollRun(payrollId: string) {

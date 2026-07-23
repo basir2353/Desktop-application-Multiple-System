@@ -22,6 +22,16 @@ import {
   removeOfflineBill,
   removeOfflineKot,
 } from "../pops/lib/popsOfflineOrders";
+import {
+  bumpOfflineCashAttempt,
+  bumpOfflinePayrollAttempt,
+  loadOfflineCashMovements,
+  loadOfflinePayrollRuns,
+  removeOfflineCashMovement,
+  removeOfflinePayrollRun,
+} from "../pops/lib/offlineCashQueue";
+import { recordCashMovement } from "../pops/api/accounting";
+import { createHrPayrollRun } from "../pops/api/hr";
 
 export type SyncSummary = {
   outboxPushed: number;
@@ -29,6 +39,10 @@ export type SyncSummary = {
   salesFailed: number;
   popsOrdersSynced: number;
   popsOrdersFailed: number;
+  cashSynced: number;
+  cashFailed: number;
+  payrollSynced: number;
+  payrollFailed: number;
 };
 
 /** Push outbox rows and replay queued store POS + restaurant POS orders to the hosted API. */
@@ -39,6 +53,10 @@ export async function flushAllOfflineData(accessToken: string): Promise<SyncSumm
     salesFailed: 0,
     popsOrdersSynced: 0,
     popsOrdersFailed: 0,
+    cashSynced: 0,
+    cashFailed: 0,
+    payrollSynced: 0,
+    payrollFailed: 0,
   };
 
   if (!isOnline()) return summary;
@@ -101,10 +119,34 @@ export async function flushAllOfflineData(accessToken: string): Promise<SyncSumm
     }
   }
 
+  for (const entry of loadOfflineCashMovements()) {
+    try {
+      await recordCashMovement(entry.payload);
+      removeOfflineCashMovement(entry.id);
+      summary.cashSynced += 1;
+    } catch {
+      bumpOfflineCashAttempt(entry.id);
+      summary.cashFailed += 1;
+    }
+  }
+
+  for (const entry of loadOfflinePayrollRuns()) {
+    try {
+      await createHrPayrollRun(entry.payload);
+      removeOfflinePayrollRun(entry.id);
+      summary.payrollSynced += 1;
+    } catch {
+      bumpOfflinePayrollAttempt(entry.id);
+      summary.payrollFailed += 1;
+    }
+  }
+
   if (
     summary.salesSynced > 0 ||
     summary.outboxPushed > 0 ||
-    summary.popsOrdersSynced > 0
+    summary.popsOrdersSynced > 0 ||
+    summary.cashSynced > 0 ||
+    summary.payrollSynced > 0
   ) {
     useDataModeStore.getState().markSynced();
     if (summary.popsOrdersFailed === 0 && loadOfflineBillEntries().length === 0) {

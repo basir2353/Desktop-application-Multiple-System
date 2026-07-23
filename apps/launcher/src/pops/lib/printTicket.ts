@@ -1,5 +1,7 @@
 import type { Bill, KitchenTicket } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
+import { computeTicketTotals } from "./posDiscount";
+import { loadPosSettings } from "./posSettings";
 import { parseItemsSummary, type PosRecentOrder } from "./recentOrders";
 import {
   billReceiptFontSizes,
@@ -1747,6 +1749,59 @@ export function kitchenTicketToKotPrint(
   };
 }
 
+/** Customer/order receipt from a Latest-orders card (never a kitchen KOT). */
+export function posRecentOrderToReceiptPrint(
+  branchName: string,
+  branchCode: string,
+  order: PosRecentOrder,
+): Omit<PrintTicketInput, "kind"> {
+  if (order.kind === "paid" && order.bill) {
+    return billToPrintInput(branchName, branchCode, order.bill);
+  }
+
+  const settings = loadPosSettings(branchCode);
+  const rawLines =
+    order.detail.kind === "pending"
+      ? order.detail.lines
+      : order.detail.lines.map((line) => ({
+          label: line.label,
+          qty: line.qty,
+          unitPrice: line.unitPrice,
+        }));
+  const lines = rawLines.map((line) => ({
+    label: line.label,
+    qty: line.qty,
+    unitPrice: line.unitPrice ?? 0,
+  }));
+  const subtotal = lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0);
+  const deliveryCharge = order.kitchenTicket?.deliveryChargePkr ?? 0;
+  const totals = computeTicketTotals(
+    subtotal,
+    0,
+    settings.servicePct,
+    settings.taxPct,
+    deliveryCharge,
+  );
+
+  return {
+    branchName,
+    branchCode,
+    orderRef: order.ref,
+    modeLabel: order.orderMode,
+    tableLabel: order.stationLabel,
+    lines,
+    subtotal: totals.subtotal,
+    discount: totals.discount,
+    service: totals.service,
+    tax: totals.tax,
+    deliveryCharge: totals.deliveryCharge > 0 ? totals.deliveryCharge : undefined,
+    total: totals.total,
+    servicePct: settings.servicePct,
+    taxPct: settings.taxPct,
+    discountPct: totals.discountPct,
+  };
+}
+
 export function printPosRecentOrder(
   branchName: string,
   branchCode: string,
@@ -1757,49 +1812,21 @@ export function printPosRecentOrder(
   return true;
 }
 
+/** Latest-orders Print/Close: always the customer receipt (not kitchen KOT). */
 export async function printPosRecentOrderAsync(
   branchName: string,
   branchCode: string,
   order: PosRecentOrder,
   options?: { printerName?: string; systemPrinterName?: string },
 ): Promise<boolean> {
-  if (order.kind === "paid" && order.bill) {
-    return printBillAsync(branchName, branchCode, order.bill, {
-      printerName: options?.printerName,
-      systemPrinterName: options?.systemPrinterName,
-    });
-  }
-  if (order.kitchenTicket) {
-    return printKotAsync({
-      ...kitchenTicketToKotPrint(order.kitchenTicket, branchName, branchCode),
-      printerName: options?.printerName,
-      systemPrinterName: options?.systemPrinterName,
-    });
-  }
-  if (order.detail.kind === "pending") {
-    return printKotAsync({
-      branchName,
-      branchCode,
-      orderRef: order.detail.orderRef ?? order.detail.ticketRef,
-      modeLabel: order.orderMode,
-      tableLabel: order.stationLabel,
-      lines: order.detail.lines.map((line) => ({
-        label: line.label,
-        qty: line.qty,
-        unitPrice: line.unitPrice ?? 0,
-      })),
-      subtotal: 0,
-      discount: 0,
-      service: 0,
-      tax: 0,
-      total: 0,
-      servicePct: 0,
-      discountPct: 0,
-      printerName: options?.printerName,
-      systemPrinterName: options?.systemPrinterName,
-    });
-  }
-  return false;
+  const systemPrinterName = options?.systemPrinterName?.trim() || undefined;
+  return printReceiptAsync({
+    ...posRecentOrderToReceiptPrint(branchName, branchCode, order),
+    printerName: options?.printerName ?? systemPrinterName,
+    systemPrinterName,
+    billPrintSettings:
+      resolveBillPrintSettingsForReceipt(branchCode) ?? loadBillPrintSettings(branchCode),
+  });
 }
 
 export function printKot(input: Omit<PrintTicketInput, "kind">): boolean {
