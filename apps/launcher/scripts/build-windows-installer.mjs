@@ -32,7 +32,7 @@ const apiUrl = loadEnvApiUrl();
 if (!apiUrl) {
   console.error(
     "[installer] Set VITE_API_BASE_URL in the repo-root .env before building.\n" +
-      "Example: VITE_API_BASE_URL=https://platformapi-production-39aa.up.railway.app",
+      "Example: VITE_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app",
   );
   process.exit(1);
 }

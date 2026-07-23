@@ -85,8 +85,17 @@ export function BranchSelectPage(): JSX.Element {
   useEffect(() => {
     if (persistedBranch?.id.startsWith("custom-")) {
       setBranch(null);
+      return;
     }
-  }, [persistedBranch?.id, setBranch]);
+    // Drop stale branch when API set changed (e.g. local vs Railway) or branch was deleted.
+    if (
+      persistedBranch &&
+      branchesQuery.isSuccess &&
+      !apiBranches.some((b) => b.code === persistedBranch.code)
+    ) {
+      setBranch(null);
+    }
+  }, [persistedBranch, setBranch, branchesQuery.isSuccess, apiBranches]);
 
   useEffect(() => {
     const role = normalizeMembershipRole(claims?.role);

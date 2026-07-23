@@ -1590,9 +1590,16 @@ export function PosPage(): JSX.Element {
         receiptProfile,
       );
       // One receipt dialog only — never re-open from profile copies when using the OS dialog.
+      const posAction = intent === "invoice" ? "order" : "pay";
       const result = await printReceiptDetailed({
         ...payload,
-        billPrintSettings: resolveBillPrintSettingsForReceipt(branch?.code, receiptProfile?.id),
+        // Always honor the receipt printer profile paper (58mm / 80mm / A4).
+        paperSize: receiptProfile?.paperSize ?? payload.paperSize,
+        billPrintSettings: resolveBillPrintSettingsForReceipt(
+          branch?.code,
+          receiptProfile?.id,
+          posAction,
+        ),
         copies: payload.systemPrinterName?.trim() ? Math.max(1, payload.copies ?? 1) : 1,
       });
       const target = payload.systemPrinterName ?? payload.printerName ?? "Receipt";
@@ -1719,7 +1726,12 @@ export function PosPage(): JSX.Element {
         );
         const result = await printReceiptDetailed({
           ...payload,
-          billPrintSettings: resolveBillPrintSettingsForReceipt(branch?.code, receiptProfile?.id),
+          paperSize: receiptProfile?.paperSize ?? payload.paperSize,
+          billPrintSettings: resolveBillPrintSettingsForReceipt(
+            branch?.code,
+            receiptProfile?.id,
+            "pay",
+          ),
         });
         logPrintEvent(branch?.code, {
           kind: "receipt",

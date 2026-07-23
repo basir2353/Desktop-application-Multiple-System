@@ -31,14 +31,21 @@ export const orgUserSchema = z.object({
   role: z.string(),
   branchScope: z.string(),
   pinRequired: z.boolean(),
-  permissions: z.array(z.string()),
-  /** When false, the user cannot sign in. */
-  active: z.boolean(),
+  permissions: z.array(z.string()).default([]),
+  /** When false, the user cannot sign in. Older APIs may omit this. */
+  active: z.preprocess(
+    (v) => (v === undefined ? true : v),
+    z.boolean(),
+  ),
   /**
    * Allowed ERP nav paths (e.g. `pos`, `inventory/stock`).
    * `null` = all paths allowed by the user's permissions.
+   * Older APIs may omit this.
    */
-  navAllowlist: z.array(z.string()).nullable(),
+  navAllowlist: z.preprocess(
+    (v) => (v === undefined ? null : v),
+    z.array(z.string()).nullable(),
+  ),
   lastActivityAt: z.string().nullable(),
 });
 

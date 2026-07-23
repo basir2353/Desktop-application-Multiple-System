@@ -781,60 +781,64 @@ export default function OrderScreen() {
             ) : null}
           </View>
 
-          {cart.length > 0 && editingOrder?.kind !== "bill" ? (
-            <Button
-              label="Print order"
-              variant="ghost"
-              disabled={Boolean(validateOrderTarget())}
-              onPress={() => {
-                void (async () => {
-                  const ok = await printCartOrder({
-                    branchName: branch.name,
-                    branchCode: branch.code,
-                    orderRef,
-                    stationLabel: stationLabelForMode(orderMode, activeTableId),
-                    waiterName: waiterEmail,
-                    notes: combinedOrderNotes() ?? null,
-                    lines: cartLines(),
-                    total,
-                  });
-                  setNotice(ok ? "Print order sent." : "Could not print order.");
-                })();
-              }}
-            />
-          ) : null}
-
           {cart.length > 0 ? (
-            <Button
-              label="Print bill"
-              variant="ghost"
-              disabled={Boolean(validateOrderTarget())}
-              onPress={() => {
-                void (async () => {
-                  const ok = await printCartBill({
-                    branchName: branch.name,
-                    branchCode: branch.code,
-                    orderRef,
-                    tableLabel: stationLabelForMode(orderMode, activeTableId),
-                    waiterName: waiterEmail,
-                    lines: cartLines().map((l) => ({
-                      label: l.label,
-                      qty: l.qty,
-                      unitPrice: l.unitPrice ?? 0,
-                    })),
-                    subtotal,
-                    service,
-                    servicePct: SERVICE_PCT,
-                    tax,
-                    taxPct: 15,
-                    total,
-                    deliveryChargePkr:
-                      orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
-                  });
-                  setNotice(ok ? "Bill sent to printer." : "Could not print bill.");
-                })();
-              }}
-            />
+            <View style={styles.printRow}>
+              {editingOrder?.kind !== "bill" ? (
+                <View style={styles.actionHalf}>
+                  <Button
+                    label="Print order"
+                    variant="ghost"
+                    disabled={Boolean(validateOrderTarget())}
+                    onPress={() => {
+                      void (async () => {
+                        const ok = await printCartOrder({
+                          branchName: branch.name,
+                          branchCode: branch.code,
+                          orderRef,
+                          stationLabel: stationLabelForMode(orderMode, activeTableId),
+                          waiterName: waiterEmail,
+                          notes: combinedOrderNotes() ?? null,
+                          lines: cartLines(),
+                          total,
+                        });
+                        setNotice(ok ? "Print order sent." : "Could not print order.");
+                      })();
+                    }}
+                  />
+                </View>
+              ) : null}
+              <View style={editingOrder?.kind !== "bill" ? styles.actionHalf : undefined}>
+                <Button
+                  label="Print bill"
+                  disabled={Boolean(validateOrderTarget())}
+                  onPress={() => {
+                    void (async () => {
+                      const ok = await printCartBill({
+                        branchName: branch.name,
+                        branchCode: branch.code,
+                        orderRef,
+                        tableLabel: stationLabelForMode(orderMode, activeTableId),
+                        waiterName: waiterEmail,
+                        lines: cartLines().map((l) => ({
+                          label: l.label,
+                          qty: l.qty,
+                          unitPrice: l.unitPrice ?? 0,
+                        })),
+                        subtotal,
+                        service,
+                        servicePct: SERVICE_PCT,
+                        tax,
+                        taxPct: 15,
+                        total,
+                        deliveryChargePkr:
+                          orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
+                      });
+                      setNotice(ok ? "Bill sent to printer." : "Could not print bill.");
+                    })();
+                  }}
+                />
+              </View>
+            </View>
           ) : null}
         </Card>
 
@@ -980,11 +984,55 @@ export default function OrderScreen() {
                 <Text style={styles.kitchenItems} numberOfLines={2}>
                   {k.itemsSummary}
                 </Text>
-                {canEdit && !editingOrder ? (
-                  <Pressable onPress={() => startEditTicket(k)} style={styles.editOrderBtn}>
-                    <Text style={styles.editOrderBtnText}>Edit order</Text>
+                <View style={styles.kitchenActions}>
+                  <Pressable
+                    onPress={() => {
+                      void (async () => {
+                        const lines = (k.lines ?? []).map((line) => ({
+                          label: line.label,
+                          qty: line.qty,
+                          unitPrice: line.unitPrice ?? 0,
+                        }));
+                        const kotSubtotal = lines.reduce(
+                          (sum, line) => sum + line.unitPrice * line.qty,
+                          0,
+                        );
+                        const kotService = Math.round(kotSubtotal * (SERVICE_PCT / 100));
+                        const kotTax = Math.round((kotSubtotal + kotService) * 0.15);
+                        const ok = await printCartBill({
+                          branchName: branch.name,
+                          branchCode: branch.code,
+                          orderRef: k.orderRef ?? k.ticketRef,
+                          tableLabel: k.stationLabel,
+                          waiterName: k.createdByName ?? waiterEmail,
+                          lines:
+                            lines.length > 0
+                              ? lines
+                              : [{ label: k.itemsSummary || "Order", qty: 1, unitPrice: kotSubtotal }],
+                          subtotal: kotSubtotal,
+                          service: kotService,
+                          servicePct: SERVICE_PCT,
+                          tax: kotTax,
+                          taxPct: 15,
+                          total: kotSubtotal + kotService + kotTax,
+                        });
+                        setNotice(
+                          ok
+                            ? `Bill sent for ${k.orderRef ?? k.ticketRef}.`
+                            : "Could not print bill.",
+                        );
+                      })();
+                    }}
+                    style={styles.printBillBtn}
+                  >
+                    <Text style={styles.printBillBtnText}>Print bill</Text>
                   </Pressable>
-                ) : null}
+                  {canEdit && !editingOrder ? (
+                    <Pressable onPress={() => startEditTicket(k)} style={styles.editOrderBtn}>
+                      <Text style={styles.editOrderBtnText}>Edit order</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
                 {!isMine ? (
                   <Text style={styles.viewOnlyLabel}>
                     Taken by {k.createdByName ?? "another waiter"} — view only
@@ -1217,6 +1265,10 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
   actionRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  printRow: {
     flexDirection: "row",
     gap: 10,
   },
@@ -1472,9 +1524,28 @@ const styles = StyleSheet.create({
   kitchenTicketEditing: {
     borderColor: "rgba(245, 158, 11, 0.45)",
   },
+  kitchenActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 6,
+  },
+  printBillBtn: {
+    alignSelf: "flex-start",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(34, 197, 94, 0.45)",
+    backgroundColor: "rgba(34, 197, 94, 0.12)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  printBillBtnText: {
+    color: colors.success,
+    fontSize: 13,
+    fontWeight: "700",
+  },
   editOrderBtn: {
     alignSelf: "flex-start",
-    marginTop: 4,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "rgba(245, 158, 11, 0.45)",

@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { completeBillSchema, createBillSchema, createWaiterSchema, updateBillSchema, updateWaiterSchema } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -6,6 +17,11 @@ import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
 import { BillingService } from "./billing.service";
+
+function assertCanCloseOrders(user: AccessJwtPayload): void {
+  if (user.role === "cashier" || user.role === "manager" || user.role === "admin") return;
+  throw new ForbiddenException("Only cashier or manager can close orders. Waiters cannot close bills.");
+}
 
 @Controller("v1/billing")
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -43,7 +59,17 @@ export class BillingController {
   @Post("bills")
   @RequirePermissions("pops.read")
   createBill(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.billing.createBill(user.organizationId, createBillSchema.parse(body));
+    const input = createBillSchema.parse(body);
+    // Waiters / riders may only park bills on hold — cashier/manager closes payment.
+    if (
+      (user.role === "waiter" || user.role === "rider") &&
+      input.status === "completed"
+    ) {
+      throw new ForbiddenException(
+        "Waiters cannot close orders. Save the bill on hold for the cashier.",
+      );
+    }
+    return this.billing.createBill(user.organizationId, input);
   }
 
   @Patch("bills/:billId/complete")
@@ -53,6 +79,7 @@ export class BillingController {
     @Param("billId") billId: string,
     @Body() body: unknown,
   ) {
+    assertCanCloseOrders(user);
     return this.billing.completeBill(user.organizationId, billId, completeBillSchema.parse(body));
   }
 

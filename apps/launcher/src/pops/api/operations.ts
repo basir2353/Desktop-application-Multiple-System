@@ -35,7 +35,10 @@ export async function createPopsBranch(input: CreatePopsBranch): Promise<PopsBra
 export async function fetchDashboard(branchCode: string): Promise<DashboardResponse> {
   const params = new URLSearchParams({ branchCode });
   const res = await authFetch(`/v1/operations/dashboard?${params}`);
-  if (!res.ok) throw new Error(`Dashboard failed: ${res.status}`);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Dashboard failed: ${res.status}`);
+  }
   const json: unknown = await res.json();
   return dashboardResponseSchema.parse(json);
 }

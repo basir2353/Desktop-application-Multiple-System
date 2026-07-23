@@ -31,7 +31,21 @@ export const orgUserSchema = z.object({
   role: z.string(),
   branchScope: z.string(),
   pinRequired: z.boolean(),
-  permissions: z.array(z.string()),
+  permissions: z.array(z.string()).default([]),
+  /** When false, the user cannot sign in. Older APIs may omit this. */
+  active: z.preprocess(
+    (v) => (v === undefined ? true : v),
+    z.boolean(),
+  ),
+  /**
+   * Allowed ERP nav paths (e.g. `pos`, `inventory/stock`).
+   * `null` = all paths allowed by the user's permissions.
+   * Older APIs may omit this.
+   */
+  navAllowlist: z.preprocess(
+    (v) => (v === undefined ? null : v),
+    z.array(z.string()).nullable(),
+  ),
   lastActivityAt: z.string().nullable(),
 });
 
@@ -50,6 +64,11 @@ export const updateOrgUserSchema = z.object({
   pinRequired: z.boolean().optional(),
   password: z.string().min(8).max(128).optional(),
   staffPin: z.string().regex(/^\d{4}$/).optional(),
+  /** Replace membership permissions (module access). */
+  permissions: z.array(z.string()).optional(),
+  active: z.boolean().optional(),
+  /** Pass `null` to clear and allow all permission-gated paths. */
+  navAllowlist: z.array(z.string()).nullable().optional(),
 });
 
 export const resetUserPasswordSchema = z.object({

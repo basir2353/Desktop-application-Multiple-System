@@ -9,6 +9,7 @@
 import type { PosCartLine } from "./posCart";
 import { loadPrinterSections, savePrinterSections, type PrinterSection } from "./printerSections";
 import { isVirtualSystemPrinter } from "./systemPrinters";
+import { saveThermalPrintSettings } from "./thermalPrintSettings";
 
 export type PrinterPaperSize = "58mm" | "80mm" | "A4";
 
@@ -498,10 +499,19 @@ export function updatePrinterProfile(
     }
     nextPatch.systemPrinterName = os;
   }
+  const printers = state.printers.map((p) => (p.id === printerId ? { ...p, ...nextPatch } : p));
   saveState(branchCode, {
     ...state,
-    printers: state.printers.map((p) => (p.id === printerId ? { ...p, ...nextPatch } : p)),
+    printers,
   });
+
+  // Keep thermal default paper in sync when a receipt printer's roll size changes.
+  if (nextPatch.paperSize) {
+    const updated = printers.find((p) => p.id === printerId);
+    if (updated?.printerType === "receipt") {
+      saveThermalPrintSettings(branchCode, { defaultPaperSize: nextPatch.paperSize });
+    }
+  }
 }
 
 export function duplicatePrinterProfile(branchCode: string, printerId: string): PrinterProfile | null {

@@ -53,7 +53,7 @@ export async function updateBill(billId: string, input: UpdateBill): Promise<Bil
 export async function completeBill(billId: string, input: CompleteBill): Promise<Bill> {
   const body = completeBillSchema.parse(input);
   const res = await authFetch(`/v1/billing/bills/${billId}/complete`, {
-    method: "POST",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

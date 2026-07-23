@@ -6,22 +6,44 @@ import {
   type BillPrintSettings,
 } from "./billPrintSettings";
 
+/** POS receipt actions that can use different saved templates. */
+export type BillPosReceiptAction = "order" | "pay";
+
 /** Receipt-only template assignment (never kitchen/bar). */
 export type BillReceiptTemplateAssignmentStore = {
   /** Template used as branch default receipt layout. */
   branchDefaultTemplateId: string | null;
   /** receipt printer profile id → template id */
   byReceiptPrinterId: Record<string, string>;
+  /** POS action → template id (order slip / pay receipt). */
+  byPosAction: Partial<Record<BillPosReceiptAction, string>>;
 };
 
 const STORAGE_KEY = "pops-bill-receipt-template-assign-v1";
 export const BILL_RECEIPT_TEMPLATE_ASSIGN_CHANGED_EVENT =
   "pops-bill-receipt-template-assign-changed";
 
+export const BILL_POS_RECEIPT_ACTIONS: {
+  id: BillPosReceiptAction;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: "order",
+    label: "POS Order / Invoice",
+    description: "Guest check & invoice print before or without final pay",
+  },
+  {
+    id: "pay",
+    label: "POS Pay",
+    description: "Receipt printed after payment or split pay",
+  },
+];
+
 type RootStore = Record<string, BillReceiptTemplateAssignmentStore>;
 
 function emptyStore(): BillReceiptTemplateAssignmentStore {
-  return { branchDefaultTemplateId: null, byReceiptPrinterId: {} };
+  return { branchDefaultTemplateId: null, byReceiptPrinterId: {}, byPosAction: {} };
 }
 
 function readRoot(): RootStore {
@@ -41,6 +63,19 @@ function writeRoot(root: RootStore, branchCode: string): void {
   );
 }
 
+function normalizePosActions(
+  raw: unknown,
+): Partial<Record<BillPosReceiptAction, string>> {
+  if (!raw || typeof raw !== "object") return {};
+  const obj = raw as Record<string, unknown>;
+  const out: Partial<Record<BillPosReceiptAction, string>> = {};
+  for (const key of ["order", "pay"] as const) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) out[key] = value.trim();
+  }
+  return out;
+}
+
 export function loadBillReceiptTemplateAssignments(
   branchCode: string | undefined,
 ): BillReceiptTemplateAssignmentStore {
@@ -54,6 +89,7 @@ export function loadBillReceiptTemplateAssignments(
       row.byReceiptPrinterId && typeof row.byReceiptPrinterId === "object"
         ? { ...row.byReceiptPrinterId }
         : {},
+    byPosAction: normalizePosActions(row.byPosAction),
   };
 }
 
@@ -65,6 +101,7 @@ export function saveBillReceiptTemplateAssignments(
   root[branchCode] = {
     branchDefaultTemplateId: store.branchDefaultTemplateId,
     byReceiptPrinterId: { ...store.byReceiptPrinterId },
+    byPosAction: { ...store.byPosAction },
   };
   writeRoot(root, branchCode);
 }
@@ -81,7 +118,6 @@ export function assignBillTemplateToReceiptTargets(
   const current = loadBillReceiptTemplateAssignments(branchCode);
   const byReceiptPrinterId = { ...current.byReceiptPrinterId };
 
-  // Clear previous receipt-printer links for this template, then apply selection.
   for (const [printerId, tid] of Object.entries(byReceiptPrinterId)) {
     if (tid === templateId) delete byReceiptPrinterId[printerId];
   }
@@ -96,8 +132,40 @@ export function assignBillTemplateToReceiptTargets(
   const next: BillReceiptTemplateAssignmentStore = {
     branchDefaultTemplateId,
     byReceiptPrinterId,
+    byPosAction: { ...current.byPosAction },
   };
 
+  saveBillReceiptTemplateAssignments(branchCode, next);
+  return next;
+}
+
+/** Assign (or clear) a template for a POS receipt action. */
+export function assignBillTemplateToPosAction(
+  branchCode: string,
+  action: BillPosReceiptAction,
+  templateId: string | null,
+): BillReceiptTemplateAssignmentStore {
+  const current = loadBillReceiptTemplateAssignments(branchCode);
+  const byPosAction = { ...current.byPosAction };
+  if (templateId) byPosAction[action] = templateId;
+  else delete byPosAction[action];
+  const next: BillReceiptTemplateAssignmentStore = {
+    ...current,
+    byPosAction,
+  };
+  saveBillReceiptTemplateAssignments(branchCode, next);
+  return next;
+}
+
+export function setBranchDefaultBillTemplate(
+  branchCode: string,
+  templateId: string | null,
+): BillReceiptTemplateAssignmentStore {
+  const current = loadBillReceiptTemplateAssignments(branchCode);
+  const next: BillReceiptTemplateAssignmentStore = {
+    ...current,
+    branchDefaultTemplateId: templateId,
+  };
   saveBillReceiptTemplateAssignments(branchCode, next);
   return next;
 }
@@ -120,16 +188,29 @@ export function isBranchDefaultTemplate(
   return loadBillReceiptTemplateAssignments(branchCode).branchDefaultTemplateId === templateId;
 }
 
+export function listPosActionsForTemplate(
+  branchCode: string | undefined,
+  templateId: string,
+): BillPosReceiptAction[] {
+  const store = loadBillReceiptTemplateAssignments(branchCode);
+  return (Object.entries(store.byPosAction) as [BillPosReceiptAction, string][])
+    .filter(([, tid]) => tid === templateId)
+    .map(([action]) => action);
+}
+
 /**
- * Resolve receipt layout for print: printer-specific template → branch settings → default.
+ * Resolve receipt layout for print:
+ * POS action template → printer-specific template → branch default → live settings.
  */
 export function resolveBillPrintSettingsForReceipt(
   branchCode: string | undefined,
   receiptPrinterId?: string | null,
+  posAction?: BillPosReceiptAction | null,
 ): BillPrintSettings {
   if (!branchCode) return DEFAULT_BILL_PRINT_SETTINGS;
   const assign = loadBillReceiptTemplateAssignments(branchCode);
   const templateId =
+    (posAction && assign.byPosAction[posAction]) ||
     (receiptPrinterId && assign.byReceiptPrinterId[receiptPrinterId]) ||
     assign.branchDefaultTemplateId ||
     null;
@@ -137,7 +218,6 @@ export function resolveBillPrintSettingsForReceipt(
   if (templateId) {
     const tpl = getBillPrintTemplate(branchCode, templateId);
     if (tpl) return normalizeBillPrintSettings(tpl.settings);
-    // Fall back if template was deleted but assignment remains.
     const still = loadBillPrintTemplates(branchCode).find((t) => t.id === templateId);
     if (still) return normalizeBillPrintSettings(still.settings);
   }

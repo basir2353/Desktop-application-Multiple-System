@@ -182,11 +182,11 @@ function receiptPlainColumns(
   wantPrice: boolean,
   amountSamples: string[],
 ): { qtyW: number; itemW: number; priceW: number; amtW: number; showPrice: boolean } {
+  // "QTY" needs 3 chars; keep a dedicated gap so headers never read as QTYITEM.
   const qtyW = 3;
-  const longestAmt = amountSamples.reduce((m, s) => Math.max(m, s.length), 4);
-  // Keep enough room for amount; cap so item still fits.
-  const amtW = Math.min(Math.max(longestAmt, 5), Math.max(5, Math.floor(width * 0.34)));
-  const minItem = 8;
+  const longestAmt = amountSamples.reduce((m, s) => Math.max(m, s.length), 3);
+  const amtW = Math.min(Math.max(longestAmt, 4), Math.max(4, Math.floor(width * 0.28)));
+  const minItem = Math.max(8, Math.floor(width * 0.35));
   const gapQtyItem = 1;
   const gapBeforeAmt = 1;
 
@@ -197,7 +197,7 @@ function receiptPlainColumns(
   const baseUsed = qtyW + gapQtyItem + gapBeforeAmt + amtW;
   let itemW = width - baseUsed;
   if (showPrice && itemW >= minItem + 1 + 5) {
-    priceW = Math.min(7, Math.max(5, Math.floor((itemW - minItem) * 0.45)));
+    priceW = Math.min(7, Math.max(5, Math.floor((itemW - minItem) * 0.4)));
     gapItemPrice = 1;
     itemW = width - (qtyW + gapQtyItem + priceW + gapItemPrice + gapBeforeAmt + amtW);
   } else {
@@ -212,14 +212,28 @@ function receiptPlainColumns(
     itemW = width - (qtyW + gapQtyItem + gapBeforeAmt + amtW);
   }
 
-  // Final exact fit (guard float/rounding).
   const used =
     qtyW + gapQtyItem + Math.max(itemW, 0) + (showPrice ? gapItemPrice + priceW : 0) + gapBeforeAmt + amtW;
   if (used !== width) {
-    itemW = Math.max(4, itemW + (width - used));
+    itemW = Math.max(6, itemW + (width - used));
   }
 
-  return { qtyW, itemW: Math.max(4, itemW), priceW, amtW, showPrice };
+  return { qtyW, itemW: Math.max(6, itemW), priceW, amtW, showPrice };
+}
+
+/** Fixed-width receipt row with guaranteed single-space gaps between columns. */
+function plainReceiptItemRow(
+  qty: string,
+  item: string,
+  amount: string,
+  cols: { qtyW: number; itemW: number; priceW: number; amtW: number; showPrice: boolean },
+  price = "",
+): string {
+  const left = `${padRight(qty, cols.qtyW)} ${padRight(item, cols.itemW)}`;
+  if (cols.showPrice) {
+    return `${left} ${padLeft(price, cols.priceW)} ${padLeft(amount, cols.amtW)}`;
+  }
+  return `${left} ${padLeft(amount, cols.amtW)}`;
 }
 
 /** Label left, value right — value is never truncated. */
@@ -309,20 +323,36 @@ export function buildThermalPlainText(
   }
   out.push(equals);
 
+  const pushWrapped = (text: string) => {
+    for (const w of wrapWords(text, width)) out.push(w);
+  };
+  const pushKv = (label: string, value: string) => {
+    const left = label.trim();
+    const right = value.trim();
+    if (!left && !right) return;
+    if (left.length + right.length + 1 <= width) {
+      out.push(padRight(left, width - right.length) + right);
+      return;
+    }
+    pushWrapped(left);
+    for (const w of wrapWords(right, width)) {
+      out.push(padLeft(w, width));
+    }
+  };
   if (!isReceipt || fields?.orderRef !== false) {
-    out.push(input.orderRef.slice(0, width));
+    pushWrapped(input.orderRef);
   }
   if (!isReceipt || fields?.orderType !== false) {
-    out.push(input.modeLabel.slice(0, width));
+    pushWrapped(input.modeLabel);
   }
   if (input.tableLabel && (!isReceipt || fields?.tableLabel !== false)) {
-    out.push(input.tableLabel.slice(0, width));
+    pushWrapped(input.tableLabel);
   }
   if (input.billRef && (!isReceipt || fields?.billRef !== false)) {
-    out.push(`Bill: ${input.billRef}`.slice(0, width));
+    pushKv("Bill", input.billRef);
   }
   if (input.waiterName && (!isReceipt || fields?.waiterName !== false)) {
-    out.push(`Waiter: ${input.waiterName}`.slice(0, width));
+    pushKv("Waiter", input.waiterName);
   }
   const printedAt = new Date().toLocaleString("en-PK", {
     day: "2-digit",
@@ -333,7 +363,7 @@ export function buildThermalPlainText(
     hour12: true,
   });
   if (!isReceipt || fields?.timestamp !== false) {
-    out.push(printedAt.slice(0, width));
+    pushKv("Time", printedAt);
   }
   if (input.notes && (!isReceipt || fields?.notes !== false)) {
     pushBlank();
@@ -378,9 +408,13 @@ export function buildThermalPlainText(
     const cols = receiptPlainColumns(width, wantPrice, amountSamples);
     if (fields?.itemHeaders !== false) {
       out.push(
-        `${padRight("Qty", cols.qtyW)} ${padRight("Item", cols.itemW)}${
-          cols.showPrice ? ` ${padLeft("Price", cols.priceW)}` : ""
-        } ${padLeft("Amt", cols.amtW)}`,
+        plainReceiptItemRow(
+          "QTY",
+          "ITEM",
+          cols.showPrice ? "AMT" : "AMT",
+          cols,
+          cols.showPrice ? "PRICE" : "",
+        ),
       );
       out.push(dash);
     }
@@ -390,19 +424,15 @@ export function buildThermalPlainText(
       const qty = String(row.qty);
       const nameLines = wrapWords(row.label, cols.itemW);
       nameLines.forEach((name, idx) => {
-        if (idx === 0) {
-          out.push(
-            `${padRight(qty, cols.qtyW)} ${padRight(name, cols.itemW)}${
-              cols.showPrice ? ` ${padLeft(price, cols.priceW)}` : ""
-            } ${padLeft(amt, cols.amtW)}`,
-          );
-        } else {
-          out.push(
-            `${padRight("", cols.qtyW)} ${padRight(name, cols.itemW)}${
-              cols.showPrice ? ` ${padLeft("", cols.priceW)}` : ""
-            } ${padLeft("", cols.amtW)}`,
-          );
-        }
+        out.push(
+          plainReceiptItemRow(
+            idx === 0 ? qty : "",
+            name,
+            idx === 0 ? amt : "",
+            cols,
+            idx === 0 ? price : "",
+          ),
+        );
       });
     }
   } else {
@@ -881,6 +911,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     .meta-chip {
       display: inline-block;
+      max-width: 100%;
       font-size: ${isReceipt ? receiptFonts.metaChip : kotSettings.baseFontSize}px;
       font-weight: 500;
       color: #374151;
@@ -888,6 +919,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-radius: 4px;
       padding: 3px 7px;
       line-height: 1.4;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .meta-chip.bill-ref {
       font-weight: 600;
@@ -925,17 +959,28 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     thead th {
       font-size: ${isReceipt ? receiptFonts.th : Math.max(11, kotSettings.baseFontSize - 1)}px;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: ${isReceipt ? "0.02em" : "0.04em"};
       text-transform: uppercase;
       color: #6b7280;
       padding: 0 0 6px;
       border-bottom: 1px solid #d1d5db;
       text-align: left;
     }
-    thead th.qty { width: ${narrowPaper ? "11%" : "12%"}; text-align: left; padding-left: 0; padding-right: 4px; }
-    thead th.item { text-align: left; width: auto; }
-    thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; padding-left: 2px; }
-    thead th.amt { width: ${narrowPaper ? "30%" : "24%"}; text-align: right; padding-left: 2px; }
+    thead th.qty {
+      width: ${narrowPaper ? "16%" : "12%"};
+      text-align: left;
+      padding-left: 0;
+      padding-right: ${narrowPaper ? "10px" : "8px"};
+      white-space: nowrap;
+    }
+    thead th.item { text-align: left; width: auto; padding-left: ${narrowPaper ? "4px" : "6px"}; }
+    thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; padding-left: 4px; white-space: nowrap; }
+    thead th.amt {
+      width: ${narrowPaper ? "24%" : "22%"};
+      text-align: right;
+      padding-left: 6px;
+      white-space: nowrap;
+    }
     tbody td {
       padding: 5px 0;
       vertical-align: top;
@@ -991,41 +1036,54 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-kot .footer { margin-top: 10px; padding-top: 8px; }
     body.ticket-kot .kot-banner { margin-top: 4px; padding: 4px 6px; }
     td.item-name {
-      font-size: ${isReceipt ? receiptFonts.itemName : kotItemFont}px;
+      font-size: ${isReceipt ? (narrowPaper ? Math.max(11, receiptFonts.itemName - 1) : receiptFonts.itemName) : kotItemFont}px;
       font-weight: ${isReceipt ? "500" : "700"};
       color: #111827;
       text-align: ${isReceipt ? "left" : "right"};
-      padding-left: ${isReceipt ? "0" : "12px"};
+      padding-left: ${isReceipt ? (narrowPaper ? "4px" : "6px") : "12px"};
       padding-right: ${isReceipt ? "4px" : "0"};
       word-break: break-word;
       overflow-wrap: anywhere;
-      line-height: 1.35;
+      line-height: 1.3;
+      vertical-align: top;
     }
     td.qty {
-      width: ${narrowPaper ? "11%" : "12%"};
+      width: ${narrowPaper ? "16%" : "12%"};
       text-align: left !important;
       font-size: ${isReceipt ? receiptFonts.qty : kotQtyFont}px;
       font-weight: 700;
       color: #111827;
       font-variant-numeric: tabular-nums;
       padding-left: 0;
-      padding-right: 4px;
+      padding-right: ${narrowPaper ? "10px" : "8px"};
       white-space: nowrap;
-      vertical-align: middle;
+      vertical-align: top;
     }
-    /* Customer receipt with amounts: keep QTY left, ITEM left, AMT fully visible */
+    /* Customer receipt: clear QTY | ITEM | AMT columns (never merge headers). */
+    body.ticket-receipt table.items {
+      table-layout: fixed;
+      width: 100%;
+      border-collapse: collapse;
+    }
     body.ticket-receipt table.items.has-amounts thead th.item,
     body.ticket-receipt table.items.has-amounts td.item-name {
       text-align: left;
-      padding-left: 2px;
+      padding-left: ${narrowPaper ? "4px" : "6px"};
       padding-right: 4px;
     }
     body.ticket-receipt table.items.has-amounts td.qty,
     body.ticket-receipt table.items.has-amounts thead th.qty {
-      width: ${narrowPaper ? "11%" : "12%"};
+      width: ${narrowPaper ? "16%" : "12%"};
       text-align: left !important;
       padding-left: 0;
-      padding-right: 4px;
+      padding-right: ${narrowPaper ? "10px" : "8px"};
+      white-space: nowrap;
+      vertical-align: top;
+    }
+    body.ticket-receipt table.items.has-amounts thead th.amt,
+    body.ticket-receipt table.items.has-amounts td.amt {
+      width: ${narrowPaper ? "24%" : "22%"};
+      vertical-align: top;
     }
     td.price {
       text-align: right;
@@ -1036,6 +1094,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       color: #6b7280;
       padding-right: 2px;
       width: ${showPriceCol ? "18%" : "0"};
+      vertical-align: top;
     }
     td.amt {
       text-align: right;
@@ -1043,11 +1102,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${receiptFonts.amt}px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
-      width: ${narrowPaper ? "30%" : "24%"};
-      padding-left: 2px;
+      width: ${narrowPaper ? "24%" : "22%"};
+      padding-left: 6px;
       padding-right: 0;
       overflow: visible;
       color: #111827;
+      vertical-align: top;
     }
     .totals {
       border-top: 1.5px solid #111827;
@@ -1068,17 +1128,24 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       color: #4b5563;
       min-width: 0;
       flex: 1 1 auto;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      overflow: visible;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.35;
     }
     .row .value {
       font-size: ${isReceipt ? receiptFonts.rowValue : kotSettings.baseFontSize + 1}px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
       color: #111827;
-      white-space: nowrap;
-      flex: 0 0 auto;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      flex: 0 1 auto;
+      max-width: 58%;
       text-align: right;
+      line-height: 1.35;
     }
     .row .value.discount { color: #dc2626; }
     .row.grand {

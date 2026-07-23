@@ -423,6 +423,12 @@ export function PopsDashboardPage(): JSX.Element {
       isSessionExpiredError(dashboardQuery.error) || isSessionExpiredError(ordersQuery.error);
     if (expired) {
       navigate("/role", { replace: true });
+      return;
+    }
+    const message = dashboardQuery.error instanceof Error ? dashboardQuery.error.message : "";
+    if (message.startsWith("Branch not found")) {
+      usePopsStore.getState().clearBranch();
+      navigate("/pops/branches", { replace: true });
     }
   }, [dashboardQuery.error, ordersQuery.error, navigate]);
 

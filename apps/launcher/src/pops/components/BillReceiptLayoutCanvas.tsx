@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   BILL_FONT_SIZE_MAX,
   BILL_FONT_SIZE_MIN,
@@ -192,6 +192,7 @@ export function BillReceiptLayoutCanvas({
   onChange,
 }: Props): JSX.Element {
   const dragIdRef = useRef<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   function moveBlock(fromId: string, toId: string): void {
     if (fromId === toId) return;
@@ -200,7 +201,9 @@ export function BillReceiptLayoutCanvas({
     const to = order.indexOf(toId);
     if (from < 0 || to < 0) return;
     const [moved] = order.splice(from, 1);
-    order.splice(to, 0, moved);
+    // When dragging downward, account for the removed index so drop lands after target.
+    const insertAt = from < to ? to : to;
+    order.splice(insertAt, 0, moved);
     onChange({ ...settings, blockOrder: order });
   }
 
@@ -331,7 +334,7 @@ export function BillReceiptLayoutCanvas({
           </span>
         </div>
         <div className="text-[10px] text-slate-400">
-          Edit any line below · ↑↓ / drag to move · B bold · A−/A+ line size
+          Edit any line · drag ⋮⋮ or ↑↓ to reorder · B bold · A−/A+ line size
         </div>
       </div>
 
@@ -352,31 +355,50 @@ export function BillReceiptLayoutCanvas({
           return (
             <div
               key={blockId}
-              draggable
-              onDragStart={(e) => {
-                dragIdRef.current = blockId;
-                e.dataTransfer.setData("text/plain", blockId);
-                e.dataTransfer.effectAllowed = "move";
-              }}
               onDragOver={(e) => {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
+                if (dragOverId !== blockId) setDragOverId(blockId);
+              }}
+              onDragLeave={() => {
+                if (dragOverId === blockId) setDragOverId(null);
               }}
               onDrop={(e) => {
                 e.preventDefault();
                 const fromId = e.dataTransfer.getData("text/plain") || dragIdRef.current;
                 if (fromId) moveBlock(fromId, blockId);
                 dragIdRef.current = null;
+                setDragOverId(null);
               }}
               onClick={() => onSelect(blockId)}
-              className={`cursor-grab rounded-md border px-2 py-1.5 active:cursor-grabbing ${
-                selected
-                  ? "border-amber-400 bg-amber-50 ring-1 ring-amber-300 dark:border-amber-500 dark:bg-amber-950/30"
-                  : "border-transparent hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900/40"
+              className={`rounded-md border px-2 py-1.5 ${
+                dragOverId === blockId
+                  ? "border-sky-400 bg-sky-50 ring-1 ring-sky-300 dark:border-sky-500 dark:bg-sky-950/30"
+                  : selected
+                    ? "border-amber-400 bg-amber-50 ring-1 ring-amber-300 dark:border-amber-500 dark:bg-amber-950/30"
+                    : "border-transparent hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900/40"
               } ${enabled ? "" : "opacity-40"}`}
             >
               <div className="mb-1 flex flex-wrap items-center gap-1">
-                <span className="select-none text-[10px] text-slate-400">⋮⋮</span>
+                <button
+                  type="button"
+                  draggable
+                  title="Drag to reorder"
+                  className="cursor-grab select-none rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-500 active:cursor-grabbing dark:border-slate-600"
+                  onClick={(e) => e.stopPropagation()}
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    dragIdRef.current = blockId;
+                    e.dataTransfer.setData("text/plain", blockId);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragEnd={() => {
+                    dragIdRef.current = null;
+                    setDragOverId(null);
+                  }}
+                >
+                  ⋮⋮
+                </button>
                 <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
@@ -462,21 +484,25 @@ export function BillReceiptLayoutCanvas({
               </div>
               {input.editable ? (
                 <input
+                  draggable={false}
                   className={`w-full ${fieldInputClass} ${bold ? "font-semibold" : ""}`}
                   style={{ fontSize: fontPx }}
                   value={input.value}
                   placeholder={input.placeholder}
                   onClick={(e) => e.stopPropagation()}
+                  onDragStart={(e) => e.preventDefault()}
                   onChange={(e) => updateLineText(blockId, e.target.value)}
                 />
               ) : (
                 <div>
                   <input
+                    draggable={false}
                     className={`w-full ${fieldInputClass} cursor-default bg-slate-50 text-slate-500 dark:bg-slate-900/80`}
                     style={{ fontSize: fontPx }}
                     value={input.value}
                     readOnly
                     onClick={(e) => e.stopPropagation()}
+                    onDragStart={(e) => e.preventDefault()}
                     title={input.hint}
                   />
                   {input.hint ? (

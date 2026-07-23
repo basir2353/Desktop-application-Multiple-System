@@ -23,7 +23,28 @@ import {
   starterBillPrintTemplates,
   type BillPrintTemplate,
 } from "../lib/billPrintTemplates";
+import {
+  assignBillTemplateToPosAction,
+  BILL_POS_RECEIPT_ACTIONS,
+  BILL_RECEIPT_TEMPLATE_ASSIGN_CHANGED_EVENT,
+  loadBillReceiptTemplateAssignments,
+  listPosActionsForTemplate,
+  setBranchDefaultBillTemplate,
+  type BillPosReceiptAction,
+  type BillReceiptTemplateAssignmentStore,
+} from "../lib/billReceiptTemplateAssignments";
 import { sampleBillPrintInput } from "../lib/billSampleReceipt";
+import {
+  loadPrinterRouting,
+  resolveReceiptPrinter,
+  updatePrinterProfile,
+  type PrinterPaperSize,
+} from "../lib/printerRouting";
+import {
+  loadThermalPrintSettings,
+  saveThermalPrintSettings,
+  THERMAL_PRINT_SETTINGS_CHANGED_EVENT,
+} from "../lib/thermalPrintSettings";
 import { fieldInputClass, fieldSelectClass } from "../lib/themeClasses";
 
 type Props = {
@@ -53,6 +74,14 @@ export function BillCustomizationPanel({
   );
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [assignments, setAssignments] = useState<BillReceiptTemplateAssignmentStore>(() =>
+    loadBillReceiptTemplateAssignments(branchCode),
+  );
+  const [viewingTemplateId, setViewingTemplateId] = useState<string | null>(null);
+  const [receiptPaperSize, setReceiptPaperSize] = useState<PrinterPaperSize>(() => {
+    const profile = resolveReceiptPrinter(branchCode);
+    return profile?.paperSize ?? loadThermalPrintSettings(branchCode).defaultPaperSize;
+  });
 
   useEffect(() => {
     setDraft(normalizeBillPrintSettings(settings));
@@ -61,7 +90,49 @@ export function BillCustomizationPanel({
   useEffect(() => {
     setTemplates(loadBillPrintTemplates(branchCode));
     setSelectedTemplateId(loadActiveBillTemplateId(branchCode) ?? "");
+    setAssignments(loadBillReceiptTemplateAssignments(branchCode));
+    setViewingTemplateId(null);
+    const profile = resolveReceiptPrinter(branchCode);
+    setReceiptPaperSize(
+      profile?.paperSize ?? loadThermalPrintSettings(branchCode).defaultPaperSize,
+    );
   }, [branchCode]);
+
+  useEffect(() => {
+    const refresh = () => setAssignments(loadBillReceiptTemplateAssignments(branchCode));
+    const refreshPaper = () => {
+      const profile = resolveReceiptPrinter(branchCode);
+      setReceiptPaperSize(
+        profile?.paperSize ?? loadThermalPrintSettings(branchCode).defaultPaperSize,
+      );
+    };
+    window.addEventListener(BILL_RECEIPT_TEMPLATE_ASSIGN_CHANGED_EVENT, refresh);
+    window.addEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, refreshPaper);
+    return () => {
+      window.removeEventListener(BILL_RECEIPT_TEMPLATE_ASSIGN_CHANGED_EVENT, refresh);
+      window.removeEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, refreshPaper);
+    };
+  }, [branchCode]);
+
+  function setAssignedReceiptPaper(paperSize: PrinterPaperSize): void {
+    setReceiptPaperSize(paperSize);
+    saveThermalPrintSettings(branchCode, { defaultPaperSize: paperSize });
+    const profile = resolveReceiptPrinter(branchCode);
+    if (profile) {
+      updatePrinterProfile(branchCode, profile.id, { paperSize });
+      onNotice?.(`Receipt paper set to ${paperSize} (printer “${profile.name}”).`);
+      return;
+    }
+    const anyReceipt = loadPrinterRouting(branchCode).printers.find(
+      (p) => p.printerType === "receipt",
+    );
+    if (anyReceipt) {
+      updatePrinterProfile(branchCode, anyReceipt.id, { paperSize });
+      onNotice?.(`Receipt paper set to ${paperSize} (printer “${anyReceipt.name}”).`);
+      return;
+    }
+    onNotice?.(`Receipt paper default set to ${paperSize}. Add a receipt printer profile to apply it.`);
+  }
 
   const previewInput = useMemo(
     () => sampleBillPrintInput(branchName, branchCode),
@@ -116,16 +187,32 @@ export function BillCustomizationPanel({
     try {
       const name = templateName.trim() || `Template ${templates.length + 1}`;
       const saved = saveBillPrintTemplate(branchCode, name, draft, selectedTemplateId || undefined);
-      setTemplateName("");
+      setTemplateName(saved.name);
       setSelectedTemplateId(saved.id);
+      setViewingTemplateId(saved.id);
       refreshTemplates();
-      onNotice?.(`Template “${saved.name}” saved.`);
+      onNotice?.(`Template “${saved.name}” saved. Assign it to POS Order / Pay below if needed.`);
     } catch (err) {
       onNotice?.(err instanceof Error ? err.message : "Could not save template.");
     }
   }
 
-  /** Assign = apply template to live print settings immediately. */
+  function viewTemplate(template: BillPrintTemplate): void {
+    const next = normalizeBillPrintSettings(template.settings);
+    setDraft(next);
+    onChange(next);
+    setSelectedTemplateId(template.id);
+    setTemplateName(template.name);
+    setViewingTemplateId(template.id);
+    onNotice?.(`Viewing “${template.name}”. Edit on the right, then Update template or Save.`);
+  }
+
+  function editTemplate(template: BillPrintTemplate): void {
+    viewTemplate(template);
+    onNotice?.(`Editing “${template.name}”. Change fields, then click Update template.`);
+  }
+
+  /** Assign = apply template to live print settings + branch default. */
   function assignTemplate(template: BillPrintTemplate): void {
     const next = normalizeBillPrintSettings(template.settings);
     setDraft(next);
@@ -133,17 +220,53 @@ export function BillCustomizationPanel({
     saveBillPrintSettings(branchCode, next);
     saveActiveBillTemplateId(branchCode, template.id);
     setSelectedTemplateId(template.id);
-    onNotice?.(`Template “${template.name}” assigned — prints will use this layout.`);
+    setViewingTemplateId(null);
+    setAssignments(setBranchDefaultBillTemplate(branchCode, template.id));
+    onNotice?.(`Template “${template.name}” set as branch default for prints.`);
+  }
+
+  function setPosActionTemplate(action: BillPosReceiptAction, templateId: string): void {
+    const next = assignBillTemplateToPosAction(branchCode, action, templateId || null);
+    setAssignments(next);
+    const tpl = templates.find((t) => t.id === templateId);
+    const label = BILL_POS_RECEIPT_ACTIONS.find((a) => a.id === action)?.label ?? action;
+    onNotice?.(
+      templateId
+        ? `${label} → “${tpl?.name ?? "template"}”`
+        : `${label} cleared (uses branch default)`,
+    );
   }
 
   function removeTemplate(id: string): void {
+    const assign = loadBillReceiptTemplateAssignments(branchCode);
+    if (assign.branchDefaultTemplateId === id) {
+      setBranchDefaultBillTemplate(branchCode, null);
+    }
+    for (const action of ["order", "pay"] as const) {
+      if (assign.byPosAction[action] === id) {
+        assignBillTemplateToPosAction(branchCode, action, null);
+      }
+    }
     deleteBillPrintTemplate(branchCode, id);
     if (selectedTemplateId === id) {
       setSelectedTemplateId("");
       saveActiveBillTemplateId(branchCode, null);
     }
+    if (viewingTemplateId === id) setViewingTemplateId(null);
+    setAssignments(loadBillReceiptTemplateAssignments(branchCode));
     refreshTemplates();
     onNotice?.("Template deleted.");
+  }
+
+  function templateBadges(templateId: string): string[] {
+    const badges: string[] = [];
+    if (assignments.branchDefaultTemplateId === templateId) badges.push("Default");
+    if (selectedTemplateId === templateId && viewingTemplateId === templateId) badges.push("Editing");
+    else if (selectedTemplateId === templateId) badges.push("Active");
+    for (const action of listPosActionsForTemplate(branchCode, templateId)) {
+      badges.push(action === "order" ? "Order" : "Pay");
+    }
+    return badges;
   }
 
   function cloneStarter(name: string, starterSettings: BillPrintSettings): void {
@@ -162,7 +285,7 @@ export function BillCustomizationPanel({
       <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Bill customization</h3>
         <p className="mt-1 text-xs text-slate-500">
-          Drag each receipt line, set bold / size per line, save templates, then Assign to activate on print.
+          Drag lines with ⋮⋮, set bold / size, save up to 8 templates, then assign Order vs Pay receipts.
         </p>
       </div>
 
@@ -171,62 +294,85 @@ export function BillCustomizationPanel({
           <section className="space-y-3 rounded-lg border border-amber-200/80 bg-amber-50/40 p-3 dark:border-amber-900/40 dark:bg-amber-950/20">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-200">
-                Templates
+                Saved templates
               </div>
-              <span className="text-[10px] text-slate-500">
-                {templates.length}/8 saved
-                {selectedTemplateId ? " · one assigned" : ""}
-              </span>
+              <span className="text-[10px] text-slate-500">{templates.length}/8 saved</span>
             </div>
+            <p className="text-[10px] text-slate-500">
+              View or edit any template, then assign which one POS Order / Pay should print.
+            </p>
             {templates.length === 0 ? (
               <p className="text-xs text-slate-500">
-                No saved templates yet. Add a starter, then click Assign.
+                No saved templates yet. Add a starter below, then View / Edit / Assign.
               </p>
             ) : (
               <ul className="space-y-2">
-                {templates.map((tpl) => (
-                  <li
-                    key={tpl.id}
-                    className={`flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 ${
-                      selectedTemplateId === tpl.id
-                        ? "border-amber-400 bg-white dark:border-amber-600 dark:bg-slate-900"
-                        : "border-slate-200 bg-white/80 dark:border-slate-700 dark:bg-slate-900/60"
-                    }`}
-                  >
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800 dark:text-slate-100">
-                      {tpl.name}
-                      {selectedTemplateId === tpl.id ? (
-                        <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 dark:text-amber-300">
-                          Active
-                        </span>
-                      ) : null}
-                    </span>
-                    <button
-                      type="button"
-                      className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-amber-600"
-                      onClick={() => assignTemplate(tpl)}
+                {templates.map((tpl) => {
+                  const badges = templateBadges(tpl.id);
+                  return (
+                    <li
+                      key={tpl.id}
+                      className={`rounded-md border px-2 py-2 ${
+                        selectedTemplateId === tpl.id || viewingTemplateId === tpl.id
+                          ? "border-amber-400 bg-white dark:border-amber-600 dark:bg-slate-900"
+                          : "border-slate-200 bg-white/80 dark:border-slate-700 dark:bg-slate-900/60"
+                      }`}
                     >
-                      Assign
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-slate-300 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300"
-                      onClick={() => {
-                        setSelectedTemplateId(tpl.id);
-                        setTemplateName(tpl.name);
-                      }}
-                    >
-                      Overwrite
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-rose-200 px-2 py-0.5 text-[10px] text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300"
-                      onClick={() => removeTemplate(tpl.id)}
-                    >
-                      Delete
-                    </button>
-                  </li>
-                ))}
+                      <div className="flex flex-wrap items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-medium text-slate-800 dark:text-slate-100">
+                            {tpl.name}
+                          </div>
+                          {badges.length > 0 ? (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {badges.map((badge) => (
+                                <span
+                                  key={badge}
+                                  className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:text-amber-300"
+                                >
+                                  {badge}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="mt-0.5 text-[9px] text-slate-400">
+                            Updated {new Date(tpl.updatedAt).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            className="rounded border border-slate-300 px-2 py-0.5 text-[10px] text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200"
+                            onClick={() => viewTemplate(tpl)}
+                          >
+                            View
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-sky-300 px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-50 dark:border-sky-700 dark:text-sky-300"
+                            onClick={() => editTemplate(tpl)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-amber-600"
+                            onClick={() => assignTemplate(tpl)}
+                          >
+                            Set default
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-rose-200 px-2 py-0.5 text-[10px] text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300"
+                            onClick={() => removeTemplate(tpl.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <div className="flex flex-wrap gap-2">
@@ -237,7 +383,7 @@ export function BillCustomizationPanel({
                 onChange={(e) => setTemplateName(e.target.value)}
               />
               <Button type="button" className="text-xs" onClick={saveAsTemplate}>
-                {selectedTemplateId && templateName ? "Update template" : "Save as template"}
+                {selectedTemplateId ? "Update template" : "Save as template"}
               </Button>
             </div>
             <div>
@@ -257,6 +403,74 @@ export function BillCustomizationPanel({
                 ))}
               </div>
             </div>
+          </section>
+
+          <section className="space-y-3 rounded-lg border border-sky-200/80 bg-sky-50/40 p-3 dark:border-sky-900/40 dark:bg-sky-950/20">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-800 dark:text-sky-200">
+              Assign templates to POS
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Choose which saved template prints for Order/Invoice vs Pay. Leave empty to use the
+              branch default. Paper size matches Printer Profiles (58mm / 80mm / A4).
+            </p>
+            <label className="block text-xs text-slate-600 dark:text-slate-300">
+              Receipt paper size
+              <select
+                className={`mt-1 w-full ${fieldSelectClass}`}
+                value={receiptPaperSize}
+                onChange={(e) => setAssignedReceiptPaper(e.target.value as PrinterPaperSize)}
+              >
+                <option value="58mm">58mm roll</option>
+                <option value="80mm">80mm roll</option>
+                <option value="A4">A4</option>
+              </select>
+            </label>
+            <label className="block text-xs text-slate-600 dark:text-slate-300">
+              Branch default
+              <select
+                className={`mt-1 w-full ${fieldSelectClass}`}
+                value={assignments.branchDefaultTemplateId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value || null;
+                  setAssignments(setBranchDefaultBillTemplate(branchCode, id));
+                  if (id) {
+                    const tpl = templates.find((t) => t.id === id);
+                    if (tpl) {
+                      saveActiveBillTemplateId(branchCode, id);
+                      setSelectedTemplateId(id);
+                    }
+                  }
+                  onNotice?.(id ? "Branch default updated." : "Branch default cleared.");
+                }}
+              >
+                <option value="">Live customization (no template)</option>
+                {templates.map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {BILL_POS_RECEIPT_ACTIONS.map((action) => (
+              <label key={action.id} className="block text-xs text-slate-600 dark:text-slate-300">
+                {action.label}
+                <span className="mt-0.5 block text-[10px] font-normal text-slate-400">
+                  {action.description}
+                </span>
+                <select
+                  className={`mt-1 w-full ${fieldSelectClass}`}
+                  value={assignments.byPosAction[action.id] ?? ""}
+                  onChange={(e) => setPosActionTemplate(action.id, e.target.value)}
+                >
+                  <option value="">Use branch default</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           </section>
 
           <section className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">

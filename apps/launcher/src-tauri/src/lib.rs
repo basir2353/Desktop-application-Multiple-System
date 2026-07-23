@@ -3,8 +3,23 @@ use printers::common::base::printer::PrinterState;
 use printers::{get_printer_by_name, get_printers};
 use serde::Serialize;
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Spawn helper processes without a console flash (Windows Terminal / cmd window).
+fn command_no_window(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd
+}
 
 #[derive(Serialize, Clone)]
 struct SystemPrinterInfo {
@@ -79,8 +94,16 @@ $ErrorActionPreference = 'Stop'
 Get-Printer | Select-Object Name, DriverName, PortName, Shared, Default, PrinterStatus |
   ConvertTo-Json -Compress
 "#;
-    let output = match Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+    let output = match command_no_window("powershell")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            script,
+        ])
         .output()
     {
         Ok(o) if o.status.success() => o,
@@ -156,14 +179,23 @@ fn escape_powershell_single_quoted(value: &str) -> String {
 }
 
 /// Fallback for drivers that reject StartDocPrinterW from the printers crate.
+/// Runs hidden so Windows Terminal / console never flashes during POS printing.
 fn print_via_powershell(printer_name: &str, path: &str) -> Result<(), String> {
     let script = format!(
         "Get-Content -LiteralPath '{}' -Raw | Out-Printer -Name '{}'",
         escape_powershell_single_quoted(path),
         escape_powershell_single_quoted(printer_name)
     );
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let output = command_no_window("powershell")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
         .output()
         .map_err(|e| format!("PowerShell print failed to start: {e}"))?;
     if output.status.success() {
@@ -176,8 +208,33 @@ fn print_via_powershell(printer_name: &str, path: &str) -> Result<(), String> {
     ))
 }
 
+/// Fast silent fallback: copy the text file to the printer queue via cmd (no PowerShell startup).
+#[cfg(windows)]
+fn print_via_cmd_copy(printer_name: &str, path: &str) -> Result<(), String> {
+    // UNC print share on this machine — works for many USB/network spooler printers.
+    let dest = format!("\\\\localhost\\{}", printer_name.trim());
+    let output = command_no_window("cmd")
+        .args(["/C", "copy", "/B", path, &dest])
+        .output()
+        .map_err(|e| format!("cmd copy print failed to start: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(format!(
+        "cmd copy print failed: {}",
+        format!("{stdout} {stderr}").trim().chars().take(240).collect::<String>()
+    ))
+}
+
+#[cfg(not(windows))]
+fn print_via_cmd_copy(_printer_name: &str, _path: &str) -> Result<(), String> {
+    Err("cmd copy print is Windows-only".to_string())
+}
+
 /// Sends plain-text content directly to a named OS printer (no print dialog).
-/// Writes a temp .txt file and prints it as TEXT so Windows GDI drivers accept the job.
+/// Prefers native spooler bytes (fast), then TEXT file, then silent OS fallbacks.
 #[tauri::command]
 fn print_to_printer(
     printer_name: String,
@@ -204,24 +261,7 @@ fn print_to_printer(
     let copies = copies.unwrap_or(1).max(1);
     let job_label = job_name.unwrap_or_else(|| "POPS Print".to_string());
     let mut last_job_id = 0u64;
-
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let temp_path = std::env::temp_dir().join(format!("pops-print-{stamp}.txt"));
-    // UTF-8 BOM helps Notepad/GDI text printers on Windows.
-    let mut bytes = vec![0xEFu8, 0xBB, 0xBF];
-    bytes.extend_from_slice(content.as_bytes());
-    if !content.ends_with('\n') {
-        bytes.push(b'\n');
-    }
-    fs::write(&temp_path, &bytes).map_err(|e| format!("Could not write temp print file: {e}"))?;
-
-    let path_str = temp_path
-        .to_str()
-        .ok_or_else(|| "Temp print path is not valid UTF-8".to_string())?
-        .to_string();
+    let mut temp_path: Option<std::path::PathBuf> = None;
 
     for i in 0..copies {
         let name = if copies > 1 {
@@ -229,36 +269,69 @@ fn print_to_printer(
         } else {
             job_label.clone()
         };
-        let options = PrinterJobOptions {
+
+        // 1) Fast path: raw bytes straight to the spooler (no temp file, no shell).
+        let raw_options = PrinterJobOptions {
             name: Some(name.as_str()),
             raw_properties: &[("copies", "1"), ("document-format", "text/plain")],
             ..PrinterJobOptions::none()
         };
-
-        // Prefer print_file (TEXT) → raw bytes → PowerShell Out-Printer.
-        let result = printer.print_file(&path_str, options).or_else(|_| {
-            let options = PrinterJobOptions {
-                name: Some(name.as_str()),
-                raw_properties: &[("document-format", "text/plain")],
-                ..PrinterJobOptions::none()
-            };
-            printer.print(content.as_bytes(), options)
-        });
-
-        match result {
-            Ok(job_id) => last_job_id = job_id,
-            Err(crate_err) => {
-                print_via_powershell(&printer_name, &path_str).map_err(|shell_err| {
-                    format!(
-                        "Print failed on {printer_name}: {crate_err:?}. Fallback: {shell_err}"
-                    )
-                })?;
-                last_job_id = 1;
+        match printer.print(content.as_bytes(), raw_options) {
+            Ok(job_id) => {
+                last_job_id = job_id;
+                continue;
             }
+            Err(_) => {}
         }
+
+        // Lazily create temp file only when native raw print fails.
+        if temp_path.is_none() {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!("pops-print-{stamp}.txt"));
+            let mut bytes = vec![0xEFu8, 0xBB, 0xBF];
+            bytes.extend_from_slice(content.as_bytes());
+            if !content.ends_with('\n') {
+                bytes.push(b'\n');
+            }
+            fs::write(&path, &bytes).map_err(|e| format!("Could not write temp print file: {e}"))?;
+            temp_path = Some(path);
+        }
+        let path_str = temp_path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .ok_or_else(|| "Temp print path is not valid UTF-8".to_string())?
+            .to_string();
+
+        // 2) TEXT file via print spooler.
+        let file_options = PrinterJobOptions {
+            name: Some(name.as_str()),
+            raw_properties: &[("copies", "1"), ("document-format", "text/plain")],
+            ..PrinterJobOptions::none()
+        };
+        if let Ok(job_id) = printer.print_file(&path_str, file_options) {
+            last_job_id = job_id;
+            continue;
+        }
+
+        // 3) Silent cmd copy (faster than PowerShell cold start).
+        if print_via_cmd_copy(&printer_name, &path_str).is_ok() {
+            last_job_id = 1;
+            continue;
+        }
+
+        // 4) Hidden PowerShell Out-Printer (last resort — no console window).
+        print_via_powershell(&printer_name, &path_str).map_err(|shell_err| {
+            format!("Print failed on {printer_name}: {shell_err}")
+        })?;
+        last_job_id = 1;
     }
 
-    let _ = fs::remove_file(&temp_path);
+    if let Some(path) = temp_path {
+        let _ = fs::remove_file(path);
+    }
     Ok(last_job_id)
 }
 

@@ -121,7 +121,7 @@ export function starterBillPrintTemplates(): Omit<BillPrintTemplate, "id" | "upd
       settings: normalizeBillPrintSettings({
         documentTitle: "Receipt",
         layout: "compact",
-        baseFontSize: 13,
+        baseFontSize: 10,
         fields: {
           ...DEFAULT_BILL_RECEIPT_FIELDS,
           printerName: false,

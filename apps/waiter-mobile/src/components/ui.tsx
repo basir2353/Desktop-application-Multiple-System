@@ -154,10 +154,19 @@ export function StatCard({
   hint?: string;
   accent?: string;
 }) {
+  const text = String(value);
+  const compact = text.length > 8;
   return (
     <View style={styles.statCard}>
       <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, accent ? { color: accent } : null]}>{value}</Text>
+      <Text
+        style={[styles.statValue, compact ? styles.statValueCompact : null, accent ? { color: accent } : null]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+      >
+        {text}
+      </Text>
       {hint ? <Text style={styles.statHint}>{hint}</Text> : null}
     </View>
   );
@@ -539,6 +548,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 22,
     fontWeight: "700",
+  },
+  statValueCompact: {
+    fontSize: 15,
   },
   statHint: {
     color: colors.muted,

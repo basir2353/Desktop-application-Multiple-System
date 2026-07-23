@@ -262,6 +262,8 @@ export class UsersService implements OnApplicationBootstrap {
         branchScope: organizationMemberships.branchScope,
         pinRequired: organizationMemberships.pinRequired,
         permissions: organizationMemberships.permissions,
+        active: organizationMemberships.active,
+        navAllowlist: organizationMemberships.navAllowlist,
         lastActivityAt: organizationMemberships.lastActivityAt,
       })
       .from(organizationMemberships)
@@ -274,7 +276,9 @@ export class UsersService implements OnApplicationBootstrap {
       role: formatRoleLabel(row.role),
       branchScope: row.branchScope === "all" ? "All" : row.branchScope,
       pinRequired: row.pinRequired,
-      permissions: row.permissions,
+      permissions: Array.isArray(row.permissions) ? row.permissions : [],
+      active: row.active !== false,
+      navAllowlist: Array.isArray(row.navAllowlist) ? row.navAllowlist : null,
       lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
     }));
   }
@@ -311,6 +315,9 @@ export class UsersService implements OnApplicationBootstrap {
     if (membership.role === "owner" && input.role && input.role !== "admin") {
       throw new BadRequestException("Cannot change the organization owner role");
     }
+    if (membership.role === "owner" && input.active === false) {
+      throw new BadRequestException("Cannot deactivate the organization owner");
+    }
 
     if (input.password) {
       const passwordHash = await bcrypt.hash(input.password, 12);
@@ -322,10 +329,21 @@ export class UsersService implements OnApplicationBootstrap {
       patch.role = input.role;
       patch.permissions = permissionsForPopsRole(input.role);
     }
+    if (input.permissions !== undefined) {
+      const cleaned = [...new Set(input.permissions.map((p) => p.trim()).filter(Boolean))];
+      patch.permissions = cleaned.length > 0 ? cleaned : ["pops.read"];
+    }
     if (input.branchScope !== undefined) {
       patch.branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
     }
     if (input.pinRequired !== undefined) patch.pinRequired = input.pinRequired;
+    if (input.active !== undefined) patch.active = input.active;
+    if (input.navAllowlist !== undefined) {
+      patch.navAllowlist =
+        input.navAllowlist === null
+          ? null
+          : [...new Set(input.navAllowlist.map((p) => p.trim()).filter(Boolean))];
+    }
     if (input.staffPin !== undefined) {
       patch.staffPinHash = await hashStaffPin(input.staffPin);
     }

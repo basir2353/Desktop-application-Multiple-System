@@ -205,7 +205,7 @@ export const BILL_PRINT_SETTINGS_CHANGED_EVENT = "pops-bill-print-settings-chang
 const STORAGE_KEY = "pops-bill-print-settings-v2";
 const ACTIVE_TEMPLATE_KEY = "pops-bill-print-active-template-v1";
 
-export const BILL_FONT_SIZE_MIN = 12;
+export const BILL_FONT_SIZE_MIN = 10;
 export const BILL_FONT_SIZE_MAX = 20;
 
 export const BILL_FIELD_GROUPS: { label: string; keys: (keyof BillReceiptFields)[] }[] = [
@@ -400,8 +400,7 @@ export function normalizeBillPrintSettings(input: Partial<BillPrintSettings>): B
     (input.footerText ?? DEFAULT_BILL_PRINT_SETTINGS.footerText).trim() ||
     DEFAULT_BILL_PRINT_SETTINGS.footerText;
   const footerSecondaryText = (input.footerSecondaryText ?? "").trim().slice(0, 120);
-  let baseFontSize = clampFontSize(input.baseFontSize ?? DEFAULT_BILL_PRINT_SETTINGS.baseFontSize);
-  if (baseFontSize <= 12) baseFontSize = DEFAULT_BILL_PRINT_SETTINGS.baseFontSize;
+  const baseFontSize = clampFontSize(input.baseFontSize ?? DEFAULT_BILL_PRINT_SETTINGS.baseFontSize);
   const customLines = normalizeCustomLines(input.customLines);
   return {
     baseFontSize,

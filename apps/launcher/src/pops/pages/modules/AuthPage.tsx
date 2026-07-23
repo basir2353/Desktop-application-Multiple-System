@@ -623,7 +623,10 @@ export function AuthPage(): JSX.Element {
       {usersQuery.isLoading ? <p className="text-sm text-slate-400">Loading users…</p> : null}
       {usersQuery.isError ? (
         <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          {(usersQuery.error as Error).message}
+          Could not load users. Check your connection and try again.
+          <span className="mt-1 block text-[11px] opacity-70">
+            {(usersQuery.error as Error).message?.slice(0, 180)}
+          </span>
         </p>
       ) : null}
 

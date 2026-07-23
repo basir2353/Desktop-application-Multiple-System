@@ -19,7 +19,10 @@ const variant =
   loadEnvValue("EXPO_PUBLIC_APP_VARIANT") ||
   loadEnvValue("APP_VARIANT") ||
   "waiter";
-const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || loadEnvValue("EXPO_PUBLIC_API_BASE_URL");
+const apiBaseUrl =
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  loadEnvValue("EXPO_PUBLIC_API_BASE_URL") ||
+  "https://backend-desktop-production-5505.up.railway.app";
 
 const variants = {
   waiter: {
