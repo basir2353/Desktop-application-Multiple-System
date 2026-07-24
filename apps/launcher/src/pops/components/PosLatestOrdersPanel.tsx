@@ -15,7 +15,10 @@ import {
 } from "../lib/recentOrders";
 import { updateKitchenTicket } from "../api/kitchen";
 import { removeOfflineKot } from "../lib/popsOfflineOrders";
-import { printPosRecentOrderAsync } from "../lib/printTicket";
+import {
+  posRecentOrderToReceiptPrint,
+  type PrintTicketInput,
+} from "../lib/printTicket";
 import { resolveReceiptPrinter } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -29,6 +32,7 @@ import {
 } from "../lib/posOrderModeVisibility";
 import { PosOrderDetailModal } from "./PosOrderDetailModal";
 import { ChangeOrderTableModal } from "./ChangeOrderTableModal";
+import { ReceiptPrintPreviewModal } from "./ReceiptPrintPreviewModal";
 
 type Props = {
   orders: PosRecentOrder[];
@@ -98,6 +102,12 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewOrder, setViewOrder] = useState<PosRecentOrder | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<PosRecentOrder | null>(null);
+  const [printPreview, setPrintPreview] = useState<{
+    input: Omit<PrintTicketInput, "kind">;
+    printerName?: string;
+    systemPrinterName?: string;
+  } | null>(null);
+  const [pendingCloseOrder, setPendingCloseOrder] = useState<PosRecentOrder | null>(null);
   const [dismissedRevision, setDismissedRevision] = useState(0);
   const [, setTimeTick] = useState(0);
 
@@ -156,7 +166,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   });
 
   /** Latest orders: always customer/order receipt — never kitchen KOT. */
-  async function printOrderReceipt(order: PosRecentOrder): Promise<void> {
+  function openPrintPreview(order: PosRecentOrder): void {
     if (!branch) return;
     const sessionUserId = useSessionStore.getState().claims?.sub;
     const profile = resolveReceiptPrinter(
@@ -165,7 +175,8 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
     );
     const assigned =
       order.bill?.waiterId != null ? getWaiterPrinter(branch.code, order.bill.waiterId) : null;
-    await printPosRecentOrderAsync(branch.name, branch.code, order, {
+    setPrintPreview({
+      input: posRecentOrderToReceiptPrint(branch.name, branch.code, order),
       printerName: profile?.name ?? assigned?.printerName,
       systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
     });
@@ -173,7 +184,8 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    void printOrderReceipt(order);
+    setPendingCloseOrder(null);
+    openPrintPreview(order);
   }
 
   function toggleSelected(order: PosRecentOrder): void {
@@ -182,18 +194,23 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    // Final customer receipt on Close, then dismiss the card.
-    void (async () => {
-      try {
-        await printOrderReceipt(order);
-      } catch {
-        /* still close even if print fails */
-      }
-      if (branch?.code) dismissPosOrder(branch.code, order.id);
-      setDismissedRevision((n) => n + 1);
-      setSelectedId(null);
-      closeOrderMutation.mutate(order);
-    })();
+    // Show receipt preview first; dismiss the card after a successful print.
+    setPendingCloseOrder(order);
+    openPrintPreview(order);
+  }
+
+  function handlePrintPreviewClose(): void {
+    setPrintPreview(null);
+    setPendingCloseOrder(null);
+  }
+
+  function handlePrinted(ok: boolean): void {
+    if (!ok || !pendingCloseOrder) return;
+    if (branch?.code) dismissPosOrder(branch.code, pendingCloseOrder.id);
+    setDismissedRevision((n) => n + 1);
+    setSelectedId(null);
+    closeOrderMutation.mutate(pendingCloseOrder);
+    setPendingCloseOrder(null);
   }
 
   function handleOrderDoubleClick(order: PosRecentOrder, event: MouseEvent): void {
@@ -469,6 +486,17 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
           branchCode={branch.code}
           onClose={() => setChangeTableOrder(null)}
           onSuccess={() => setChangeTableOrder(null)}
+        />
+      ) : null}
+
+      {printPreview && branch?.code ? (
+        <ReceiptPrintPreviewModal
+          input={printPreview.input}
+          branchCode={branch.code}
+          printerName={printPreview.printerName}
+          systemPrinterName={printPreview.systemPrinterName}
+          onClose={handlePrintPreviewClose}
+          onPrinted={handlePrinted}
         />
       ) : null}
     </>

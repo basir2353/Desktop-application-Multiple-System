@@ -30,7 +30,9 @@ import { CompleteHeldBillModal } from "../../components/CompleteHeldBillModal";
 import { OrderDateFiltersBar } from "../../components/OrderDateFiltersBar";
 import { ChangeOrderTableModal } from "../../components/ChangeOrderTableModal";
 import { OrderDetailModal } from "../../components/OrderDetailModal";
-import { printBill } from "../../lib/printTicket";
+import { ReceiptPrintPreviewModal } from "../../components/ReceiptPrintPreviewModal";
+import { billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
+import { resolveReceiptPrinter } from "../../lib/printerRouting";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
@@ -109,6 +111,12 @@ export function OrdersPage(): JSX.Element {
   const [selectedOrder, setSelectedOrder] = useState<UnifiedOrder | null>(null);
   const [heldBillToPay, setHeldBillToPay] = useState<Bill | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<UnifiedOrder | null>(null);
+  const [printPreview, setPrintPreview] = useState<{
+    input: Omit<PrintTicketInput, "kind">;
+    printerName?: string;
+    systemPrinterName?: string;
+    billRef: string;
+  } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [bulkDeleteFrom, setBulkDeleteFrom] = useState("");
   const [bulkDeleteTo, setBulkDeleteTo] = useState("");
@@ -210,27 +218,20 @@ export function OrdersPage(): JSX.Element {
   );
 
   function reprint(bill: Bill): void {
-    void (async () => {
-      const { resolveReceiptPrinter } = await import("../../lib/printerRouting");
-      const { printBillAsync } = await import("../../lib/printTicket");
-      const branchCode = branch?.code ?? undefined;
-      const profile = resolveReceiptPrinter(branchCode, bill.waiterId);
-      const assigned = getWaiterPrinter(branchCode, bill.waiterId);
-      const systemPrinterName = profile?.systemPrinterName ?? assigned?.systemPrinterName;
-      const ok = await printBillAsync(branch?.name ?? "POPS", branchCode ?? "—", bill, {
-        printerName: profile?.name ?? assigned?.printerName,
-        systemPrinterName,
+    const branchCode = branch?.code ?? "—";
+    const branchName = branch?.name ?? "POPS";
+    const profile = resolveReceiptPrinter(branch?.code, bill.waiterId);
+    const assigned = getWaiterPrinter(branch?.code, bill.waiterId);
+    setPrintPreview({
+      input: {
+        ...billToPrintInput(branchName, branchCode, bill),
         paperSize: profile?.paperSize,
         copies: profile?.copies,
-      });
-      setNotice(
-        ok
-          ? systemPrinterName
-            ? `Reprinting ${bill.billRef} to ${systemPrinterName}…`
-            : `Reprinting ${bill.billRef}…`
-          : `Reprint failed for ${bill.billRef}. Check printer assignment / OS link.`,
-      );
-    })();
+      },
+      printerName: profile?.name ?? assigned?.printerName,
+      systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
+      billRef: bill.billRef,
+    });
   }
 
   function openOrder(order: UnifiedOrder): void {
@@ -616,6 +617,25 @@ export function OrdersPage(): JSX.Element {
               ? () => confirmDeleteOrder(selectedOrder.bill)
               : undefined
           }
+        />
+      ) : null}
+
+      {printPreview && branch?.code ? (
+        <ReceiptPrintPreviewModal
+          input={printPreview.input}
+          branchCode={branch.code}
+          printerName={printPreview.printerName}
+          systemPrinterName={printPreview.systemPrinterName}
+          onClose={() => setPrintPreview(null)}
+          onPrinted={(ok) => {
+            setNotice(
+              ok
+                ? printPreview.systemPrinterName
+                  ? `Reprinted ${printPreview.billRef} to ${printPreview.systemPrinterName}`
+                  : `Reprinted ${printPreview.billRef}`
+                : `Reprint failed for ${printPreview.billRef}. Check printer assignment / OS link.`,
+            );
+          }}
         />
       ) : null}
 

@@ -5,8 +5,12 @@ import {
   BILL_LINE_FONT_MAX,
   BILL_LINE_FONT_MIN,
   BILL_SYSTEM_BLOCK_LABELS,
+  BILL_TEXT_COLOR_PRESETS,
+  DEFAULT_BLOCK_TEXT_COLOR,
   getBlockStyle,
   isBillSystemBlock,
+  normalizeHexColor,
+  resolveBlockColor,
   resolveBlockFontSize,
   type BillPrintSettings,
   type BillSystemBlockId,
@@ -270,6 +274,27 @@ export function BillReceiptLayoutCanvas({
     });
   }
 
+  function setBlockColor(blockId: string, color: string): void {
+    const nextColor = normalizeHexColor(color);
+    if (!isBillSystemBlock(blockId)) {
+      onChange({
+        ...settings,
+        customLines: settings.customLines.map((row) =>
+          row.id === blockId ? { ...row, color: nextColor } : row,
+        ),
+      });
+      return;
+    }
+    const style = getBlockStyle(settings, blockId);
+    onChange({
+      ...settings,
+      blockStyles: {
+        ...settings.blockStyles,
+        [blockId]: { ...style, color: nextColor },
+      },
+    });
+  }
+
   function updateLineText(blockId: string, text: string): void {
     if (!isBillSystemBlock(blockId)) {
       onChange({
@@ -334,11 +359,11 @@ export function BillReceiptLayoutCanvas({
           </span>
         </div>
         <div className="text-[10px] text-slate-400">
-          Edit any line · drag ⋮⋮ or ↑↓ to reorder · B bold · A−/A+ line size
+          Edit any line · drag ⋮⋮ or ↑↓ to reorder · B bold · color · A−/A+ size
         </div>
       </div>
 
-      <div className={`max-h-[520px] space-y-1 overflow-y-auto p-3 ${align}`}>
+      <div className={`max-h-[560px] space-y-1 overflow-y-auto p-3 ${align}`}>
         {settings.blockOrder.map((blockId, index) => {
           const selected = selectedId === blockId;
           const enabled = isBlockEnabled(settings, blockId);
@@ -347,6 +372,7 @@ export function BillReceiptLayoutCanvas({
             : null;
           const bold = custom ? custom.bold : getBlockStyle(settings, blockId).bold;
           const fontPx = resolveBlockFontSize(settings, blockId, settings.baseFontSize);
+          const ink = resolveBlockColor(settings, blockId) || DEFAULT_BLOCK_TEXT_COLOR;
           const label = isBillSystemBlock(blockId)
             ? BILL_SYSTEM_BLOCK_LABELS[blockId]
             : "Custom line";
@@ -446,6 +472,43 @@ export function BillReceiptLayoutCanvas({
                 >
                   B
                 </button>
+                <label
+                  className="inline-flex items-center gap-1 rounded border border-slate-200 px-1 py-0.5 dark:border-slate-600"
+                  title="Text color"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span className="text-[9px] text-slate-500">Color</span>
+                  <input
+                    type="color"
+                    value={ink}
+                    className="h-5 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+                    onChange={(e) => setBlockColor(blockId, e.target.value)}
+                  />
+                </label>
+                <div className="flex flex-wrap gap-0.5" onClick={(e) => e.stopPropagation()}>
+                  {BILL_TEXT_COLOR_PRESETS.slice(0, 6).map((preset) => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      title={preset.label}
+                      className={`h-4 w-4 rounded-sm border ${
+                        ink.toLowerCase() === preset.value.toLowerCase()
+                          ? "border-amber-500 ring-1 ring-amber-400"
+                          : "border-slate-300 dark:border-slate-600"
+                      }`}
+                      style={{ backgroundColor: preset.value }}
+                      onClick={() => setBlockColor(blockId, preset.value)}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    title="Reset color"
+                    className="rounded border border-slate-200 px-1 text-[8px] text-slate-500 dark:border-slate-600"
+                    onClick={() => setBlockColor(blockId, "")}
+                  >
+                    ⌀
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="rounded border border-slate-200 px-1.5 py-0.5 text-[9px] dark:border-slate-600"
@@ -486,7 +549,7 @@ export function BillReceiptLayoutCanvas({
                 <input
                   draggable={false}
                   className={`w-full ${fieldInputClass} ${bold ? "font-semibold" : ""}`}
-                  style={{ fontSize: fontPx }}
+                  style={{ fontSize: fontPx, color: ink }}
                   value={input.value}
                   placeholder={input.placeholder}
                   onClick={(e) => e.stopPropagation()}
@@ -497,8 +560,8 @@ export function BillReceiptLayoutCanvas({
                 <div>
                   <input
                     draggable={false}
-                    className={`w-full ${fieldInputClass} cursor-default bg-slate-50 text-slate-500 dark:bg-slate-900/80`}
-                    style={{ fontSize: fontPx }}
+                    className={`w-full ${fieldInputClass} cursor-default bg-slate-50 dark:bg-slate-900/80`}
+                    style={{ fontSize: fontPx, color: ink }}
                     value={input.value}
                     readOnly
                     onClick={(e) => e.stopPropagation()}

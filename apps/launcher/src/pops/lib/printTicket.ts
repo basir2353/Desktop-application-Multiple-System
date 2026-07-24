@@ -9,6 +9,7 @@ import {
   isBillSystemBlock,
   DEFAULT_BILL_PRINT_SETTINGS,
   loadBillPrintSettings,
+  resolveBlockColor,
   resolveBlockFontSize,
   type BillPrintSettings,
 } from "./billPrintSettings";
@@ -27,6 +28,7 @@ import {
   thermalContentWidthMm,
   type ThermalPrintSettings,
 } from "./thermalPrintSettings";
+import { sampleBillPrintInput } from "./billSampleReceipt";
 
 export type PrintLine = {
   label: string;
@@ -108,8 +110,10 @@ function renderCustomLineHtml(
   if (!line || !line.enabled || !line.text.trim()) return "";
   const size = resolveBlockFontSize(settings, lineId, fallbackPx);
   const weight = line.bold ? 600 : 400;
+  const color = resolveBlockColor(settings, lineId);
+  const colorCss = color ? `color:${color};` : "";
   const cls = line.bold ? "custom-line custom-line-bold" : "custom-line";
-  return `<div class="${cls}" style="text-align:${align};font-size:${size}px;font-weight:${weight}">${escapeHtml(line.text.trim())}</div>`;
+  return `<div class="${cls}" style="text-align:${align};font-size:${size}px;font-weight:${weight};${colorCss}">${escapeHtml(line.text.trim())}</div>`;
 }
 
 function blockStyleInline(
@@ -121,7 +125,13 @@ function blockStyleInline(
   const bold = isBillSystemBlock(blockId)
     ? getBlockStyle(settings, blockId).bold
     : Boolean(settings.customLines.find((l) => l.id === blockId)?.bold);
-  return `font-size:${size}px;font-weight:${bold ? 600 : 400}`;
+  const color = resolveBlockColor(settings, blockId);
+  const colorCss = color ? `color:${color};` : "";
+  return `font-size:${size}px;font-weight:${bold ? 600 : 400};${colorCss}`;
+}
+
+function blockInkClass(settings: BillPrintSettings, blockId: string): string {
+  return resolveBlockColor(settings, blockId) ? " ink-custom" : "";
 }
 
 function pushCustomLinePlain(
@@ -742,25 +752,27 @@ export function buildTicketHtml(input: PrintTicketInput): string {
           switch (blockId) {
             case "branchName":
               return fields.branchName
-                ? `<div class="branch-name" style="text-align:${headerAlign};${blockStyleInline(billSettings, "branchName", receiptFonts.branchName)}">${escapeHtml(displayBusinessName)}</div>`
+                ? `<div class="branch-name${blockInkClass(billSettings, "branchName")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "branchName", receiptFonts.branchName)}">${escapeHtml(displayBusinessName)}</div>`
                 : "";
             case "headerSubtitle":
               return showHeaderSubtitle
-                ? `<div class="header-subtitle" style="text-align:${headerAlign};${blockStyleInline(billSettings, "headerSubtitle", receiptFonts.headerSubtitle)}">${escapeHtml(billSettings.headerSubtitle.trim())}</div>`
+                ? `<div class="header-subtitle${blockInkClass(billSettings, "headerSubtitle")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "headerSubtitle", receiptFonts.headerSubtitle)}">${escapeHtml(billSettings.headerSubtitle.trim())}</div>`
                 : "";
             case "documentTitle":
               return fields.documentTitle
-                ? `<div class="doc-type" style="text-align:${headerAlign};${blockStyleInline(billSettings, "documentTitle", receiptFonts.docType)}">${escapeHtml(title)}</div>`
+                ? `<div class="doc-type${blockInkClass(billSettings, "documentTitle")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "documentTitle", receiptFonts.docType)}">${escapeHtml(title)}</div>`
                 : "";
             case "meta":
-              return metaRows ? `<div class="meta-block">${metaRows}</div>` : "";
+              return metaRows
+                ? `<div class="meta-block${blockInkClass(billSettings, "meta")}" style="${blockStyleInline(billSettings, "meta", receiptFonts.metaChip)}">${metaRows}</div>`
+                : "";
             case "notes":
               return fields.notes && input.notes
-                ? `<p class="notes" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(input.notes)}</p>`
+                ? `<p class="notes${blockInkClass(billSettings, "notes")}" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(input.notes)}</p>`
                 : "";
             case "timestamp":
               return fields.timestamp || fields.branchCode
-                ? `<div class="timestamp" style="text-align:${headerAlign};${blockStyleInline(billSettings, "timestamp", receiptFonts.timestamp)}">${[
+                ? `<div class="timestamp${blockInkClass(billSettings, "timestamp")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "timestamp", receiptFonts.timestamp)}">${[
                     fields.branchCode ? escapeHtml(input.branchCode) : "",
                     fields.timestamp ? escapeHtml(printedAt) : "",
                   ]
@@ -768,16 +780,20 @@ export function buildTicketHtml(input: PrintTicketInput): string {
                     .join(" · ")}</div>`
                 : "";
             case "items":
-              return itemsHtml ? `<div class="items-wrap">${itemsHtml}</div>` : "";
+              return itemsHtml
+                ? `<div class="items-wrap${blockInkClass(billSettings, "items")}" style="${blockStyleInline(billSettings, "items", receiptFonts.itemName)}">${itemsHtml}</div>`
+                : "";
             case "totals":
-              return totalsBlock;
+              return totalsBlock
+                ? `<div class="totals-wrap${blockInkClass(billSettings, "totals")}" style="${blockStyleInline(billSettings, "totals", receiptFonts.rowLabel)}">${totalsBlock}</div>`
+                : "";
             case "footer":
               return showFooterPrimary
-                ? `<div class="footer" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footer", receiptFonts.footer)}">${escapeHtml(billSettings.footerText)}</div>`
+                ? `<div class="footer${blockInkClass(billSettings, "footer")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footer", receiptFonts.footer)}">${escapeHtml(billSettings.footerText)}</div>`
                 : "";
             case "footerSecondary":
               return showFooterSecondary
-                ? `<div class="footer-secondary" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footerSecondary", receiptFonts.footerSecondary)}">${escapeHtml(billSettings.footerSecondaryText.trim())}</div>`
+                ? `<div class="footer-secondary${blockInkClass(billSettings, "footerSecondary")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footerSecondary", receiptFonts.footerSecondary)}">${escapeHtml(billSettings.footerSecondaryText.trim())}</div>`
                 : "";
             default:
               return "";
@@ -960,6 +976,23 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-receipt .custom-line-bold {
       font-weight: 700;
       color: #111827;
+    }
+    body.ticket-receipt .ink-custom,
+    body.ticket-receipt .ink-custom .meta-label,
+    body.ticket-receipt .ink-custom .meta-value,
+    body.ticket-receipt .ink-custom thead th,
+    body.ticket-receipt .ink-custom td,
+    body.ticket-receipt .ink-custom .row .label,
+    body.ticket-receipt .ink-custom .row .value,
+    body.ticket-receipt .ink-custom .clear-item-name,
+    body.ticket-receipt .ink-custom .clear-item-qty,
+    body.ticket-receipt .ink-custom .clear-item-amt {
+      color: inherit !important;
+    }
+    body.ticket-receipt .ink-custom .meta-label,
+    body.ticket-receipt .ink-custom .clear-item-qty,
+    body.ticket-receipt .ink-custom .row .label {
+      opacity: 0.72;
     }
     body.ticket-receipt .clear-items { margin: 2px 0 8px; }
     body.ticket-receipt .clear-item {
@@ -1707,7 +1740,7 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
   return { ok: true, usedNamedPrinter: false };
 }
 
-/** Test page — targets the named OS printer when available. */
+/** Test page — prints a sample tax invoice using the same layout as live bills. */
 export function printTestPage(printerName: string): boolean {
   void printTestPageAsync(printerName);
   return true;
@@ -1722,77 +1755,32 @@ export async function printTestPageAsync(
     thermal?: ThermalPrintSettings;
   },
 ): Promise<boolean> {
+  const branchCode = options?.branchCode?.trim() || "TEST";
   const thermal =
     options?.thermal ??
     (options?.branchCode
       ? loadThermalPrintSettings(options.branchCode)
       : DEFAULT_THERMAL_PRINT_SETTINGS);
   const paper = options?.paperSize ?? thermal.defaultPaperSize;
-  const width = thermalCharsPerLine(paper, thermal);
-  const line = "-".repeat(width);
-  const stamped = new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
-  const plain = [
-    centerLine("TEST PRINT", width),
-    line,
-    `Printer: ${printerName}`.slice(0, width),
-    `Paper: ${paper}`.slice(0, width),
-    stamped.slice(0, width),
-    line,
-    ...wrapWords("If this printed correctly, the printer is connected and working.", width),
-    line,
-    centerLine("1234567890".repeat(Math.ceil(width / 10)).slice(0, width), width),
-    "",
-    "",
-  ].join("\n");
-
-  const contentWidthMm = thermalContentWidthMm(paper, thermal.marginMm);
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Test print · ${escapeHtml(printerName)}</title>
-<style>
-  body {
-    font-family: ui-monospace, Consolas, monospace;
-    width: ${contentWidthMm}mm;
-    max-width: ${contentWidthMm}mm;
-    margin: 0 auto;
-    padding: 8px 0;
-    text-align: center;
-    font-size: 11px;
-  }
-  h1 { font-size: 14px; margin: 0 0 8px; }
-  p { font-size: 11px; margin: 4px 0; word-break: break-word; }
-  hr { border: none; border-top: 1px dashed #000; margin: 10px 0; }
-  @page { margin: ${thermal.marginMm}mm; size: ${paper === "58mm" ? "58mm 200mm" : paper === "A4" ? "A4 portrait" : "80mm 297mm"}; }
-</style>
-</head>
-<body>
-  <h1>TEST PRINT</h1>
-  <hr />
-  <p>Printer: ${escapeHtml(printerName)}</p>
-  <p>Paper: ${escapeHtml(paper)}</p>
-  <p>${escapeHtml(stamped)}</p>
-  <hr />
-  <p>If this printed correctly, the printer is connected and working.</p>
-  <hr />
-  <p>${escapeHtml("1234567890".repeat(Math.ceil(width / 10)).slice(0, width))}</p>
-</body>
-</html>`;
-
+  const billSettings =
+    resolveBillPrintSettingsForReceipt(branchCode) ?? loadBillPrintSettings(branchCode);
+  const sample = sampleBillPrintInput("BuchaSoft", branchCode);
   const copies = Math.max(1, options?.copies ?? 1);
-  const named = await printToSystemPrinter({
-    printerName,
-    content: `${plain}\n\n`,
-    jobName: `Test print · ${printerName}`,
+
+  const result = await printTicketDetailed({
+    ...sample,
+    kind: "receipt",
+    paperSize: paper,
     copies,
+    printerName: printerName.trim() || "Test printer",
+    systemPrinterName: printerName.trim() || undefined,
+    billPrintSettings: {
+      ...billSettings,
+      documentTitle: billSettings.documentTitle || "Tax Invoice",
+      footerText: billSettings.footerText || "Thank you — visit again",
+    },
   });
-  if (named.ok) return true;
-  return printHtmlDocumentAsync(html, {
-    copies,
-    jobTitle: `Test print · ${printerName}`,
-    requireNamedPrinter: false,
-  });
+  return result.ok;
 }
 
 export function billToPrintInput(

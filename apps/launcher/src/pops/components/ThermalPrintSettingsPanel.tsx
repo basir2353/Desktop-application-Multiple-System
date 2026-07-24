@@ -1,6 +1,5 @@
 import { Button } from "@platform/ui";
-import { useEffect, useMemo, useState } from "react";
-import type { PrinterPaperSize } from "../lib/printerRouting";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
   loadThermalPrintSettings,
@@ -10,50 +9,64 @@ import {
   type ThermalPrintSettings,
   type ThermalReceiptLayout,
 } from "../lib/thermalPrintSettings";
-import { buildThermalPlainText, printTestPageAsync, type PrintTicketInput } from "../lib/printTicket";
+import { buildTicketHtml, printTestPageAsync } from "../lib/printTicket";
+import { sampleBillPrintInput } from "../lib/billSampleReceipt";
 import { listSystemPrintersDetailed } from "../lib/systemPrinters";
-import { DEFAULT_BILL_PRINT_SETTINGS } from "../lib/billPrintSettings";
+import {
+  BILL_PRINT_SETTINGS_CHANGED_EVENT,
+  loadBillPrintSettings,
+  saveBillPrintSettings,
+  type BillPrintSettings,
+} from "../lib/billPrintSettings";
+import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
+import { BillCustomizationPanel } from "./BillCustomizationPanel";
+import { usePopsStore } from "../../stores/popsStore";
 
 type Props = {
   branchCode: string;
   notify?: (message: string) => void;
 };
 
-function sampleReceiptInput(
-  branchCode: string,
-  paperSize: PrinterPaperSize,
-): PrintTicketInput {
-  return {
-    kind: "receipt",
-    branchName: "POPS Blue Area",
-    branchCode,
-    orderRef: "ORD-6",
-    billRef: "BILL-SAMPLE",
-    modeLabel: "Takeaway",
-    tableLabel: "Takeaway",
-    waiterName: "POS Counter",
-    paperSize,
-    lines: [
-      { label: "Seekh Kabab (6pc) (Standard)", qty: 1, unitPrice: 980 },
-      { label: "Chicken Biryani (Plate)", qty: 1, unitPrice: 450 },
-    ],
-    subtotal: 1430,
-    discount: 0,
-    service: 143,
-    tax: 0,
-    total: 1573,
-    servicePct: 10,
-    taxPct: 0,
-    discountPct: 0,
-    billPrintSettings: {
-      ...DEFAULT_BILL_PRINT_SETTINGS,
-      documentTitle: "TAX INVOICE",
-      footerText: "THANK YOU --- VISIT AGAIN",
-    },
-  };
+function StepBadge({ n }: { n: number }): JSX.Element {
+  return (
+    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-[11px] font-bold text-amber-300 ring-1 ring-amber-500/40">
+      {n}
+    </span>
+  );
+}
+
+function SectionCard({
+  step,
+  title,
+  subtitle,
+  children,
+  action,
+}: {
+  step?: number;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  action?: ReactNode;
+}): JSX.Element {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/50 shadow-sm shadow-black/20">
+      <header className="flex items-start justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
+        <div className="flex min-w-0 items-start gap-3">
+          {step != null ? <StepBadge n={step} /> : null}
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold tracking-tight text-white">{title}</h3>
+            {subtitle ? <p className="mt-0.5 text-xs leading-relaxed text-slate-400">{subtitle}</p> : null}
+          </div>
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </header>
+      <div className="p-5">{children}</div>
+    </section>
+  );
 }
 
 export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.Element {
+  const branchName = usePopsStore((s) => s.branch?.name) ?? "BuchaSoft";
   const [draft, setDraft] = useState<ThermalPrintSettings>(() =>
     loadThermalPrintSettings(branchCode),
   );
@@ -61,22 +74,37 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
   const [testPrinter, setTestPrinter] = useState("");
   const [osPrinters, setOsPrinters] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [billSettings, setBillSettings] = useState<BillPrintSettings>(() =>
+    loadBillPrintSettings(branchCode),
+  );
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     setDraft(loadThermalPrintSettings(branchCode));
+    setBillSettings(loadBillPrintSettings(branchCode));
     setDirty(false);
   }, [branchCode]);
 
   useEffect(() => {
-    function onChanged(event: Event): void {
+    function onThermalChanged(event: Event): void {
       const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
       if (detail?.branchCode === branchCode) {
         setDraft(loadThermalPrintSettings(branchCode));
         setDirty(false);
       }
     }
-    window.addEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, onChanged);
+    function onBillChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!detail?.branchCode || detail.branchCode === branchCode) {
+        setBillSettings(loadBillPrintSettings(branchCode));
+      }
+    }
+    window.addEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, onThermalChanged);
+    window.addEventListener(BILL_PRINT_SETTINGS_CHANGED_EVENT, onBillChanged);
+    return () => {
+      window.removeEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, onThermalChanged);
+      window.removeEventListener(BILL_PRINT_SETTINGS_CHANGED_EVENT, onBillChanged);
+    };
   }, [branchCode]);
 
   useEffect(() => {
@@ -87,25 +115,27 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
     });
   }, []);
 
-  const previewText = useMemo(
-    () =>
-      buildThermalPlainText(
-        sampleReceiptInput(branchCode, draft.defaultPaperSize),
-        draft,
-      ),
-    [branchCode, draft],
-  );
+  const previewHtml = useMemo(() => {
+    const settings =
+      resolveBillPrintSettingsForReceipt(branchCode) ?? billSettings;
+    return buildTicketHtml({
+      ...sampleBillPrintInput(branchName, branchCode),
+      kind: "receipt",
+      paperSize: draft.defaultPaperSize,
+      billPrintSettings: settings,
+    });
+  }, [branchCode, branchName, billSettings, draft.defaultPaperSize]);
 
   function patch(partial: Partial<ThermalPrintSettings>): void {
     setDraft((prev) => normalizeThermalPrintSettings({ ...prev, ...partial }));
     setDirty(true);
   }
 
-  function save(): void {
+  function saveThermal(): void {
     const next = saveThermalPrintSettings(branchCode, draft);
     setDraft(next);
     setDirty(false);
-    notify?.("Print settings saved. Receipts will use this clear layout.");
+    notify?.("Paper settings saved.");
   }
 
   function resetDefaults(): void {
@@ -113,9 +143,15 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
     setDirty(true);
   }
 
+  function persistBillSettings(next: BillPrintSettings): void {
+    saveBillPrintSettings(branchCode, next);
+    setBillSettings(next);
+    notify?.("Bill slip saved — live prints use this layout.");
+  }
+
   async function runTestPrint(): Promise<void> {
     if (!testPrinter.trim()) {
-      notify?.("Select a Windows printer for the test print.");
+      notify?.("Select a printer first.");
       return;
     }
     setBusy(true);
@@ -126,182 +162,262 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
         thermal: draft,
         copies: 1,
       });
-      notify?.(
-        ok
-          ? `Test print sent to ${testPrinter}. Amounts should be fully visible.`
-          : `Test print failed for ${testPrinter}.`,
-      );
+      notify?.(ok ? `Test bill sent to ${testPrinter}.` : `Test print failed for ${testPrinter}.`);
     } finally {
       setBusy(false);
     }
   }
 
+  const paperLabel =
+    draft.defaultPaperSize === "A4"
+      ? "A4 sheet"
+      : draft.defaultPaperSize === "58mm"
+        ? "58mm roll"
+        : "80mm roll";
+
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-        <h3 className="text-sm font-semibold text-white">Clear receipt layout</h3>
-        <p className="mt-1 text-xs text-slate-400">
-          Physical printers use a stacked layout so item names and full amounts always show —
-          no cut-off on the right side. Match paper size to your roll (usually 58mm).
-        </p>
+    <div className="space-y-8">
+      {/* Page intro */}
+      <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 px-6 py-5">
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 w-1/3 opacity-40"
+          style={{
+            background:
+              "radial-gradient(ellipse at 80% 40%, rgba(245,158,11,0.18), transparent 60%)",
+          }}
+        />
+        <div className="relative flex flex-wrap items-end justify-between gap-4">
+          <div className="max-w-xl">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-400/90">
+              Print settings
+            </p>
+            <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">
+              Set up how bills look when printed
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+              Three steps: choose paper, check a test print, then edit the slip text and colors.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-slate-300">
+              Paper · {paperLabel}
+            </span>
+            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-slate-300">
+              Layout · {draft.receiptLayout === "clear" ? "Stacked" : "Columns"}
+            </span>
+          </div>
+        </div>
+
+        <ol className="relative mt-5 grid gap-2 sm:grid-cols-3">
+          {[
+            { n: 1, t: "Paper", d: "Roll size & amounts" },
+            { n: 2, t: "Test", d: "Send a sample bill" },
+            { n: 3, t: "Edit slip", d: "Text, color, order" },
+          ].map((s) => (
+            <li
+              key={s.n}
+              className="flex items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-950/60 px-3 py-2.5"
+            >
+              <StepBadge n={s.n} />
+              <div>
+                <div className="text-xs font-semibold text-slate-100">{s.t}</div>
+                <div className="text-[11px] text-slate-500">{s.d}</div>
+              </div>
+            </li>
+          ))}
+        </ol>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-4">
-          <label className="block space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <span className="text-xs font-medium text-slate-300">Receipt layout</span>
-            <select
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-              value={draft.receiptLayout}
-              onChange={(e) =>
-                patch({ receiptLayout: e.target.value as ThermalReceiptLayout })
-              }
-            >
-              <option value="clear">Clear (recommended) — item then amount</option>
-              <option value="columns">Columns — Qty / Item / Price / Amt</option>
-            </select>
-            <span className="text-[11px] text-slate-500">
-              Use Clear on all thermal printers. Columns only if you have wide 80mm paper.
-            </span>
-          </label>
-
-          <div className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <span className="text-xs font-medium text-slate-300">Thermal paper size</span>
-            <div className="grid grid-cols-2 gap-2">
-              {(["58mm", "80mm"] as const).map((size) => {
-                const active = draft.defaultPaperSize === size;
-                return (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() =>
-                      patch({
-                        defaultPaperSize: size,
-                        // Both rolls use table columns on Pay receipt (QTY | ITEM | PRICE | AMT).
-                        receiptLayout: "columns",
-                        showUnitPrice: true,
-                      })
-                    }
-                    className={`rounded-lg border px-3 py-3 text-sm font-semibold transition ${
-                      active
-                        ? "border-amber-500/60 bg-amber-500/15 text-amber-200"
-                        : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500"
-                    }`}
-                  >
-                    {size}
-                    <span className="mt-0.5 block text-[10px] font-normal text-slate-500">
-                      {size === "58mm" ? "Narrow roll" : "Wide roll"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={draft.defaultPaperSize === "A4"}
-                onChange={(e) =>
-                  patch({
-                    defaultPaperSize: e.target.checked ? "A4" : "80mm",
-                    receiptLayout: e.target.checked ? "columns" : "columns",
-                  })
-                }
-              />
-              Use A4 (office printer) instead of thermal roll
-            </label>
-          </div>
-
-          <label className="block space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <span className="text-xs font-medium text-slate-300">Side margin (mm)</span>
-            <input
-              type="number"
-              min={0}
-              max={8}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-              value={draft.marginMm}
-              onChange={(e) => patch({ marginMm: Number(e.target.value) })}
-            />
-          </label>
-
-          <label className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={draft.showCurrencyPrefix}
-              onChange={(e) => patch({ showCurrencyPrefix: e.target.checked })}
-            />
-            <span>
-              <span className="block text-xs font-medium text-slate-300">Show “Rs” on amounts</span>
-              <span className="mt-1 block text-[11px] text-slate-500">
-                Off by default — prints 3200 not Rs3200.
-              </span>
-            </span>
-          </label>
-
-          <label className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={draft.compactMoney}
-              onChange={(e) => patch({ compactMoney: e.target.checked })}
-            />
-            <span>
-              <span className="block text-xs font-medium text-slate-300">Compact numbers (no commas)</span>
-              <span className="mt-1 block text-[11px] text-slate-500">
-                1430 instead of 1,430 — better on narrow paper.
-              </span>
-            </span>
-          </label>
-
-          {draft.receiptLayout === "columns" ? (
-            <label className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={draft.showUnitPrice}
-                onChange={(e) => patch({ showUnitPrice: e.target.checked })}
-              />
-              <span>
-                <span className="block text-xs font-medium text-slate-300">Show unit Price column</span>
-                <span className="mt-1 block text-[11px] text-slate-500">
-                  Only for columns layout on 80mm paper.
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
+        <div className="space-y-6">
+          <SectionCard
+            step={1}
+            title="Paper & layout"
+            subtitle="Match your physical printer roll. Most restaurants use 80mm."
+            action={
+              dirty ? (
+                <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[10px] font-semibold text-amber-300">
+                  Unsaved
                 </span>
-              </span>
-            </label>
-          ) : null}
+              ) : null
+            }
+          >
+            <div className="space-y-5">
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-300">Paper size</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: "58mm" as const, label: "58mm", hint: "Narrow" },
+                      { id: "80mm" as const, label: "80mm", hint: "Wide · recommended" },
+                      { id: "A4" as const, label: "A4", hint: "Office printer" },
+                    ] as const
+                  ).map((opt) => {
+                    const active = draft.defaultPaperSize === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() =>
+                          patch({
+                            defaultPaperSize: opt.id,
+                            receiptLayout: opt.id === "58mm" ? "clear" : "columns",
+                            showUnitPrice: opt.id === "80mm",
+                          })
+                        }
+                        className={`rounded-xl border px-3 py-3 text-left transition ${
+                          active
+                            ? "border-amber-500/70 bg-amber-500/10 ring-1 ring-amber-500/30"
+                            : "border-slate-700 bg-slate-900/80 hover:border-slate-500"
+                        }`}
+                      >
+                        <div
+                          className={`text-sm font-semibold ${active ? "text-amber-200" : "text-slate-200"}`}
+                        >
+                          {opt.label}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-500">{opt.hint}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <span className="text-xs font-medium text-slate-300">Chars / line (58mm)</span>
-              <input
-                type="number"
-                min={24}
-                max={40}
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-                value={draft.charsPerLine58}
-                onChange={(e) => patch({ charsPerLine58: Number(e.target.value) })}
-              />
-            </label>
-            <label className="block space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <span className="text-xs font-medium text-slate-300">Chars / line (80mm)</span>
-              <input
-                type="number"
-                min={32}
-                max={56}
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-                value={draft.charsPerLine80}
-                onChange={(e) => patch({ charsPerLine80: Number(e.target.value) })}
-              />
-            </label>
-          </div>
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-300">Item layout</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {(
+                    [
+                      {
+                        id: "clear" as ThermalReceiptLayout,
+                        label: "Stacked",
+                        hint: "Name, then amount — safest on narrow paper",
+                      },
+                      {
+                        id: "columns" as ThermalReceiptLayout,
+                        label: "Columns",
+                        hint: "Qty · Item · Price · Amt",
+                      },
+                    ] as const
+                  ).map((opt) => {
+                    const active = draft.receiptLayout === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => patch({ receiptLayout: opt.id })}
+                        className={`rounded-xl border px-3 py-3 text-left transition ${
+                          active
+                            ? "border-amber-500/70 bg-amber-500/10 ring-1 ring-amber-500/30"
+                            : "border-slate-700 bg-slate-900/80 hover:border-slate-500"
+                        }`}
+                      >
+                        <div
+                          className={`text-sm font-semibold ${active ? "text-amber-200" : "text-slate-200"}`}
+                        >
+                          {opt.label}
+                        </div>
+                        <div className="mt-0.5 text-[10px] leading-snug text-slate-500">{opt.hint}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Test print</h4>
-            <div className="mt-3 flex flex-wrap items-end gap-3">
-              <label className="min-w-[220px] flex-1 space-y-1.5">
-                <span className="text-xs text-slate-400">Windows printer</span>
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-300">Amount format</div>
+                <div className="divide-y divide-slate-800 overflow-hidden rounded-xl border border-slate-800">
+                  <label className="flex cursor-pointer items-start gap-3 bg-slate-900/40 px-4 py-3 hover:bg-slate-900/70">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 accent-amber-500"
+                      checked={draft.showCurrencyPrefix}
+                      onChange={(e) => patch({ showCurrencyPrefix: e.target.checked })}
+                    />
+                    <span>
+                      <span className="block text-sm text-slate-200">Show “Rs” before amounts</span>
+                      <span className="mt-0.5 block text-[11px] text-slate-500">
+                        Example: Rs 3200 instead of 3200
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-3 bg-slate-900/40 px-4 py-3 hover:bg-slate-900/70">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 accent-amber-500"
+                      checked={draft.compactMoney}
+                      onChange={(e) => patch({ compactMoney: e.target.checked })}
+                    />
+                    <span>
+                      <span className="block text-sm text-slate-200">Compact numbers</span>
+                      <span className="mt-0.5 block text-[11px] text-slate-500">
+                        Example: 1430 instead of 1,430
+                      </span>
+                    </span>
+                  </label>
+                  {draft.receiptLayout === "columns" ? (
+                    <label className="flex cursor-pointer items-start gap-3 bg-slate-900/40 px-4 py-3 hover:bg-slate-900/70">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 accent-amber-500"
+                        checked={draft.showUnitPrice}
+                        onChange={(e) => patch({ showUnitPrice: e.target.checked })}
+                      />
+                      <span>
+                        <span className="block text-sm text-slate-200">Show unit price column</span>
+                        <span className="mt-0.5 block text-[11px] text-slate-500">
+                          Extra Price column next to Qty / Item / Amount
+                        </span>
+                      </span>
+                    </label>
+                  ) : null}
+                </div>
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                >
+                  {showAdvanced ? "Hide advanced" : "Show advanced (margin)"}
+                </button>
+                {showAdvanced ? (
+                  <label className="mt-3 block max-w-[12rem]">
+                    <span className="text-xs text-slate-400">Side margin (mm)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={8}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+                      value={draft.marginMm}
+                      onChange={(e) => patch({ marginMm: Number(e.target.value) })}
+                    />
+                  </label>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-4">
+                <Button type="button" onClick={saveThermal} disabled={!dirty}>
+                  Save paper settings
+                </Button>
+                <Button type="button" variant="ghost" onClick={resetDefaults}>
+                  Reset
+                </Button>
+              </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            step={2}
+            title="Test print"
+            subtitle="Send a sample bill with your current settings before editing the slip."
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="min-w-0 flex-1 space-y-1.5">
+                <span className="text-xs font-medium text-slate-300">Printer</span>
                 <select
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white"
                   value={testPrinter}
                   onChange={(e) => setTestPrinter(e.target.value)}
                 >
@@ -315,53 +431,71 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
               </label>
               <Button
                 type="button"
-                variant="ghost"
                 disabled={busy || !testPrinter}
                 onClick={() => void runTestPrint()}
+                className="shrink-0"
               >
-                {busy ? "Sending…" : "Send test print"}
+                {busy ? "Sending…" : "Send test bill"}
               </Button>
             </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={save} disabled={!dirty}>
-              Save print settings
-            </Button>
-            <Button type="button" variant="ghost" onClick={resetDefaults}>
-              Reset to defaults
-            </Button>
-            {dirty ? <span className="self-center text-xs text-amber-300">Unsaved changes</span> : null}
-          </div>
+            {osPrinters.length === 0 ? (
+              <p className="mt-3 text-[11px] text-slate-500">
+                No Windows printers found. Add a printer in All Printers, or use the browser print
+                dialog from Orders → Reprint.
+              </p>
+            ) : null}
+          </SectionCard>
         </div>
 
-        <div className="rounded-xl border border-amber-500/30 bg-slate-950 p-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-amber-300">
-              Receipt preview
-            </h4>
-            <span className="text-[10px] text-slate-500">
-              Exact layout sent to physical printer
-            </span>
-          </div>
-          <div
-            className="mx-auto overflow-auto rounded-lg border border-slate-700 bg-white p-3 text-slate-900 shadow-inner"
-            style={{ maxWidth: draft.defaultPaperSize === "58mm" ? 280 : 340 }}
+        {/* Live preview */}
+        <aside className="xl:sticky xl:top-4">
+          <SectionCard
+            title="Live preview"
+            subtitle="Updates as you change paper or the slip below."
           >
-            <pre
-              className="whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.35]"
-              style={{ fontFamily: 'ui-monospace, Consolas, "Courier New", monospace' }}
-            >
-              {previewText}
-            </pre>
-          </div>
-          <p className="mt-3 text-[11px] text-slate-500">
-            Example uses Seekh Kabab + Biryani so you can confirm amounts like{" "}
-            <span className="text-slate-300">Rs980</span> and{" "}
-            <span className="text-slate-300">Rs1573</span> are fully visible.
-          </p>
-        </div>
+            <div className="overflow-hidden rounded-xl border border-slate-700 bg-white shadow-inner">
+              <iframe
+                title="Bill preview"
+                srcDoc={previewHtml}
+                className="block h-[min(70vh,560px)] w-full border-0 bg-white"
+                sandbox="allow-same-origin"
+              />
+            </div>
+            <p className="mt-3 text-center text-[10px] text-slate-500">
+              Preview uses sample items · same format as customer bills
+            </p>
+          </SectionCard>
+        </aside>
       </div>
+
+      <SectionCard
+        step={3}
+        title="Edit the print slip"
+        subtitle="Change business name, title, footer, colors, and which sections appear. Drag lines to reorder."
+      >
+        <div className="mb-4 flex flex-wrap gap-2 text-[11px] text-slate-400">
+          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+            Click a line to edit text
+          </span>
+          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+            Color · Bold · Size on each line
+          </span>
+          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+            Drag ⋮⋮ to reorder
+          </span>
+          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+            Save when finished
+          </span>
+        </div>
+        <BillCustomizationPanel
+          branchName={branchName}
+          branchCode={branchCode}
+          settings={billSettings}
+          onChange={setBillSettings}
+          onSave={() => persistBillSettings(billSettings)}
+          onNotice={notify}
+        />
+      </SectionCard>
     </div>
   );
 }

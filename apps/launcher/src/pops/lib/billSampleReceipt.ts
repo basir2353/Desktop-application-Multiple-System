@@ -1,7 +1,7 @@
 import type { PrintTicketInput } from "./printTicket";
 import { billChannelLabel } from "./orderSales";
 
-/** Sample receipt data for bill customization preview. */
+/** Sample receipt data for bill customization preview and test prints. */
 export function sampleBillPrintInput(
   branchName: string,
   branchCode: string,
@@ -10,24 +10,24 @@ export function sampleBillPrintInput(
     branchName,
     branchCode,
     orderRef: "ORD-SAMPLE",
-    billRef: "BILL-PREVIEW",
-    modeLabel: billChannelLabel("T5"),
-    tableLabel: "T5",
-    waiterName: "Ahmed Khan",
-    notes: "Extra spicy · no onions",
+    billRef: "BILL-TEST",
+    modeLabel: billChannelLabel("Takeaway"),
+    tableLabel: "Takeaway",
+    waiterName: "POS Counter",
+    notes: undefined,
     lines: [
-      { label: "Chicken Biryani (Full)", qty: 2, unitPrice: 850 },
-      { label: "Mint Raita", qty: 2, unitPrice: 120 },
-      { label: "Service charge (manual)", qty: 1, unitPrice: 150 },
+      { label: "Soft drink", qty: 3, unitPrice: 120 },
+      { label: "Chicken Karahi (Full)", qty: 1, unitPrice: 2850 },
+      { label: "Family Combo 4", qty: 1, unitPrice: 4850 },
     ],
-    subtotal: 2090,
-    discount: 100,
-    service: 199,
-    tax: 358,
-    deliveryCharge: 200,
-    total: 2747,
+    subtotal: 8060,
+    discount: 0,
+    service: 806,
+    tax: 1329,
+    deliveryCharge: undefined,
+    total: 10195,
     servicePct: 10,
-    taxPct: 18,
-    discountPct: 5,
+    taxPct: 15,
+    discountPct: 0,
   };
 }

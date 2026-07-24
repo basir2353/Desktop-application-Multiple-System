@@ -12,6 +12,8 @@ export type BillCustomLine = {
   enabled: boolean;
   /** Absolute px; 0 = inherit from base receipt scale. */
   fontSize: number;
+  /** Hex color e.g. #111827; empty = theme default. */
+  color: string;
 };
 
 export type BillReceiptFields = {
@@ -60,7 +62,23 @@ export type BillBlockStyle = {
   bold: boolean;
   /** 0 = use default scaled size for that block. */
   fontSize: number;
+  /** Hex color e.g. #111827; empty = theme default for that block. */
+  color: string;
 };
+
+/** Preset ink colors for the receipt editor. */
+export const BILL_TEXT_COLOR_PRESETS: { label: string; value: string }[] = [
+  { label: "Black", value: "#111827" },
+  { label: "Charcoal", value: "#374151" },
+  { label: "Gray", value: "#6b7280" },
+  { label: "Amber", value: "#b45309" },
+  { label: "Red", value: "#b91c1c" },
+  { label: "Green", value: "#047857" },
+  { label: "Blue", value: "#1d4ed8" },
+  { label: "Purple", value: "#6d28d9" },
+];
+
+export const DEFAULT_BLOCK_TEXT_COLOR = "#111827";
 
 export type BillPrintSettings = {
   baseFontSize: number;
@@ -159,6 +177,7 @@ export function newBillCustomLine(
     zone: partial?.zone ?? "footer",
     enabled: partial?.enabled ?? true,
     fontSize: clampLineFont(partial?.fontSize ?? 0),
+    color: normalizeHexColor(partial?.color ?? ""),
   };
 }
 
@@ -184,6 +203,7 @@ export function getBlockStyle(
   return {
     bold: Boolean(raw?.bold),
     fontSize: clampLineFont(raw?.fontSize ?? 0),
+    color: normalizeHexColor(raw?.color ?? ""),
   };
 }
 
@@ -198,6 +218,34 @@ export function resolveBlockFontSize(
   }
   const style = getBlockStyle(settings, blockId);
   return style.fontSize > 0 ? style.fontSize : fallbackPx;
+}
+
+/** Resolve ink color for a block/line; empty means use CSS default for that element. */
+export function resolveBlockColor(
+  settings: BillPrintSettings,
+  blockId: string,
+  fallback = "",
+): string {
+  const custom = settings.customLines.find((line) => line.id === blockId);
+  if (custom) {
+    return custom.color || fallback;
+  }
+  const style = getBlockStyle(settings, blockId);
+  return style.color || fallback;
+}
+
+/** Accept #RGB / #RRGGBB; return normalized #rrggbb or "". */
+export function normalizeHexColor(value: string | undefined | null): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const short = /^#([0-9a-fA-F]{3})$/.exec(raw);
+  if (short) {
+    const [r, g, b] = short[1].split("");
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  const full = /^#([0-9a-fA-F]{6})$/.exec(raw);
+  if (full) return `#${full[1]}`.toLowerCase();
+  return "";
 }
 
 export const BILL_PRINT_SETTINGS_CHANGED_EVENT = "pops-bill-print-settings-changed";
@@ -293,6 +341,7 @@ function normalizeCustomLines(input: unknown): BillCustomLine[] {
         zone,
         enabled: row.enabled !== false,
         fontSize: clampLineFont(Number(row.fontSize ?? 0)),
+        color: normalizeHexColor(row.color),
       } satisfies BillCustomLine;
     })
     .filter((line): line is BillCustomLine => Boolean(line))
@@ -373,6 +422,7 @@ function normalizeBlockStyles(input: unknown): Record<string, BillBlockStyle> {
     out[key] = {
       bold: Boolean(row.bold),
       fontSize: clampLineFont(Number(row.fontSize ?? 0)),
+      color: normalizeHexColor(row.color),
     };
   }
   return out;
