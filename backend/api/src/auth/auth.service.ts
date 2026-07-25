@@ -405,7 +405,7 @@ export class AuthService implements OnModuleInit {
     let accessToken: string;
     try {
       accessToken = await this.jwt.signAsync(accessPayload, {
-        expiresIn: accessTtl,
+        expiresIn: accessExpiresIn,
       });
     } catch (err) {
       console.error(

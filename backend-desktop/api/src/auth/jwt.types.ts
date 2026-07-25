@@ -4,5 +4,7 @@ export type AccessJwtPayload = {
   permissions: string[];
   role: string;
   branchScope: string;
+  /** null/undefined = all permission-gated paths; otherwise only listed paths. */
+  navAllowlist?: string[] | null;
   riderId?: string;
 };
