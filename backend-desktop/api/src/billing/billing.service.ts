@@ -557,8 +557,8 @@ export class BillingService implements OnApplicationBootstrap {
 
   private computeBillTotals(input: CreateBill): BillTotals {
     const subtotal = input.lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
-    const servicePct = input.servicePct ?? 10;
-    const taxPct = input.taxPct ?? 15;
+    const servicePct = input.servicePct ?? 0;
+    const taxPct = input.taxPct ?? 0;
     const discount =
       input.discountPkr != null && input.discountPkr > 0
         ? Math.min(Math.round(input.discountPkr), subtotal)

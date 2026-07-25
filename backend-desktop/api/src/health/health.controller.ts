@@ -50,6 +50,40 @@ export class HealthController {
       checks.userCountError = err instanceof Error ? err.message : String(err);
     }
 
+    // Column probes — missing columns cause login 500 when selecting full membership rows.
+    for (const col of ["active", "nav_allowlist", "last_activity_at", "staff_pin_hash"] as const) {
+      try {
+        const rows = await this.db.execute(
+          sql.raw(
+            `select 1 from information_schema.columns where table_schema='public' and table_name='organization_memberships' and column_name='${col}' limit 1`,
+          ),
+        );
+        checks[`col_memberships_${col}`] = (rows.rows?.length ?? 0) > 0;
+      } catch {
+        checks[`col_memberships_${col}`] = false;
+      }
+    }
+
+    try {
+      await this.db.execute(
+        sql`select organization_id, role, permissions, branch_scope from organization_memberships limit 1`,
+      );
+      checks.membershipCoreSelect = true;
+    } catch (err) {
+      checks.membershipCoreSelect = false;
+      checks.membershipCoreError = err instanceof Error ? err.message : String(err);
+    }
+
+    try {
+      await this.db.execute(
+        sql`select organization_id, role, permissions, branch_scope, active, nav_allowlist from organization_memberships limit 1`,
+      );
+      checks.membershipFullSelect = true;
+    } catch (err) {
+      checks.membershipFullSelect = false;
+      checks.membershipFullError = err instanceof Error ? err.message : String(err);
+    }
+
     const ready =
       checks.connected === true &&
       checks.table_users === true &&

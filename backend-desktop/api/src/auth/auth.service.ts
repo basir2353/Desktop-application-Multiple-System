@@ -1,7 +1,7 @@
-import { Inject, Injectable, OnModuleInit, UnauthorizedException } from "@nestjs/common";
+import { Inject, Injectable, InternalServerErrorException, OnModuleInit, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import {
   moduleVersions,
   modules,
@@ -85,9 +85,30 @@ export class AuthService implements OnModuleInit {
   }
 
   async login(email: string, password: string) {
-    const normalizedEmail = email.trim();
-    const row = await this.db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
-    const user = row[0];
+    const normalizedEmail = email.trim().toLowerCase();
+    const row = await this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        passwordHash: users.passwordHash,
+      })
+      .from(users)
+      .where(eq(users.email, normalizedEmail))
+      .limit(1);
+    // Case-insensitive fallback for older rows stored with mixed case.
+    const user =
+      row[0] ??
+      (
+        await this.db
+          .select({
+            id: users.id,
+            email: users.email,
+            passwordHash: users.passwordHash,
+          })
+          .from(users)
+          .where(sql`lower(${users.email}) = ${normalizedEmail}`)
+          .limit(1)
+      )[0];
     if (!user) {
       await this.security.logEvent({
         eventType: "login_failed",
@@ -98,16 +119,18 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    const ok = await bcrypt.compare(password, user.passwordHash);
+    const ok = await bcrypt.compare(password, user.passwordHash).catch((err: unknown) => {
+      console.error(
+        "[auth] bcrypt.compare failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return false;
+    });
     if (!ok) {
-      const membership = await this.db
-        .select({ organizationId: organizationMemberships.organizationId })
-        .from(organizationMemberships)
-        .where(eq(organizationMemberships.userId, user.id))
-        .limit(1);
+      const membership = await this.loadMembershipLite(user.id);
 
       await this.security.logEvent({
-        organizationId: membership[0]?.organizationId ?? null,
+        organizationId: membership?.organizationId ?? null,
         eventType: "login_failed",
         userEmail: normalizedEmail,
         userId: user.id,
@@ -117,14 +140,19 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    const membership = await this.db
-      .select()
-      .from(organizationMemberships)
-      .where(eq(organizationMemberships.userId, user.id))
-      .limit(1);
-
-    const m = membership[0];
+    const m = await this.loadMembershipForAuth(user.id);
     if (!m) throw new UnauthorizedException("No organization membership");
+    if (m.active === false) {
+      await this.security.logEvent({
+        organizationId: m.organizationId,
+        eventType: "login_failed",
+        userEmail: normalizedEmail,
+        userId: user.id,
+        action: "Login failed",
+        detail: "Account deactivated",
+      });
+      throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+    }
 
     await this.touchLastActivity(m.organizationId, user.id);
 
@@ -137,13 +165,22 @@ export class AuthService implements OnModuleInit {
       detail: "Session started",
     });
 
-    return this.issueTokens(
-      user.id,
-      m.organizationId,
-      normalizePermissions(m.permissions, m.role),
-      m.role,
-      m.branchScope ?? "all",
-    );
+    try {
+      return await this.issueTokens(
+        user.id,
+        m.organizationId,
+        normalizePermissions(m.permissions, m.role),
+        m.role,
+        m.branchScope ?? "all",
+        Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
+      );
+    } catch (err) {
+      console.error("[auth] issueTokens failed:", err instanceof Error ? err.message : String(err));
+      if (err instanceof UnauthorizedException || err instanceof InternalServerErrorException) throw err;
+      throw new InternalServerErrorException(
+        "Login succeeded but session could not be created. Check JWT_ACCESS_SECRET and DB schema (drizzle push).",
+      );
+    }
   }
 
   async pinLogin(branchCode: string, pin: string) {
@@ -203,6 +240,7 @@ export class AuthService implements OnModuleInit {
         normalizePermissions(row.permissions, row.role),
         row.role,
         row.branchScope ?? "all",
+        null,
       );
     }
 
@@ -228,14 +266,9 @@ export class AuthService implements OnModuleInit {
     if (!rt) throw new UnauthorizedException("Invalid refresh token");
     if (rt.expiresAt.getTime() < Date.now()) throw new UnauthorizedException("Refresh expired");
 
-    const membership = await this.db
-      .select()
-      .from(organizationMemberships)
-      .where(eq(organizationMemberships.userId, rt.userId))
-      .limit(1);
-
-    const m = membership[0];
+    const m = await this.loadMembershipForAuth(rt.userId);
     if (!m) throw new UnauthorizedException("No organization membership");
+    if (m.active === false) throw new UnauthorizedException("Account deactivated. Contact an administrator.");
 
     await this.db.delete(refreshTokens).where(eq(refreshTokens.id, rt.id));
     return this.issueTokens(
@@ -244,7 +277,78 @@ export class AuthService implements OnModuleInit {
       normalizePermissions(m.permissions, m.role),
       m.role,
       m.branchScope ?? "all",
+      Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
     );
+  }
+
+  /** Minimal membership lookup (never selects optional columns). */
+  private async loadMembershipLite(
+    userId: string,
+  ): Promise<{ organizationId: string } | undefined> {
+    const rows = await this.db
+      .select({ organizationId: organizationMemberships.organizationId })
+      .from(organizationMemberships)
+      .where(eq(organizationMemberships.userId, userId))
+      .limit(1);
+    return rows[0];
+  }
+
+  /**
+   * Full membership for auth.
+   * Only selects core columns so Railway DBs missing newer fields
+   * (`active`, `nav_allowlist`, …) still allow login.
+   */
+  private async loadMembershipForAuth(userId: string): Promise<{
+    organizationId: string;
+    role: string;
+    permissions: unknown;
+    branchScope: string;
+    active: boolean;
+    navAllowlist: string[] | null;
+  } | null> {
+    const rows = await this.db
+      .select({
+        organizationId: organizationMemberships.organizationId,
+        role: organizationMemberships.role,
+        permissions: organizationMemberships.permissions,
+        branchScope: organizationMemberships.branchScope,
+      })
+      .from(organizationMemberships)
+      .where(eq(organizationMemberships.userId, userId))
+      .limit(1);
+    const m = rows[0];
+    if (!m) return null;
+
+    let active = true;
+    let navAllowlist: string[] | null = null;
+    try {
+      const extra = await this.db
+        .select({
+          active: organizationMemberships.active,
+          navAllowlist: organizationMemberships.navAllowlist,
+        })
+        .from(organizationMemberships)
+        .where(eq(organizationMemberships.userId, userId))
+        .limit(1);
+      if (extra[0]) {
+        active = extra[0].active !== false;
+        navAllowlist = Array.isArray(extra[0].navAllowlist) ? extra[0].navAllowlist : null;
+      }
+    } catch (err) {
+      console.warn(
+        "[auth] optional membership columns unavailable; defaulting active=true:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    return {
+      organizationId: m.organizationId,
+      role: m.role,
+      permissions: m.permissions,
+      branchScope: m.branchScope ?? "all",
+      active,
+      navAllowlist,
+    };
   }
 
   private async touchLastActivity(organizationId: string, userId: string): Promise<void> {
@@ -272,6 +376,7 @@ export class AuthService implements OnModuleInit {
     permissions: string[],
     role: string,
     branchScope: string,
+    navAllowlist: string[] | null = null,
   ) {
     let riderId: string | undefined;
     if (role === "rider") {
@@ -289,6 +394,7 @@ export class AuthService implements OnModuleInit {
       permissions,
       role,
       branchScope,
+      ...(navAllowlist != null ? { navAllowlist } : {}),
       ...(riderId ? { riderId } : {}),
     };
 
@@ -296,9 +402,20 @@ export class AuthService implements OnModuleInit {
     const refreshTtlDays = Number(this.config.get<string>("JWT_REFRESH_TTL_DAYS") ?? "30");
     const accessExpiresIn = parseExpiresInSeconds(accessTtl);
 
-    const accessToken = await this.jwt.signAsync(accessPayload, {
-      expiresIn: accessExpiresIn,
-    });
+    let accessToken: string;
+    try {
+      accessToken = await this.jwt.signAsync(accessPayload, {
+        expiresIn: accessTtl,
+      });
+    } catch (err) {
+      console.error(
+        "[auth] JWT sign failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      throw new InternalServerErrorException(
+        "Auth token signing failed. Set JWT_ACCESS_SECRET (min 32 chars) on Railway.",
+      );
+    }
 
     const refreshToken = randomBytes(48).toString("base64url");
     const refreshHash = sha256Hex(refreshToken);

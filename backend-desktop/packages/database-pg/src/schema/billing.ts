@@ -23,8 +23,8 @@ export const popsBills = pgTable("pops_bills", {
   servicePkr: integer("service_pkr").notNull().default(0),
   taxPkr: integer("tax_pkr").notNull().default(0),
   totalPkr: integer("total_pkr").notNull(),
-  servicePct: integer("service_pct").notNull().default(10),
-  taxPct: integer("tax_pct").notNull().default(15),
+  servicePct: integer("service_pct").notNull().default(0),
+  taxPct: integer("tax_pct").notNull().default(0),
   /** JSON array of { method, amount } for split / multi-method payments. */
   paymentsJson: text("payments_json"),
   /** Links split bills from the same order, e.g. ORD-1234-S1 */

@@ -254,21 +254,53 @@ export class UsersService implements OnApplicationBootstrap {
   }
 
   async listUsers(organizationId: string) {
-    const rows = await this.db
-      .select({
-        id: users.id,
-        email: users.email,
-        role: organizationMemberships.role,
-        branchScope: organizationMemberships.branchScope,
-        pinRequired: organizationMemberships.pinRequired,
-        permissions: organizationMemberships.permissions,
-        active: organizationMemberships.active,
-        navAllowlist: organizationMemberships.navAllowlist,
-        lastActivityAt: organizationMemberships.lastActivityAt,
-      })
-      .from(organizationMemberships)
-      .innerJoin(users, eq(users.id, organizationMemberships.userId))
-      .where(eq(organizationMemberships.organizationId, organizationId));
+    // Core columns first — Railway DBs may still be missing active/nav_allowlist
+    // until ensure-schema runs on boot.
+    let rows: Array<{
+      id: string;
+      email: string;
+      role: string;
+      branchScope: string;
+      pinRequired: boolean;
+      permissions: unknown;
+      active?: boolean | null;
+      navAllowlist?: unknown;
+      lastActivityAt?: Date | null;
+    }>;
+
+    try {
+      rows = await this.db
+        .select({
+          id: users.id,
+          email: users.email,
+          role: organizationMemberships.role,
+          branchScope: organizationMemberships.branchScope,
+          pinRequired: organizationMemberships.pinRequired,
+          permissions: organizationMemberships.permissions,
+          active: organizationMemberships.active,
+          navAllowlist: organizationMemberships.navAllowlist,
+          lastActivityAt: organizationMemberships.lastActivityAt,
+        })
+        .from(organizationMemberships)
+        .innerJoin(users, eq(users.id, organizationMemberships.userId))
+        .where(eq(organizationMemberships.organizationId, organizationId));
+    } catch (err) {
+      this.logger.warn(
+        `listUsers full select failed; using core columns: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      rows = await this.db
+        .select({
+          id: users.id,
+          email: users.email,
+          role: organizationMemberships.role,
+          branchScope: organizationMemberships.branchScope,
+          pinRequired: organizationMemberships.pinRequired,
+          permissions: organizationMemberships.permissions,
+        })
+        .from(organizationMemberships)
+        .innerJoin(users, eq(users.id, organizationMemberships.userId))
+        .where(eq(organizationMemberships.organizationId, organizationId));
+    }
 
     return rows.map((row) => ({
       id: row.id,
