@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
+import { ensureCriticalSchema } from "./ensure-schema.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(scriptDir, "..");
@@ -104,6 +105,10 @@ requireEnv("JWT_ACCESS_SECRET");
 
 if (!runSchemaPush()) {
   process.exit(1);
+}
+
+if (!ensureCriticalSchema()) {
+  console.warn("[railway] ensure-schema had errors — continuing; login may fail if columns are missing.");
 }
 
 await runSeedBoot();

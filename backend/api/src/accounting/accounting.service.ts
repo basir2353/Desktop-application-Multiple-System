@@ -870,7 +870,15 @@ export class AccountingService implements OnApplicationBootstrap {
     }
 
     const rows = await this.db
-      .select()
+      .select({
+        id: popsCashMovements.id,
+        sessionId: popsCashMovements.sessionId,
+        type: popsCashMovements.type,
+        amountPkr: popsCashMovements.amountPkr,
+        reason: popsCashMovements.reason,
+        recordedBy: popsCashMovements.recordedBy,
+        createdAt: popsCashMovements.createdAt,
+      })
       .from(popsCashMovements)
       .where(
         and(
@@ -888,8 +896,8 @@ export class AccountingService implements OnApplicationBootstrap {
       reason: r.reason,
       recordedBy: r.recordedBy,
       createdAt: r.createdAt.toISOString(),
-      employeeId: r.employeeId ?? null,
-      partyKind: (r.partyKind as "supplier" | "customer" | "employee" | null) ?? null,
+      employeeId: null as string | null,
+      partyKind: null as "supplier" | "customer" | "employee" | null,
     }));
   }
 
@@ -911,8 +919,12 @@ export class AccountingService implements OnApplicationBootstrap {
   }
 
   private async computeSessionCashAdjustments(sessionId: string): Promise<number> {
+    // Select only core columns — older DBs may lack employee_id / party_kind.
     const rows = await this.db
-      .select()
+      .select({
+        type: popsCashMovements.type,
+        amountPkr: popsCashMovements.amountPkr,
+      })
       .from(popsCashMovements)
       .where(eq(popsCashMovements.sessionId, sessionId));
     return rows.reduce((s, r) => s + (r.type === "paid_in" ? r.amountPkr : -r.amountPkr), 0);
