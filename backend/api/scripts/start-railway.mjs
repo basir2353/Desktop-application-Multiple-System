@@ -36,6 +36,9 @@ function runSchemaPush() {
     console.error(
       "[railway] Schema push failed — ensure DATABASE_URL is set and Postgres is reachable.",
     );
+    console.warn(
+      "[railway] Continuing startup anyway (existing Railway DBs often fail drizzle push on PK alters). ensure-schema will patch critical columns.",
+    );
     return false;
   }
 
@@ -103,8 +106,10 @@ function startApi() {
 requireEnv("DATABASE_URL");
 requireEnv("JWT_ACCESS_SECRET");
 
+// Never abort boot on drizzle push — production DBs frequently hit benign alter conflicts
+// (e.g. "column id is in a primary key"), which previously caused permanent 502s.
 if (!runSchemaPush()) {
-  process.exit(1);
+  console.warn("[railway] Schema push reported errors; starting API with existing schema.");
 }
 
 if (!ensureCriticalSchema()) {
