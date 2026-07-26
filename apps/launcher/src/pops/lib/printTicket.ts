@@ -23,10 +23,14 @@ import {
 } from "./kotPrintSettings";
 import { toPng } from "html-to-image";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
-import { printImageToSystemPrinter, printToSystemPrinter } from "./systemPrinters";
+import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter } from "./systemPrinters";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
+  isNarrowPaperWidth,
+  isWidePaperWidth,
   loadThermalPrintSettings,
+  paperWidthMm,
+  receiptRenderWidthPx,
   thermalCharsPerLine,
   thermalContentWidthMm,
   type ThermalPrintSettings,
@@ -515,12 +519,12 @@ export function buildThermalPlainText(
       ? resolveBillPrintSettingsForReceipt(input.branchCode)
       : DEFAULT_BILL_PRINT_SETTINGS);
   const fields = billSettings.fields;
-  // 80mm always uses columns — Clear is for narrow 58mm rolls only.
-  const useClearLayout = thermal.receiptLayout === "clear" && paper === "58mm";
+  // Wide rolls use columns; Clear is for narrow rolls only.
+  const useClearLayout = thermal.receiptLayout === "clear" && isNarrowPaperWidth(paper, thermal.customPaperWidthMm);
   const showPrice =
     !useClearLayout &&
     Boolean(fields.itemAmount) &&
-    (thermal.showUnitPrice || paper === "80mm");
+    (thermal.showUnitPrice || isWidePaperWidth(paper, thermal.customPaperWidthMm));
   const showAmt = Boolean(fields.itemAmount);
   const dash = "-".repeat(width);
   const equals = "=".repeat(width);
@@ -735,9 +739,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       ? loadThermalPrintSettings(input.branchCode)
       : DEFAULT_THERMAL_PRINT_SETTINGS;
   const paperSize = resolvePaperSize(input, thermal);
-  const narrowPaper = paperSize === "58mm";
+  const narrowPaper = isNarrowPaperWidth(paperSize, thermal.customPaperWidthMm);
   const marginMm = thermal.marginMm;
-  const contentWidthMm = thermalContentWidthMm(paperSize, marginMm);
+  const contentWidthMm = thermalContentWidthMm(paperSize, marginMm, thermal.customPaperWidthMm);
   const moneyCompact = thermal.compactMoney;
   activeShowCurrencyPrefix = thermal.showCurrencyPrefix === true;
   const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
@@ -756,15 +760,17 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalItems = input.lines.length;
   const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
 
-  // Pay / invoice receipt: columns on 80mm; Clear only when user chose it on 58mm.
+  // Pay / invoice receipt: columns on wide rolls; Clear only on narrow rolls.
   const useClearLayout =
-    isReceipt && thermal.receiptLayout === "clear" && paperSize === "58mm";
+    isReceipt && thermal.receiptLayout === "clear" && isNarrowPaperWidth(paperSize, thermal.customPaperWidthMm);
   const showAmtColEarly = isReceipt && Boolean(fields?.itemAmount);
   const showPriceCol =
     showAmtColEarly &&
     !useClearLayout &&
     !narrowPaper &&
-    (thermal.showUnitPrice || paperSize === "80mm" || thermal.receiptLayout === "columns");
+    (thermal.showUnitPrice ||
+      isWidePaperWidth(paperSize, thermal.customPaperWidthMm) ||
+      thermal.receiptLayout === "columns");
 
   const clearItemBlocks =
     useClearLayout && showAmtColEarly
@@ -1644,9 +1650,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         size: ${
           paperSize === "A4"
             ? "A4 portrait"
-            : paperSize === "58mm"
-              ? "58mm 200mm"
-              : "80mm 297mm"
+            : `${paperWidthMm(paperSize, thermal.customPaperWidthMm)}mm 297mm`
         };
       }
     }
@@ -1873,7 +1877,7 @@ export async function printHtmlDocumentDetailed(
   // Prefer silent Auto print; always allow dialog fallback so PDF/XPS/driver failures still print.
   const requireNamed = options?.requireNamedPrinter ?? false;
 
-  if (systemPrinterName) {
+  if (systemPrinterName && !isVirtualSystemPrinter(systemPrinterName)) {
     const plain = htmlToPlainText(html);
     if (!plain) {
       return { ok: false, usedNamedPrinter: false, error: "Print content was empty after conversion." };
@@ -1917,11 +1921,11 @@ export function buildThermalDialogHtml(
   plain: string,
   paperSize: PrinterPaperSize,
   marginMm = 2,
+  customPaperWidthMm = DEFAULT_THERMAL_PRINT_SETTINGS.customPaperWidthMm,
 ): string {
-  const pageW = paperSize === "58mm" ? 58 : paperSize === "A4" ? 210 : 80;
+  const pageW = paperWidthMm(paperSize, customPaperWidthMm);
   const side = Math.max(0, Math.min(1, marginMm));
-  // Larger bold monospace fills 80mm / 3" and stays sharp on thermal + screen.
-  const fontPx = paperSize === "58mm" ? 12 : paperSize === "A4" ? 13 : 13;
+  const fontPx = isNarrowPaperWidth(paperSize, customPaperWidthMm) ? 12 : 13;
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1973,14 +1977,6 @@ export function buildPrintPreviewHtml(input: PrintTicketInput): string {
   return buildTicketHtml(input);
 }
 
-function receiptRenderWidthPx(paper: PrinterPaperSize): number {
-  // Match typical 203 DPI thermal dots so GDI does not smash a huge PNG into ~3".
-  // 58mm ≈ 2.28" × 203 ≈ 463; 80mm ≈ 3.15" × 203 ≈ 639.
-  if (paper === "58mm") return 464;
-  if (paper === "A4") return 794;
-  return 640;
-}
-
 /** Force pure black/white — grey anti-alias dither looks broken on thermal. */
 async function binarizePngBytes(png: Uint8Array, threshold = 168): Promise<Uint8Array | null> {
   if (typeof document === "undefined" || typeof createImageBitmap === "undefined") return png;
@@ -2019,18 +2015,14 @@ async function binarizePngBytes(png: Uint8Array, threshold = 168): Promise<Uint8
   }
 }
 
-/** Virtual printers that cause PDF/XPS zoom blur — never use for Auto thermal print. */
-function isVirtualPdfOrXpsPrinter(name: string): boolean {
-  return /print\s*to\s*pdf|microsoft\s*pdf|xps\s*document|onenote|fax\s*printer/i.test(name.trim());
-}
-
 /** Rasterize styled ticket HTML so Auto/named printers print the exact preview design. */
 export async function renderTicketHtmlToPngBytes(
   html: string,
   paper: PrinterPaperSize,
+  customPaperWidthMm = DEFAULT_THERMAL_PRINT_SETTINGS.customPaperWidthMm,
 ): Promise<Uint8Array | null> {
   if (typeof document === "undefined") return null;
-  const widthPx = receiptRenderWidthPx(paper);
+  const widthPx = receiptRenderWidthPx(paper, customPaperWidthMm);
   // 2× is sharp enough on 203 DPI and avoids oversized soft bitmaps.
   const pixelRatio = 2;
   const host = document.createElement("div");
@@ -2221,18 +2213,19 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
   const paper = resolvePaperSize(input, thermal);
   // Same styled HTML for preview, Auto print, and dialog — never a different slip.
   const styledHtml = buildTicketHtml(input);
-  const paperMm = paper === "58mm" ? 58 : paper === "A4" ? 210 : 80;
+  const paperMm = paperWidthMm(paper, thermal.customPaperWidthMm);
 
   if (systemPrinterName) {
-    if (isVirtualPdfOrXpsPrinter(systemPrinterName)) {
-      return {
-        ok: false,
-        usedNamedPrinter: false,
-        error:
-          "Linked printer is PDF/XPS — link the SAM4S / thermal printer instead for direct print (no PDF zoom).",
-      };
+    // PDF/XPS/Fax — open the Windows print dialog (user picks save location / paper size).
+    if (isVirtualSystemPrinter(systemPrinterName)) {
+      const opened = await printHtmlDocumentAndWait(styledHtml, docTitle);
+      if (!opened) {
+        return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
+      }
+      return { ok: true, usedNamedPrinter: false };
     }
-    const png = await renderTicketHtmlToPngBytes(styledHtml, paper);
+
+    const png = await renderTicketHtmlToPngBytes(styledHtml, paper, thermal.customPaperWidthMm);
     if (!png?.length) {
       return {
         ok: false,

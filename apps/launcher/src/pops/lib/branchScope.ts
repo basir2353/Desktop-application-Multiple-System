@@ -17,3 +17,15 @@ export function storeBranchCodes(
   }
   return [selectedCode];
 }
+
+/** Kitchen monitoring — include every branch (HQ included) so POS orders on any branch appear. */
+export function kitchenBranchCodes(
+  selectedCode: string | undefined,
+  allBranches: readonly { code: string }[] | undefined,
+): string[] {
+  if (!selectedCode) return [];
+  if (isMonitoringBranch(selectedCode)) {
+    return (allBranches ?? []).map((b) => b.code);
+  }
+  return [selectedCode];
+}

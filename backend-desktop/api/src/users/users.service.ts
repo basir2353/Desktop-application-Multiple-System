@@ -253,6 +253,73 @@ export class UsersService implements OnApplicationBootstrap {
     };
   }
 
+  /** Staff who can print (for printer-section assignment). Uses pops.read — not pops.users.manage. */
+  async listAssignableStaff(organizationId: string, branchCode?: string) {
+    const printRoles = new Set([
+      "waiter",
+      "cashier",
+      "kitchen",
+      "manager",
+      "rider",
+      "admin",
+      "owner",
+    ]);
+    const code = branchCode?.trim().toUpperCase();
+
+    let rows: Array<{
+      id: string;
+      email: string;
+      role: string;
+      branchScope: string;
+      active?: boolean | null;
+    }>;
+
+    try {
+      rows = await this.db
+        .select({
+          id: users.id,
+          email: users.email,
+          role: organizationMemberships.role,
+          branchScope: organizationMemberships.branchScope,
+          active: organizationMemberships.active,
+        })
+        .from(organizationMemberships)
+        .innerJoin(users, eq(users.id, organizationMemberships.userId))
+        .where(eq(organizationMemberships.organizationId, organizationId));
+    } catch (err) {
+      this.logger.warn(
+        `listAssignableStaff full select failed; using core columns: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      rows = await this.db
+        .select({
+          id: users.id,
+          email: users.email,
+          role: organizationMemberships.role,
+          branchScope: organizationMemberships.branchScope,
+        })
+        .from(organizationMemberships)
+        .innerJoin(users, eq(users.id, organizationMemberships.userId))
+        .where(eq(organizationMemberships.organizationId, organizationId));
+    }
+
+    return rows
+      .filter((row) => printRoles.has(row.role))
+      .filter((row) => row.active !== false)
+      .filter((row) => {
+        if (!code) return true;
+        const scope = row.branchScope.trim().toUpperCase();
+        return scope === "ALL" || scope === code;
+      })
+      .map((row) => ({
+        id: row.id,
+        email: row.email,
+        name: staffDisplayName(row.email),
+        role: formatRoleLabel(row.role),
+        branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async listUsers(organizationId: string) {
     // Core columns first — Railway DBs may still be missing active/nav_allowlist
     // until ensure-schema runs on boot.
@@ -602,4 +669,10 @@ function formatRoleLabel(role: string): string {
   if (role === "owner") return "Admin";
   const template = POPS_ROLE_TEMPLATES.find((r) => r.id === role);
   return template?.label ?? role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function staffDisplayName(email: string): string {
+  const local = email.split("@")[0] ?? email;
+  const words = local.replace(/[._-]+/g, " ").trim().split(/\s+/);
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }

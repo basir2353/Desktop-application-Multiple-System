@@ -39,10 +39,14 @@ async function createKitchenTicketRemote(input: CreateKitchenTicket): Promise<Ki
   return kitchenTicketSchema.parse(await res.json());
 }
 
-export async function fetchKitchenTickets(branchCode: string): Promise<KitchenTicket[]> {
+export async function fetchKitchenTickets(
+  branchCode: string,
+  opts?: { scope?: "active" | "done" | "all" },
+): Promise<KitchenTicket[]> {
   const offline = loadOfflineKots();
   try {
     const params = new URLSearchParams({ branchCode });
+    if (opts?.scope) params.set("scope", opts.scope);
     const res = await authFetch(`/v1/kitchen/tickets?${params}`);
     if (!res.ok) {
       const err = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -50,11 +54,19 @@ export async function fetchKitchenTickets(branchCode: string): Promise<KitchenTi
     }
     const json: unknown = await res.json();
     const remote = kitchenTicketListSchema.parse(json).tickets;
+    if (opts?.scope === "done") {
+      return remote.filter((t) => t.status === "done");
+    }
     const remoteIds = new Set(remote.map((t) => t.id));
     return [...offline.filter((t) => !remoteIds.has(t.id)), ...remote];
   } catch {
+    if (opts?.scope === "done") return [];
     return offline;
   }
+}
+
+export async function fetchCompletedKitchenTickets(branchCode: string): Promise<KitchenTicket[]> {
+  return fetchKitchenTickets(branchCode, { scope: "done" });
 }
 
 export async function createKitchenTicketRemoteOnly(

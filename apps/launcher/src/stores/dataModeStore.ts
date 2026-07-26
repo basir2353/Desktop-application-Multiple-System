@@ -3,12 +3,18 @@ import { persist } from "zustand/middleware";
 
 export type DataMode = "cloud" | "local";
 
+/** Which API host the desktop/web client calls (works in installed .exe). */
+export type ApiPreset = "live" | "local" | "custom";
+
 type DataModeState = {
   dataMode: DataMode;
-  /** Runtime API URL — overrides VITE_API_BASE_URL when set (cloud mode). */
+  /** Live / local / custom API selection for installed apps. */
+  apiPreset: ApiPreset;
+  /** Custom API URL when apiPreset is "custom". */
   cloudApiUrl: string;
   lastSyncedAt: string | null;
   setDataMode: (mode: DataMode) => void;
+  setApiPreset: (preset: ApiPreset) => void;
   setCloudApiUrl: (url: string) => void;
   markSynced: () => void;
 };
@@ -16,14 +22,16 @@ type DataModeState = {
 export const useDataModeStore = create<DataModeState>()(
   persist(
     (set) => ({
-      dataMode: "cloud",
+      dataMode: "local",
+      apiPreset: "local",
       cloudApiUrl: "",
       lastSyncedAt: null,
       setDataMode: (dataMode) => set({ dataMode }),
+      setApiPreset: (apiPreset) => set({ apiPreset }),
       setCloudApiUrl: (cloudApiUrl) => set({ cloudApiUrl: cloudApiUrl.trim().replace(/\/$/, "") }),
       markSynced: () => set({ lastSyncedAt: new Date().toISOString() }),
     }),
-    { name: "platform-data-mode-v1" },
+    { name: "platform-data-mode-v2" },
   ),
 );
 

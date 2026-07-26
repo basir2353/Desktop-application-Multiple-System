@@ -37,7 +37,28 @@ export async function fetchDashboard(branchCode: string): Promise<DashboardRespo
   const res = await authFetch(`/v1/operations/dashboard?${params}`);
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(err?.message ?? `Dashboard failed: ${res.status}`);
+    const message = err?.message ?? `Dashboard failed: ${res.status}`;
+    // Hosted API may 500 when inventory tables are missing — degrade gracefully.
+    if (res.status >= 500) {
+      return dashboardResponseSchema.parse({
+        branchCode,
+        metrics: {
+          liveSales: { amountPkr: 0, changePercent: 0 },
+          activeOrders: { total: 0, dineIn: 0, takeaway: 0, delivery: 0 },
+          kitchenQueue: { total: 0, priority: 0, slaStatus: "green" },
+          lowStock: { skuCount: 0, criticalCount: 0 },
+        },
+        recentSales: [],
+        alerts: [
+          {
+            id: "dashboard-degraded",
+            text: "Dashboard metrics temporarily unavailable from server — sales below use live orders.",
+            tone: "warning",
+          },
+        ],
+      });
+    }
+    throw new Error(message);
   }
   const json: unknown = await res.json();
   return dashboardResponseSchema.parse(json);

@@ -1,9 +1,11 @@
 import {
   accessControlSchema,
+  assignableStaffOptionSchema,
   inviteOrgUserResultSchema,
   invitePreviewSchema,
   pendingInviteSchema,
   type AccessControl,
+  type AssignableStaffOption,
   type CreateOrgUser,
   type InviteOrgUser,
   type InviteOrgUserResult,
@@ -58,6 +60,16 @@ export async function fetchOrgUsers(): Promise<OrgUser[]> {
   const users = json.map((row) => normalizeOrgUser(row));
   cacheOrgUsersForPrint(users);
   return users;
+}
+
+/** Staff for printer assignment — works with pops.read (no users.manage needed). */
+export async function fetchAssignableStaff(branchCode?: string): Promise<AssignableStaffOption[]> {
+  const params = branchCode?.trim() ? `?${new URLSearchParams({ branchCode: branchCode.trim() })}` : "";
+  const res = await authFetch(`/v1/users/assignable${params}`);
+  if (!res.ok) throw new Error(`Assignable staff failed: ${res.status}`);
+  const json: unknown = await res.json();
+  if (!Array.isArray(json)) throw new Error("Invalid assignable staff response");
+  return json.map((row) => assignableStaffOptionSchema.parse(row));
 }
 
 export async function fetchPendingInvites(): Promise<PendingInvite[]> {

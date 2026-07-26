@@ -461,9 +461,11 @@ export function PopsDashboardPage(): JSX.Element {
     {
       label: "Low stock SKUs",
       value: dashboardQuery.isLoading ? "…" : String(metrics?.lowStock.skuCount ?? 0),
-      hint: metrics
-        ? `${metrics.lowStock.criticalCount} critical reorder`
-        : "Loading inventory…",
+      hint: dashboardQuery.isError
+        ? "Inventory metrics unavailable — other dashboard data still works"
+        : metrics
+          ? `${metrics.lowStock.criticalCount} critical reorder`
+          : "Loading inventory…",
     },
   ];
 
@@ -569,8 +571,9 @@ export function PopsDashboardPage(): JSX.Element {
       </div>
 
       {dashboardQuery.isError && !isSessionExpiredError(dashboardQuery.error) ? (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-          {(dashboardQuery.error as Error).message}
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          Dashboard metrics could not load ({(dashboardQuery.error as Error).message}). Sales and
+          kitchen counts below still update from live orders.
         </div>
       ) : null}
 

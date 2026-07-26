@@ -122,6 +122,15 @@ export const accessControlSchema = z.object({
   roles: z.array(roleTemplateSchema),
 });
 
+/** Staff who can be assigned to printer sections (waiters, cashiers, kitchen, …). */
+export const assignableStaffOptionSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string(),
+  name: z.string(),
+  role: z.string(),
+  branchScope: z.string(),
+});
+
 export type PopsRole = z.infer<typeof popsRoleSchema>;
 export type OrgUser = z.infer<typeof orgUserSchema>;
 export type CreateOrgUser = z.infer<typeof createOrgUserSchema>;
@@ -134,6 +143,7 @@ export type InvitePreview = z.infer<typeof invitePreviewSchema>;
 export type AcceptInvite = z.infer<typeof acceptInviteSchema>;
 export type RoleTemplate = z.infer<typeof roleTemplateSchema>;
 export type AccessControl = z.infer<typeof accessControlSchema>;
+export type AssignableStaffOption = z.infer<typeof assignableStaffOptionSchema>;
 
 export const POPS_CAPABILITIES: { id: string; label: string }[] = [
   { id: "pops.pos.void", label: "Void line" },

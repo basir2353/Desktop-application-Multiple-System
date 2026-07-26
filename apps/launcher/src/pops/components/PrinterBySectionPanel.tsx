@@ -45,6 +45,8 @@ type Props = {
   sections: PrinterSection[];
   routing: PrinterRoutingState;
   people: AssignablePerson[];
+  peopleLoading?: boolean;
+  peopleError?: string | null;
   notify: (message: string) => void;
 };
 
@@ -60,6 +62,8 @@ export function PrinterBySectionPanel({
   sections,
   routing,
   people,
+  peopleLoading = false,
+  peopleError = null,
   notify,
 }: Props): JSX.Element {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
@@ -496,10 +500,16 @@ export function PrinterBySectionPanel({
                     value={peopleSearch}
                     onChange={(e) => setPeopleSearch(e.target.value)}
                   />
-                  {availablePeople.length === 0 ? (
+                  {peopleLoading ? (
+                    <p className="text-[11px] text-slate-500">Loading staff…</p>
+                  ) : peopleError ? (
+                    <p className="text-[11px] text-amber-300">
+                      {peopleError} Restart the API if you just updated the app.
+                    </p>
+                  ) : availablePeople.length === 0 ? (
                     <p className="text-[11px] text-slate-500">
                       {people.length === 0
-                        ? "No users or waiters found."
+                        ? "No users or waiters for this branch. Add staff under Users / Waiters with branch access, or set branch scope to All."
                         : "Everyone is already assigned, or none match your search."}
                     </p>
                   ) : (

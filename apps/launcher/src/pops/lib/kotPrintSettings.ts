@@ -178,9 +178,12 @@ function migrateKotToClassicSlip(settings: KotPrintSettings): KotPrintSettings {
   };
 }
 
+export const KOT_FONT_SIZE_MIN = 12;
+export const KOT_FONT_SIZE_MAX = 35;
+
 function clampFontSize(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_KOT_PRINT_SETTINGS.baseFontSize;
-  return Math.max(12, Math.min(22, Math.round(value)));
+  return Math.max(KOT_FONT_SIZE_MIN, Math.min(KOT_FONT_SIZE_MAX, Math.round(value)));
 }
 
 function clampLineFont(value: number): number {

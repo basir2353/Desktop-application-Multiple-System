@@ -46,9 +46,10 @@ API service → **Variables** → paste from [`railway.env.example`](./railway.e
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
 | `JWT_ACCESS_SECRET` | Random string, min 32 chars |
 | `NODE_ENV` | `production` |
+| `SEED_SUPER_ADMIN_EMAIL` | `superadmin@platform.local` |
 | `SEED_USER_EMAIL` | `admin@platform.local` |
 | `SEED_USER_PASSWORD` | `changeme-please-01` |
-| `CORS_ORIGINS` | `http://127.0.0.1:1420,tauri://localhost,https://tauri.localhost` |
+| `CORS_ORIGINS` | `http://127.0.0.1:1420,tauri://localhost,https://tauri.localhost,https://backend-desktop-production-5505.up.railway.app` |
 
 Do **not** set `PORT` — Railway injects it.
 

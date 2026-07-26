@@ -459,7 +459,13 @@ export class OperationsService implements OnModuleInit {
     const row = branch[0];
     if (!row) throw new NotFoundException(`Branch not found: ${branchCode}`);
 
-    const { orders } = await this.billing.listOrders(organizationId, branchCode);
+    let orders: CompletedOrder[] = [];
+    try {
+      const listed = await this.billing.listOrders(organizationId, branchCode);
+      orders = listed.orders;
+    } catch {
+      orders = [];
+    }
     const completedOrders = completedOrdersFromList(orders);
     const todayKey = karachiDateKey(new Date());
     const yesterdayKey = karachiDateKey(new Date(Date.now() - 86_400_000));
@@ -500,17 +506,7 @@ export class OperationsService implements OnModuleInit {
     const slaStatus =
       kitchenRows.length > 12 ? "red" : kitchenRows.length > 8 ? "yellow" : "green";
 
-    const ingredientRows = await this.db
-      .select({
-        sku: popsIngredients.sku,
-        name: popsIngredients.name,
-        qty: popsIngredients.currentStock,
-        minQty: popsIngredients.reorderLevel,
-      })
-      .from(popsIngredients)
-      .where(
-        and(eq(popsIngredients.branchId, row.id), eq(popsIngredients.organizationId, organizationId)),
-      );
+    const ingredientRows = await this.loadLowStockRows(organizationId, row.id);
 
     const lowStock = ingredientRows.filter((i) => i.minQty > 0 && i.qty < i.minQty);
     const critical = lowStock.filter((i) => i.qty < i.minQty * 0.5);
@@ -536,7 +532,7 @@ export class OperationsService implements OnModuleInit {
       ...alertRows.map((a) => ({
         id: a.id,
         text: a.text,
-        tone: a.tone as "danger" | "warning" | "info",
+        tone: normalizeDashboardAlertTone(a.tone),
       })),
     ];
 
@@ -569,6 +565,51 @@ export class OperationsService implements OnModuleInit {
       })),
       alerts: mergedAlerts,
     };
+  }
+
+  /** Ingredients table (new inventory) with legacy pops_inventory_items fallback. */
+  private async loadLowStockRows(
+    organizationId: string,
+    branchId: string,
+  ): Promise<{ sku: string; name: string; qty: number; minQty: number }[]> {
+    try {
+      const ingredientRows = await this.db
+        .select({
+          sku: popsIngredients.sku,
+          name: popsIngredients.name,
+          qty: popsIngredients.currentStock,
+          minQty: popsIngredients.reorderLevel,
+        })
+        .from(popsIngredients)
+        .where(
+          and(
+            eq(popsIngredients.branchId, branchId),
+            eq(popsIngredients.organizationId, organizationId),
+          ),
+        );
+      if (ingredientRows.length > 0) return ingredientRows;
+    } catch {
+      /* pops_ingredients may not exist on older Railway deployments */
+    }
+
+    try {
+      return await this.db
+        .select({
+          sku: popsInventoryItems.sku,
+          name: popsInventoryItems.name,
+          qty: popsInventoryItems.qty,
+          minQty: popsInventoryItems.minQty,
+        })
+        .from(popsInventoryItems)
+        .where(
+          and(
+            eq(popsInventoryItems.branchId, branchId),
+            eq(popsInventoryItems.organizationId, organizationId),
+          ),
+        );
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -630,6 +671,11 @@ function billChannelLabel(tableLabel: string): "Dine-in" | "Takeaway" | "Deliver
   if (label === "delivery" || label.startsWith("dl-")) return "Delivery";
   if (label.includes("takeaway") || label.startsWith("tw-")) return "Takeaway";
   return "Dine-in";
+}
+
+function normalizeDashboardAlertTone(tone: string): "danger" | "warning" | "info" {
+  if (tone === "danger" || tone === "warning" || tone === "info") return tone;
+  return "info";
 }
 
 function normalizeBranchCode(raw: string): string {

@@ -6,15 +6,22 @@ import { usePopsStore } from "../../../stores/popsStore";
 import { fetchCompletedOrders } from "../../api/billing";
 import {
   bumpKitchenPriority,
+  fetchCompletedKitchenTickets,
   fetchKitchenTickets,
   updateKitchenTicket,
 } from "../../api/kitchen";
 import { fetchPopsBranches } from "../../api/operations";
 import { fetchOrgUsers } from "../../api/users";
-import { isMonitoringBranch, storeBranchCodes } from "../../lib/branchScope";
+import { isMonitoringBranch, kitchenBranchCodes, storeBranchCodes } from "../../lib/branchScope";
+import {
+  cacheKitchenCompleted,
+  loadCachedKitchenCompleted,
+  pruneCachedKitchenCompleted,
+} from "../../lib/kitchenCompletedCache";
 import { OrderDetailModal } from "../../components/OrderDetailModal";
 import {
-  buildUnifiedOrders,
+  kitchenActiveOrders,
+  kitchenCompletedOrders,
   unifiedOrderRef,
   unifiedOrderStatusLabel,
   unifiedOrderStatusTone,
@@ -96,14 +103,6 @@ function ticketToPrint(
   };
 }
 
-function isActiveKitchenOrder(order: UnifiedOrder): boolean {
-  return order.source === "kitchen";
-}
-
-function isCompletedKitchenOrder(order: UnifiedOrder): boolean {
-  return order.source === "bill";
-}
-
 function kitchenItemsSummary(order: UnifiedOrder): string {
   if (order.source === "kitchen") {
     return parseItemsSummary(order.ticket.itemsSummary)
@@ -121,6 +120,7 @@ export function KitchenPage(): JSX.Element {
   const [selectedOrder, setSelectedOrder] = useState<UnifiedOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [completedBump, setCompletedBump] = useState(0);
   const monitoringView = isMonitoringBranch(branch?.code);
 
   // Warm UUID→name cache so KOT "By" shows staff name, not user id.
@@ -141,6 +141,11 @@ export function KitchenPage(): JSX.Element {
     [branch?.code, branchesQuery.data],
   );
 
+  const kitchenBranchScope = useMemo(
+    () => kitchenBranchCodes(branch?.code, branchesQuery.data),
+    [branch?.code, branchesQuery.data],
+  );
+
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code, scopedBranchCodes],
     enabled: scopedBranchCodes.length > 0,
@@ -154,12 +159,12 @@ export function KitchenPage(): JSX.Element {
   });
 
   const ticketsQuery = useQuery({
-    queryKey: ["kitchen", branch?.code, scopedBranchCodes],
-    enabled: scopedBranchCodes.length > 0,
+    queryKey: ["kitchen", "active", branch?.code, kitchenBranchScope],
+    enabled: kitchenBranchScope.length > 0,
     queryFn: async () => {
       const branchByTicketId = new Map<string, string>();
       const tickets: KitchenTicket[] = [];
-      for (const code of scopedBranchCodes) {
+      for (const code of kitchenBranchScope) {
         const rows = await fetchKitchenTickets(code);
         for (const row of rows) {
           branchByTicketId.set(row.id, code);
@@ -172,16 +177,49 @@ export function KitchenPage(): JSX.Element {
     refetchInterval: 5_000,
   });
 
+  const doneTicketsQuery = useQuery({
+    queryKey: ["kitchen", "done", branch?.code, kitchenBranchScope],
+    enabled: kitchenBranchScope.length > 0,
+    queryFn: async () => {
+      const branchByTicketId = new Map<string, string>();
+      const tickets: KitchenTicket[] = [];
+      for (const code of kitchenBranchScope) {
+        const rows = await fetchCompletedKitchenTickets(code);
+        for (const row of rows) {
+          branchByTicketId.set(row.id, code);
+          tickets.push(row);
+        }
+      }
+      pruneCachedKitchenCompleted(new Set(tickets.map((t) => t.id)));
+      const cached = loadCachedKitchenCompleted(kitchenBranchScope);
+      const remoteIds = new Set(tickets.map((t) => t.id));
+      for (const row of cached) {
+        if (!remoteIds.has(row.id)) {
+          tickets.push(row);
+        }
+      }
+      tickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return { tickets, branchByTicketId };
+    },
+    refetchInterval: 5_000,
+  });
+
   const kitchenTickets = ticketsQuery.data?.tickets ?? [];
   const ticketBranchById = ticketsQuery.data?.branchByTicketId ?? new Map<string, string>();
+  const doneTicketBranchById = doneTicketsQuery.data?.branchByTicketId ?? ticketBranchById;
 
-  const allOrders = useMemo(
-    () => buildUnifiedOrders(ordersQuery.data ?? [], kitchenTickets),
-    [ordersQuery.data, kitchenTickets],
-  );
+  const activeOrders = useMemo(() => kitchenActiveOrders(kitchenTickets), [kitchenTickets]);
 
-  const activeOrders = useMemo(() => allOrders.filter(isActiveKitchenOrder), [allOrders]);
-  const completedOrders = useMemo(() => allOrders.filter(isCompletedKitchenOrder), [allOrders]);
+  const completedOrders = useMemo(() => {
+    const doneTickets = doneTicketsQuery.data?.tickets ?? [];
+    const cachedOnly = loadCachedKitchenCompleted(kitchenBranchScope);
+    const mergedDone = [...doneTickets];
+    const seen = new Set(doneTickets.map((t) => t.id));
+    for (const row of cachedOnly) {
+      if (!seen.has(row.id)) mergedDone.push(row);
+    }
+    return kitchenCompletedOrders(ordersQuery.data ?? [], mergedDone, kitchenTickets);
+  }, [ordersQuery.data, doneTicketsQuery.data, kitchenBranchScope, kitchenTickets, completedBump]);
 
   const sectionOrders = view === "active" ? activeOrders : completedOrders;
 
@@ -207,16 +245,74 @@ export function KitchenPage(): JSX.Element {
   }
 
   const completeMutation = useMutation({
-    mutationFn: (id: string) => updateKitchenTicket(id, { status: "done" }),
+    mutationFn: async ({ id, ticket, branchCode }: { id: string; ticket: KitchenTicket; branchCode: string }) => {
+      const updated = await updateKitchenTicket(id, { status: "done" });
+      cacheKitchenCompleted(updated, branchCode);
+      return { updated, branchCode };
+    },
+    onMutate: async ({ id, ticket, branchCode }) => {
+      const doneTicket: KitchenTicket = { ...ticket, status: "done" };
+      cacheKitchenCompleted(doneTicket, branchCode);
+
+      const activeKey = ["kitchen", "active", branch?.code, kitchenBranchScope] as const;
+      const doneKey = ["kitchen", "done", branch?.code, kitchenBranchScope] as const;
+
+      await queryClient.cancelQueries({ queryKey: activeKey });
+      await queryClient.cancelQueries({ queryKey: doneKey });
+
+      const prevActive = queryClient.getQueryData<{
+        tickets: KitchenTicket[];
+        branchByTicketId: Map<string, string>;
+      }>(activeKey);
+      const prevDone = queryClient.getQueryData<{
+        tickets: KitchenTicket[];
+        branchByTicketId: Map<string, string>;
+      }>(doneKey);
+
+      queryClient.setQueryData(activeKey, (old) => {
+        if (!old) return old;
+        return {
+          tickets: old.tickets.filter((row) => row.id !== id),
+          branchByTicketId: old.branchByTicketId,
+        };
+      });
+
+      queryClient.setQueryData(doneKey, (old) => {
+        const branchByTicketId = new Map(old?.branchByTicketId ?? []);
+        branchByTicketId.set(id, branchCode);
+        const tickets = [doneTicket, ...(old?.tickets ?? []).filter((row) => row.id !== id)];
+        return { tickets, branchByTicketId };
+      });
+
+      setCompletedBump((n) => n + 1);
+
+      return { prevActive, prevDone };
+    },
     onSuccess: async () => {
       invalidate();
-      await queryClient.refetchQueries({ queryKey: ["orders", branch?.code] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["kitchen", "active"] }),
+        queryClient.refetchQueries({ queryKey: ["kitchen", "done"] }),
+        queryClient.refetchQueries({ queryKey: ["orders", branch?.code] }),
+      ]);
       setSelectedOrder(null);
       setCompletingId(null);
       setView("completed");
       setNotice("Order completed and moved to Completed.");
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _vars, context) => {
+      if (context?.prevActive) {
+        queryClient.setQueryData(
+          ["kitchen", "active", branch?.code, kitchenBranchScope],
+          context.prevActive,
+        );
+      }
+      if (context?.prevDone) {
+        queryClient.setQueryData(
+          ["kitchen", "done", branch?.code, kitchenBranchScope],
+          context.prevDone,
+        );
+      }
       setCompletingId(null);
       setNotice(err.message);
     },
@@ -236,9 +332,9 @@ export function KitchenPage(): JSX.Element {
     onError: (err: Error) => setNotice(err.message),
   });
 
-  const isLoading = ordersQuery.isLoading || ticketsQuery.isLoading;
-  const isError = ordersQuery.isError || ticketsQuery.isError;
-  const errorMessage = (ordersQuery.error ?? ticketsQuery.error) as Error | null;
+  const isLoading = ordersQuery.isLoading || ticketsQuery.isLoading || doneTicketsQuery.isLoading;
+  const isError = ordersQuery.isError || ticketsQuery.isError || doneTicketsQuery.isError;
+  const errorMessage = (ordersQuery.error ?? ticketsQuery.error ?? doneTicketsQuery.error) as Error | null;
 
   if (!branch?.code) {
     return <p className="text-sm text-slate-500">Select a branch to view kitchen orders.</p>;
@@ -257,6 +353,7 @@ export function KitchenPage(): JSX.Element {
               onClick={() => {
                 void ordersQuery.refetch();
                 void ticketsQuery.refetch();
+                void doneTicketsQuery.refetch();
               }}
             >
               Refresh
@@ -359,7 +456,11 @@ export function KitchenPage(): JSX.Element {
                     header: "Branch",
                     render: (r: UnifiedOrder) => (
                       <span className="font-mono text-xs text-slate-400">
-                        {r.source === "kitchen" ? (ticketBranchById.get(r.ticket.id) ?? "—") : "—"}
+                        {r.source === "kitchen"
+                          ? (view === "completed"
+                              ? doneTicketBranchById.get(r.ticket.id)
+                              : ticketBranchById.get(r.ticket.id)) ?? "—"
+                          : "—"}
                       </span>
                     ),
                   },
@@ -425,7 +526,7 @@ export function KitchenPage(): JSX.Element {
               header: "",
               id: "actions",
               render: (r) =>
-                r.source === "kitchen" ? (
+                r.source === "kitchen" && view === "active" ? (
                   <span
                     className="flex flex-wrap items-center gap-2"
                     onClick={(e) => e.stopPropagation()}
@@ -437,7 +538,11 @@ export function KitchenPage(): JSX.Element {
                       disabled={completeMutation.isPending}
                       onClick={() => {
                         setCompletingId(r.ticket.id);
-                        completeMutation.mutate(r.ticket.id);
+                        completeMutation.mutate({
+                          id: r.ticket.id,
+                          ticket: r.ticket,
+                          branchCode: ticketBranchById.get(r.ticket.id) ?? branch!.code,
+                        });
                       }}
                     >
                       {completeMutation.isPending && completingId === r.ticket.id ? "…" : "Completed"}

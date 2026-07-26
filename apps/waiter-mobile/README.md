@@ -56,7 +56,7 @@ Instead:
 
 | Role | Email | Password | PIN (mobile) |
 | --- | --- | --- | --- |
-| Waiter | `waiter1@platform.local` | `changeme-please-01` | `1111` |
+| Waiter | `waiter1@platform.local` | `changeme-please-01` | `9999` |
 | Delivery rider | `rider1@platform.local` | `changeme-please-01` | `6666` |
 
 On the mobile app, enter **branch code** (e.g. `ISB-GT`) and the **4-digit PIN**. PIN auto-submits after the fourth digit.

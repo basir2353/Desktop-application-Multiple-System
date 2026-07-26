@@ -7,6 +7,7 @@ import {
 import {
   THERMAL_PRINT_SETTINGS_CHANGED_EVENT,
   loadThermalPrintSettings,
+  previewPaperWidthPx,
 } from "../lib/thermalPrintSettings";
 import { buildPrintPreviewHtml, type PrintTicketInput } from "../lib/printTicket";
 
@@ -69,10 +70,8 @@ export function BillReceiptPreview({
   }, [input, settings, branchCode, thermalTick]);
 
   const paperPx = useMemo(() => {
-    const paper = loadThermalPrintSettings(branchCode).defaultPaperSize;
-    if (paper === "58mm") return 280;
-    if (paper === "A4") return 420;
-    return 340;
+    const thermal = loadThermalPrintSettings(branchCode);
+    return previewPaperWidthPx(thermal.defaultPaperSize, thermal.customPaperWidthMm);
   }, [branchCode, thermalTick]);
 
   return (

@@ -1,12 +1,67 @@
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { Pressable, Text, View } from "react-native";
 import { bootstrapSession, SessionExpiredError } from "../src/lib/authFetch";
 import { OfflineBanner } from "../src/components/OfflineBanner";
 import { warmApiConnection } from "../src/lib/warmApi";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
+
+class RootErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.warn("[RootErrorBoundary]", error.message, info.componentStack);
+  }
+
+  render(): ReactNode {
+    if (this.state.error) {
+      return (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "#0f172a",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            gap: 12,
+          }}
+        >
+          <Text style={{ color: "#f8fafc", fontSize: 18, fontWeight: "700" }}>Something went wrong</Text>
+          <Text style={{ color: "#94a3b8", fontSize: 13, textAlign: "center" }}>
+            {this.state.error.message}
+          </Text>
+          <Pressable
+            onPress={() => {
+              useSessionStore.getState().clear();
+              useBranchStore.getState().clear();
+              this.setState({ error: null });
+            }}
+            style={{
+              marginTop: 8,
+              backgroundColor: "#f59e0b",
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 10,
+            }}
+          >
+            <Text style={{ color: "#0f172a", fontWeight: "700" }}>Back to login</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -75,30 +130,32 @@ export default function RootLayout() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <StatusBar style="light" />
-      <SessionGuard />
-      <OfflineBanner />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: "#0f172a" },
-          headerTintColor: "#f8fafc",
-          headerTitleStyle: { fontWeight: "600" },
-          contentStyle: { backgroundColor: "#0f172a" },
-        }}
-      >
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="branch" options={{ title: "Select branch" }} />
-        <Stack.Screen name="home" options={{ headerShown: false }} />
-        <Stack.Screen name="rider-home" options={{ headerShown: false }} />
-        <Stack.Screen name="rider-deliveries" options={{ title: "My deliveries" }} />
-        <Stack.Screen name="rider-delivery" options={{ title: "Delivery detail" }} />
-        <Stack.Screen name="order" options={{ title: "Take order" }} />
-        <Stack.Screen name="orders" options={{ title: "View orders" }} />
-        <Stack.Screen name="table-transfer" options={{ title: "Table transfer" }} />
-        <Stack.Screen name="history" options={{ title: "Order history" }} />
-        <Stack.Screen name="manage-pin" options={{ title: "Manage PIN" }} />
-      </Stack>
-    </QueryClientProvider>
+    <RootErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <StatusBar style="light" />
+        <SessionGuard />
+        <OfflineBanner />
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: "#0f172a" },
+            headerTintColor: "#f8fafc",
+            headerTitleStyle: { fontWeight: "600" },
+            contentStyle: { backgroundColor: "#0f172a" },
+          }}
+        >
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="branch" options={{ title: "Select branch" }} />
+          <Stack.Screen name="home" options={{ headerShown: false }} />
+          <Stack.Screen name="rider-home" options={{ headerShown: false }} />
+          <Stack.Screen name="rider-deliveries" options={{ title: "My deliveries" }} />
+          <Stack.Screen name="rider-delivery" options={{ title: "Delivery detail" }} />
+          <Stack.Screen name="order" options={{ title: "Take order" }} />
+          <Stack.Screen name="orders" options={{ title: "View orders" }} />
+          <Stack.Screen name="table-transfer" options={{ title: "Table transfer" }} />
+          <Stack.Screen name="history" options={{ title: "Order history" }} />
+          <Stack.Screen name="manage-pin" options={{ title: "Manage PIN" }} />
+        </Stack>
+      </QueryClientProvider>
+    </RootErrorBoundary>
   );
 }

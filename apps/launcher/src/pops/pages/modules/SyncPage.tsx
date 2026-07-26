@@ -2,7 +2,7 @@ import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { isOnline, subscribeConnectivity } from "@platform/connectivity";
-import { getApiBaseUrl } from "../../../lib/apiBase";
+import { ApiEndpointSelector } from "../../../components/ApiEndpointSelector";
 import { countPendingOutbox, flushAllOfflineData } from "../../../lib/offlineSync";
 import { loadOfflineQueue } from "../../../store/lib/storePosSync";
 import { countOfflinePopsOrders } from "../../lib/popsOfflineOrders";
@@ -26,13 +26,10 @@ export function SyncPage(): JSX.Element {
   const queryClient = useQueryClient();
   const accessToken = useSessionStore((s) => s.accessToken);
   const dataMode = useDataModeStore((s) => s.dataMode);
-  const cloudApiUrl = useDataModeStore((s) => s.cloudApiUrl);
   const lastSyncedAt = useDataModeStore((s) => s.lastSyncedAt);
   const setDataMode = useDataModeStore((s) => s.setDataMode);
-  const setCloudApiUrl = useDataModeStore((s) => s.setCloudApiUrl);
 
   const [online, setOnline] = useState(isOnline());
-  const [apiUrlDraft, setApiUrlDraft] = useState(cloudApiUrl || getApiBaseUrl());
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,12 +66,6 @@ export function SyncPage(): JSX.Element {
       setNotice(null);
     },
   });
-
-  function applyCloudUrl(): void {
-    setCloudApiUrl(apiUrlDraft);
-    setNotice("Cloud API URL saved.");
-    setError(null);
-  }
 
   function onModeChange(mode: DataMode): void {
     setDataMode(mode);
@@ -154,25 +145,10 @@ export function SyncPage(): JSX.Element {
         </div>
 
         <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-          <div className="text-sm font-medium text-white">Cloud API URL</div>
-          <p className="text-xs text-slate-400">
-            Your Railway API domain (not the Postgres URL). Use the private Postgres URL only on the Railway API service — not here.
+          <ApiEndpointSelector />
+          <p className="text-xs text-slate-500">
+            After changing API, sign out and sign in again so menu and orders reload from the new server.
           </p>
-          <input
-            className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-            placeholder="https://your-api.up.railway.app"
-            value={apiUrlDraft}
-            onChange={(e) => setApiUrlDraft(e.target.value)}
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" className="text-xs" onClick={applyCloudUrl}>
-              Save URL
-            </Button>
-            <span className="self-center text-xs text-slate-500">Active: {getApiBaseUrl()}</span>
-          </div>
-          {!accessToken ? (
-            <p className="text-xs text-amber-400">Sign in to push local data to the cloud database.</p>
-          ) : null}
         </div>
       </div>
     </div>

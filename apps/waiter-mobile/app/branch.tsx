@@ -39,13 +39,18 @@ export default function BranchScreen() {
     return all.filter((b) => b.code === scope);
   }, [branchesQuery.data, claims?.branchScope]);
 
+  // Auto-pick when the account is scoped to one branch (waiter/cashier/rider).
   useEffect(() => {
-    if (role !== "rider" || branch || branchesQuery.isLoading) return;
+    if (branch || branchesQuery.isLoading || branchesQuery.isError) return;
     const scope = claims?.branchScope;
     const match =
       scope && scope !== "all"
         ? branchesQuery.data?.find((b) => b.code === scope)
-        : visibleBranches[0];
+        : visibleBranches.length === 1
+          ? visibleBranches[0]
+          : role === "rider"
+            ? visibleBranches[0]
+            : undefined;
     if (match) {
       setBranch(match);
       router.replace(homeRoute);
@@ -54,6 +59,7 @@ export default function BranchScreen() {
     role,
     branch,
     branchesQuery.isLoading,
+    branchesQuery.isError,
     branchesQuery.data,
     claims?.branchScope,
     visibleBranches,

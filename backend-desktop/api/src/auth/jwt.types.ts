@@ -10,13 +10,10 @@ export type AccessJwtPayload = {
   /** Membership role (`admin`, `cashier`, …) or `super_admin`. */
   role: string;
   branchScope: string;
-<<<<<<< Updated upstream
-=======
   /** Platform control-plane role; only Super Admin has this set. */
   platformRole?: PlatformRole | null;
   /** Permanently assigned business system for tenant users. */
   systemType?: SystemType | null;
->>>>>>> Stashed changes
   /** null/undefined = all permission-gated paths; otherwise only listed paths. */
   navAllowlist?: string[] | null;
   riderId?: string;

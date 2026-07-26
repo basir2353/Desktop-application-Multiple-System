@@ -17,11 +17,14 @@ import { updateKitchenTicket } from "../api/kitchen";
 import { removeOfflineKot } from "../lib/popsOfflineOrders";
 import {
   posRecentOrderToReceiptPrint,
+  printReceiptAsync,
   resolveSessionPrintName,
   type PrintTicketInput,
 } from "../lib/printTicket";
 import { resolveReceiptPrinter, resolvePrintUserId } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
+import { loadBillPrintSettings } from "../lib/billPrintSettings";
+import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
@@ -190,12 +193,33 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
     openPrintPreview(order);
   }
 
+  /** Close: same receipt print as Print, but skip preview popup. */
+  function printOrderDirect(order: PosRecentOrder): void {
+    if (!branch) return;
+    const sessionUserId = useSessionStore.getState().claims?.sub;
+    const printedBy = resolveSessionPrintName(sessionUserId);
+    const printUserId = resolvePrintUserId(sessionUserId, order.bill?.waiterId);
+    const profile = resolveReceiptPrinter(branch.code, printUserId);
+    const assigned = printUserId ? getWaiterPrinter(branch.code, printUserId) : null;
+    const base = posRecentOrderToReceiptPrint(branch.name, branch.code, order);
+    const systemPrinterName = profile?.systemPrinterName ?? assigned?.systemPrinterName;
+    void printReceiptAsync({
+      ...base,
+      waiterName: printedBy || base.waiterName,
+      printerName: profile?.name ?? assigned?.printerName ?? systemPrinterName,
+      systemPrinterName,
+      billPrintSettings:
+        resolveBillPrintSettingsForReceipt(branch.code) ?? loadBillPrintSettings(branch.code),
+    });
+  }
+
   function toggleSelected(order: PosRecentOrder): void {
     setSelectedId((current) => (current === order.id ? null : order.id));
   }
 
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
+    printOrderDirect(order);
     if (branch?.code) dismissPosOrder(branch.code, order.id);
     setDismissedRevision((n) => n + 1);
     setSelectedId(null);

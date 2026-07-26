@@ -10,7 +10,7 @@ import type { PosCartLine } from "./posCart";
 import { loadPrinterSections, savePrinterSections, type PrinterSection } from "./printerSections";
 import { saveThermalPrintSettings } from "./thermalPrintSettings";
 
-export type PrinterPaperSize = "58mm" | "80mm" | "A4";
+export type PrinterPaperSize = "58mm" | "80mm" | "100mm" | "A4" | "custom";
 
 /** Logical role of a printer profile in the restaurant workflow. */
 export type PrinterType = "kitchen" | "bar" | "receipt" | "other";
@@ -91,7 +91,14 @@ function normalizeProfile(raw: Partial<PrinterProfile> & Pick<PrinterProfile, "i
     assignedCounter: raw.assignedCounter,
     assignedUserId: raw.assignedUserId,
     copies: Math.max(1, Number(raw.copies) || 1),
-    paperSize: raw.paperSize === "58mm" || raw.paperSize === "A4" ? raw.paperSize : "80mm",
+    paperSize:
+      raw.paperSize === "58mm" ||
+      raw.paperSize === "80mm" ||
+      raw.paperSize === "100mm" ||
+      raw.paperSize === "A4" ||
+      raw.paperSize === "custom"
+        ? raw.paperSize
+        : "80mm",
     autoCut: raw.autoCut !== false,
   };
 }

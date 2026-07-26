@@ -1,6 +1,6 @@
-import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
 import type { PopsBranch } from "@platform/contracts";
+import { secureDelete, secureGet, secureSet } from "../lib/secureStorage";
 
 const BRANCH_KEY = "pops-waiter-branch";
 
@@ -17,25 +17,30 @@ export const useBranchStore = create<BranchState>((set) => ({
   hydrated: false,
 
   setBranch: (branch) => {
-    void SecureStore.setItemAsync(BRANCH_KEY, JSON.stringify(branch));
+    void secureSet(BRANCH_KEY, JSON.stringify(branch));
     set({ branch });
   },
 
   clear: () => {
-    void SecureStore.deleteItemAsync(BRANCH_KEY);
+    void secureDelete(BRANCH_KEY);
     set({ branch: null });
   },
 
   hydrate: async () => {
-    const raw = await SecureStore.getItemAsync(BRANCH_KEY);
-    if (!raw) {
-      set({ hydrated: true });
-      return;
-    }
     try {
-      set({ branch: JSON.parse(raw) as PopsBranch, hydrated: true });
-    } catch {
-      set({ hydrated: true });
+      const raw = await secureGet(BRANCH_KEY);
+      if (!raw) {
+        set({ hydrated: true });
+        return;
+      }
+      try {
+        set({ branch: JSON.parse(raw) as PopsBranch, hydrated: true });
+      } catch {
+        set({ branch: null, hydrated: true });
+      }
+    } catch (err) {
+      console.warn("[branchStore] hydrate failed:", err);
+      set({ branch: null, hydrated: true });
     }
   },
 }));

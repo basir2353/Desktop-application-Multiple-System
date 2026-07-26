@@ -4,6 +4,8 @@ import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
   loadThermalPrintSettings,
   normalizeThermalPrintSettings,
+  paperSizeLabel,
+  previewPaperWidthPx,
   saveThermalPrintSettings,
   THERMAL_PRINT_SETTINGS_CHANGED_EVENT,
   type ThermalPrintSettings,
@@ -169,12 +171,7 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
     }
   }
 
-  const paperLabel =
-    draft.defaultPaperSize === "A4"
-      ? "A4 sheet"
-      : draft.defaultPaperSize === "58mm"
-        ? "58mm roll"
-        : "80mm roll";
+  const paperLabel = paperSizeLabel(draft.defaultPaperSize, draft.customPaperWidthMm);
 
   return (
     <div className="space-y-8">
@@ -247,12 +244,14 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
             <div className="space-y-5">
               <div>
                 <div className="mb-2 text-xs font-medium text-slate-300">Paper size</div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                   {(
                     [
                       { id: "58mm" as const, label: "58mm", hint: "Narrow" },
                       { id: "80mm" as const, label: "80mm", hint: "Wide · recommended" },
+                      { id: "100mm" as const, label: "100mm", hint: "Extra wide" },
                       { id: "A4" as const, label: "A4", hint: "Office printer" },
+                      { id: "custom" as const, label: "Custom", hint: "Any width" },
                     ] as const
                   ).map((opt) => {
                     const active = draft.defaultPaperSize === opt.id;
@@ -263,8 +262,9 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
                         onClick={() =>
                           patch({
                             defaultPaperSize: opt.id,
-                            receiptLayout: "columns",
-                            showUnitPrice: opt.id === "80mm",
+                            receiptLayout:
+                              opt.id === "58mm" ? draft.receiptLayout : "columns",
+                            showUnitPrice: opt.id !== "58mm",
                           })
                         }
                         className={`rounded-xl border px-3 py-3 text-left transition ${
@@ -283,6 +283,26 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
                     );
                   })}
                 </div>
+                {draft.defaultPaperSize === "custom" ? (
+                  <label className="mt-3 block max-w-[14rem]">
+                    <span className="text-xs text-slate-400">Custom roll width (mm)</span>
+                    <input
+                      type="number"
+                      min={48}
+                      max={120}
+                      step={1}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+                      value={draft.customPaperWidthMm}
+                      onChange={(e) =>
+                        patch({
+                          defaultPaperSize: "custom",
+                          customPaperWidthMm: Number(e.target.value),
+                        })
+                      }
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-500">48–120 mm (e.g. 100 for 100mm rolls)</span>
+                  </label>
+                ) : null}
               </div>
 
               <div>

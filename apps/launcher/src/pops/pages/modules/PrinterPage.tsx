@@ -54,9 +54,7 @@ import {
 } from "../../lib/printHistory";
 import { printTestPageAsync } from "../../lib/printTicket";
 import { fetchBranchMenuAdmin } from "../../api/menu";
-import { fetchOrgUsers } from "../../api/users";
-import { fetchWaiters } from "../../api/billing";
-import { fetchRiders } from "../../api/delivery";
+import { fetchAssignableStaff, fetchOrgUsers } from "../../api/users";
 import { PageHeader } from "../../ui/PageHeader";
 import {
   PrinterBySectionPanel,
@@ -1132,13 +1130,13 @@ function PrinterProfilesTab({
   branchCode,
   routing,
   systemPrinters,
-  users,
+  staffLabelById,
   notify,
 }: {
   branchCode: string;
   routing: PrinterRoutingState;
   systemPrinters: SystemPrinterInfo[];
-  users: { id: string; email: string; role: string }[];
+  staffLabelById: Map<string, string>;
   notify: (message: string) => void;
 }): JSX.Element {
   const [newName, setNewName] = useState("");
@@ -1380,7 +1378,7 @@ function PrinterProfilesTab({
                       <AssignedUsersCell
                         branchCode={branchCode}
                         printer={printer}
-                        users={users}
+                        staffLabelById={staffLabelById}
                       />
                     </td>
                     <td className="px-2.5 py-2 font-mono text-[10px] text-slate-400">{branchCode}</td>
@@ -1428,6 +1426,8 @@ function PrinterProfilesTab({
                         >
                           <option value="58mm">58mm roll</option>
                           <option value="80mm">80mm roll</option>
+                          <option value="100mm">100mm roll</option>
+                          <option value="custom">Custom (branch setting)</option>
                           <option value="A4">A4</option>
                         </select>
                       </div>
@@ -1493,14 +1493,14 @@ function PrinterProfilesTab({
 function AssignedUsersCell({
   branchCode,
   printer,
-  users,
+  staffLabelById,
 }: {
   branchCode: string;
   printer: PrinterProfile;
-  users: { id: string; email: string; role: string }[];
+  staffLabelById: Map<string, string>;
 }): JSX.Element {
   const assignedIds = getUserIdsForPrinter(branchCode, printer.id);
-  const labels = assignedIds.map((id) => users.find((u) => u.id === id)?.email ?? id);
+  const labels = assignedIds.map((id) => staffLabelById.get(id) ?? id);
 
   return (
     <div className="min-w-[10rem] space-y-1">
@@ -2032,69 +2032,34 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
   const categories = menuQuery.data?.categories ?? [];
   const items = menuQuery.data?.items ?? [];
 
+  const assignableQuery = useQuery({
+    queryKey: ["assignable-staff", branchCode, "printer-management"],
+    queryFn: () => fetchAssignableStaff(branchCode),
+  });
+
   const usersQuery = useQuery({
     queryKey: ["org-users", "printer-management"],
     queryFn: () => fetchOrgUsers(),
+    retry: false,
   });
   const users = usersQuery.data ?? [];
 
-  const waitersQuery = useQuery({
-    queryKey: ["billing", "waiters", branchCode, "printer-management"],
-    queryFn: () => fetchWaiters(branchCode),
-  });
-  const waiters = waitersQuery.data ?? [];
-
-  const ridersQuery = useQuery({
-    queryKey: ["delivery-riders", branchCode, "printer-management"],
-    queryFn: () => fetchRiders(branchCode),
-  });
-  const riders = ridersQuery.data ?? [];
-
   const assignablePeople = useMemo((): AssignablePerson[] => {
-    const fromUsers: AssignablePerson[] = users.map((u) => ({
-      id: u.id,
-      label: u.email,
-      role: u.role,
-      kind: "user",
+    const staff = assignableQuery.data ?? [];
+    return staff.map((person) => ({
+      id: person.id,
+      label: person.name || person.email,
+      role: person.role,
+      kind: person.role.toLowerCase() === "waiter" ? ("waiter" as const) : ("user" as const),
     }));
-    const byId = new Map(fromUsers.map((u) => [u.id, u]));
+  }, [assignableQuery.data]);
 
-    for (const w of waiters) {
-      const existing = byId.get(w.id);
-      if (existing) {
-        byId.set(w.id, { ...existing, label: w.name, kind: "waiter", role: "waiter" });
-      } else {
-        byId.set(w.id, {
-          id: w.id,
-          label: w.name,
-          role: "waiter",
-          kind: "waiter",
-        });
-      }
-    }
-
-    for (const r of riders) {
-      const loginId = r.userId?.trim() || r.id;
-      const existing = byId.get(loginId);
-      const label = `${r.name} (rider)`;
-      if (existing) {
-        byId.set(loginId, {
-          ...existing,
-          label: existing.kind === "waiter" ? existing.label : label,
-          role: existing.role || "rider",
-        });
-      } else {
-        byId.set(loginId, {
-          id: loginId,
-          label,
-          role: "rider",
-          kind: "user",
-        });
-      }
-    }
-
-    return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
-  }, [users, waiters, riders]);
+  const staffLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const person of assignablePeople) map.set(person.id, person.label);
+    for (const user of users) map.set(user.id, user.email);
+    return map;
+  }, [assignablePeople, users]);
 
   function notify(message: string): void {
     setNotice(message);
@@ -2228,7 +2193,7 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
           branchCode={branchCode}
           routing={routing}
           systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
-          users={users}
+          staffLabelById={staffLabelById}
           notify={notify}
         />
       ) : null}
@@ -2238,6 +2203,14 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
           sections={sections}
           routing={routing}
           people={assignablePeople}
+          peopleLoading={assignableQuery.isLoading}
+          peopleError={
+            assignableQuery.isError
+              ? assignableQuery.error instanceof Error
+                ? assignableQuery.error.message
+                : "Could not load staff."
+              : null
+          }
           notify={notify}
         />
       ) : null}

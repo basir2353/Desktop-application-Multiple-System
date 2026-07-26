@@ -20,8 +20,14 @@ export class KitchenController {
 
   @Get("tickets")
   @RequirePermissions("pops.read")
-  listTickets(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
-    return this.kitchen.listTickets(user.organizationId, branchCode?.trim() ?? "");
+  listTickets(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("scope") scope?: string,
+  ) {
+    const parsed =
+      scope === "done" || scope === "all" || scope === "active" ? scope : "active";
+    return this.kitchen.listTickets(user.organizationId, branchCode?.trim() ?? "", parsed);
   }
 
   // Kitchen cancellations report (must be deployed).

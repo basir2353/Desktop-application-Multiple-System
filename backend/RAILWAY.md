@@ -65,6 +65,7 @@ Copy from [`railway.env.example`](./railway.env.example) into the API service â†
 | `JWT_ACCESS_SECRET` | Random string, min 32 chars | Yes |
 | `NODE_ENV` | `production` | Yes |
 | `CORS_ORIGINS` | Your frontend URL(s), comma-separated | Yes for browser |
+| `SEED_SUPER_ADMIN_EMAIL` | `superadmin@platform.local` | First deploy |
 | `SEED_USER_EMAIL` | `admin@platform.local` | First deploy |
 | `SEED_USER_PASSWORD` | Strong password | First deploy |
 | `APP_PUBLIC_URL` | Your web app URL | Optional (invite links) |
@@ -94,6 +95,7 @@ From your machine (one-off â€” public Postgres URL is OK here):
 ```bash
 DATABASE_URL="postgresql://..." \
 JWT_ACCESS_SECRET="your-production-secret-min-32-chars" \
+SEED_SUPER_ADMIN_EMAIL=superadmin@platform.local \
 SEED_USER_EMAIL=admin@platform.local \
 SEED_USER_PASSWORD="your-strong-password" \
 pnpm seed:live

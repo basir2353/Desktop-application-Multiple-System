@@ -2,7 +2,7 @@
   "expo": {
     "name": "POPS Waiter",
     "slug": "pops-waiter",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "scheme": "pops-waiter",
     "userInterfaceStyle": "dark",

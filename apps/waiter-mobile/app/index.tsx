@@ -30,7 +30,7 @@ const ROLE_DEFAULTS: Record<StaffRole, { email: string; title: string; subtitle:
     email: "waiter1@platform.local",
     title: "Waiter",
     subtitle: "Take table orders and send them to the kitchen.",
-    demoPin: "1111",
+    demoPin: "9999",
   },
   rider: {
     email: "rider1@platform.local",
@@ -59,6 +59,7 @@ export default function LoginScreen() {
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
   const setTokens = useSessionStore((s) => s.setTokens);
+  const clearBranch = useBranchStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
 
   const [loginMode, setLoginMode] = useState<LoginMode>("password");
@@ -69,6 +70,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("changeme-please-01");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  /** Prevents Redirect + router.replace racing after a successful login (Android crash). */
+  const [postLoginNav, setPostLoginNav] = useState(false);
 
   useEffect(() => {
     if (accessToken || Platform.OS !== "android") return;
@@ -76,7 +79,8 @@ export default function LoginScreen() {
     return () => subscription.remove();
   }, [accessToken]);
 
-  if (accessToken) {
+  // Cold start / resume only — never during an in-flight login navigation.
+  if (accessToken && !loading && !postLoginNav) {
     const home = branch ? homeRouteForRole(resolveStaffRole(claims)) : "/branch";
     return <Redirect href={home} />;
   }
@@ -123,10 +127,14 @@ export default function LoginScreen() {
       if (roleTab === "waiter" && resolvedRole === "cashier") {
         throw new Error("This PIN is a cashier account. Switch to the Cashier tab.");
       }
+      setPostLoginNav(true);
+      clearBranch();
       setTokens(tokens.accessToken, tokens.refreshToken, decoded);
       markOnline();
+      // Single navigation path — do not also rely on <Redirect> in the same tick.
       router.replace("/branch");
     } catch (err) {
+      setPostLoginNav(false);
       setError(err instanceof Error ? err.message : "PIN login failed");
       setPin("");
     } finally {
@@ -151,10 +159,14 @@ export default function LoginScreen() {
       if (roleTab === "waiter" && resolvedRole === "rider") {
         throw new Error("This account is a delivery rider. Switch to the Delivery rider tab.");
       }
+      setPostLoginNav(true);
+      clearBranch();
       setTokens(tokens.accessToken, tokens.refreshToken, decoded, email.trim());
       markOnline();
+      // Single navigation path — do not also rely on <Redirect> in the same tick.
       router.replace("/branch");
     } catch (err) {
+      setPostLoginNav(false);
       const message = err instanceof Error ? err.message : "Login failed";
       if (message.toLowerCase().includes("invalid")) {
         setError(
@@ -280,10 +292,10 @@ export default function LoginScreen() {
               Branch: ISB-GT
               {"\n"}
               {defaultRole === "waiter"
-                ? "Waiter PIN: 1111"
+                ? "Waiter PIN: 9999"
                 : defaultRole === "rider"
                   ? "Rider PIN: 6666"
-                  : "Waiter PIN: 1111 · Rider PIN: 6666"}
+                  : "Waiter PIN: 9999 · Rider PIN: 6666"}
               {"\n"}
               Set your own PIN after signing in via Home → Manage PIN.
             </Subtitle>

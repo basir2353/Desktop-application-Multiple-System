@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import type { SalarySlip } from "@platform/contracts";
 import { fetchHrPayrollRuns, fetchSalarySlips } from "../../../api/hr";
 import { formatPkr, useHrAccess } from "../../../hooks/useHr";
+import { printSalarySlip } from "../../../lib/printSalarySlip";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
@@ -10,6 +12,8 @@ import { HrError, HrLoading } from "./HrUi";
 
 export function SalarySlipsPage(): JSX.Element {
   const { branch } = useHrAccess();
+  const [printNotice, setPrintNotice] = useState<string | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
 
   const slipsQuery = useQuery({
     queryKey: ["hr", "salary-slips", branch?.code],
@@ -31,25 +35,20 @@ export function SalarySlipsPage(): JSX.Element {
   const paidSlips = slips.filter((s) => s.payrollStatus === "paid");
   const isMonitoringBranch = branch?.code === "HQ-01";
 
-  function printSlip(slip: SalarySlip): void {
-    const html = `<!DOCTYPE html><html><head><title>Salary slip ${slip.payrollRef}</title>
-<style>body{font-family:sans-serif;padding:24px;max-width:480px;margin:0 auto}
-h1{font-size:18px}table{width:100%;border-collapse:collapse;margin-top:16px}
-td{padding:6px 0;border-bottom:1px solid #eee}.total{font-weight:bold;font-size:16px}</style></head>
-<body><h1>Salary slip</h1>
-<p><strong>${slip.employeeName}</strong> (${slip.employeeCode})<br>${slip.jobTitle}</p>
-<p>Period: ${slip.periodStart} — ${slip.periodEnd}<br>Ref: ${slip.payrollRef}</p>
-<table>
-<tr><td>Gross pay</td><td align="right">${formatPkr(slip.grossPkr)}</td></tr>
-<tr><td>Deductions (EOBI/tax)</td><td align="right">− ${formatPkr(slip.deductionsPkr)}</td></tr>
-<tr><td>Overtime</td><td align="right">${formatPkr(slip.overtimePkr)}</td></tr>
-<tr class="total"><td>Net pay</td><td align="right">${formatPkr(slip.netPkr)}</td></tr>
-</table></body></html>`;
-    const w = window.open("", "_blank");
-    if (w) {
-      w.document.write(html);
-      w.document.close();
-      w.print();
+  async function onPrintSlip(slip: SalarySlip): Promise<void> {
+    setPrintNotice(null);
+    setPrintingId(slip.id);
+    try {
+      const result = await printSalarySlip(slip, branch?.name);
+      if (result.ok) {
+        setPrintNotice(`Print dialog opened for ${slip.employeeName}.`);
+      } else {
+        setPrintNotice(result.error ?? "Print failed.");
+      }
+    } catch (err) {
+      setPrintNotice(err instanceof Error ? err.message : "Print failed.");
+    } finally {
+      setPrintingId(null);
     }
   }
 
@@ -76,6 +75,12 @@ td{padding:6px 0;border-bottom:1px solid #eee}.total{font-weight:bold;font-size:
               — Run payroll on this branch or switch to a store branch (e.g. ISB-GT).
             </span>
           ) : null}
+        </p>
+      ) : null}
+
+      {printNotice ? (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          {printNotice}
         </p>
       ) : null}
 
@@ -141,15 +146,20 @@ td{padding:6px 0;border-bottom:1px solid #eee}.total{font-weight:bold;font-size:
                 {
                   key: "actions",
                   header: "",
-                  render: (r) => (
-                    <button
-                      type="button"
-                      className="text-xs text-amber-400 hover:text-amber-200"
-                      onClick={() => printSlip(slips.find((s: SalarySlip) => s.id === r.id)!)}
-                    >
-                      Print slip
-                    </button>
-                  ),
+                  render: (r) => {
+                    const slip = slips.find((s) => s.id === r.id);
+                    if (!slip) return null;
+                    return (
+                      <button
+                        type="button"
+                        className="text-xs text-amber-400 hover:text-amber-200 disabled:opacity-50"
+                        disabled={printingId === slip.id}
+                        onClick={() => void onPrintSlip(slip)}
+                      >
+                        {printingId === slip.id ? "Opening…" : "Print slip"}
+                      </button>
+                    );
+                  },
                 },
               ]}
               rows={slips as unknown as Record<string, unknown>[]}

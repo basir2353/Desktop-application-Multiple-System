@@ -9,6 +9,8 @@ import {
   newKotCustomLine,
   normalizeKotPrintSettings,
   saveKotPrintSettings,
+  KOT_FONT_SIZE_MAX,
+  KOT_FONT_SIZE_MIN,
   type KotPrintSettings,
   type KotReceiptFields,
 } from "../lib/kotPrintSettings";
@@ -16,6 +18,7 @@ import { buildPrintPreviewHtml, type PrintTicketInput } from "../lib/printTicket
 import {
   THERMAL_PRINT_SETTINGS_CHANGED_EVENT,
   loadThermalPrintSettings,
+  previewPaperWidthPx,
 } from "../lib/thermalPrintSettings";
 import { fieldInputClass, fieldSelectClass } from "../lib/themeClasses";
 
@@ -98,10 +101,8 @@ export function KotCustomizationPanel({
   }, [branchName, branchCode, draft, thermalTick]);
 
   const paperPx = useMemo(() => {
-    const paper = loadThermalPrintSettings(branchCode).defaultPaperSize;
-    if (paper === "58mm") return 280;
-    if (paper === "A4") return 420;
-    return 340;
+    const thermal = loadThermalPrintSettings(branchCode);
+    return previewPaperWidthPx(thermal.defaultPaperSize, thermal.customPaperWidthMm);
   }, [branchCode, thermalTick]);
 
   function patch(partial: Partial<KotPrintSettings>): void {
@@ -192,11 +193,18 @@ export function KotCustomizationPanel({
             Base font size (px)
             <input
               type="number"
-              min={12}
-              max={22}
+              min={KOT_FONT_SIZE_MIN}
+              max={KOT_FONT_SIZE_MAX}
               className={`mt-1 w-full ${fieldInputClass}`}
               value={draft.baseFontSize}
-              onChange={(e) => patch({ baseFontSize: Number(e.target.value) || 15 })}
+              onChange={(e) =>
+                patch({
+                  baseFontSize: Math.max(
+                    KOT_FONT_SIZE_MIN,
+                    Math.min(KOT_FONT_SIZE_MAX, Number(e.target.value) || 15),
+                  ),
+                })
+              }
             />
           </label>
         </section>

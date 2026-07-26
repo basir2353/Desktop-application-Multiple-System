@@ -46,6 +46,48 @@ export function buildUnifiedOrders(bills: Bill[], tickets: KitchenTicket[]): Uni
   return rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+/** All open kitchen tickets for the Kitchen screen (includes KOTs already billed on Pay/Invoice). */
+export function kitchenActiveOrders(tickets: KitchenTicket[]): UnifiedOrder[] {
+  return tickets
+    .map((ticket) => ({
+      source: "kitchen" as const,
+      id: ticket.id,
+      createdAt: ticket.createdAt,
+      ticket,
+    }))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+/** Kitchen Completed tab — kitchen-done tickets plus bills not still active in kitchen. */
+export function kitchenCompletedOrders(
+  bills: Bill[],
+  doneTickets: KitchenTicket[],
+  activeTickets: KitchenTicket[] = [],
+): UnifiedOrder[] {
+  const activeRefs = new Set(
+    activeTickets.map((t) => t.orderRef).filter((ref): ref is string => Boolean(ref)),
+  );
+  const doneRefs = new Set(
+    doneTickets.map((t) => t.orderRef).filter((ref): ref is string => Boolean(ref)),
+  );
+
+  const ticketRows: UnifiedOrder[] = doneTickets.map((ticket) => ({
+    source: "kitchen" as const,
+    id: ticket.id,
+    createdAt: ticket.createdAt,
+    ticket,
+  }));
+
+  const billRows = buildUnifiedOrders(bills, [])
+    .filter((row) => row.source === "bill")
+    .filter((row) => !row.bill.orderRef || !activeRefs.has(row.bill.orderRef))
+    .filter((row) => !row.bill.orderRef || !doneRefs.has(row.bill.orderRef));
+
+  return [...ticketRows, ...billRows].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
 export function filterUnifiedOrdersByDateTime(
   orders: UnifiedOrder[],
   filters: OrderDateFilters,

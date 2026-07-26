@@ -40,87 +40,269 @@ export class AuthService implements OnModuleInit {
   }
 
   async seedIfEmpty(): Promise<void> {
-    const superEmail =
-      this.config.get<string>("SEED_SUPER_ADMIN_EMAIL") ?? "superadmin@platform.local";
-    const existingSuper = await this.db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, superEmail))
-      .limit(1);
-
     const password = this.config.get<string>("SEED_USER_PASSWORD") ?? "changeme-please-01";
     const passwordHash = await bcrypt.hash(password, 12);
+    const adminPerms = permissionsForPopsRole("admin");
 
-    if (existingSuper.length === 0) {
-      await this.db.insert(users).values({
-        email: superEmail,
-        name: "Super Admin",
+    const primarySuper =
+      this.config.get<string>("SEED_SUPER_ADMIN_EMAIL") ?? "superadmin@pops.platform";
+    const secondarySuper =
+      this.config.get<string>("SEED_SUPER_ADMIN_EMAIL_2") ?? "owner@pops.platform";
+
+    const superAdmins = [
+      { email: primarySuper, name: "Platform Super Admin" },
+      { email: secondarySuper, name: "Platform Owner" },
+      // Legacy alias kept so older clients / docs keep working.
+      { email: "superadmin@platform.local", name: "Super Admin (legacy)" },
+    ];
+
+    for (const sa of superAdmins) {
+      const email = sa.email.trim().toLowerCase();
+      const existing = await this.db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+      if (existing.length === 0) {
+        await this.db.insert(users).values({
+          email,
+          name: sa.name,
+          passwordHash,
+          platformRole: "super_admin",
+          status: "active",
+        });
+      } else {
+        await this.db
+          .update(users)
+          .set({
+            platformRole: "super_admin",
+            status: "active",
+            name: sa.name,
+          })
+          .where(eq(users.email, email));
+      }
+    }
+
+    const systemBusinesses: Array<{
+      systemType: SystemType;
+      name: string;
+      adminEmail: string;
+      adminName: string;
+      branchCode: string;
+      branchName: string;
+      city: string;
+    }> = [
+      {
+        systemType: "restaurant",
+        name: "POPS Demo Restaurant",
+        adminEmail: this.config.get<string>("SEED_USER_EMAIL") ?? "admin.restaurant@pops.demo",
+        adminName: "Restaurant Owner",
+        branchCode: "REST-HQ",
+        branchName: "Restaurant HQ",
+        city: "Islamabad",
+      },
+      {
+        systemType: "pharmacy",
+        name: "POPS Demo Pharmacy",
+        adminEmail: "admin.pharmacy@pops.demo",
+        adminName: "Pharmacy Owner",
+        branchCode: "PHAR-HQ",
+        branchName: "Pharmacy HQ",
+        city: "Lahore",
+      },
+      {
+        systemType: "general_store",
+        name: "POPS Demo General Store",
+        adminEmail: "admin.store@pops.demo",
+        adminName: "Store Owner",
+        branchCode: "STORE-HQ",
+        branchName: "Store HQ",
+        city: "Karachi",
+      },
+      {
+        systemType: "grocery",
+        name: "POPS Demo Grocery",
+        adminEmail: "admin.grocery@pops.demo",
+        adminName: "Grocery Owner",
+        branchCode: "GROC-HQ",
+        branchName: "Grocery HQ",
+        city: "Islamabad",
+      },
+      {
+        systemType: "retail",
+        name: "POPS Demo Retail",
+        adminEmail: "admin.retail@pops.demo",
+        adminName: "Retail Owner",
+        branchCode: "RETL-HQ",
+        branchName: "Retail HQ",
+        city: "Multan",
+      },
+    ];
+
+    // Also keep legacy restaurant admin email mapped to restaurant demo.
+    const legacyRestaurantAdmin = "admin@platform.local";
+
+    for (const biz of systemBusinesses) {
+      await this.ensureDemoBusiness({
+        ...biz,
         passwordHash,
-        platformRole: "super_admin",
-        status: "active",
+        adminPerms,
+        alsoBindEmail: biz.systemType === "restaurant" ? legacyRestaurantAdmin : undefined,
       });
     }
 
-    const email = this.config.get<string>("SEED_USER_EMAIL") ?? "admin@platform.local";
-    const existingSeed = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existingSeed.length > 0) return;
+    const existingModule = await this.db.select({ id: modules.id }).from(modules).where(eq(modules.slug, "sample")).limit(1);
+    if (existingModule.length === 0) {
+      await this.db.insert(modules).values({
+        slug: "sample",
+        displayName: "Sample Module",
+        description: "Reference microfrontend remote for the launcher host.",
+        publisher: "platform",
+      });
 
-    const [org] = await this.db
-      .insert(organizations)
-      .values({
-        name: "Demo Restaurant",
-        systemType: "restaurant",
-        status: "active",
-        licencePlan: "demo",
-      })
-      .returning({ id: organizations.id });
+      const mod = await this.db.select().from(modules).where(eq(modules.slug, "sample")).limit(1);
+      const moduleRow = mod[0];
+      if (!moduleRow) throw new Error("Failed to seed module");
 
-    if (!org) throw new Error("Failed to seed organization");
+      await this.db.insert(moduleVersions).values({
+        moduleId: moduleRow.id,
+        semver: "0.1.0",
+        artifactUrl: "http://127.0.0.1:5001/assets/remoteEntry.js",
+        digestSha256: "0".repeat(64),
+      });
+    }
+  }
 
-    const [user] = await this.db
-      .insert(users)
-      .values({
-        email,
-        name: "Restaurant Admin",
-        passwordHash,
-        status: "active",
-      })
-      .returning({ id: users.id });
+  private async ensureDemoBusiness(input: {
+    systemType: SystemType;
+    name: string;
+    adminEmail: string;
+    adminName: string;
+    branchCode: string;
+    branchName: string;
+    city: string;
+    passwordHash: string;
+    adminPerms: string[];
+    alsoBindEmail?: string;
+  }): Promise<void> {
+    const adminEmail = input.adminEmail.trim().toLowerCase();
+    let orgId: string | undefined;
 
-    if (!user) throw new Error("Failed to seed user");
+    const byType = await this.db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(and(eq(organizations.systemType, input.systemType), eq(organizations.status, "active")))
+      .limit(1);
+    orgId = byType[0]?.id;
 
-    await this.db
-      .update(organizations)
-      .set({ createdBy: user.id })
-      .where(eq(organizations.id, org.id));
+    if (!orgId) {
+      const [org] = await this.db
+        .insert(organizations)
+        .values({
+          name: input.name,
+          systemType: input.systemType,
+          status: "active",
+          licencePlan: "demo",
+          licenceKey: `LIC-DEMO-${input.systemType.toUpperCase()}`,
+        })
+        .returning({ id: organizations.id });
+      orgId = org?.id;
+    } else {
+      await this.db
+        .update(organizations)
+        .set({
+          name: input.name,
+          status: "active",
+          licencePlan: "demo",
+          updatedAt: new Date(),
+        })
+        .where(eq(organizations.id, orgId));
+    }
 
-    await this.db.insert(organizationMemberships).values({
-      organizationId: org.id,
-      userId: user.id,
-      role: "owner",
-      permissions: permissionsForPopsRole("admin"),
-      branchScope: "all",
-      pinRequired: false,
-      lastActivityAt: new Date(),
-    });
+    if (!orgId) throw new Error(`Failed to seed organization for ${input.systemType}`);
 
-    await this.db.insert(modules).values({
-      slug: "sample",
-      displayName: "Sample Module",
-      description: "Reference microfrontend remote for the launcher host.",
-      publisher: "platform",
-    });
+    const ensureOwner = async (email: string, name: string) => {
+      const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+      let userId = existing[0]?.id;
+      if (!userId) {
+        const [created] = await this.db
+          .insert(users)
+          .values({
+            email,
+            name,
+            passwordHash: input.passwordHash,
+            status: "active",
+          })
+          .returning({ id: users.id });
+        userId = created?.id;
+      } else {
+        await this.db
+          .update(users)
+          .set({ name, status: "active" })
+          .where(eq(users.id, userId));
+      }
+      if (!userId) throw new Error(`Failed to seed owner ${email}`);
 
-    const mod = await this.db.select().from(modules).where(eq(modules.slug, "sample")).limit(1);
-    const moduleRow = mod[0];
-    if (!moduleRow) throw new Error("Failed to seed module");
+      const mem = await this.db
+        .select({ userId: organizationMemberships.userId })
+        .from(organizationMemberships)
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, orgId!),
+            eq(organizationMemberships.userId, userId),
+          ),
+        )
+        .limit(1);
+      if (mem.length === 0) {
+        await this.db.insert(organizationMemberships).values({
+          organizationId: orgId!,
+          userId,
+          role: "owner",
+          permissions: input.adminPerms,
+          branchScope: "all",
+          pinRequired: false,
+          active: true,
+          lastActivityAt: new Date(),
+        });
+      } else {
+        await this.db
+          .update(organizationMemberships)
+          .set({
+            role: "owner",
+            permissions: input.adminPerms,
+            branchScope: "all",
+            active: true,
+          })
+          .where(
+            and(
+              eq(organizationMemberships.organizationId, orgId!),
+              eq(organizationMemberships.userId, userId),
+            ),
+          );
+      }
 
-    await this.db.insert(moduleVersions).values({
-      moduleId: moduleRow.id,
-      semver: "0.1.0",
-      artifactUrl: "http://127.0.0.1:5001/assets/remoteEntry.js",
-      digestSha256: "0".repeat(64),
-    });
+      await this.db.update(organizations).set({ createdBy: userId }).where(eq(organizations.id, orgId!));
+      return userId;
+    };
+
+    await ensureOwner(adminEmail, input.adminName);
+    if (input.alsoBindEmail && input.alsoBindEmail !== adminEmail) {
+      await ensureOwner(input.alsoBindEmail.trim().toLowerCase(), "Restaurant Admin");
+    }
+
+    const branch = await this.db
+      .select({ id: popsBranches.id })
+      .from(popsBranches)
+      .where(and(eq(popsBranches.organizationId, orgId), eq(popsBranches.code, input.branchCode)))
+      .limit(1);
+    if (branch.length === 0) {
+      await this.db.insert(popsBranches).values({
+        organizationId: orgId,
+        code: input.branchCode,
+        name: input.branchName,
+        city: input.city,
+      });
+    }
   }
 
   async login(email: string, password: string) {
@@ -130,6 +312,8 @@ export class AuthService implements OnModuleInit {
         id: users.id,
         email: users.email,
         passwordHash: users.passwordHash,
+        status: users.status,
+        platformRole: users.platformRole,
       })
       .from(users)
       .where(eq(users.email, normalizedEmail))
@@ -143,6 +327,8 @@ export class AuthService implements OnModuleInit {
             id: users.id,
             email: users.email,
             passwordHash: users.passwordHash,
+            status: users.status,
+            platformRole: users.platformRole,
           })
           .from(users)
           .where(sql`lower(${users.email}) = ${normalizedEmail}`)
@@ -158,7 +344,10 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-<<<<<<< Updated upstream
+    if (user.status === "inactive" || user.status === "suspended") {
+      throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+    }
+
     const ok = await bcrypt.compare(password, user.passwordHash).catch((err: unknown) => {
       console.error(
         "[auth] bcrypt.compare failed:",
@@ -166,13 +355,6 @@ export class AuthService implements OnModuleInit {
       );
       return false;
     });
-=======
-    if (user.status === "inactive" || user.status === "suspended") {
-      throw new UnauthorizedException("Account deactivated. Contact an administrator.");
-    }
-
-    const ok = await bcrypt.compare(password, user.passwordHash);
->>>>>>> Stashed changes
     if (!ok) {
       const membership = await this.loadMembershipLite(user.id);
 
@@ -187,10 +369,6 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-<<<<<<< Updated upstream
-    const m = await this.loadMembershipForAuth(user.id);
-    if (!m) throw new UnauthorizedException("No organization membership");
-=======
     // Platform Super Admin — no org membership required.
     if (user.platformRole === "super_admin") {
       await this.security.logEvent({
@@ -201,16 +379,24 @@ export class AuthService implements OnModuleInit {
         detail: "Super Admin session started",
       });
 
-      return this.issueTokens({
-        userId: user.id,
-        organizationId: PLATFORM_SENTINEL_ORG_ID,
-        permissions: permissionsForPlatformRole("super_admin"),
-        role: "super_admin",
-        branchScope: "all",
-        platformRole: "super_admin",
-        systemType: null,
-        navAllowlist: null,
-      });
+      try {
+        return await this.issueTokens({
+          userId: user.id,
+          organizationId: PLATFORM_SENTINEL_ORG_ID,
+          permissions: permissionsForPlatformRole("super_admin"),
+          role: "super_admin",
+          branchScope: "all",
+          platformRole: "super_admin",
+          systemType: null,
+          navAllowlist: null,
+        });
+      } catch (err) {
+        console.error("[auth] issueTokens failed:", err instanceof Error ? err.message : String(err));
+        if (err instanceof UnauthorizedException || err instanceof InternalServerErrorException) throw err;
+        throw new InternalServerErrorException(
+          "Login succeeded but session could not be created. Check JWT_ACCESS_SECRET and DB schema (drizzle push).",
+        );
+      }
     }
 
     const membership = await this.db
@@ -235,7 +421,6 @@ export class AuthService implements OnModuleInit {
       );
     }
 
->>>>>>> Stashed changes
     if (m.active === false) {
       await this.security.logEvent({
         organizationId: m.organizationId,
@@ -261,16 +446,17 @@ export class AuthService implements OnModuleInit {
       detail: `Session started (${systemType})`,
     });
 
-<<<<<<< Updated upstream
     try {
-      return await this.issueTokens(
-        user.id,
-        m.organizationId,
-        normalizePermissions(m.permissions, m.role),
-        m.role,
-        m.branchScope ?? "all",
-        Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
-      );
+      return await this.issueTokens({
+        userId: user.id,
+        organizationId: m.organizationId,
+        permissions: normalizePermissions(m.permissions, m.role),
+        role: m.role,
+        branchScope: m.branchScope ?? "all",
+        platformRole: null,
+        systemType,
+        navAllowlist: Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
+      });
     } catch (err) {
       console.error("[auth] issueTokens failed:", err instanceof Error ? err.message : String(err));
       if (err instanceof UnauthorizedException || err instanceof InternalServerErrorException) throw err;
@@ -278,18 +464,6 @@ export class AuthService implements OnModuleInit {
         "Login succeeded but session could not be created. Check JWT_ACCESS_SECRET and DB schema (drizzle push).",
       );
     }
-=======
-    return this.issueTokens({
-      userId: user.id,
-      organizationId: m.organizationId,
-      permissions: normalizePermissions(m.permissions, m.role),
-      role: m.role,
-      branchScope: m.branchScope ?? "all",
-      platformRole: null,
-      systemType,
-      navAllowlist: Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
-    });
->>>>>>> Stashed changes
   }
 
   async pinLogin(branchCode: string, pin: string) {
@@ -321,6 +495,8 @@ export class AuthService implements OnModuleInit {
         role: organizationMemberships.role,
         branchScope: organizationMemberships.branchScope,
         staffPinHash: organizationMemberships.staffPinHash,
+        active: organizationMemberships.active,
+        navAllowlist: organizationMemberships.navAllowlist,
         email: users.email,
         userStatus: users.status,
       })
@@ -335,11 +511,8 @@ export class AuthService implements OnModuleInit {
 
     const eligible = memberships.filter(
       (row) =>
-<<<<<<< Updated upstream
-=======
         row.active !== false &&
         row.userStatus === "active" &&
->>>>>>> Stashed changes
         row.staffPinHash &&
         (row.branchScope === "all" || row.branchScope.toUpperCase() === code),
     );
@@ -360,16 +533,6 @@ export class AuthService implements OnModuleInit {
         detail: `Branch ${code}`,
       });
 
-<<<<<<< Updated upstream
-      return this.issueTokens(
-        row.userId,
-        row.organizationId,
-        normalizePermissions(row.permissions, row.role),
-        row.role,
-        row.branchScope ?? "all",
-        null,
-      );
-=======
       return this.issueTokens({
         userId: row.userId,
         organizationId: row.organizationId,
@@ -380,7 +543,6 @@ export class AuthService implements OnModuleInit {
         systemType,
         navAllowlist: Array.isArray(row.navAllowlist) ? row.navAllowlist : null,
       });
->>>>>>> Stashed changes
     }
 
     await this.security.logEvent({
@@ -405,10 +567,6 @@ export class AuthService implements OnModuleInit {
     if (!rt) throw new UnauthorizedException("Invalid refresh token");
     if (rt.expiresAt.getTime() < Date.now()) throw new UnauthorizedException("Refresh expired");
 
-<<<<<<< Updated upstream
-    const m = await this.loadMembershipForAuth(rt.userId);
-    if (!m) throw new UnauthorizedException("No organization membership");
-=======
     const userRows = await this.db.select().from(users).where(eq(users.id, rt.userId)).limit(1);
     const user = userRows[0];
     if (!user || user.status !== "active") {
@@ -443,7 +601,6 @@ export class AuthService implements OnModuleInit {
     const row0 = membership[0];
     if (!row0) throw new UnauthorizedException("No organization membership");
     const m = row0.membership;
->>>>>>> Stashed changes
     if (m.active === false) throw new UnauthorizedException("Account deactivated. Contact an administrator.");
     if (row0.org.status !== "active") {
       throw new UnauthorizedException(`This business is ${row0.org.status}.`);
@@ -471,64 +628,6 @@ export class AuthService implements OnModuleInit {
       .where(eq(organizationMemberships.userId, userId))
       .limit(1);
     return rows[0];
-  }
-
-  /**
-   * Full membership for auth.
-   * Only selects core columns so Railway DBs missing newer fields
-   * (`active`, `nav_allowlist`, …) still allow login.
-   */
-  private async loadMembershipForAuth(userId: string): Promise<{
-    organizationId: string;
-    role: string;
-    permissions: unknown;
-    branchScope: string;
-    active: boolean;
-    navAllowlist: string[] | null;
-  } | null> {
-    const rows = await this.db
-      .select({
-        organizationId: organizationMemberships.organizationId,
-        role: organizationMemberships.role,
-        permissions: organizationMemberships.permissions,
-        branchScope: organizationMemberships.branchScope,
-      })
-      .from(organizationMemberships)
-      .where(eq(organizationMemberships.userId, userId))
-      .limit(1);
-    const m = rows[0];
-    if (!m) return null;
-
-    let active = true;
-    let navAllowlist: string[] | null = null;
-    try {
-      const extra = await this.db
-        .select({
-          active: organizationMemberships.active,
-          navAllowlist: organizationMemberships.navAllowlist,
-        })
-        .from(organizationMemberships)
-        .where(eq(organizationMemberships.userId, userId))
-        .limit(1);
-      if (extra[0]) {
-        active = extra[0].active !== false;
-        navAllowlist = Array.isArray(extra[0].navAllowlist) ? extra[0].navAllowlist : null;
-      }
-    } catch (err) {
-      console.warn(
-        "[auth] optional membership columns unavailable; defaulting active=true:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-
-    return {
-      organizationId: m.organizationId,
-      role: m.role,
-      permissions: m.permissions,
-      branchScope: m.branchScope ?? "all",
-      active,
-      navAllowlist,
-    };
   }
 
   private async touchLastActivity(organizationId: string, userId: string): Promise<void> {
@@ -571,14 +670,6 @@ export class AuthService implements OnModuleInit {
     }
 
     const accessPayload: AccessJwtPayload = {
-<<<<<<< Updated upstream
-      sub: userId,
-      organizationId,
-      permissions,
-      role,
-      branchScope,
-      ...(navAllowlist != null ? { navAllowlist } : {}),
-=======
       sub: opts.userId,
       organizationId: opts.organizationId,
       permissions: opts.permissions,
@@ -587,7 +678,6 @@ export class AuthService implements OnModuleInit {
       platformRole: opts.platformRole,
       systemType: opts.systemType,
       navAllowlist: opts.navAllowlist,
->>>>>>> Stashed changes
       ...(riderId ? { riderId } : {}),
     };
 

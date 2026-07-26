@@ -421,7 +421,7 @@ export function BillCustomizationPanel({
             </div>
             <p className="text-[10px] text-slate-500">
               Choose which saved template prints for Order/Invoice vs Pay. Leave empty to use the
-              branch default. Paper size matches Printer Profiles (58mm / 80mm / A4).
+              branch default. Paper size matches Printer Profiles (58mm / 80mm / 100mm / custom / A4).
             </p>
             <label className="block text-xs text-slate-600 dark:text-slate-300">
               Receipt paper size
@@ -432,6 +432,8 @@ export function BillCustomizationPanel({
               >
                 <option value="58mm">58mm roll</option>
                 <option value="80mm">80mm roll</option>
+                <option value="100mm">100mm roll</option>
+                <option value="custom">Custom (branch setting)</option>
                 <option value="A4">A4</option>
               </select>
             </label>

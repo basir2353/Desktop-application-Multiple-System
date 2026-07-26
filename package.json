@@ -32,7 +32,10 @@
     "db:push": "dotenv -e .env -- pnpm --filter @platform/database-pg push",
     "db:studio": "pnpm --filter @platform/database-pg studio",
     "seed:live": "node backend/scripts/seed-live.mjs",
-    "fix:live-login": "node backend/scripts/seed-live.mjs"
+    "fix:live-login": "node backend/scripts/seed-live.mjs",
+    "local:start": "local\\start-local.bat",
+    "local:seed": "local\\seed-local.bat",
+    "local:stop": "local\\stop-local.bat"
   },
   "devDependencies": {
     "dotenv-cli": "^8.0.0",

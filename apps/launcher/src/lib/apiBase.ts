@@ -1,15 +1,18 @@
-import { useDataModeStore } from "../stores/dataModeStore";
+import { useDataModeStore, type ApiPreset } from "../stores/dataModeStore";
 
-/** Live Railway API — override with VITE_API_BASE_URL for local dev. */
-const DEFAULT_API = "https://platformapi-production-39aa.up.railway.app";
+/** Hosted Railway API (production). */
+export const LIVE_API_URL = "https://backend-desktop-production-5505.up.railway.app";
+
+/** Local dev API — run `pnpm dev:api` on this machine. */
+export const LOCAL_API_URL = "http://127.0.0.1:3000";
 
 function normalizeApiBaseUrl(url: string): string {
   const trimmed = url.trim().replace(/\/$/, "");
-  if (!trimmed) return DEFAULT_API;
+  if (!trimmed) return LIVE_API_URL;
   try {
     new URL(trimmed);
   } catch {
-    return DEFAULT_API;
+    return LIVE_API_URL;
   }
   return trimmed;
 }
@@ -19,12 +22,27 @@ function builtInApiBaseUrl(): string {
   if (fromEnv) {
     return normalizeApiBaseUrl(fromEnv);
   }
-  return DEFAULT_API;
+  return LIVE_API_URL;
 }
 
-/** API base URL — build-time default or runtime override from Sync settings (cloud mode). */
-export function getApiBaseUrl(): string {
-  const override = useDataModeStore.getState().cloudApiUrl?.trim();
-  if (override) return normalizeApiBaseUrl(override);
+function urlForPreset(preset: ApiPreset, customUrl: string): string {
+  if (preset === "local") return LOCAL_API_URL;
+  if (preset === "live") return LIVE_API_URL;
+  if (preset === "custom" && customUrl.trim()) return normalizeApiBaseUrl(customUrl);
   return builtInApiBaseUrl();
+}
+
+/** API base URL — dev uses `.env`; installed .exe uses Live / Local / Custom preset. */
+export function getApiBaseUrl(): string {
+  const fromEnv = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  if (import.meta.env.DEV && fromEnv) {
+    return normalizeApiBaseUrl(fromEnv);
+  }
+
+  const { apiPreset, cloudApiUrl } = useDataModeStore.getState();
+  return urlForPreset(apiPreset, cloudApiUrl);
+}
+
+export function describeApiPreset(preset: ApiPreset): string {
+  return urlForPreset(preset, useDataModeStore.getState().cloudApiUrl);
 }

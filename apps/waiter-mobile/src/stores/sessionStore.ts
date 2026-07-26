@@ -1,7 +1,7 @@
-import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
 import { getApiBaseUrl } from "../lib/apiBase";
 import { decodeAccessToken, type AccessTokenClaims } from "../lib/jwt";
+import { secureDelete, secureGet, secureSet } from "../lib/secureStorage";
 
 const ACCESS_KEY = "pops-waiter-access";
 const REFRESH_KEY = "pops-waiter-refresh";
@@ -27,38 +27,66 @@ export const useSessionStore = create<SessionState>((set) => ({
   hydrated: false,
 
   setTokens: (access, refresh, claims, email) => {
-    void SecureStore.setItemAsync(ACCESS_KEY, access);
-    void SecureStore.setItemAsync(REFRESH_KEY, refresh);
-    void SecureStore.setItemAsync(API_BASE_KEY, getApiBaseUrl());
-    if (email) void SecureStore.setItemAsync(EMAIL_KEY, email);
+    void secureSet(ACCESS_KEY, access);
+    void secureSet(REFRESH_KEY, refresh);
+    void secureSet(API_BASE_KEY, getApiBaseUrl());
+    if (email) void secureSet(EMAIL_KEY, email);
     set({ accessToken: access, refreshToken: refresh, claims, waiterEmail: email ?? null });
   },
 
   clear: () => {
-    void SecureStore.deleteItemAsync(ACCESS_KEY);
-    void SecureStore.deleteItemAsync(REFRESH_KEY);
-    void SecureStore.deleteItemAsync(EMAIL_KEY);
-    void SecureStore.deleteItemAsync(API_BASE_KEY);
+    void secureDelete(ACCESS_KEY);
+    void secureDelete(REFRESH_KEY);
+    void secureDelete(EMAIL_KEY);
+    void secureDelete(API_BASE_KEY);
     set({ accessToken: null, refreshToken: null, claims: null, waiterEmail: null });
   },
 
   hydrate: async () => {
-    const currentApiBase = getApiBaseUrl();
-    const [access, refresh, email, storedApiBase] = await Promise.all([
-      SecureStore.getItemAsync(ACCESS_KEY),
-      SecureStore.getItemAsync(REFRESH_KEY),
-      SecureStore.getItemAsync(EMAIL_KEY),
-      SecureStore.getItemAsync(API_BASE_KEY),
-    ]);
-
-    // Tokens from localhost / old backend are invalid after switching to Railway.
-    if (storedApiBase && storedApiBase !== currentApiBase) {
-      await Promise.all([
-        SecureStore.deleteItemAsync(ACCESS_KEY),
-        SecureStore.deleteItemAsync(REFRESH_KEY),
-        SecureStore.deleteItemAsync(EMAIL_KEY),
-        SecureStore.deleteItemAsync(API_BASE_KEY),
+    try {
+      const currentApiBase = getApiBaseUrl();
+      const [access, refresh, email, storedApiBase] = await Promise.all([
+        secureGet(ACCESS_KEY),
+        secureGet(REFRESH_KEY),
+        secureGet(EMAIL_KEY),
+        secureGet(API_BASE_KEY),
       ]);
+
+      // Tokens from localhost / old backend are invalid after switching to Railway.
+      if (storedApiBase && storedApiBase !== currentApiBase) {
+        await Promise.all([
+          secureDelete(ACCESS_KEY),
+          secureDelete(REFRESH_KEY),
+          secureDelete(EMAIL_KEY),
+          secureDelete(API_BASE_KEY),
+        ]);
+        set({
+          accessToken: null,
+          refreshToken: null,
+          claims: null,
+          waiterEmail: null,
+          hydrated: true,
+        });
+        return;
+      }
+
+      let claims: AccessTokenClaims | null = null;
+      if (access) {
+        try {
+          claims = decodeAccessToken(access);
+        } catch {
+          claims = null;
+        }
+      }
+      set({
+        accessToken: access,
+        refreshToken: refresh,
+        claims,
+        waiterEmail: email,
+        hydrated: true,
+      });
+    } catch (err) {
+      console.warn("[sessionStore] hydrate failed:", err);
       set({
         accessToken: null,
         refreshToken: null,
@@ -66,23 +94,6 @@ export const useSessionStore = create<SessionState>((set) => ({
         waiterEmail: null,
         hydrated: true,
       });
-      return;
     }
-
-    let claims: AccessTokenClaims | null = null;
-    if (access) {
-      try {
-        claims = decodeAccessToken(access);
-      } catch {
-        claims = null;
-      }
-    }
-    set({
-      accessToken: access,
-      refreshToken: refresh,
-      claims,
-      waiterEmail: email,
-      hydrated: true,
-    });
   },
 }));

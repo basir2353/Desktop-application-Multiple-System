@@ -28,7 +28,9 @@ type PricedLine = {
 export function buildUnifiedOrders(bills: Bill[], tickets: KitchenTicket[]): UnifiedOrder[] {
   const eligibleBills = bills.filter(
     (bill) =>
-      (bill.status === "completed" || bill.status === "held") && !bill.billRef.endsWith("-SEED"),
+      (bill.status === "completed" || bill.status === "held") &&
+      typeof bill.billRef === "string" &&
+      !bill.billRef.endsWith("-SEED"),
   );
   const billedOrderRefs = new Set(
     eligibleBills.map((bill) => bill.orderRef).filter((ref): ref is string => Boolean(ref)),

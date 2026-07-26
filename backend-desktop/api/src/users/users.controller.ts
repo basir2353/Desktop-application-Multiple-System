@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   acceptInviteSchema,
   createOrgUserSchema,
@@ -29,6 +29,16 @@ export class UsersController {
   @RequirePermissions("pops.users.manage")
   list(@CurrentUser() user: AccessJwtPayload) {
     return this.users.listUsers(user.organizationId);
+  }
+
+  /** Waiters, cashiers, kitchen, etc. for printer assignment — any pops.read user. */
+  @Get("assignable")
+  @RequirePermissions("pops.read")
+  listAssignable(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode?: string,
+  ) {
+    return this.users.listAssignableStaff(user.organizationId, branchCode?.trim());
   }
 
   @Get("invites")
