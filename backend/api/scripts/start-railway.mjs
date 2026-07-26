@@ -106,9 +106,12 @@ function startApi() {
 requireEnv("DATABASE_URL");
 requireEnv("JWT_ACCESS_SECRET");
 
-// Never abort boot on drizzle push — production DBs frequently hit benign alter conflicts
-// (e.g. "column id is in a primary key"), which previously caused permanent 502s.
-if (!runSchemaPush()) {
+// Skip drizzle-kit push on boot — it often fails on existing Railway DBs
+// ("column id is in a primary key") and previously caused permanent 502s.
+const skipPush = (process.env.RAILWAY_SKIP_SCHEMA_PUSH ?? "1") !== "0";
+if (skipPush) {
+  console.warn("[railway] Skipping drizzle-kit push on boot (RAILWAY_SKIP_SCHEMA_PUSH=1).");
+} else if (!runSchemaPush()) {
   console.warn("[railway] Schema push reported errors; starting API with existing schema.");
 }
 
@@ -116,5 +119,10 @@ if (!ensureCriticalSchema()) {
   console.warn("[railway] ensure-schema had errors — continuing; login may fail if columns are missing.");
 }
 
-await runSeedBoot();
+try {
+  await runSeedBoot();
+} catch (err) {
+  console.warn("[railway] Seed boot failed — continuing:", err instanceof Error ? err.message : err);
+}
+
 startApi();

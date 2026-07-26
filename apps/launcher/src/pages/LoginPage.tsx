@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { decodeAccessToken, isSuperAdminClaims } from "../lib/jwt";
 import { getApiBaseUrl } from "../lib/apiBase";
-import { ApiEndpointSelector } from "../components/ApiEndpointSelector";
 import {
   businessSystemIdFromSystemType,
   getBusinessSystem,
@@ -219,9 +218,6 @@ export function LoginPage(): JSX.Element {
             {roleMeta.label}
           </h1>
           <p className={`mt-1 text-sm ${mutedClass}`}>{roleMeta.description}</p>
-          <div className="mt-4">
-            <ApiEndpointSelector compact />
-          </div>
           <form className="mt-4 space-y-4" onSubmit={onSubmitPassword}>
             <label className={`block text-sm ${subtleClass}`}>
               Email
@@ -287,10 +283,6 @@ export function LoginPage(): JSX.Element {
           {roleMeta!.label}
         </h1>
         <p className={`mt-1 text-sm ${mutedClass}`}>{roleMeta!.description}</p>
-
-        <div className="mt-4">
-          <ApiEndpointSelector compact />
-        </div>
 
         {!isAdminLogin ? (
           <div className="mt-4 flex gap-2">

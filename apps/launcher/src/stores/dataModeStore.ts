@@ -22,8 +22,8 @@ type DataModeState = {
 export const useDataModeStore = create<DataModeState>()(
   persist(
     (set) => ({
-      dataMode: "local",
-      apiPreset: "local",
+      dataMode: "cloud",
+      apiPreset: "live",
       cloudApiUrl: "",
       lastSyncedAt: null,
       setDataMode: (dataMode) => set({ dataMode }),

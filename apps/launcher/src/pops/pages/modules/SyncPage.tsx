@@ -2,7 +2,7 @@ import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { isOnline, subscribeConnectivity } from "@platform/connectivity";
-import { ApiEndpointSelector } from "../../../components/ApiEndpointSelector";
+import { getApiBaseUrl } from "../../../lib/apiBase";
 import { countPendingOutbox, flushAllOfflineData } from "../../../lib/offlineSync";
 import { loadOfflineQueue } from "../../../store/lib/storePosSync";
 import { countOfflinePopsOrders } from "../../lib/popsOfflineOrders";
@@ -144,11 +144,10 @@ export function SyncPage(): JSX.Element {
           </label>
         </div>
 
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-          <ApiEndpointSelector />
-          <p className="text-xs text-slate-500">
-            After changing API, sign out and sign in again so menu and orders reload from the new server.
-          </p>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">API server</div>
+          <p className="text-sm text-slate-200">Live Railway</p>
+          <p className="break-all text-xs text-slate-500">{getApiBaseUrl()}</p>
         </div>
       </div>
     </div>
