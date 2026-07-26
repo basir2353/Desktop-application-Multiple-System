@@ -4,21 +4,31 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { and, count, desc, eq, ne, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, ne, sql } from "drizzle-orm";
 import {
   permissionsForPopsRole,
   SYSTEM_TYPES,
   type Business,
   type CreateBusiness,
+  type CreateLicencePayment,
+  type GrantLicenceDays,
+  type LicencePayment,
+  type LicenceReminderResult,
+  type MonthlyLicenceRow,
+  type MonthlyLicenceStatus,
   type PlatformAnalytics,
   type PlatformUser,
+  type SendLicenceReminders,
   type SystemType,
   type UpdateBusiness,
   type UpdatePlatformSettings,
 } from "@platform/contracts";
 import {
+  licencePayments,
+  licenceReminders,
   organizationMemberships,
   organizations,
   platformSettings,
@@ -30,10 +40,50 @@ import { randomBytes } from "node:crypto";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { isSuperAdmin } from "../auth/jwt.types";
+import { OrgAlertsService } from "../org-alerts/org-alerts.service";
+
+const LICENCE_TZ = "Asia/Karachi";
+
+function karachiYmd(date = new Date()): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: LICENCE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = Number(parts.find((p) => p.type === "year")?.value);
+  const month = Number(parts.find((p) => p.type === "month")?.value);
+  const day = Number(parts.find((p) => p.type === "day")?.value);
+  return { year, month, day };
+}
+
+/** Asia/Karachi has no DST (UTC+5). */
+function karachiMonthBounds(year: number, month: number): { start: Date; end: Date } {
+  const start = new Date(Date.UTC(year, month - 1, 1) - 5 * 60 * 60 * 1000);
+  const end = new Date(Date.UTC(year, month, 1) - 5 * 60 * 60 * 1000);
+  return { start, end };
+}
+
+function periodKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function periodLabel(year: number, month: number): string {
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
 
 @Injectable()
 export class PlatformService {
-  constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
+  private readonly logger = new Logger(PlatformService.name);
+
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PlatformPgDb,
+    private readonly orgAlerts: OrgAlertsService,
+  ) {}
 
   assertSuperAdmin(user: AccessJwtPayload): void {
     if (!isSuperAdmin(user)) {
@@ -51,6 +101,7 @@ export class PlatformService {
         licenceKey: organizations.licenceKey,
         licencePlan: organizations.licencePlan,
         licenceExpiresAt: organizations.licenceExpiresAt,
+        enabledModules: organizations.enabledModules,
         createdBy: organizations.createdBy,
         createdAt: organizations.createdAt,
       })
@@ -141,6 +192,7 @@ export class PlatformService {
         licenceKey,
         licencePlan: input.licencePlan ?? "standard",
         licenceExpiresAt: input.licenceExpiresAt ? new Date(input.licenceExpiresAt) : null,
+        enabledModules: input.enabledModules ?? null,
         createdBy: actor.sub,
       })
       .returning();
@@ -193,6 +245,7 @@ export class PlatformService {
               licenceExpiresAt: input.licenceExpiresAt ? new Date(input.licenceExpiresAt) : null,
             }
           : {}),
+        ...(input.enabledModules !== undefined ? { enabledModules: input.enabledModules } : {}),
         updatedAt: new Date(),
       })
       .where(eq(organizations.id, businessId))
@@ -203,6 +256,407 @@ export class PlatformService {
       adminEmail: existing.adminEmail ?? null,
       userCount: existing.userCount ?? 0,
     });
+  }
+
+  /** Extend licence from max(now, current expiry) by N days; optional payment row. */
+  async grantLicenceDays(
+    actor: AccessJwtPayload,
+    businessId: string,
+    input: GrantLicenceDays,
+  ): Promise<Business> {
+    const existing = await this.getBusiness(businessId);
+    const now = new Date();
+    const currentExpiry = existing.licenceExpiresAt ? new Date(existing.licenceExpiresAt) : null;
+    const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
+    const nextExpiry = new Date(base.getTime() + input.days * 24 * 60 * 60 * 1000);
+    const plan =
+      input.plan ??
+      (input.days === 5 ? "trial_5" : input.days === 30 ? "monthly_30" : existing.licencePlan ?? "custom");
+
+    const [updated] = await this.db
+      .update(organizations)
+      .set({
+        licencePlan: plan,
+        licenceExpiresAt: nextExpiry,
+        status: existing.status === "suspended" ? "active" : existing.status,
+        updatedAt: now,
+      })
+      .where(eq(organizations.id, businessId))
+      .returning();
+
+    if (!updated) throw new NotFoundException("Business not found");
+
+    if (input.recordPayment) {
+      await this.db.insert(licencePayments).values({
+        organizationId: businessId,
+        periodDays: input.days,
+        amount: input.amount ?? 0,
+        currency: input.currency ?? "PKR",
+        paidByLabel: input.paidByLabel?.trim() || existing.adminEmail || existing.name,
+        note: input.note?.trim() || `Granted ${input.days}-day licence`,
+        paidAt: now,
+        recordedBy: actor.sub,
+      });
+    }
+
+    await this.orgAlerts.resolveLicenceAlerts(businessId);
+
+    return this.toBusiness(updated, {
+      adminEmail: existing.adminEmail ?? null,
+      userCount: existing.userCount ?? 0,
+    });
+  }
+
+  async listLicencePayments(businessId?: string): Promise<LicencePayment[]> {
+    const base = this.db
+      .select({
+        id: licencePayments.id,
+        organizationId: licencePayments.organizationId,
+        periodDays: licencePayments.periodDays,
+        amount: licencePayments.amount,
+        currency: licencePayments.currency,
+        paidByLabel: licencePayments.paidByLabel,
+        note: licencePayments.note,
+        paidAt: licencePayments.paidAt,
+        recordedBy: licencePayments.recordedBy,
+        createdAt: licencePayments.createdAt,
+        businessName: organizations.name,
+      })
+      .from(licencePayments)
+      .innerJoin(organizations, eq(organizations.id, licencePayments.organizationId));
+
+    const rows = await (businessId
+      ? base.where(eq(licencePayments.organizationId, businessId))
+      : base
+    )
+      .orderBy(desc(licencePayments.paidAt))
+      .limit(200);
+
+    return rows.map((row) => ({
+      id: row.id,
+      organizationId: row.organizationId,
+      periodDays: row.periodDays,
+      amount: row.amount,
+      currency: row.currency,
+      paidByLabel: row.paidByLabel,
+      note: row.note,
+      paidAt: row.paidAt.toISOString(),
+      recordedBy: row.recordedBy,
+      createdAt: row.createdAt.toISOString(),
+      businessName: row.businessName,
+    }));
+  }
+
+  async recordLicencePayment(
+    actor: AccessJwtPayload,
+    businessId: string,
+    input: CreateLicencePayment,
+  ): Promise<{ payment: LicencePayment; business: Business }> {
+    const existing = await this.getBusiness(businessId);
+    const paidAt = input.paidAt ? new Date(input.paidAt) : new Date();
+    const extend = input.extendLicence !== false;
+
+    const [payment] = await this.db
+      .insert(licencePayments)
+      .values({
+        organizationId: businessId,
+        periodDays: input.periodDays,
+        amount: input.amount ?? 0,
+        currency: input.currency ?? "PKR",
+        paidByLabel: input.paidByLabel?.trim() || existing.adminEmail || existing.name,
+        note: input.note?.trim() || null,
+        paidAt,
+        recordedBy: actor.sub,
+      })
+      .returning();
+
+    let business = existing;
+    if (extend) {
+      business = await this.grantLicenceDays(actor, businessId, {
+        days: input.periodDays,
+        plan: input.periodDays === 5 ? "trial_5" : input.periodDays === 30 ? "monthly_30" : undefined,
+        recordPayment: false,
+      });
+    } else {
+      await this.orgAlerts.resolveLicenceAlerts(businessId);
+    }
+
+    return {
+      payment: {
+        id: payment.id,
+        organizationId: payment.organizationId,
+        periodDays: payment.periodDays,
+        amount: payment.amount,
+        currency: payment.currency,
+        paidByLabel: payment.paidByLabel,
+        note: payment.note,
+        paidAt: payment.paidAt.toISOString(),
+        recordedBy: payment.recordedBy,
+        createdAt: payment.createdAt.toISOString(),
+        businessName: existing.name,
+      },
+      business,
+    };
+  }
+
+  async getMonthlyLicenceStatus(year?: number, month?: number): Promise<MonthlyLicenceStatus> {
+    const nowParts = karachiYmd();
+    const y = year ?? nowParts.year;
+    const m = month ?? nowParts.month;
+    if (m < 1 || m > 12) throw new BadRequestException("Invalid month");
+
+    const { start, end } = karachiMonthBounds(y, m);
+    const label = periodLabel(y, m);
+    const key = periodKey(y, m);
+
+    const businesses = await this.listBusinesses();
+    const activeBiz = businesses.filter((b) => b.status === "active" || b.status === "suspended");
+
+    const payments = await this.db
+      .select()
+      .from(licencePayments)
+      .where(and(gte(licencePayments.paidAt, start), lt(licencePayments.paidAt, end)))
+      .orderBy(desc(licencePayments.paidAt));
+
+    const paymentByOrg = new Map<string, (typeof payments)[0]>();
+    for (const p of payments) {
+      if (!paymentByOrg.has(p.organizationId)) paymentByOrg.set(p.organizationId, p);
+    }
+
+    const reminderRows = await this.db
+      .select()
+      .from(licenceReminders)
+      .where(eq(licenceReminders.periodKey, key))
+      .orderBy(desc(licenceReminders.sentAt));
+    const lastReminderByOrg = new Map<string, Date>();
+    for (const r of reminderRows) {
+      if (!lastReminderByOrg.has(r.organizationId)) {
+        lastReminderByOrg.set(r.organizationId, r.sentAt);
+      }
+    }
+
+    const paid: MonthlyLicenceRow[] = [];
+    const unpaid: MonthlyLicenceRow[] = [];
+
+    for (const b of activeBiz) {
+      const pay = paymentByOrg.get(b.id) ?? null;
+      const daysLeft =
+        typeof b.licenceDaysLeft === "number"
+          ? b.licenceDaysLeft
+          : b.licenceExpiresAt
+            ? Math.ceil((new Date(b.licenceExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+            : null;
+      const row: MonthlyLicenceRow = {
+        organizationId: b.id,
+        businessName: b.name,
+        systemType: b.systemType,
+        status: b.status,
+        adminEmail: b.adminEmail ?? null,
+        licencePlan: b.licencePlan ?? null,
+        licenceExpiresAt: b.licenceExpiresAt ?? null,
+        licenceDaysLeft: daysLeft,
+        licenceExpired: Boolean(b.licenceExpired),
+        paidThisMonth: Boolean(pay),
+        payment: pay
+          ? {
+              id: pay.id,
+              amount: pay.amount,
+              currency: pay.currency,
+              periodDays: pay.periodDays,
+              paidAt: pay.paidAt.toISOString(),
+              paidByLabel: pay.paidByLabel,
+              note: pay.note,
+            }
+          : null,
+        lastReminderAt: lastReminderByOrg.get(b.id)?.toISOString() ?? null,
+      };
+      if (pay) {
+        paid.push(row);
+      } else {
+        unpaid.push(row);
+      }
+    }
+
+    const orgIds = new Set(activeBiz.map((b) => b.id));
+    const totalCollected = payments
+      .filter((p) => orgIds.has(p.organizationId))
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    return {
+      year: y,
+      month: m,
+      timezone: LICENCE_TZ,
+      periodLabel: label,
+      paidCount: paid.length,
+      unpaidCount: unpaid.length,
+      totalCollected,
+      currency: "PKR",
+      paid,
+      unpaid,
+    };
+  }
+
+  async sendLicenceReminders(input: SendLicenceReminders): Promise<LicenceReminderResult> {
+    const status = await this.getMonthlyLicenceStatus(input.year, input.month);
+    const nowParts = karachiYmd();
+    const day = nowParts.day;
+    const mode = input.mode ?? "month_end";
+    const force = Boolean(input.force);
+    const dryRun = Boolean(input.dryRun);
+    const key = periodKey(status.year, status.month);
+    const idFilter = input.organizationIds?.length
+      ? new Set(input.organizationIds)
+      : null;
+
+    const candidates = status.unpaid.filter((row) => {
+      if (idFilter && !idFilter.has(row.organizationId)) return false;
+      const dueSoon =
+        row.licenceExpired ||
+        (row.licenceDaysLeft != null && row.licenceDaysLeft <= 5);
+      const monthEndWindow = day >= 25 || day <= 3;
+      if (mode === "month_end") return monthEndWindow || dueSoon;
+      if (mode === "due") return dueSoon;
+      return true; // all unpaid
+    });
+
+    const results: LicenceReminderResult["results"] = [];
+    let sent = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const row of candidates) {
+      const kind: "month_end" | "due" =
+        row.licenceExpired || (row.licenceDaysLeft != null && row.licenceDaysLeft <= 5)
+          ? "due"
+          : "month_end";
+
+      if (!force) {
+        const existing = await this.db
+          .select({ id: licenceReminders.id })
+          .from(licenceReminders)
+          .where(
+            and(
+              eq(licenceReminders.organizationId, row.organizationId),
+              eq(licenceReminders.periodKey, key),
+              eq(licenceReminders.kind, kind),
+            ),
+          )
+          .limit(1);
+        if (existing[0]) {
+          skipped += 1;
+          results.push({
+            organizationId: row.organizationId,
+            businessName: row.businessName,
+            adminEmail: row.adminEmail,
+            status: "skipped",
+            reason: `Already alerted (${kind}) for ${key}`,
+          });
+          continue;
+        }
+      }
+
+      if (dryRun) {
+        results.push({
+          organizationId: row.organizationId,
+          businessName: row.businessName,
+          adminEmail: row.adminEmail,
+          status: "dry_run",
+          reason: `Would create in-app admin alert (${kind})`,
+        });
+        continue;
+      }
+
+      try {
+        if (force) {
+          await this.db
+            .delete(licenceReminders)
+            .where(
+              and(
+                eq(licenceReminders.organizationId, row.organizationId),
+                eq(licenceReminders.periodKey, key),
+                eq(licenceReminders.kind, kind),
+              ),
+            );
+        }
+
+        const alertKind = kind === "due" ? "licence_due" : "licence_month_end";
+        const title =
+          kind === "due"
+            ? "Software licence payment due"
+            : `Monthly payment due — ${status.periodLabel}`;
+        const expiryBit = row.licenceExpiresAt
+          ? ` Licence expiry: ${new Date(row.licenceExpiresAt).toLocaleDateString()}${
+              row.licenceDaysLeft != null
+                ? row.licenceDaysLeft < 0
+                  ? ` (expired ${Math.abs(row.licenceDaysLeft)}d ago)`
+                  : ` (${row.licenceDaysLeft}d left)`
+                : ""
+            }.`
+          : "";
+        const message =
+          kind === "due"
+            ? `Your POPS software licence needs renewal.${expiryBit} Contact the platform to pay and keep the system active.`
+            : `Monthly software payment for ${status.periodLabel} is not recorded yet.${expiryBit} Please pay so your access continues.`;
+
+        const upsert = await this.orgAlerts.upsertLicenceAlert({
+          organizationId: row.organizationId,
+          kind: alertKind,
+          periodKey: key,
+          title,
+          message,
+          force,
+        });
+
+        await this.db.insert(licenceReminders).values({
+          organizationId: row.organizationId,
+          periodKey: key,
+          kind,
+          channel: "in_app",
+          toEmail: row.adminEmail,
+          success: "true",
+          detail: `admin_alert_${upsert}`,
+        });
+
+        sent += 1;
+        results.push({
+          organizationId: row.organizationId,
+          businessName: row.businessName,
+          adminEmail: row.adminEmail,
+          status: "sent",
+          reason: `In-app admin alert ${upsert}`,
+        });
+      } catch (err) {
+        failed += 1;
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Reminder failed for ${row.businessName}: ${reason}`);
+        results.push({
+          organizationId: row.organizationId,
+          businessName: row.businessName,
+          adminEmail: row.adminEmail,
+          status: "failed",
+          reason,
+        });
+      }
+    }
+
+    return { sent, skipped, failed, dryRun, results };
+  }
+
+  /** Automated tick: month-end window or licences due within 5 days. */
+  async runAutomatedLicenceReminders(): Promise<LicenceReminderResult | null> {
+    const { day } = karachiYmd();
+    const status = await this.getMonthlyLicenceStatus();
+    const hasDue = status.unpaid.some(
+      (r) => r.licenceExpired || (r.licenceDaysLeft != null && r.licenceDaysLeft <= 5),
+    );
+    const monthEndWindow = day >= 25 || day <= 3;
+    if (!monthEndWindow && !hasDue) {
+      this.logger.debug("Licence reminder tick: nothing due");
+      return null;
+    }
+    const mode = hasDue && !monthEndWindow ? "due" : monthEndWindow && hasDue ? "all" : "month_end";
+    this.logger.log(`Licence reminder automation running (mode=${mode}, day=${day})`);
+    return this.sendLicenceReminders({ mode });
   }
 
   async deleteBusiness(businessId: string): Promise<{ ok: true }> {
@@ -326,11 +780,18 @@ export class PlatformService {
       licenceKey: string | null;
       licencePlan: string | null;
       licenceExpiresAt: Date | null;
+      enabledModules?: string[] | null;
       createdBy: string | null;
       createdAt: Date;
     },
     extras?: { adminEmail?: string | null; userCount?: number },
   ): Business {
+    const expiresAt = row.licenceExpiresAt;
+    const now = Date.now();
+    const licenceExpired = expiresAt ? expiresAt.getTime() < now : false;
+    const licenceDaysLeft = expiresAt
+      ? Math.ceil((expiresAt.getTime() - now) / (24 * 60 * 60 * 1000))
+      : undefined;
     return {
       id: row.id,
       name: row.name,
@@ -338,11 +799,14 @@ export class PlatformService {
       status: row.status as Business["status"],
       licenceKey: row.licenceKey,
       licencePlan: row.licencePlan,
-      licenceExpiresAt: row.licenceExpiresAt?.toISOString() ?? null,
+      licenceExpiresAt: expiresAt?.toISOString() ?? null,
+      enabledModules: row.enabledModules ?? null,
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
       adminEmail: extras?.adminEmail ?? null,
       userCount: extras?.userCount ?? 0,
+      licenceDaysLeft,
+      licenceExpired,
     };
   }
 }

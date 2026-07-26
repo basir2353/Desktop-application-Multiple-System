@@ -1,34 +1,16 @@
-/** Hosted Railway API (production) — always used by desktop + browser. */
-export const LIVE_API_URL = "https://backend-desktop-production-5505.up.railway.app";
+/**
+ * Live data API — Nest process talking to Railway Postgres.
+ * Public railway.app is currently 502; once /health is ok, set this to RAILWAY_API_URL.
+ */
+export const RAILWAY_API_URL = "https://backend-desktop-production-5505.up.railway.app";
+export const LIVE_API_URL = "http://127.0.0.1:3000";
 
-/** @deprecated Kept for Sync/docs references only — app no longer switches to local API. */
+/** @deprecated */
 export const LOCAL_API_URL = "http://127.0.0.1:3000";
 
-function normalizeApiBaseUrl(url: string): string {
-  const trimmed = url.trim().replace(/\/$/, "");
-  if (!trimmed) return LIVE_API_URL;
-  try {
-    new URL(trimmed);
-  } catch {
-    return LIVE_API_URL;
-  }
-  // Never silently fall back to a local Nest process from env misconfig.
-  if (/localhost|127\.0\.0\.1/i.test(trimmed)) {
-    return LIVE_API_URL;
-  }
-  return trimmed;
-}
-
-/**
- * Always the live Railway API.
- * Optional `VITE_API_BASE_URL` may override only when it is a non-local https host.
- */
+/** Always the live-data API (Railway database). */
 export function getApiBaseUrl(): string {
-  const fromEnv = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-  if (fromEnv) {
-    return normalizeApiBaseUrl(fromEnv);
-  }
-  return LIVE_API_URL;
+  return LIVE_API_URL.replace(/\/$/, "");
 }
 
 export function describeApiPreset(_preset?: string): string {

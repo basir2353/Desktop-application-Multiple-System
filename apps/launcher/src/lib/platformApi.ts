@@ -1,14 +1,23 @@
 import {
   businessSchema,
+  licencePaymentSchema,
+  licenceReminderResultSchema,
+  monthlyLicenceStatusSchema,
   platformAnalyticsSchema,
   platformSettingsSchema,
   platformUserSchema,
   systemTypeSchema,
   type Business,
   type CreateBusiness,
+  type CreateLicencePayment,
+  type GrantLicenceDays,
+  type LicencePayment,
+  type LicenceReminderResult,
+  type MonthlyLicenceStatus,
   type PlatformAnalytics,
   type PlatformSettings,
   type PlatformUser,
+  type SendLicenceReminders,
   type SystemType,
   type UpdateBusiness,
   type UpdatePlatformSettings,
@@ -69,6 +78,65 @@ export async function deletePlatformBusiness(businessId: string): Promise<void> 
     const text = await res.text();
     throw new Error(text || `Delete failed (${res.status})`);
   }
+}
+
+export async function grantPlatformLicence(
+  businessId: string,
+  input: GrantLicenceDays,
+): Promise<Business> {
+  const res = await authFetch(`/v1/platform/businesses/${businessId}/grant-licence`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readJson(res, (json) => businessSchema.parse(json));
+}
+
+export async function fetchLicencePayments(businessId?: string): Promise<LicencePayment[]> {
+  const q = businessId ? `?businessId=${encodeURIComponent(businessId)}` : "";
+  const res = await authFetch(`/v1/platform/licence-payments${q}`);
+  return readJson(res, (json) => licencePaymentSchema.array().parse(json));
+}
+
+export async function fetchMonthlyLicenceStatus(
+  year?: number,
+  month?: number,
+): Promise<MonthlyLicenceStatus> {
+  const params = new URLSearchParams();
+  if (year != null) params.set("year", String(year));
+  if (month != null) params.set("month", String(month));
+  const q = params.toString() ? `?${params}` : "";
+  const res = await authFetch(`/v1/platform/licence-payments/monthly-status${q}`);
+  return readJson(res, (json) => monthlyLicenceStatusSchema.parse(json));
+}
+
+export async function sendLicenceReminders(
+  input: SendLicenceReminders = { mode: "all" },
+): Promise<LicenceReminderResult> {
+  const res = await authFetch("/v1/platform/licence-payments/send-reminders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readJson(res, (json) => licenceReminderResultSchema.parse(json));
+}
+
+export async function recordLicencePayment(
+  businessId: string,
+  input: CreateLicencePayment,
+): Promise<{ payment: LicencePayment; business: Business }> {
+  const res = await authFetch(`/v1/platform/businesses/${businessId}/licence-payments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readJson(res, (json) => {
+    const row = json as { payment?: unknown; business?: unknown };
+    return {
+      payment: licencePaymentSchema.parse(row.payment),
+      business: businessSchema.parse(row.business),
+    };
+  });
 }
 
 export async function fetchPlatformUsers(): Promise<PlatformUser[]> {

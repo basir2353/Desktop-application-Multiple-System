@@ -24,6 +24,7 @@ import { SecurityModule } from "./security/security.module";
 import { TablesModule } from "./tables/tables.module";
 import { UsersModule } from "./users/users.module";
 import { PlatformModule } from "./platform/platform.module";
+import { OrgAlertsModule } from "./org-alerts/org-alerts.module";
 import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
 
 @Module({
@@ -55,6 +56,7 @@ import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
     TablesModule,
     UsersModule,
     PlatformModule,
+    OrgAlertsModule,
     SyncModule,
     SecurityModule,
     ClosingModule,

@@ -17,8 +17,46 @@ const STATEMENTS = [
   `ALTER TABLE pops_cash_movements ADD COLUMN IF NOT EXISTS employee_id uuid`,
   `ALTER TABLE pops_cash_movements ADD COLUMN IF NOT EXISTS party_kind text`,
   `ALTER TABLE pops_cash_movements ADD COLUMN IF NOT EXISTS client_request_id text`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS enabled_modules jsonb`,
+  `CREATE TABLE IF NOT EXISTS licence_payments (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    period_days integer NOT NULL,
+    amount integer NOT NULL DEFAULT 0,
+    currency text NOT NULL DEFAULT 'PKR',
+    paid_by_label text,
+    note text,
+    paid_at timestamptz NOT NULL DEFAULT now(),
+    recorded_by uuid,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS licence_reminders (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    period_key text NOT NULL,
+    kind text NOT NULL,
+    channel text NOT NULL DEFAULT 'email',
+    to_email text,
+    success text NOT NULL DEFAULT 'true',
+    detail text,
+    sent_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS licence_reminders_org_period_kind_uidx
+    ON licence_reminders (organization_id, period_key, kind)`,
+  `CREATE TABLE IF NOT EXISTS org_alerts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    kind text NOT NULL,
+    period_key text NOT NULL,
+    title text NOT NULL,
+    message text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    resolved_at timestamptz,
+    dismissed_at timestamptz
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS org_alerts_org_period_kind_uidx
+    ON org_alerts (organization_id, period_key, kind)`,
 ];
-
 export function ensureCriticalSchema() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
