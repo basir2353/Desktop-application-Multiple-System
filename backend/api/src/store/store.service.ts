@@ -71,6 +71,7 @@ import {
 } from "./store-pos";
 import { StoreGroceryService } from "./store-grocery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
 
 const PRODUCT_SEEDS = [
   { sku: "SKU-001", name: "Premium Basmati Rice 5kg", category: "Groceries", subcategory: "Rice & Pulses", brand: "Guard", unit: "Bag", barcode: "8901001001001", purchase: 850, selling: 1100, stock: 120, reorder: 30 },
@@ -95,6 +96,7 @@ export class StoreService implements OnModuleInit {
   constructor(
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly grocery: StoreGroceryService,
+    private readonly taxAuthority: TaxAuthorityService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -1756,6 +1758,18 @@ export class StoreService implements OnModuleInit {
       }
       if (input.customerId) {
         await this.applyCustomerSaleEffects(input.customerId, total, input.isCredit, loyaltyRedeem, loyaltyEarn);
+      }
+      if (!input.reserveStock && sale) {
+        await this.taxAuthority.enqueueFromSale({
+          organizationId,
+          branchId: branch.id,
+          branchCode: branch.code,
+          sourceType: "store_sale",
+          sourceId: sale.id,
+          sourceRef: invoiceNumber,
+          taxableAmountPkr: Math.max(0, subtotal - manualDiscount - promotionDiscount - couponDiscount),
+          taxAmountPkr: tax,
+        });
       }
     }
 

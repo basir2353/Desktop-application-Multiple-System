@@ -16,10 +16,13 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
+import { SystemTypeGuard } from "../users/system-type.guard";
+import { RequireSystemType } from "../users/require-system-type.decorator";
 import { PharmacyService } from "./pharmacy.service";
 
 @Controller("v1/pharmacy")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
+@RequireSystemType("pharmacy")
 export class PharmacyController {
   constructor(private readonly pharmacy: PharmacyService) {}
 

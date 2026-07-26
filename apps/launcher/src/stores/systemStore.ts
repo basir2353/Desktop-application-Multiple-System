@@ -5,7 +5,7 @@ import {
   getBusinessSystem,
   isBusinessSystemId,
 } from "../lib/businessSystems";
-import { getLockedSystemId } from "../lib/edition";
+import { getEffectiveSystemLock } from "../lib/deviceInstall";
 
 type SystemState = {
   systemId: BusinessSystemId | null;
@@ -13,9 +13,10 @@ type SystemState = {
   clearSystem: () => void;
 };
 
-// Single-system installers lock the store to their baked-in edition. The picker
+// Single-system installers lock the store to their baked-in edition, and a
+// device that already has a system installed stays on that system. The picker
 // and any "switch system" action become no-ops so only that system is visible.
-const lockedSystemId = getLockedSystemId();
+const lockedSystemId = getEffectiveSystemLock();
 
 export const useSystemStore = create<SystemState>()(
   persist(

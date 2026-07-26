@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useSystemReady } from "../hooks/useSystemReady";
 import { getBusinessSystem, isBusinessSystemId } from "../lib/businessSystems";
-import { getLockedSystemId, isSingleSystemEdition } from "../lib/edition";
+import { getEffectiveSystemLock } from "../lib/deviceInstall";
 import { loginPathForRole, loginRolesForSystem } from "../lib/loginRoles";
 import { mutedClass, screenCenterClass } from "../pops/lib/themeClasses";
 import { useSystemStore } from "../stores/systemStore";
@@ -18,11 +18,11 @@ export function RoleSelectPage(): JSX.Element {
   const setSystem = useSystemStore((s) => s.setSystem);
   const persistedSystemId = useSystemStore((s) => s.systemId);
   const querySystem = params.get("system");
-  const lockedId = getLockedSystemId();
+  const lockedId = getEffectiveSystemLock();
   const systemId =
+    lockedId ??
     (querySystem && isBusinessSystemId(querySystem) ? querySystem : null) ??
-    persistedSystemId ??
-    lockedId;
+    persistedSystemId;
   const system = systemId ? getBusinessSystem(systemId) : null;
 
   useEffect(() => {
@@ -53,7 +53,7 @@ export function RoleSelectPage(): JSX.Element {
     <div className="min-h-screen bg-slate-50 px-6 py-10 dark:bg-slate-950">
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 flex items-center justify-between gap-3">
-          {isSingleSystemEdition() ? (
+          {lockedId ? (
             <span />
           ) : (
             <button

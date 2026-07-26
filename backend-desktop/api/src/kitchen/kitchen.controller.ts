@@ -8,10 +8,13 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
+import { SystemTypeGuard } from "../users/system-type.guard";
+import { RequireSystemType } from "../users/require-system-type.decorator";
 import { KitchenService } from "./kitchen.service";
 
 @Controller("v1/kitchen")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
+@RequireSystemType("restaurant")
 export class KitchenController {
   constructor(private readonly kitchen: KitchenService) {}
 

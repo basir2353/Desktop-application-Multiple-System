@@ -24,6 +24,7 @@ import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { AccountingHooksService } from "../accounting/accounting-hooks.service";
 import { ClosingService } from "../closing/closing.service";
 import { InventoryDeductionService } from "../inventory/inventory-deduction.service";
+import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
 import { assertDineInTableAvailable } from "../tables/table-booking";
 
 type BillTotals = {
@@ -46,6 +47,7 @@ export class BillingService implements OnApplicationBootstrap {
     private readonly inventoryDeduction: InventoryDeductionService,
     private readonly accountingHooks: AccountingHooksService,
     private readonly closing: ClosingService,
+    private readonly taxAuthority: TaxAuthorityService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -551,6 +553,30 @@ export class BillingService implements OnApplicationBootstrap {
     } catch (err) {
       this.logger.warn(
         `Accounting entry failed for ${row.billRef}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    try {
+      const [branch] = await this.db
+        .select()
+        .from(popsBranches)
+        .where(eq(popsBranches.id, row.branchId))
+        .limit(1);
+      if (branch) {
+        await this.taxAuthority.enqueueFromSale({
+          organizationId,
+          branchId: row.branchId,
+          branchCode: branch.code,
+          sourceType: "bill",
+          sourceId: row.id,
+          sourceRef: row.billRef,
+          taxableAmountPkr: Math.max(0, row.subtotalPkr - row.discountPkr),
+          taxAmountPkr: row.taxPkr,
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `FBR/PRA enqueue failed for ${row.billRef}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

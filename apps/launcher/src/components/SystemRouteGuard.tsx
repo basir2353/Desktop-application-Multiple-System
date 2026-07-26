@@ -1,41 +1,53 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import {
+  businessSystemIdFromSystemType,
   getErpEntryPath,
   isRestaurantExclusivePath,
   resolveBusinessSystemFromPath,
 } from "../lib/businessSystems";
-import { getLockedSystemId } from "../lib/edition";
+import { getEffectiveSystemLock, recordDeviceInstall } from "../lib/deviceInstall";
 import { useActiveSystemId } from "../hooks/useActiveSystemId";
 import { erpEntryPathForRole } from "../pops/lib/roleAccess";
 import { usePopsStore } from "../stores/popsStore";
+import { useSessionStore } from "../stores/sessionStore";
+import { useSystemStore } from "../stores/systemStore";
+import { useEffect } from "react";
 
 /**
- * Blocks routes that don't belong to the active system. In a single-system
- * (locked) edition this also blocks every other system's routes, so an installed
- * build can never navigate into a module it wasn't shipped with.
+ * Blocks routes that don't belong to the active / assigned system.
+ * JWT `systemType` permanently locks tenant users; installers add a build-time lock.
  */
 export function SystemRouteGuard(): JSX.Element {
   const { pathname } = useLocation();
   const systemId = useActiveSystemId();
-  const lockedSystemId = getLockedSystemId();
+  const lockedSystemId = getEffectiveSystemLock();
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
+  const claims = useSessionStore((s) => s.claims);
+  const setSystem = useSystemStore((s) => s.setSystem);
+  const assignedSystemId = businessSystemIdFromSystemType(claims?.systemType);
+  const effectiveLock = lockedSystemId ?? assignedSystemId;
   const hasBranch = Boolean(branch);
+
+  useEffect(() => {
+    if (!assignedSystemId) return;
+    setSystem(assignedSystemId);
+    // Covers sessions restored from storage that predate the device install.
+    recordDeviceInstall(claims?.systemType ?? assignedSystemId);
+  }, [assignedSystemId, claims?.systemType, setSystem]);
 
   function homePath(targetSystemId: typeof systemId): string {
     if (!hasBranch) return getErpEntryPath(targetSystemId, false);
     return erpEntryPathForRole(targetSystemId, displayRole);
   }
 
-  if (lockedSystemId) {
+  if (effectiveLock) {
     const routeSystem = resolveBusinessSystemFromPath(pathname);
-    // A pharmacy/store route in a non-matching locked build, or a restaurant-only
-    // route in a locked non-restaurant build, is redirected home.
-    const crossSystem = routeSystem && routeSystem !== lockedSystemId;
+    const crossSystem = routeSystem && routeSystem !== effectiveLock;
     const restaurantLeak =
-      lockedSystemId !== "restaurant" && isRestaurantExclusivePath(pathname);
+      effectiveLock !== "restaurant" && isRestaurantExclusivePath(pathname);
     if (crossSystem || restaurantLeak) {
-      return <Navigate to={homePath(lockedSystemId)} replace />;
+      return <Navigate to={homePath(effectiveLock)} replace />;
     }
     return <Outlet />;
   }

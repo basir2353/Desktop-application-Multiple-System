@@ -15,10 +15,16 @@ import {
 } from "@platform/database-pg";
 import * as bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
-import { permissionsForPopsRole } from "@platform/contracts";
+import {
+  permissionsForPlatformRole,
+  permissionsForPopsRole,
+  systemTypeSchema,
+  type PlatformRole,
+  type SystemType,
+} from "@platform/contracts";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { SecurityService } from "../security/security.service";
-import type { AccessJwtPayload } from "./jwt.types";
+import { PLATFORM_SENTINEL_ORG_ID, type AccessJwtPayload } from "./jwt.types";
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -34,26 +40,59 @@ export class AuthService implements OnModuleInit {
   }
 
   async seedIfEmpty(): Promise<void> {
-    const email = this.config.get<string>("SEED_USER_EMAIL") ?? "admin@platform.local";
-    const existingSeed = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existingSeed.length > 0) return;
+    const superEmail =
+      this.config.get<string>("SEED_SUPER_ADMIN_EMAIL") ?? "superadmin@platform.local";
+    const existingSuper = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, superEmail))
+      .limit(1);
 
     const password = this.config.get<string>("SEED_USER_PASSWORD") ?? "changeme-please-01";
     const passwordHash = await bcrypt.hash(password, 12);
 
+    if (existingSuper.length === 0) {
+      await this.db.insert(users).values({
+        email: superEmail,
+        name: "Super Admin",
+        passwordHash,
+        platformRole: "super_admin",
+        status: "active",
+      });
+    }
+
+    const email = this.config.get<string>("SEED_USER_EMAIL") ?? "admin@platform.local";
+    const existingSeed = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existingSeed.length > 0) return;
+
     const [org] = await this.db
       .insert(organizations)
-      .values({ name: "Demo Organization" })
+      .values({
+        name: "Demo Restaurant",
+        systemType: "restaurant",
+        status: "active",
+        licencePlan: "demo",
+      })
       .returning({ id: organizations.id });
 
     if (!org) throw new Error("Failed to seed organization");
 
     const [user] = await this.db
       .insert(users)
-      .values({ email, passwordHash })
+      .values({
+        email,
+        name: "Restaurant Admin",
+        passwordHash,
+        status: "active",
+      })
       .returning({ id: users.id });
 
     if (!user) throw new Error("Failed to seed user");
+
+    await this.db
+      .update(organizations)
+      .set({ createdBy: user.id })
+      .where(eq(organizations.id, org.id));
 
     await this.db.insert(organizationMemberships).values({
       organizationId: org.id,
@@ -119,6 +158,7 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
+<<<<<<< Updated upstream
     const ok = await bcrypt.compare(password, user.passwordHash).catch((err: unknown) => {
       console.error(
         "[auth] bcrypt.compare failed:",
@@ -126,6 +166,13 @@ export class AuthService implements OnModuleInit {
       );
       return false;
     });
+=======
+    if (user.status === "inactive" || user.status === "suspended") {
+      throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+    }
+
+    const ok = await bcrypt.compare(password, user.passwordHash);
+>>>>>>> Stashed changes
     if (!ok) {
       const membership = await this.loadMembershipLite(user.id);
 
@@ -140,8 +187,55 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
+<<<<<<< Updated upstream
     const m = await this.loadMembershipForAuth(user.id);
     if (!m) throw new UnauthorizedException("No organization membership");
+=======
+    // Platform Super Admin — no org membership required.
+    if (user.platformRole === "super_admin") {
+      await this.security.logEvent({
+        eventType: "login_success",
+        userEmail: normalizedEmail,
+        userId: user.id,
+        action: "Login success",
+        detail: "Super Admin session started",
+      });
+
+      return this.issueTokens({
+        userId: user.id,
+        organizationId: PLATFORM_SENTINEL_ORG_ID,
+        permissions: permissionsForPlatformRole("super_admin"),
+        role: "super_admin",
+        branchScope: "all",
+        platformRole: "super_admin",
+        systemType: null,
+        navAllowlist: null,
+      });
+    }
+
+    const membership = await this.db
+      .select({
+        membership: organizationMemberships,
+        org: organizations,
+      })
+      .from(organizationMemberships)
+      .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+      .where(eq(organizationMemberships.userId, user.id))
+      .limit(1);
+
+    const row0 = membership[0];
+    if (!row0) throw new UnauthorizedException("No organization membership");
+
+    const m = row0.membership;
+    const org = row0.org;
+
+    if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
+      throw new UnauthorizedException(
+        `This business is ${org.status}. Contact the platform administrator.`,
+      );
+    }
+
+>>>>>>> Stashed changes
     if (m.active === false) {
       await this.security.logEvent({
         organizationId: m.organizationId,
@@ -154,6 +248,8 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Account deactivated. Contact an administrator.");
     }
 
+    const systemType = parseSystemType(org.systemType);
+
     await this.touchLastActivity(m.organizationId, user.id);
 
     await this.security.logEvent({
@@ -162,9 +258,10 @@ export class AuthService implements OnModuleInit {
       userEmail: normalizedEmail,
       userId: user.id,
       action: "Login success",
-      detail: "Session started",
+      detail: `Session started (${systemType})`,
     });
 
+<<<<<<< Updated upstream
     try {
       return await this.issueTokens(
         user.id,
@@ -181,6 +278,18 @@ export class AuthService implements OnModuleInit {
         "Login succeeded but session could not be created. Check JWT_ACCESS_SECRET and DB schema (drizzle push).",
       );
     }
+=======
+    return this.issueTokens({
+      userId: user.id,
+      organizationId: m.organizationId,
+      permissions: normalizePermissions(m.permissions, m.role),
+      role: m.role,
+      branchScope: m.branchScope ?? "all",
+      platformRole: null,
+      systemType,
+      navAllowlist: Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
+    });
+>>>>>>> Stashed changes
   }
 
   async pinLogin(branchCode: string, pin: string) {
@@ -193,6 +302,17 @@ export class AuthService implements OnModuleInit {
     const branch = branchRows[0];
     if (!branch) throw new UnauthorizedException("Branch not found");
 
+    const orgRows = await this.db
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, branch.organizationId))
+      .limit(1);
+    const org = orgRows[0];
+    if (!org || org.status !== "active") {
+      throw new UnauthorizedException("This business is not active.");
+    }
+    const systemType = parseSystemType(org.systemType);
+
     const memberships = await this.db
       .select({
         userId: organizationMemberships.userId,
@@ -202,6 +322,7 @@ export class AuthService implements OnModuleInit {
         branchScope: organizationMemberships.branchScope,
         staffPinHash: organizationMemberships.staffPinHash,
         email: users.email,
+        userStatus: users.status,
       })
       .from(organizationMemberships)
       .innerJoin(users, eq(users.id, organizationMemberships.userId))
@@ -214,6 +335,11 @@ export class AuthService implements OnModuleInit {
 
     const eligible = memberships.filter(
       (row) =>
+<<<<<<< Updated upstream
+=======
+        row.active !== false &&
+        row.userStatus === "active" &&
+>>>>>>> Stashed changes
         row.staffPinHash &&
         (row.branchScope === "all" || row.branchScope.toUpperCase() === code),
     );
@@ -234,6 +360,7 @@ export class AuthService implements OnModuleInit {
         detail: `Branch ${code}`,
       });
 
+<<<<<<< Updated upstream
       return this.issueTokens(
         row.userId,
         row.organizationId,
@@ -242,6 +369,18 @@ export class AuthService implements OnModuleInit {
         row.branchScope ?? "all",
         null,
       );
+=======
+      return this.issueTokens({
+        userId: row.userId,
+        organizationId: row.organizationId,
+        permissions: normalizePermissions(row.permissions, row.role),
+        role: row.role,
+        branchScope: row.branchScope ?? "all",
+        platformRole: null,
+        systemType,
+        navAllowlist: Array.isArray(row.navAllowlist) ? row.navAllowlist : null,
+      });
+>>>>>>> Stashed changes
     }
 
     await this.security.logEvent({
@@ -266,19 +405,60 @@ export class AuthService implements OnModuleInit {
     if (!rt) throw new UnauthorizedException("Invalid refresh token");
     if (rt.expiresAt.getTime() < Date.now()) throw new UnauthorizedException("Refresh expired");
 
+<<<<<<< Updated upstream
     const m = await this.loadMembershipForAuth(rt.userId);
     if (!m) throw new UnauthorizedException("No organization membership");
-    if (m.active === false) throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+=======
+    const userRows = await this.db.select().from(users).where(eq(users.id, rt.userId)).limit(1);
+    const user = userRows[0];
+    if (!user || user.status !== "active") {
+      throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+    }
 
     await this.db.delete(refreshTokens).where(eq(refreshTokens.id, rt.id));
-    return this.issueTokens(
-      rt.userId,
-      m.organizationId,
-      normalizePermissions(m.permissions, m.role),
-      m.role,
-      m.branchScope ?? "all",
-      Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
-    );
+
+    if (user.platformRole === "super_admin") {
+      return this.issueTokens({
+        userId: user.id,
+        organizationId: PLATFORM_SENTINEL_ORG_ID,
+        permissions: permissionsForPlatformRole("super_admin"),
+        role: "super_admin",
+        branchScope: "all",
+        platformRole: "super_admin",
+        systemType: null,
+        navAllowlist: null,
+      });
+    }
+
+    const membership = await this.db
+      .select({
+        membership: organizationMemberships,
+        org: organizations,
+      })
+      .from(organizationMemberships)
+      .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+      .where(eq(organizationMemberships.userId, rt.userId))
+      .limit(1);
+
+    const row0 = membership[0];
+    if (!row0) throw new UnauthorizedException("No organization membership");
+    const m = row0.membership;
+>>>>>>> Stashed changes
+    if (m.active === false) throw new UnauthorizedException("Account deactivated. Contact an administrator.");
+    if (row0.org.status !== "active") {
+      throw new UnauthorizedException(`This business is ${row0.org.status}.`);
+    }
+
+    return this.issueTokens({
+      userId: rt.userId,
+      organizationId: m.organizationId,
+      permissions: normalizePermissions(m.permissions, m.role),
+      role: m.role,
+      branchScope: m.branchScope ?? "all",
+      platformRole: null,
+      systemType: parseSystemType(row0.org.systemType),
+      navAllowlist: Array.isArray(m.navAllowlist) ? m.navAllowlist : null,
+    });
   }
 
   /** Minimal membership lookup (never selects optional columns). */
@@ -370,31 +550,44 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  private async issueTokens(
-    userId: string,
-    organizationId: string,
-    permissions: string[],
-    role: string,
-    branchScope: string,
-    navAllowlist: string[] | null = null,
-  ) {
+  private async issueTokens(opts: {
+    userId: string;
+    organizationId: string;
+    permissions: string[];
+    role: string;
+    branchScope: string;
+    platformRole: PlatformRole | null;
+    systemType: SystemType | null;
+    navAllowlist: string[] | null;
+  }) {
     let riderId: string | undefined;
-    if (role === "rider") {
+    if (opts.role === "rider" && opts.organizationId !== PLATFORM_SENTINEL_ORG_ID) {
       const riders = await this.db
         .select({ id: popsRiders.id })
         .from(popsRiders)
-        .where(eq(popsRiders.userId, userId))
+        .where(eq(popsRiders.userId, opts.userId))
         .limit(1);
       riderId = riders[0]?.id;
     }
 
     const accessPayload: AccessJwtPayload = {
+<<<<<<< Updated upstream
       sub: userId,
       organizationId,
       permissions,
       role,
       branchScope,
       ...(navAllowlist != null ? { navAllowlist } : {}),
+=======
+      sub: opts.userId,
+      organizationId: opts.organizationId,
+      permissions: opts.permissions,
+      role: opts.role,
+      branchScope: opts.branchScope,
+      platformRole: opts.platformRole,
+      systemType: opts.systemType,
+      navAllowlist: opts.navAllowlist,
+>>>>>>> Stashed changes
       ...(riderId ? { riderId } : {}),
     };
 
@@ -423,7 +616,7 @@ export class AuthService implements OnModuleInit {
 
     try {
       await this.db.insert(refreshTokens).values({
-        userId,
+        userId: opts.userId,
         tokenHash: refreshHash,
         expiresAt,
       });
@@ -440,6 +633,11 @@ export class AuthService implements OnModuleInit {
       expiresIn: accessExpiresIn,
     };
   }
+}
+
+function parseSystemType(value: string): SystemType {
+  const parsed = systemTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : "restaurant";
 }
 
 function normalizePermissions(value: unknown, role: string): string[] {

@@ -2,7 +2,8 @@ import { Button } from "@platform/ui";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getBusinessSystem } from "../../lib/businessSystems";
-import { isSingleSystemEdition } from "../../lib/edition";
+import { getEffectiveSystemLock } from "../../lib/deviceInstall";
+import { roleSelectPath } from "../../lib/loginRoles";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { SystemRouteGuard } from "../../components/SystemRouteGuard";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -59,11 +60,13 @@ export function PopsShell(): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const clearSession = useSessionStore((s) => s.clear);
+  const claims = useSessionStore((s) => s.claims);
   const clearBranch = usePopsStore((s) => s.clearBranch);
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const systemId = useActiveSystemId();
   const system = getBusinessSystem(systemId);
+  const systemLocked = Boolean(getEffectiveSystemLock()) || Boolean(claims?.systemType);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarVisible);
   const [posHeaderVisible, setPosHeaderVisibleState] = useState(loadPosHeaderVisible);
   const isPosRoute = /\/pos(?:\/|$)/.test(location.pathname);
@@ -87,9 +90,12 @@ export function PopsShell(): JSX.Element {
   }, []);
 
   function signOut(): void {
+    // The device stays bound to its installed system, so sign-out returns to
+    // this system's role/login screen — never the picker or Super Admin login.
+    const returnTo = getEffectiveSystemLock() ?? systemId;
     clearSession();
     clearBranch();
-    navigate("/role", { replace: true });
+    navigate(roleSelectPath(returnTo), { replace: true });
   }
 
   return (
@@ -168,7 +174,7 @@ export function PopsShell(): JSX.Element {
               <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
                 Switch branch
               </Button>
-              {isSingleSystemEdition() ? null : (
+              {systemLocked ? null : (
                 <Button variant="ghost" className="text-xs" onClick={() => navigate("/")}>
                   Switch system
                 </Button>

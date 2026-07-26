@@ -34,11 +34,14 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
+import { SystemTypeGuard } from "../users/system-type.guard";
+import { RequireSystemType } from "../users/require-system-type.decorator";
 import { StoreService } from "./store.service";
 import { StoreGroceryService } from "./store-grocery.service";
 
 @Controller("v1/store")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
+@RequireSystemType("general_store", "grocery", "retail")
 export class StoreController {
   constructor(
     private readonly store: StoreService,

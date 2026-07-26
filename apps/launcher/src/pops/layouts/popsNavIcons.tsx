@@ -83,6 +83,12 @@ const icons: Record<string, (props: IconProps) => JSX.Element> = {
       <path d="M14 3v6h6M9 13h6M9 17h4" />
     </Svg>
   ),
+  "FBR / PRA": (p) => (
+    <Svg {...p}>
+      <path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z" />
+      <path d="M14 3v6h6M9 13h6M9 17h4" />
+    </Svg>
+  ),
   "Multi-branch": (p) => (
     <Svg {...p}>
       <circle cx="6" cy="6" r="2.5" />

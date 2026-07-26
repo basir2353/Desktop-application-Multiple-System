@@ -18,4 +18,6 @@ export * from "./store-grocery";
 export * from "./store-units";
 export * from "./store";
 export * from "./security";
+export * from "./platform";
+export * from "./tax-authority";
 export * from "./users";

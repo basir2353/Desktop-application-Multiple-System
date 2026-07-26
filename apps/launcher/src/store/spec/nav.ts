@@ -65,6 +65,7 @@ export const storeNavItems: PopsNavItem[] = [
     ],
   },
   { type: "link", path: "auth", label: "Users & roles" },
+  { type: "link", path: "tax", label: "FBR / PRA" },
   { type: "link", path: "notifications", label: "Notifications" },
   { type: "link", path: "settings", label: "Settings" },
 ];

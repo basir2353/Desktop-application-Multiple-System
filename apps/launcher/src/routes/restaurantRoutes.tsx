@@ -130,7 +130,6 @@ const DeliveryPage = lazy(() =>
   import("../pops/pages/modules/DeliveryPage").then((m) => ({ default: m.DeliveryPage })),
 );
 const CrmPage = lazy(() => import("../pops/pages/modules/CrmPage").then((m) => ({ default: m.CrmPage })));
-const TaxPage = lazy(() => import("../pops/pages/modules/TaxPage").then((m) => ({ default: m.TaxPage })));
 const MultiBranchDashboardPage = lazy(() =>
   import("../pops/pages/modules/multi-branch/MultiBranchDashboardPage").then((m) => ({ default: m.MultiBranchDashboardPage })),
 );
@@ -210,7 +209,6 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="hr/salary-slips" element={<SalarySlipsPage />} />
       <Route path="delivery" element={<DeliveryPage />} />
       <Route path="crm" element={<CrmPage />} />
-      <Route path="tax" element={<TaxPage />} />
       <Route path="multi-branch" element={<MultiBranchDashboardPage />} />
       <Route path="multi-branch/transfers" element={<InterBranchTransfersPage />} />
       <Route path="multi-branch/receive" element={<BranchReceivePage />} />

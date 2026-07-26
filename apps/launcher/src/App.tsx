@@ -26,10 +26,18 @@ import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { screenCenterClass } from "./pops/lib/themeClasses";
+import { isSuperAdminClaims } from "./lib/jwt";
+import { SuperAdminShell } from "./super-admin/SuperAdminShell";
+import { SuperAdminOverviewPage } from "./super-admin/SuperAdminOverviewPage";
+import { SuperAdminBusinessesPage } from "./super-admin/SuperAdminBusinessesPage";
+import { SuperAdminUsersPage } from "./super-admin/SuperAdminUsersPage";
+import { SuperAdminLicencesPage } from "./super-admin/SuperAdminLicencesPage";
+import { SuperAdminSettingsPage } from "./super-admin/SuperAdminSettingsPage";
 
 function Protected({ children }: { children: JSX.Element }): JSX.Element {
   const sessionReady = useSessionReady();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
 
   useEffect(() => {
     if (sessionReady) void bootstrapSession();
@@ -39,6 +47,24 @@ function Protected({ children }: { children: JSX.Element }): JSX.Element {
     return <div className={screenCenterClass}>Restoring session…</div>;
   }
   if (!accessToken) return <Navigate to="/role" replace />;
+  if (isSuperAdminClaims(claims)) return <Navigate to="/super-admin" replace />;
+  return children;
+}
+
+function SuperAdminOnly({ children }: { children: JSX.Element }): JSX.Element {
+  const sessionReady = useSessionReady();
+  const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
+
+  useEffect(() => {
+    if (sessionReady) void bootstrapSession();
+  }, [sessionReady]);
+
+  if (!sessionReady) {
+    return <div className={screenCenterClass}>Restoring session…</div>;
+  }
+  if (!accessToken) return <Navigate to="/login?role=super_admin" replace />;
+  if (!isSuperAdminClaims(claims)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -72,6 +98,20 @@ export function App(): JSX.Element {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
           <Route path="/" element={<SystemSelectPage />} />
+          <Route
+            path="/super-admin"
+            element={
+              <SuperAdminOnly>
+                <SuperAdminShell />
+              </SuperAdminOnly>
+            }
+          >
+            <Route index element={<SuperAdminOverviewPage />} />
+            <Route path="businesses" element={<SuperAdminBusinessesPage />} />
+            <Route path="users" element={<SuperAdminUsersPage />} />
+            <Route path="licences" element={<SuperAdminLicencesPage />} />
+            <Route path="settings" element={<SuperAdminSettingsPage />} />
+          </Route>
           <Route
             path="/platform"
             element={

@@ -64,6 +64,7 @@ export const pharmacyNavItems: PopsNavItem[] = [
     ],
   },
   { type: "link", path: "pharmacy/staff", label: "Staff management" },
+  { type: "link", path: "tax", label: "FBR / PRA" },
   { type: "link", path: "auth", label: "Users & roles" },
   { type: "link", path: "notifications", label: "Notifications" },
   { type: "link", path: "settings", label: "Settings" },

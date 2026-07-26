@@ -23,6 +23,8 @@ import { StoreModule } from "./store/store.module";
 import { SecurityModule } from "./security/security.module";
 import { TablesModule } from "./tables/tables.module";
 import { UsersModule } from "./users/users.module";
+import { PlatformModule } from "./platform/platform.module";
+import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
 
 @Module({
   imports: [
@@ -52,11 +54,13 @@ import { UsersModule } from "./users/users.module";
     KitchenModule,
     TablesModule,
     UsersModule,
+    PlatformModule,
     SyncModule,
     SecurityModule,
     ClosingModule,
     PharmacyModule,
     StoreModule,
+    TaxAuthorityModule,
   ],
 })
 export class AppModule {}

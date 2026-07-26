@@ -2,10 +2,18 @@ import { Button } from "@platform/ui";
 import { AuthClient } from "@platform/auth-client";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { decodeAccessToken } from "../lib/jwt";
+import { decodeAccessToken, isSuperAdminClaims } from "../lib/jwt";
 import { getApiBaseUrl } from "../lib/apiBase";
-import { getBusinessSystem, getErpEntryPath } from "../lib/businessSystems";
-import { getLockedSystemId, isSingleSystemEdition } from "../lib/edition";
+import {
+  businessSystemIdFromSystemType,
+  getBusinessSystem,
+  getErpEntryPath,
+} from "../lib/businessSystems";
+import {
+  getEffectiveSystemLock,
+  getInstalledSystemId,
+  recordDeviceInstall,
+} from "../lib/deviceInstall";
 import {
   loginRolesForSystem,
   membershipMatchesLoginRole,
@@ -19,28 +27,41 @@ import { useSessionStore } from "../stores/sessionStore";
 import { usePopsStore } from "../stores/popsStore";
 import { findUserIdByPin, isValidPin, loadBranchPinMap } from "../pops/lib/posPinAuth";
 import { isPopsRole } from "../pops/lib/roleAccess";
+import { normalizeMembershipRole } from "../lib/loginRoles";
 
 type LoginMode = "password" | "pin";
 
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const isSuperAdminLogin = params.get("role") === "super_admin";
   const selectedRole = parseLoginRoleParam(params.get("role"));
   const setTokens = useSessionStore((s) => s.setTokens);
   const clearSession = useSessionStore((s) => s.clear);
   const branch = usePopsStore((s) => s.branch);
   const setDisplayRole = usePopsStore((s) => s.setDisplayRole);
+  const setSystem = useSystemStore((s) => s.setSystem);
   const persistedSystemId = useSystemStore((s) => s.systemId);
-  const systemId = persistedSystemId ?? getLockedSystemId();
+  const systemLock = getEffectiveSystemLock();
+  const systemId = systemLock ?? persistedSystemId;
   const system = systemId ? getBusinessSystem(systemId) : null;
 
   const roleMeta = useMemo(() => {
+    if (isSuperAdminLogin) {
+      return {
+        id: "super_admin" as const,
+        label: "Super Admin",
+        description: "Full control of every business system and client installation",
+        demoEmail: "superadmin@platform.local",
+        kind: "admin" as const,
+      };
+    }
     if (!systemId || !selectedRole) return null;
     const { admin, staff } = loginRolesForSystem(systemId);
     if (admin.id === selectedRole) return { ...admin, kind: "admin" as const };
     const staffRole = staff.find((r) => r.id === selectedRole);
     return staffRole ? { ...staffRole, kind: "staff" as const } : null;
-  }, [systemId, selectedRole]);
+  }, [systemId, selectedRole, isSuperAdminLogin]);
 
   const isAdminLogin = roleMeta?.kind === "admin";
   const [mode, setMode] = useState<LoginMode>("password");
@@ -55,21 +76,43 @@ export function LoginPage(): JSX.Element {
     if (!roleMeta) return;
     setEmail(roleMeta.demoEmail ?? "");
     setPinEmail(roleMeta.demoEmail ?? "");
-    setPassword(roleMeta.kind === "admin" ? "changeme-please-01" : "changeme-please-01");
+    setPassword("changeme-please-01");
     setMode("password");
     setError(null);
   }, [roleMeta?.id, roleMeta?.kind, roleMeta?.demoEmail]);
 
-  if (!systemId || !system) {
-    return <Navigate to="/" replace />;
+  // Once a business system is installed on this machine the Super Admin console
+  // is no longer reachable from it — the device belongs to that system admin.
+  if (isSuperAdminLogin && getInstalledSystemId()) {
+    return <Navigate to={roleSelectPath(getInstalledSystemId()!)} replace />;
   }
 
-  if (!selectedRole || !roleMeta) {
+  if (isSuperAdminLogin) {
+    // fall through to render Super Admin login form
+  } else if (!systemId || !system) {
+    return <Navigate to="/" replace />;
+  } else if (!selectedRole || !roleMeta) {
     return <Navigate to={systemId ? roleSelectPath(systemId) : "/"} replace />;
   }
 
   async function completeLogin(accessToken: string, refreshToken: string): Promise<void> {
     const claims = decodeAccessToken(accessToken);
+
+    if (isSuperAdminLogin) {
+      if (!isSuperAdminClaims(claims)) {
+        clearSession();
+        throw new Error("This account is not a Super Admin.");
+      }
+      setTokens(accessToken, refreshToken, claims);
+      navigate("/super-admin", { replace: true });
+      return;
+    }
+
+    if (isSuperAdminClaims(claims)) {
+      clearSession();
+      throw new Error("Super Admin accounts must sign in from the Super Admin login.");
+    }
+
     if (!membershipMatchesLoginRole(claims.role, selectedRole!)) {
       clearSession();
       const actual = claims.role ?? "unknown";
@@ -77,11 +120,26 @@ export function LoginPage(): JSX.Element {
         `This account is role “${actual}”, but you chose “${roleMeta!.label}”. Go back and pick the matching role.`,
       );
     }
-    setTokens(accessToken, refreshToken, claims);
-    if (isPopsRole(claims.role) || claims.role === "owner") {
-      setDisplayRole(selectedRole!);
+
+    const assignedSystemId = businessSystemIdFromSystemType(claims.systemType);
+    if (assignedSystemId && systemId && assignedSystemId !== systemId) {
+      clearSession();
+      throw new Error(
+        `This account is permanently assigned to the ${assignedSystemId} system and cannot access ${systemId}.`,
+      );
     }
-    navigate(getErpEntryPath(systemId!, false));
+
+    const lockedId = assignedSystemId ?? systemId!;
+    // Provision this device for the account's system: after logout the app
+    // returns here instead of the picker or the Super Admin login.
+    recordDeviceInstall(claims.systemType ?? lockedId);
+    setSystem(lockedId);
+    setTokens(accessToken, refreshToken, claims);
+    const display = normalizeMembershipRole(claims.role) ?? selectedRole!;
+    if (isPopsRole(claims.role) || claims.role === "owner") {
+      setDisplayRole(display);
+    }
+    navigate(getErpEntryPath(lockedId, false));
   }
 
   async function onSubmitPassword(e: React.FormEvent): Promise<void> {
@@ -136,6 +194,57 @@ export function LoginPage(): JSX.Element {
     ? "ring-1 ring-amber-500/40"
     : "ring-1 ring-sky-500/30";
 
+  if (isSuperAdminLogin && roleMeta) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-slate-50 px-6 dark:bg-slate-950">
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+          >
+            ← Systems
+          </button>
+          <ThemeToggle />
+        </div>
+        <div className={`${loginCardClass} ring-1 ring-amber-500/40`}>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600 dark:text-amber-400">
+            Platform
+          </p>
+          <h1 className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+            {roleMeta.label}
+          </h1>
+          <p className={`mt-1 text-sm ${mutedClass}`}>{roleMeta.description}</p>
+          <form className="mt-6 space-y-4" onSubmit={onSubmitPassword}>
+            <label className={`block text-sm ${subtleClass}`}>
+              Email
+              <input
+                className={`mt-1 w-full ${fieldInputClass}`}
+                value={email}
+                onChange={(ev) => setEmail(ev.target.value)}
+                autoComplete="username"
+              />
+            </label>
+            <label className={`block text-sm ${subtleClass}`}>
+              Password
+              <input
+                className={`mt-1 w-full ${fieldInputClass}`}
+                type="password"
+                value={password}
+                onChange={(ev) => setPassword(ev.target.value)}
+                autoComplete="current-password"
+              />
+            </label>
+            {error ? <div className="text-sm text-red-600 dark:text-red-400">{error}</div> : null}
+            <Button className="w-full" disabled={loading} type="submit">
+              {loading ? "Signing in…" : "Sign in as Super Admin"}
+            </Button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-slate-50 px-6 dark:bg-slate-950">
       <div className="mb-4 flex items-center justify-between">
@@ -147,7 +256,7 @@ export function LoginPage(): JSX.Element {
           ← Change role
         </button>
         <div className="flex items-center gap-2">
-          {!isSingleSystemEdition() ? (
+          {systemLock ? null : (
             <button
               type="button"
               onClick={() => navigate("/")}
@@ -155,22 +264,22 @@ export function LoginPage(): JSX.Element {
             >
               System
             </button>
-          ) : null}
+          )}
           <ThemeToggle />
         </div>
       </div>
 
       <div className={`${loginCardClass} ${accentRing}`}>
-        <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${system.accentClass}`}>
-          {system.shortName}
+        <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${system!.accentClass}`}>
+          {system!.shortName}
         </p>
         <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
           {isAdminLogin ? "Admin login" : "Staff login"}
         </p>
         <h1 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
-          {roleMeta.label}
+          {roleMeta!.label}
         </h1>
-        <p className={`mt-1 text-sm ${mutedClass}`}>{roleMeta.description}</p>
+        <p className={`mt-1 text-sm ${mutedClass}`}>{roleMeta!.description}</p>
 
         {!isAdminLogin ? (
           <div className="mt-4 flex gap-2">
@@ -222,7 +331,7 @@ export function LoginPage(): JSX.Element {
             </label>
             {error ? <div className="text-sm text-red-600 dark:text-red-400">{error}</div> : null}
             <Button className="w-full" disabled={loading} type="submit">
-              {loading ? "Signing in…" : `Sign in as ${roleMeta.label}`}
+              {loading ? "Signing in…" : `Sign in as ${roleMeta!.label}`}
             </Button>
           </form>
         ) : (
@@ -265,7 +374,7 @@ export function LoginPage(): JSX.Element {
             </label>
             {error ? <div className="text-sm text-red-600 dark:text-red-400">{error}</div> : null}
             <Button className="w-full" disabled={loading} type="submit">
-              {loading ? "Signing in…" : `Sign in as ${roleMeta.label}`}
+              {loading ? "Signing in…" : `Sign in as ${roleMeta!.label}`}
             </Button>
           </form>
         )}

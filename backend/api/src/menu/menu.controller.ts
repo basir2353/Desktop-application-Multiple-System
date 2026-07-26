@@ -11,12 +11,15 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
+import { SystemTypeGuard } from "../users/system-type.guard";
+import { RequireSystemType } from "../users/require-system-type.decorator";
 import { MenuService } from "./menu.service";
 import { MenuUploadService } from "./menu-upload.service";
 import type { MenuUploadedFile } from "./menu-upload.types";
 
 @Controller("v1/menu")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
+@RequireSystemType("restaurant")
 export class MenuController {
   constructor(
     private readonly menu: MenuService,

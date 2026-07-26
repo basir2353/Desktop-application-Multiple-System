@@ -1,15 +1,22 @@
 import { Button } from "@platform/ui";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ThemeToggle } from "../components/ThemeToggle";
 import {
+  businessSystemIdFromSystemType,
   getErpEntryPath,
   type BusinessSystem,
   type BusinessSystemId,
 } from "../lib/businessSystems";
-import { getAvailableSystems, getLockedSystemId } from "../lib/edition";
+import { getAvailableSystems } from "../lib/edition";
+import {
+  clearDeviceInstall,
+  getEffectiveSystemLock,
+  getInstalledSystemId,
+} from "../lib/deviceInstall";
 import { mutedClass } from "../pops/lib/themeClasses";
 import { erpEntryPathForRole } from "../pops/lib/roleAccess";
 import { roleSelectPath } from "../lib/loginRoles";
+import { isSuperAdminClaims } from "../lib/jwt";
 import { useSessionStore } from "../stores/sessionStore";
 import { usePopsStore } from "../stores/popsStore";
 import { useSystemStore } from "../stores/systemStore";
@@ -64,11 +71,19 @@ function SystemCard({
 
 export function SystemSelectPage(): JSX.Element {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const claims = useSessionStore((s) => s.claims);
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const setSystem = useSystemStore((s) => s.setSystem);
-  const lockedSystemId = getLockedSystemId();
+
+  // Support/re-provisioning hatch: `/?reset-install=1` unbinds this machine.
+  if (params.get("reset-install") === "1" && getInstalledSystemId()) {
+    clearDeviceInstall();
+  }
+
+  const lockedSystemId = getEffectiveSystemLock();
   const availableSystems = getAvailableSystems();
 
   function entryPath(id: BusinessSystemId): string {
@@ -76,7 +91,19 @@ export function SystemSelectPage(): JSX.Element {
     return erpEntryPathForRole(id, displayRole);
   }
 
-  // Single-system installers skip the picker entirely and boot into the system.
+  // Authenticated Super Admin always lands on the control plane.
+  if (accessToken && isSuperAdminClaims(claims)) {
+    return <Navigate to="/super-admin" replace />;
+  }
+
+  // System admins are permanently locked to their assigned system — no picker.
+  const assignedSystemId = businessSystemIdFromSystemType(claims?.systemType);
+  if (accessToken && assignedSystemId) {
+    return <Navigate to={entryPath(assignedSystemId)} replace />;
+  }
+
+  // Single-system installers, and any machine that already has a system
+  // installed, skip the picker entirely and boot into that system.
   if (lockedSystemId) {
     return (
       <Navigate
@@ -88,8 +115,6 @@ export function SystemSelectPage(): JSX.Element {
 
   function onSelect(id: BusinessSystemId): void {
     setSystem(id);
-    // Full assign so Tauri/webview cannot keep a stale module graph that previously
-    // crashed on /role (broken loginRoles imports) and silently bounce back here.
     const next = accessToken ? entryPath(id) : roleSelectPath(id);
     window.location.assign(next);
   }
@@ -105,20 +130,14 @@ export function SystemSelectPage(): JSX.Element {
             Choose your business system
           </h1>
           <p className={`mt-2 max-w-xl text-sm ${mutedClass}`}>
-            Select the workspace that matches your operation. You can switch systems anytime from the app header.
+            Sign in to the system you administer. System admins cannot switch modules after login.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <ThemeToggle compact />
-          {accessToken ? (
-            <Button variant="ghost" className="text-xs" onClick={() => navigate("/platform")}>
-              Module runtime
-            </Button>
-          ) : (
-            <Button variant="ghost" className="text-xs" onClick={() => navigate("/role")}>
-              Sign in
-            </Button>
-          )}
+          <Button variant="ghost" className="text-xs" onClick={() => navigate("/login?role=super_admin")}>
+            Super Admin
+          </Button>
         </div>
       </header>
 
@@ -129,7 +148,7 @@ export function SystemSelectPage(): JSX.Element {
       </div>
 
       <p className="mt-10 text-center text-xs text-slate-500 dark:text-slate-500">
-        Offline-first · shared control plane · branch-scoped data
+        Offline-first · multi-tenant RBAC · strict system isolation
       </p>
     </div>
   );

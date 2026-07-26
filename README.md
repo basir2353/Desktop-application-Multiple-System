@@ -33,7 +33,20 @@ pnpm db:push
 pnpm dev:stack          # API + frontend
 ```
 
-Default login: `admin@platform.local` / `changeme-please-01`
+Default logins:
+
+| Role | Email | Password |
+| --- | --- | --- |
+| **Super Admin** | `superadmin@platform.local` | `changeme-please-01` |
+| Restaurant Admin (demo) | `admin@platform.local` | `changeme-please-01` |
+
+## Installation flow
+
+1. Super Admin signs in and creates a business, choosing its system (restaurant, pharmacy, general store, …) and the first System Admin account.
+2. That admin signs in on their own machine. The first successful login **installs** the system on that device.
+3. From then on the device belongs to that system: sign-out returns to the same system's login screen, the system picker and the Super Admin login are hidden, and the API rejects any other system's endpoints with `403`.
+
+To re-provision a machine for a different client, open the app with `/?reset-install=1`.
 
 ## Commands
 
@@ -144,6 +157,9 @@ See [deployment/README.md](./deployment/README.md).
 | `VITE_API_BASE_URL` | API URL for web + desktop |
 | `EXPO_PUBLIC_API_BASE_URL` | API URL for mobile |
 | `CORS_ORIGINS` | Allowed web origins (production) |
+| `FBR_TOKEN_URL` | Optional OAuth token URL for FBR (otherwise Client Secret is used as Bearer token) |
+| `PRA_TOKEN_URL` | Optional PRA auth URL |
+| `PRA_INVOICE_URL` | Optional PRA invoice submit URL (sandbox can work without it) |
 
 ## License
 

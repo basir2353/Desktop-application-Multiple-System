@@ -10,10 +10,13 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
+import { SystemTypeGuard } from "../users/system-type.guard";
+import { RequireSystemType } from "../users/require-system-type.decorator";
 import { TablesService } from "./tables.service";
 
 @Controller("v1/tables")
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
+@RequireSystemType("restaurant")
 export class TablesController {
   constructor(private readonly tables: TablesService) {}
 

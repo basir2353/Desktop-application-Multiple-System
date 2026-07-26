@@ -83,7 +83,7 @@ export const popsNavItems: PopsNavItem[] = [
       { path: "hr/salary-slips", label: "Salary slips" },
     ],
   },
-  { type: "link", path: "tax", label: "PRA / FBR" },
+  { type: "link", path: "tax", label: "FBR / PRA" },
   {
     type: "group",
     label: "Multi-branch",

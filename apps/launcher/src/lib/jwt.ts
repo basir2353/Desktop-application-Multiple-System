@@ -2,14 +2,22 @@ export type AccessTokenClaims = {
   sub: string;
   organizationId: string;
   permissions: string[];
-  /** Membership role from the control plane (admin, cashier, …). */
+  /** Membership role from the control plane (admin, cashier, …) or `super_admin`. */
   role?: string;
+  /** Platform control-plane role. */
+  platformRole?: "super_admin" | null;
+  /** Permanently assigned business system for tenant users. */
+  systemType?: string | null;
   /** `all` or a branch code. */
   branchScope?: string;
   /** null/undefined = all permission-gated paths; otherwise only listed paths. */
   navAllowlist?: string[] | null;
   exp?: number;
 };
+
+export function isSuperAdminClaims(claims: AccessTokenClaims | null | undefined): boolean {
+  return claims?.platformRole === "super_admin" || claims?.role === "super_admin";
+}
 
 export function decodeJwtPayload<T = unknown>(token: string): T {
   const parts = token.split(".");
@@ -33,6 +41,8 @@ export function decodeAccessToken(token: string): AccessTokenClaims {
 
 export function isAccessTokenExpired(token: string, skewSeconds = 30): boolean {
   const { exp } = decodeAccessToken(token);
-  if (typeof exp !== "number") return false;
-  return Date.now() >= exp * 1000 - skewSeconds * 1000;
+  if (typeof exp === "number") {
+    return Date.now() >= exp * 1000 - skewSeconds * 1000;
+  }
+  return false;
 }

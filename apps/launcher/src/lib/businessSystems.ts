@@ -6,6 +6,7 @@ import {
 } from "../pops/spec/modules";
 import { pharmacyNavItems } from "../pharmacy/spec/nav";
 import { storeNavItems } from "../store/spec/nav";
+import { frontendIdToSystemType, systemTypeToFrontendId, type SystemType } from "@platform/contracts";
 
 export type BusinessSystemId = "restaurant" | "pharmacy" | "general-store";
 
@@ -101,6 +102,20 @@ export function getBusinessSystem(id: BusinessSystemId): BusinessSystem {
 
 export function getSystemHomePath(_id: BusinessSystemId): string {
   return "/pops";
+}
+
+/** Map JWT / DB system type onto the frontend ERP shell id. */
+export function businessSystemIdFromSystemType(
+  systemType: string | null | undefined,
+): BusinessSystemId | null {
+  if (!systemType) return null;
+  if (systemType === "grocery" || systemType === "retail") return "general-store";
+  const frontend = systemTypeToFrontendId(systemType as SystemType);
+  return isBusinessSystemId(frontend) ? frontend : null;
+}
+
+export function systemTypeForBusinessSystemId(id: BusinessSystemId): SystemType {
+  return frontendIdToSystemType(id) ?? "restaurant";
 }
 
 /** First ERP screen after auth — skips redirect-only `/pops` hop. */

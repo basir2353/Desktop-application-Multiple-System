@@ -41,6 +41,7 @@ import {
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
 import { mapMedicineRow, parseJsonArray, parsePaymentsJson, stringifyJsonArray } from "./pharmacy-mappers";
 
 const MEDICINE_SEEDS = [
@@ -157,7 +158,10 @@ const MEDICINE_SEEDS = [
 export class PharmacyService implements OnModuleInit {
   private readonly logger = new Logger(PharmacyService.name);
 
-  constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PlatformPgDb,
+    private readonly taxAuthority: TaxAuthorityService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     try {
@@ -1512,6 +1516,17 @@ export class PharmacyService implements OnModuleInit {
           .where(eq(pharmacyShifts.id, shift.id));
       }
     }
+
+    await this.taxAuthority.enqueueFromSale({
+      organizationId,
+      branchId: branch.id,
+      branchCode: branch.code,
+      sourceType: "pharmacy_sale",
+      sourceId: sale.id,
+      sourceRef: invoiceNumber,
+      taxableAmountPkr: Math.max(0, subtotal - discount),
+      taxAmountPkr: tax,
+    });
 
     return this.listSales(organizationId, input.branchCode).then((list) => list.find((s) => s.id === sale.id)!);
   }
