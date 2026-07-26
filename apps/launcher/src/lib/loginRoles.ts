@@ -35,7 +35,7 @@ const STAFF_DESCRIPTIONS: Record<Exclude<PopsRole, "admin">, string> = {
 };
 
 const DEMO_EMAIL: Partial<Record<PopsRole, string>> = {
-  admin: "admin@platform.local",
+  admin: "admin.restaurant@pops.demo",
   manager: "manager1@platform.local",
   cashier: "cashier1@platform.local",
   waiter: "waiter1@platform.local",
@@ -44,6 +44,11 @@ const DEMO_EMAIL: Partial<Record<PopsRole, string>> = {
   hr: "hr1@platform.local",
   rider: "rider1@platform.local",
 };
+
+/** Demo password matching Railway / production seed (SEED_USER_PASSWORD). */
+export const DEMO_OWNER_PASSWORD = "Owner@12345";
+export const DEMO_SUPER_ADMIN_EMAIL = "superadmin@pops.platform";
+export const DEMO_SUPER_ADMIN_PASSWORD = "SuperAdmin@123";
 
 function restaurantStaff(): LoginRoleOption[] {
   const byId = Object.fromEntries(POPS_ROLE_TEMPLATES.map((r) => [r.id, r.label])) as Record<

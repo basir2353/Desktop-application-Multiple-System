@@ -20,6 +20,9 @@ import {
   membershipMatchesLoginRole,
   parseLoginRoleParam,
   roleSelectPath,
+  DEMO_OWNER_PASSWORD,
+  DEMO_SUPER_ADMIN_EMAIL,
+  DEMO_SUPER_ADMIN_PASSWORD,
 } from "../lib/loginRoles";
 import { useSystemStore } from "../stores/systemStore";
 import { ThemeToggle } from "../components/ThemeToggle";
@@ -53,7 +56,7 @@ export function LoginPage(): JSX.Element {
         id: "super_admin" as const,
         label: "Super Admin",
         description: "Full control of every business system and client installation",
-        demoEmail: "superadmin@platform.local",
+        demoEmail: DEMO_SUPER_ADMIN_EMAIL,
         kind: "admin" as const,
       };
     }
@@ -77,10 +80,10 @@ export function LoginPage(): JSX.Element {
     if (!roleMeta) return;
     setEmail(roleMeta.demoEmail ?? "");
     setPinEmail(roleMeta.demoEmail ?? "");
-    setPassword("changeme-please-01");
+    setPassword(isSuperAdminLogin ? DEMO_SUPER_ADMIN_PASSWORD : DEMO_OWNER_PASSWORD);
     setMode("password");
     setError(null);
-  }, [roleMeta?.id, roleMeta?.kind, roleMeta?.demoEmail]);
+  }, [roleMeta?.id, roleMeta?.kind, roleMeta?.demoEmail, isSuperAdminLogin]);
 
   // Once a business system is installed on this machine the Super Admin console
   // is no longer reachable from it — the device belongs to that system admin.
