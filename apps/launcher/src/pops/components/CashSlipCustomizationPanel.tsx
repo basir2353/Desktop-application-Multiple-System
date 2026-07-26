@@ -59,7 +59,7 @@ export function CashSlipCustomizationPanel({ branchCode, onNotice }: Props): JSX
     patch({
       customLines: [
         ...draft.customLines,
-        { id: newLineId(), text: "Signature: ____________", bold: false, enabled: true },
+        { id: newLineId(), text: "New line", bold: false, enabled: true },
       ],
     });
   }
@@ -86,7 +86,7 @@ export function CashSlipCustomizationPanel({ branchCode, onNotice }: Props): JSX
           Pay out / Pay in slip
         </h3>
         <p className="mt-1 text-xs text-slate-500">
-          Customize cash drawer slips: titles, direction labels, soft bold, and extra lines (signature, notes).
+          Customize cash drawer slips: titles, direction labels, soft bold, and extra note lines.
         </p>
       </div>
 
@@ -175,7 +175,7 @@ export function CashSlipCustomizationPanel({ branchCode, onNotice }: Props): JSX
             </Button>
           </div>
           {draft.customLines.length === 0 ? (
-            <p className="text-xs text-slate-400">Optional signature or note lines for the slip.</p>
+            <p className="text-xs text-slate-400">Optional note lines for the slip.</p>
           ) : (
             <ul className="space-y-2">
               {draft.customLines.map((line) => (

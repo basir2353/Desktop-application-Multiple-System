@@ -62,7 +62,18 @@ export function PosCheckoutModal({
   onConfirm,
 }: Props): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
-  const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
+  const [settingsTick, setSettingsTick] = useState(0);
+  useEffect(() => {
+    function refresh(): void {
+      setSettingsTick((n) => n + 1);
+    }
+    window.addEventListener("pops-pos-settings-changed", refresh);
+    return () => window.removeEventListener("pops-pos-settings-changed", refresh);
+  }, []);
+  const posSettings = useMemo(
+    () => loadPosSettings(branch?.code),
+    [branch?.code, settingsTick],
+  );
   const [taxPctInput, setTaxPctInput] = useState(initialTaxPct);
   const [payments, setPayments] = useState<BillPayment[]>([
     { method: "cash", amount: 0 },
@@ -240,11 +251,13 @@ export function PosCheckoutModal({
                 <span>− Rs {discount.toLocaleString()}</span>
               </div>
             ) : null}
-            <div className="flex justify-between text-slate-500">
-              <span>Service ({initialServicePct}%)</span>
-              <span>Rs {totals.service.toLocaleString()}</span>
-            </div>
-            {posSettings.taxEnabled ? (
+            {totals.service > 0 ? (
+              <div className="flex justify-between text-slate-500">
+                <span>Service ({initialServicePct}%)</span>
+                <span>Rs {totals.service.toLocaleString()}</span>
+              </div>
+            ) : null}
+            {posSettings.taxEnabled && totals.tax > 0 ? (
               <div className="flex justify-between text-slate-500">
                 <span>Tax ({effectiveTaxPct}%)</span>
                 <span>Rs {totals.tax.toLocaleString()}</span>

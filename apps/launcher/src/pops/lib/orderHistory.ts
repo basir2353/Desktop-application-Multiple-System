@@ -12,7 +12,7 @@ import {
 import { DEFAULT_BUSINESS_DAY, type BusinessDaySettings } from "./businessDay";
 import { computeTicketTotals } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
-import { DEFAULT_POS_SETTINGS } from "./posSettings";
+import { DEFAULT_POS_SETTINGS, effectiveTaxPct } from "./posSettings";
 
 export type UnifiedOrder =
   | { source: "bill"; id: string; createdAt: string; bill: Bill }
@@ -137,7 +137,7 @@ export function unifiedOrderAmounts(
     subtotal,
     0,
     settings.servicePct,
-    settings.taxPct,
+    effectiveTaxPct(settings),
     order.ticket.deliveryChargePkr ?? 0,
   );
 

@@ -1,7 +1,19 @@
-# Railway production image — build from repository root (monorepo).
+# Railway / production Docker image for NestJS API (`backend/api`).
 #
+# Live hosted API:
+#   https://backend-desktop-production-5505.up.railway.app
+#   Health: https://backend-desktop-production-5505.up.railway.app/health
+#
+# Build from repository root (monorepo):
 #   docker build -f backend/Dockerfile -t platform-api .
-#   docker run --rm -p 3000:3000 -e DATABASE_URL=... -e JWT_ACCESS_SECRET=... platform-api
+#   docker run --rm -p 3000:3000 \
+#     -e DATABASE_URL=postgresql://user:pass@host:5432/platform \
+#     -e JWT_ACCESS_SECRET=your-secret-min-32-chars \
+#     -e CORS_ORIGINS=http://127.0.0.1:1420,tauri://localhost \
+#     platform-api
+#
+# Or compose (API + Postgres):
+#   docker compose -f backend/docker-compose.yml --env-file backend/.env.docker up -d --build
 #
 # Railway settings:
 #   Root Directory: (empty — repo root)

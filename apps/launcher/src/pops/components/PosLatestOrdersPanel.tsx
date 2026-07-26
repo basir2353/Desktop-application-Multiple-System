@@ -17,9 +17,10 @@ import { updateKitchenTicket } from "../api/kitchen";
 import { removeOfflineKot } from "../lib/popsOfflineOrders";
 import {
   posRecentOrderToReceiptPrint,
+  resolveSessionPrintName,
   type PrintTicketInput,
 } from "../lib/printTicket";
-import { resolveReceiptPrinter } from "../lib/printerRouting";
+import { resolveReceiptPrinter, resolvePrintUserId } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
@@ -107,7 +108,6 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
     printerName?: string;
     systemPrinterName?: string;
   } | null>(null);
-  const [pendingCloseOrder, setPendingCloseOrder] = useState<PosRecentOrder | null>(null);
   const [dismissedRevision, setDismissedRevision] = useState(0);
   const [, setTimeTick] = useState(0);
 
@@ -169,14 +169,17 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   function openPrintPreview(order: PosRecentOrder): void {
     if (!branch) return;
     const sessionUserId = useSessionStore.getState().claims?.sub;
-    const profile = resolveReceiptPrinter(
-      branch.code,
-      order.bill?.waiterId ?? sessionUserId,
-    );
-    const assigned =
-      order.bill?.waiterId != null ? getWaiterPrinter(branch.code, order.bill.waiterId) : null;
+    const printedBy = resolveSessionPrintName(sessionUserId);
+    const printUserId = resolvePrintUserId(sessionUserId, order.bill?.waiterId);
+    const profile = resolveReceiptPrinter(branch.code, printUserId);
+    const assigned = printUserId ? getWaiterPrinter(branch.code, printUserId) : null;
+    const base = posRecentOrderToReceiptPrint(branch.name, branch.code, order);
     setPrintPreview({
-      input: posRecentOrderToReceiptPrint(branch.name, branch.code, order),
+      input: {
+        ...base,
+        // Show the person who printed (name), never a user id.
+        waiterName: printedBy || base.waiterName,
+      },
       printerName: profile?.name ?? assigned?.printerName,
       systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
     });
@@ -184,7 +187,6 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    setPendingCloseOrder(null);
     openPrintPreview(order);
   }
 
@@ -194,23 +196,14 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    // Show receipt preview first; dismiss the card after a successful print.
-    setPendingCloseOrder(order);
-    openPrintPreview(order);
+    if (branch?.code) dismissPosOrder(branch.code, order.id);
+    setDismissedRevision((n) => n + 1);
+    setSelectedId(null);
+    closeOrderMutation.mutate(order);
   }
 
   function handlePrintPreviewClose(): void {
     setPrintPreview(null);
-    setPendingCloseOrder(null);
-  }
-
-  function handlePrinted(ok: boolean): void {
-    if (!ok || !pendingCloseOrder) return;
-    if (branch?.code) dismissPosOrder(branch.code, pendingCloseOrder.id);
-    setDismissedRevision((n) => n + 1);
-    setSelectedId(null);
-    closeOrderMutation.mutate(pendingCloseOrder);
-    setPendingCloseOrder(null);
   }
 
   function handleOrderDoubleClick(order: PosRecentOrder, event: MouseEvent): void {
@@ -496,7 +489,6 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
           printerName={printPreview.printerName}
           systemPrinterName={printPreview.systemPrinterName}
           onClose={handlePrintPreviewClose}
-          onPrinted={handlePrinted}
         />
       ) : null}
     </>

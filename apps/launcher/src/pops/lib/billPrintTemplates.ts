@@ -1,5 +1,6 @@
 import {
   DEFAULT_BILL_RECEIPT_FIELDS,
+  newBillCustomLine,
   normalizeBillPrintSettings,
   type BillPrintSettings,
 } from "./billPrintSettings";
@@ -9,6 +10,13 @@ export type BillPrintTemplate = {
   name: string;
   settings: BillPrintSettings;
   updatedAt: string;
+};
+
+export type BillPrintStarterTemplate = {
+  name: string;
+  /** Short hint shown under the starter button. */
+  description: string;
+  settings: BillPrintSettings;
 };
 
 export const BILL_PRINT_TEMPLATES_CHANGED_EVENT = "pops-bill-print-templates-changed";
@@ -104,11 +112,117 @@ export function getBillPrintTemplate(
   return loadBillPrintTemplates(branchCode).find((row) => row.id === templateId) ?? null;
 }
 
-/** Built-in starter templates admins can clone into saved templates. */
-export function starterBillPrintTemplates(): Omit<BillPrintTemplate, "id" | "updatedAt">[] {
+/**
+ * Built-in layouts inspired by common cafe / bakery / restaurant thermal bills.
+ * Users clone → edit text → Assign to POS. Inspiration only — not locked designs.
+ */
+export function starterBillPrintTemplates(): BillPrintStarterTemplate[] {
   return [
     {
+      name: "Cafe Receipt",
+      description: "Centered brand · RECEIPT · thank-you footer (cafe / kitchen & bar style)",
+      settings: normalizeBillPrintSettings({
+        documentTitle: "RECEIPT",
+        headerSubtitle: "Your address · Tel · www.yoursite.com",
+        footerText: "Thank you!",
+        footerSecondaryText: "WE APPRECIATE YOUR VISIT",
+        layout: "compact",
+        headerAlign: "center",
+        baseFontSize: 13,
+        fields: {
+          ...DEFAULT_BILL_RECEIPT_FIELDS,
+          printerName: false,
+          headerSubtitle: true,
+          footerSecondary: true,
+          discount: true,
+          delivery: false,
+        },
+        customLines: [
+          newBillCustomLine({
+            id: "cafe-open",
+            text: "Dine-in · Takeaway · Delivery",
+            bold: false,
+            zone: "header",
+            enabled: true,
+            fontSize: 11,
+          }),
+        ],
+      }),
+    },
+    {
+      name: "Bakery Slip",
+      description: "Simple Item×Qty · Price · Items/Qty · no-return note",
+      settings: normalizeBillPrintSettings({
+        documentTitle: "BILL",
+        headerSubtitle: "Address · Tel",
+        footerText: "NO RETURN. NO EXCHANGE.",
+        footerSecondaryText: "",
+        layout: "compact",
+        headerAlign: "center",
+        baseFontSize: 12,
+        fields: {
+          ...DEFAULT_BILL_RECEIPT_FIELDS,
+          orderType: false,
+          tableLabel: false,
+          waiterName: false,
+          printerName: false,
+          service: false,
+          tax: false,
+          delivery: false,
+          discount: false,
+          headerSubtitle: true,
+          footerSecondary: false,
+          billRef: true,
+        },
+        customLines: [
+          newBillCustomLine({
+            id: "bakery-pay",
+            text: "Payment: Cash / Card",
+            bold: false,
+            zone: "afterItems",
+            enabled: true,
+            fontSize: 11,
+          }),
+        ],
+      }),
+    },
+    {
+      name: "Restaurant Tax Bill",
+      description: "GST-style header · Order/Bill/Table · ITEM QTY AMT (dining)",
+      settings: normalizeBillPrintSettings({
+        documentTitle: "TAX INVOICE",
+        headerSubtitle: "Address · Phone · NTN / GSTIN",
+        footerText: "Thank you — visit again",
+        footerSecondaryText: "Prices include applicable taxes",
+        layout: "standard",
+        headerAlign: "center",
+        baseFontSize: 13,
+        fields: {
+          ...DEFAULT_BILL_RECEIPT_FIELDS,
+          printerName: false,
+          headerSubtitle: true,
+          footerSecondary: true,
+          billRef: true,
+          waiterName: true,
+          tableLabel: true,
+          service: true,
+          tax: true,
+        },
+        customLines: [
+          newBillCustomLine({
+            id: "rest-pax",
+            text: "Pax: __",
+            bold: false,
+            zone: "beforeItems",
+            enabled: false,
+            fontSize: 11,
+          }),
+        ],
+      }),
+    },
+    {
       name: "Classic Tax Invoice",
+      description: "Standard Pakistani POS invoice",
       settings: normalizeBillPrintSettings({
         documentTitle: "Tax Invoice",
         footerText: "Thank you — visit again",
@@ -118,10 +232,11 @@ export function starterBillPrintTemplates(): Omit<BillPrintTemplate, "id" | "upd
     },
     {
       name: "Compact Thermal",
+      description: "Tight 58mm roll — fewer fields",
       settings: normalizeBillPrintSettings({
         documentTitle: "Receipt",
         layout: "compact",
-        baseFontSize: 10,
+        baseFontSize: 11,
         fields: {
           ...DEFAULT_BILL_RECEIPT_FIELDS,
           printerName: false,
@@ -133,51 +248,30 @@ export function starterBillPrintTemplates(): Omit<BillPrintTemplate, "id" | "upd
     },
     {
       name: "Guest Check",
+      description: "Pay-later slip",
       settings: normalizeBillPrintSettings({
         documentTitle: "Guest Check",
         footerText: "Please pay at the counter",
-        customLines: [
-          {
-            id: "guest-sig",
-            text: "Signature: ____________________",
-            bold: false,
-            zone: "footer",
-            enabled: true,
-            fontSize: 12,
-          },
-        ],
+        customLines: [],
       }),
     },
     {
       name: "Takeaway Slip",
+      description: "Pickup-ready takeaway ticket",
       settings: normalizeBillPrintSettings({
         documentTitle: "Takeaway",
         footerText: "Collect your order · Thank you",
         layout: "compact",
         customLines: [
-          {
+          newBillCustomLine({
             id: "tw-ready",
             text: "Order ready for pickup",
             bold: true,
             zone: "beforeItems",
             enabled: true,
             fontSize: 13,
-          },
+          }),
         ],
-      }),
-    },
-    {
-      name: "Detailed Invoice",
-      settings: normalizeBillPrintSettings({
-        documentTitle: "Tax Invoice",
-        footerText: "Thank you for your business",
-        footerSecondaryText: "Prices include applicable taxes",
-        layout: "standard",
-        fields: {
-          ...DEFAULT_BILL_RECEIPT_FIELDS,
-          printerName: true,
-          footerSecondary: true,
-        },
       }),
     },
   ];

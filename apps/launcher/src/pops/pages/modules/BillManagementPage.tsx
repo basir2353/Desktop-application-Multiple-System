@@ -17,7 +17,7 @@ import {
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { loadBusinessDaySettings } from "../../lib/businessDay";
 import { billChannelLabel, businessDateKey, filterOrdersByDateTime, ordersPageBills } from "../../lib/orderSales";
-import { loadPosSettings } from "../../lib/posSettings";
+import { effectiveTaxPct, loadPosSettings } from "../../lib/posSettings";
 import { discountAmountFromPct } from "../../lib/posDiscount";
 import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
 import { printBillAsync } from "../../lib/printTicket";
@@ -27,8 +27,9 @@ import {
   type BillPrintSettings,
 } from "../../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../../lib/billReceiptTemplateAssignments";
-import { resolveReceiptPrinter } from "../../lib/printerRouting";
+import { resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRouting";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
+import { useSessionStore } from "../../../stores/sessionStore";
 import { BillCustomizationPanel } from "../../components/BillCustomizationPanel";
 import { BillDetailModal } from "../../components/BillDetailModal";
 import { BillFormModal, type BillFormValues } from "../../components/BillFormModal";
@@ -330,8 +331,12 @@ export function BillManagementPage(): JSX.Element {
     bill: Bill,
     settings: BillPrintSettings,
   ): Promise<boolean> {
-    const profile = resolveReceiptPrinter(branchCode, bill.waiterId);
-    const assigned = getWaiterPrinter(branchCode, bill.waiterId);
+    const printUserId = resolvePrintUserId(
+      useSessionStore.getState().claims?.sub,
+      bill.waiterId,
+    );
+    const profile = resolveReceiptPrinter(branchCode, printUserId);
+    const assigned = getWaiterPrinter(branchCode, printUserId);
     return printBillAsync(branchName, branchCode, bill, {
       printerName: profile?.name ?? assigned?.printerName,
       systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
@@ -654,7 +659,7 @@ export function BillManagementPage(): JSX.Element {
           menuItems={menuQuery.data?.items ?? []}
           waiters={waitersQuery.data ?? []}
           defaultServicePct={posSettings.servicePct}
-          defaultTaxPct={posSettings.taxPct}
+          defaultTaxPct={effectiveTaxPct(posSettings)}
           billPrintSettings={billPrintSettings}
           loading={createMutation.isPending}
           error={formError}
@@ -673,7 +678,7 @@ export function BillManagementPage(): JSX.Element {
           menuItems={menuQuery.data?.items ?? []}
           waiters={waitersQuery.data ?? []}
           defaultServicePct={posSettings.servicePct}
-          defaultTaxPct={posSettings.taxPct}
+          defaultTaxPct={effectiveTaxPct(posSettings)}
           billPrintSettings={billPrintSettings}
           loading={updateMutation.isPending}
           error={formError}

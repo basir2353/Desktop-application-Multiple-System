@@ -152,8 +152,12 @@ export function OrderDetailModal({
             <div className="mt-4 space-y-1 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
               <Row label="Subtotal" value={order.bill.subtotal} />
               {order.bill.discount > 0 ? <Row label="Discount" value={-order.bill.discount} /> : null}
-              <Row label="Service" value={order.bill.service} suffix={`${order.bill.servicePct}%`} />
-              <Row label="Tax" value={order.bill.tax} suffix={`${order.bill.taxPct}%`} />
+              {order.bill.service > 0 ? (
+                <Row label="Service" value={order.bill.service} suffix={`${order.bill.servicePct}%`} />
+              ) : null}
+              {order.bill.tax > 0 ? (
+                <Row label="Tax" value={order.bill.tax} suffix={`${order.bill.taxPct}%`} />
+              ) : null}
               {order.bill.payments.length > 0 ? (
                 <div className="col-span-2 pt-1">
                   <div className="text-slate-500">Payments</div>

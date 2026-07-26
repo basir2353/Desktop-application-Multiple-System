@@ -8,7 +8,6 @@
  */
 import type { PosCartLine } from "./posCart";
 import { loadPrinterSections, savePrinterSections, type PrinterSection } from "./printerSections";
-import { isVirtualSystemPrinter } from "./systemPrinters";
 import { saveThermalPrintSettings } from "./thermalPrintSettings";
 
 export type PrinterPaperSize = "58mm" | "80mm" | "A4";
@@ -87,9 +86,8 @@ function normalizeProfile(raw: Partial<PrinterProfile> & Pick<PrinterProfile, "i
     printerType: raw.printerType ?? "kitchen",
     status: raw.status === "offline" ? "offline" : "online",
     notes: raw.notes,
-    // Drop Fax/PDF links — they cause StartDocPrinterW failures on KOT/receipt jobs.
-    systemPrinterName:
-      systemPrinterName && !isVirtualSystemPrinter(systemPrinterName) ? systemPrinterName : undefined,
+    // Keep every OS link (Epson, PDF, XPS, …) so Auto can print to the chosen device.
+    systemPrinterName,
     assignedCounter: raw.assignedCounter,
     assignedUserId: raw.assignedUserId,
     copies: Math.max(1, Number(raw.copies) || 1),
@@ -188,14 +186,7 @@ export function addPrinterProfile(
     throw new Error("Enter a printer name.");
   }
   const state = loadPrinterRouting(branchCode);
-  const requestedOs = extra?.systemPrinterName?.trim() || undefined;
-  const systemPrinterName =
-    requestedOs && !isVirtualSystemPrinter(requestedOs) ? requestedOs : undefined;
-  if (requestedOs && !systemPrinterName) {
-    throw new Error(
-      `"${requestedOs}" is a virtual Windows printer (XPS / PDF / Fax / OneNote). Choose a real USB or network printer.`,
-    );
-  }
+  const systemPrinterName = extra?.systemPrinterName?.trim() || undefined;
   const profile: PrinterProfile = {
     id: newPrinterId(trimmedName),
     name: trimmedName,
@@ -205,7 +196,7 @@ export function addPrinterProfile(
     systemPrinterName,
     assignedCounter: extra?.assignedCounter,
     copies: 1,
-    paperSize: "58mm",
+    paperSize: "80mm",
     autoCut: true,
   };
   saveState(branchCode, { ...state, printers: [...state.printers, profile] });
@@ -213,38 +204,11 @@ export function addPrinterProfile(
 }
 
 /**
- * Removes Fax / PDF / OneNote profiles and their section/user assignments.
- * Returns how many profiles were removed.
+ * Legacy no-op — PDF/XPS/Fax links are allowed for Auto printing.
+ * Kept so older call sites do not break.
  */
-export function cleanupVirtualPrinterLinks(branchCode: string): number {
-  const state = loadPrinterRouting(branchCode);
-  const removeIds = new Set(
-    state.printers
-      .filter(
-        (p) => isVirtualSystemPrinter(p.systemPrinterName) || isVirtualSystemPrinter(p.name),
-      )
-      .map((p) => p.id),
-  );
-  if (removeIds.size === 0) return 0;
-
-  const sectionPrinters: Record<string, string[]> = {};
-  for (const [sectionId, ids] of Object.entries(state.sectionPrinters)) {
-    sectionPrinters[sectionId] = ids.filter((id) => !removeIds.has(id));
-  }
-  const userPrinters: Record<string, string[]> = {};
-  for (const [userId, ids] of Object.entries(state.userPrinters)) {
-    const next = ids.filter((id) => !removeIds.has(id));
-    if (next.length > 0) userPrinters[userId] = next;
-  }
-  saveState(branchCode, {
-    ...state,
-    printers: state.printers.filter((p) => !removeIds.has(p.id)),
-    sectionPrinters,
-    userPrinters,
-    receiptPrinterId:
-      state.receiptPrinterId && removeIds.has(state.receiptPrinterId) ? null : state.receiptPrinterId,
-  });
-  return removeIds.size;
+export function cleanupVirtualPrinterLinks(_branchCode: string): number {
+  return 0;
 }
 
 export function setReceiptPrinter(branchCode: string, printerId: string | null): void {
@@ -350,16 +314,13 @@ export function listAssignedCounters(branchCode: string | undefined): string[] {
   return [...new Set(counters)].sort((a, b) => a.localeCompare(b));
 }
 
-/** Profiles linked to Fax/PDF/XPS cannot receive ticket jobs. */
-function isDirectPrintableProfile(profile: PrinterProfile): boolean {
-  const os = profile.systemPrinterName?.trim();
-  if (!os) return true;
-  return !isVirtualSystemPrinter(os);
+/** Every profile can print — OS-linked (incl. PDF/XPS) uses Auto; unlinked opens the dialog. */
+function isDirectPrintableProfile(_profile: PrinterProfile): boolean {
+  return true;
 }
 
 function pickOnlineThenAny(profiles: PrinterProfile[]): PrinterProfile | null {
-  const usable = profiles.filter(isDirectPrintableProfile);
-  return usable.find((p) => p.status === "online") ?? usable[0] ?? null;
+  return profiles.find((p) => p.status === "online") ?? profiles[0] ?? null;
 }
 
 /** Primary (then backup) online printer profile assigned to a kitchen/bar section. */
@@ -426,7 +387,7 @@ export function resolveDefaultPrinterByType(
   return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(typed);
 }
 
-/** Default receipt printer: user receipt assignment → branch default → any receipt profile. */
+/** Default receipt printer: user receipt → branch default → OS-linked receipt → any receipt. */
 export function resolveReceiptPrinter(
   branchCode: string | undefined,
   userId?: string | null,
@@ -438,12 +399,26 @@ export function resolveReceiptPrinter(
   const state = loadPrinterRouting(branchCode);
   if (state.receiptPrinterId) {
     const selected = state.printers.find((p) => p.id === state.receiptPrinterId);
-    if (selected && isDirectPrintableProfile(selected)) return selected;
+    if (selected) return selected;
   }
-  const receipts = state.printers.filter(
-    (p) => p.printerType === "receipt" && isDirectPrintableProfile(p),
-  );
-  return pickOnlineThenAny(receipts);
+  const receipts = state.printers.filter((p) => p.printerType === "receipt");
+  const withOs = receipts.filter((p) => p.systemPrinterName?.trim());
+  return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(receipts);
+}
+
+/**
+ * Who owns this print job for routing:
+ * - Prefer the logged-in staff who clicked Print (waiter / rider / cashier).
+ * - Optional fallback (selected waiter on Waiter page, or bill.waiterId).
+ */
+export function resolvePrintUserId(
+  sessionUserId?: string | null,
+  fallbackUserId?: string | null,
+): string | null {
+  const session = (sessionUserId ?? "").trim();
+  if (session) return session;
+  const fallback = (fallbackUserId ?? "").trim();
+  return fallback || null;
 }
 
 /**
@@ -491,13 +466,7 @@ export function updatePrinterProfile(
   const state = loadPrinterRouting(branchCode);
   const nextPatch = { ...patch };
   if (nextPatch.systemPrinterName !== undefined) {
-    const os = nextPatch.systemPrinterName?.trim() || undefined;
-    if (os && isVirtualSystemPrinter(os)) {
-      throw new Error(
-        `"${os}" is a virtual Windows printer (XPS / PDF / Fax). Choose a real printer.`,
-      );
-    }
-    nextPatch.systemPrinterName = os;
+    nextPatch.systemPrinterName = nextPatch.systemPrinterName?.trim() || undefined;
   }
   const printers = state.printers.map((p) => (p.id === printerId ? { ...p, ...nextPatch } : p));
   saveState(branchCode, {
@@ -505,12 +474,10 @@ export function updatePrinterProfile(
     printers,
   });
 
-  // Keep thermal default paper in sync when a receipt printer's roll size changes.
+  // Keep thermal default paper in sync when any linked profile's roll size changes
+  // so Auto KOT / receipt both wrap to the printer width.
   if (nextPatch.paperSize) {
-    const updated = printers.find((p) => p.id === printerId);
-    if (updated?.printerType === "receipt") {
-      saveThermalPrintSettings(branchCode, { defaultPaperSize: nextPatch.paperSize });
-    }
+    saveThermalPrintSettings(branchCode, { defaultPaperSize: nextPatch.paperSize });
   }
 }
 

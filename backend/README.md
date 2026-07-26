@@ -58,3 +58,13 @@ docker run --rm -p 3000:3000 \
   -e CORS_ORIGINS=https://app.yourdomain.com \
   platform-api
 ```
+
+## Docker Compose (API + Postgres)
+
+```bash
+cp backend/.env.docker.example backend/.env.docker
+docker compose -f backend/docker-compose.yml --env-file backend/.env.docker up -d --build
+```
+
+**Live Railway API:** https://backend-desktop-production-5505.up.railway.app  
+Health: https://backend-desktop-production-5505.up.railway.app/health

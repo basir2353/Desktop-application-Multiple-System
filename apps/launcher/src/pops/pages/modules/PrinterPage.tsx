@@ -2,13 +2,7 @@ import { Button } from "@platform/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePopsStore } from "../../../stores/popsStore";
-import {
-  DEFAULT_KOT_PRINT_SETTINGS,
-  loadKotPrintSettings,
-  normalizeKotPrintSettings,
-  saveKotPrintSettings,
-  type KotPrintSettings,
-} from "../../lib/kotPrintSettings";
+import { KotCustomizationPanel } from "../../components/KotCustomizationPanel";
 import {
   PRINTER_PRESETS,
   loadPrinterAssignments,
@@ -62,6 +56,7 @@ import { printTestPageAsync } from "../../lib/printTicket";
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { fetchOrgUsers } from "../../api/users";
 import { fetchWaiters } from "../../api/billing";
+import { fetchRiders } from "../../api/delivery";
 import { PageHeader } from "../../ui/PageHeader";
 import {
   PrinterBySectionPanel,
@@ -306,9 +301,8 @@ function PrinterSectionsTab({
       return;
     }
     const printerType = printerTypeForSection(selectedSection);
-    // Virtual devices (Fax/PDF): keep as profile label, but do not force direct OS print
-    // (that fails with StartDocPrinterW). Real printers get a direct OS link.
-    const systemPrinterName = printer.isVirtual ? undefined : printer.name;
+    // Link every Windows printer (USB, network, PDF, XPS, …) for Auto silent print.
+    const systemPrinterName = printer.name;
     let profile =
       routing.printers.find((p) => p.systemPrinterName === printer.name) ??
       routing.printers.find((p) => p.name.toLowerCase() === printer.name.toLowerCase());
@@ -325,13 +319,13 @@ function PrinterSectionsTab({
     } else {
       updatePrinterProfile(branchCode, profile.id, {
         printerType,
-        systemPrinterName: systemPrinterName ?? profile.systemPrinterName,
+        systemPrinterName,
       });
     }
     togglePrinterForSection(branchCode, selectedSection.id, profile.id, true);
     notify(
       printer.isVirtual
-        ? `✓ ${printer.name} → ${selectedSection.name}. (Virtual printer — Windows print dialog will open.)`
+        ? `✓ ${printer.name} → ${selectedSection.name} (PDF/XPS Auto). Windows may ask where to save.`
         : `✓ ${printer.name} → ${selectedSection.name}. Done.`,
     );
     setPrinterPickerOpen(false);
@@ -394,8 +388,8 @@ function PrinterSectionsTab({
                 <div className="flex items-start justify-between gap-2">
                   <div className="truncate text-sm font-medium text-white">{printer.name}</div>
                   {printer.isVirtual ? (
-                    <span className="shrink-0 rounded-full bg-slate-700/80 px-1.5 py-0.5 text-[9px] text-slate-300">
-                      Virtual
+                    <span className="shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] text-sky-300">
+                      PDF/XPS
                     </span>
                   ) : (
                     <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-300">
@@ -419,25 +413,23 @@ function PrinterSectionsTab({
                   >
                     Use for {selectedSection?.name ?? "section"}
                   </Button>
-                  {!printer.isVirtual ? (
-                    <button
-                      type="button"
-                      className="text-[11px] text-amber-400 hover:text-amber-300"
-                      onClick={() => {
-                        void (async () => {
-                          const ok = await printTestPageAsync(printer.name, { branchCode });
-                          logPrintEvent(branchCode, { kind: "test", printerName: printer.name, ok });
-                          notify(
-                            ok
-                              ? `Test print sent to ${printer.name}.`
-                              : `Test print failed on ${printer.name}.`,
-                          );
-                        })();
-                      }}
-                    >
-                      Test
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    className="text-[11px] text-amber-400 hover:text-amber-300"
+                    onClick={() => {
+                      void (async () => {
+                        const ok = await printTestPageAsync(printer.name, { branchCode });
+                        logPrintEvent(branchCode, { kind: "test", printerName: printer.name, ok });
+                        notify(
+                          ok
+                            ? `Test print sent to ${printer.name}.`
+                            : `Test print failed on ${printer.name}.`,
+                        );
+                      })();
+                    }}
+                  >
+                    Test
+                  </button>
                 </div>
               </div>
             ))
@@ -1161,6 +1153,10 @@ function PrinterProfilesTab({
     () => systemPrinters.filter((p) => p.isVirtual),
     [systemPrinters],
   );
+  const allOsPrinters = useMemo(
+    () => [...usableOsPrinters, ...virtualOsPrinters],
+    [usableOsPrinters, virtualOsPrinters],
+  );
 
   function handleAddProfile(): void {
     const name = newName.trim();
@@ -1178,7 +1174,7 @@ function PrinterProfilesTab({
       notify(
         profile.systemPrinterName
           ? `Printer “${profile.name}” added and linked to ${profile.systemPrinterName}.`
-          : `Printer “${profile.name}” added. Link a real OS printer before POS can print.`,
+          : `Printer “${profile.name}” added. Link any Windows printer (including PDF/XPS) for Auto print.`,
       );
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not add printer profile.");
@@ -1197,7 +1193,7 @@ function PrinterProfilesTab({
           value={routing.receiptPrinterId ?? ""}
           onChange={(e) => setReceiptPrinter(branchCode, e.target.value || null)}
         >
-          <option value="">Auto — first Receipt-type profile</option>
+          <option value="">Auto — first online OS-linked Receipt printer</option>
           {routing.printers.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -1210,8 +1206,9 @@ function PrinterProfilesTab({
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">All printers</div>
         <p className="mt-1 text-xs text-slate-500">
-          Add a name, type (Kitchen / Bar / Receipt), and link a real Windows printer. Do not use XPS, PDF, Fax, or
-          OneNote — those cannot print POS tickets. Then assign the profile under Printer by Section.
+          Add a name, type (Kitchen / Bar / Receipt), and link any Windows printer — USB, network,{" "}
+          <span className="text-slate-300">Microsoft Print to PDF</span>, XPS, and more. Auto POS print uses the
+          linked device; if silent print fails, the Windows dialog opens (same as manual).
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -1251,10 +1248,11 @@ function PrinterProfilesTab({
               </option>
             ))}
             {virtualOsPrinters.length > 0 ? (
-              <optgroup label="Virtual — not for POS">
+              <optgroup label="PDF / XPS / virtual — OK for Auto">
                 {virtualOsPrinters.map((sp) => (
-                  <option key={sp.name} value={sp.name} disabled>
-                    {sp.name} (XPS/PDF/Fax)
+                  <option key={sp.name} value={sp.name}>
+                    {sp.name}
+                    {sp.isDefault ? " (default)" : ""}
                   </option>
                 ))}
               </optgroup>
@@ -1269,10 +1267,10 @@ function PrinterProfilesTab({
             Add profile
           </Button>
         </div>
-        {usableOsPrinters.length === 0 ? (
+        {allOsPrinters.length === 0 ? (
           <p className="mt-2 text-[11px] text-amber-300">
-            No real Windows printers found. Install/connect a USB or network printer, then refresh. You can still add a
-            profile name now and link the OS printer later.
+            No Windows printers found. Install a USB/network printer or use Print to PDF, then refresh. You can still
+            add a profile name now and link the OS printer later.
           </p>
         ) : null}
 
@@ -1348,10 +1346,20 @@ function PrinterProfilesTab({
                             {sp.isDefault ? " (default)" : ""}
                           </option>
                         ))}
+                        {virtualOsPrinters.length > 0 ? (
+                          <optgroup label="PDF / XPS / virtual">
+                            {virtualOsPrinters.map((sp) => (
+                              <option key={sp.name} value={sp.name}>
+                                {sp.name}
+                                {sp.isDefault ? " (default)" : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null}
                         {printer.systemPrinterName &&
-                        !usableOsPrinters.some((sp) => sp.name === printer.systemPrinterName) ? (
+                        !allOsPrinters.some((sp) => sp.name === printer.systemPrinterName) ? (
                           <option value={printer.systemPrinterName}>
-                            {printer.systemPrinterName} (invalid)
+                            {printer.systemPrinterName} (saved)
                           </option>
                         ) : null}
                       </select>
@@ -1565,12 +1573,13 @@ function PrinterAssignmentTab({
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">
-          Assign printers to users / waiters
+          Assign printers to users / waiters / riders
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          One user can have Kitchen + Bar + Receipt. One printer can be shared by many users. Cashiers can also
-          change their own printers on POS → <span className="text-amber-300">My printers</span>. Waiters: assign
-          by name on Waiter page → Printer assignments. Branch:{" "}
+          Jab waiter, rider, ya cashier Print dabaye, bill / KOT unke assigned printer se niklega (mobile /
+          USB / network — jo OS printer profile se linked ho). Ek user ke paas Receipt + Kitchen + Bar ho
+          sakte hain. Cashiers: POS → <span className="text-amber-300">My printers</span>. Waiters: Waiter
+          page → Printer assignments. Branch:{" "}
           <span className="font-mono text-slate-300">{branchCode}</span>
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -2014,6 +2023,7 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
   const systemPrinters = systemPrintersQuery.data?.usable ?? [];
   const allSystemPrinters = systemPrintersQuery.data?.printers ?? [];
   const systemPrintersError = systemPrintersQuery.data?.error ?? null;
+  const browserPrinterMode = systemPrintersQuery.data?.browserMode === true;
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branchCode, "printer-management"],
@@ -2034,6 +2044,12 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
   });
   const waiters = waitersQuery.data ?? [];
 
+  const ridersQuery = useQuery({
+    queryKey: ["delivery-riders", branchCode, "printer-management"],
+    queryFn: () => fetchRiders(branchCode),
+  });
+  const riders = ridersQuery.data ?? [];
+
   const assignablePeople = useMemo((): AssignablePerson[] => {
     const fromUsers: AssignablePerson[] = users.map((u) => ({
       id: u.id,
@@ -2041,23 +2057,44 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
       role: u.role,
       kind: "user",
     }));
-    const userIds = new Set(fromUsers.map((u) => u.id));
-    const fromWaiters: AssignablePerson[] = waiters
-      .filter((w) => !userIds.has(w.id))
-      .map((w) => ({
-        id: w.id,
-        label: w.name,
-        role: "waiter",
-        kind: "waiter" as const,
-      }));
-    // Prefer waiter display name when the same id exists as an org user.
-    const merged = fromUsers.map((u) => {
-      const waiter = waiters.find((w) => w.id === u.id);
-      if (!waiter) return u;
-      return { ...u, label: waiter.name, kind: "waiter" as const, role: "waiter" };
-    });
-    return [...merged, ...fromWaiters].sort((a, b) => a.label.localeCompare(b.label));
-  }, [users, waiters]);
+    const byId = new Map(fromUsers.map((u) => [u.id, u]));
+
+    for (const w of waiters) {
+      const existing = byId.get(w.id);
+      if (existing) {
+        byId.set(w.id, { ...existing, label: w.name, kind: "waiter", role: "waiter" });
+      } else {
+        byId.set(w.id, {
+          id: w.id,
+          label: w.name,
+          role: "waiter",
+          kind: "waiter",
+        });
+      }
+    }
+
+    for (const r of riders) {
+      const loginId = r.userId?.trim() || r.id;
+      const existing = byId.get(loginId);
+      const label = `${r.name} (rider)`;
+      if (existing) {
+        byId.set(loginId, {
+          ...existing,
+          label: existing.kind === "waiter" ? existing.label : label,
+          role: existing.role || "rider",
+        });
+      } else {
+        byId.set(loginId, {
+          id: loginId,
+          label,
+          role: "rider",
+          kind: "user",
+        });
+      }
+    }
+
+    return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [users, waiters, riders]);
 
   function notify(message: string): void {
     setNotice(message);
@@ -2143,13 +2180,25 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
       {notice ? (
         <p
           className={`rounded-lg border px-4 py-3 text-sm ${
-            /virtual|could not|enter a|xps|failed|invalid/i.test(notice)
+            /could not|enter a|failed|invalid|import failed/i.test(notice)
               ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
               : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
           }`}
         >
           {notice}
         </p>
+      ) : null}
+
+      {browserPrinterMode ? (
+        <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          <div className="font-semibold text-sky-50">Browser mode — Windows PDF / XPS available</div>
+          <p className="mt-1 text-xs leading-relaxed text-sky-100/85">
+            Link <span className="font-medium text-white">Microsoft Print to PDF</span> or{" "}
+            <span className="font-medium text-white">Microsoft XPS Document Writer</span> under All Printers.
+            When you print, the Windows print dialog opens — pick that PDF/XPS printer (or any other Windows
+            printer). Silent Auto to USB printers needs the desktop <span className="font-medium">.exe</span> app.
+          </p>
+        </div>
       ) : null}
 
       <PrinterDashboardStats
@@ -2217,8 +2266,6 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
 
 export function PrinterPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
-  const [kotSaved, setKotSaved] = useState<KotPrintSettings>(DEFAULT_KOT_PRINT_SETTINGS);
-  const [kotDraft, setKotDraft] = useState<KotPrintSettings>(DEFAULT_KOT_PRINT_SETTINGS);
   const [notice, setNotice] = useState<string | null>(null);
   const [legacyOpen, setLegacyOpen] = useState(false);
 
@@ -2238,21 +2285,6 @@ export function PrinterPage(): JSX.Element {
     [branch?.code, notice],
   );
 
-  useEffect(() => {
-    const kot = loadKotPrintSettings(branch?.code);
-    setKotSaved(kot);
-    setKotDraft(kot);
-  }, [branch?.code]);
-
-  function applyKot(): void {
-    if (!branch?.code) return;
-    const next = normalizeKotPrintSettings(kotDraft);
-    saveKotPrintSettings(branch.code, next);
-    setKotSaved(next);
-    setKotDraft(next);
-    setNotice("KOT print template saved.");
-  }
-
   if (!branch?.code) {
     return <PageHeader title="Printer" subtitle="Select a branch to configure printer settings." />;
   }
@@ -2270,54 +2302,20 @@ export function PrinterPage(): JSX.Element {
 
       <PrinterManagement branchCode={branch.code} />
 
-      <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">Kitchen KOT print template</div>
-        <p className="mt-1 text-xs text-slate-500">Customize how kitchen order tickets are printed.</p>
-
-        <div className="mt-4 space-y-3">
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            <input
-              type="checkbox"
-              checked={kotDraft.emphasizeOrderMeta}
-              onChange={(e) => setKotDraft((p) => ({ ...p, emphasizeOrderMeta: e.target.checked }))}
-            />
-            Bold &amp; enlarge order number, order type, and table number
-          </label>
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            <input
-              type="checkbox"
-              checked={kotDraft.showItemTotals}
-              onChange={(e) => setKotDraft((p) => ({ ...p, showItemTotals: e.target.checked }))}
-            />
-            Show total items and total item quantity
-          </label>
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            <input
-              type="checkbox"
-              checked={kotDraft.itemUnderlineSeparator}
-              onChange={(e) => setKotDraft((p) => ({ ...p, itemUnderlineSeparator: e.target.checked }))}
-            />
-            Underline separator for each item
-          </label>
-          <label className="block text-xs text-slate-400">
-            Base font size (px) — larger is easier to read in kitchen
-            <input
-              type="number"
-              min={12}
-              max={20}
-              value={kotDraft.baseFontSize}
-              onChange={(e) =>
-                setKotDraft((p) => ({ ...p, baseFontSize: Number(e.target.value) || 15 }))
-              }
-              className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-            />
-          </label>
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+          Kitchen ticket customization
         </div>
-
+        <p className="mt-1 text-xs text-slate-500">
+          Full kitchen receipt editor — same style as bill customization. Preview matches Auto print.
+          Also available under Print Settings → step 4.
+        </p>
         <div className="mt-4">
-          <Button type="button" className="text-xs" onClick={() => applyKot()}>
-            Save KOT template
-          </Button>
+          <KotCustomizationPanel
+            branchName={branch.name}
+            branchCode={branch.code}
+            onNotice={setNotice}
+          />
         </div>
       </div>
 

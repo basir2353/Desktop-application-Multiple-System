@@ -2,7 +2,7 @@ import type { Bill, KitchenTicket, KitchenTicketStatus } from "@platform/contrac
 import { billChannelLabel, type OrderChannelLabel } from "./orderSales";
 import { computeTicketTotals } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
-import { DEFAULT_POS_SETTINGS } from "./posSettings";
+import { DEFAULT_POS_SETTINGS, effectiveTaxPct } from "./posSettings";
 import type { PosOrderModeLabel } from "./posOrderMode";
 
 export type PosOrderLine = {
@@ -118,7 +118,13 @@ export function posRecentOrderTotal(
   if (subtotal <= 0) return null;
 
   const delivery = order.kitchenTicket?.deliveryChargePkr ?? 0;
-  return computeTicketTotals(subtotal, 0, settings.servicePct, settings.taxPct, delivery).total;
+  return computeTicketTotals(
+    subtotal,
+    0,
+    settings.servicePct,
+    effectiveTaxPct(settings),
+    delivery,
+  ).total;
 }
 
 function mapTicket(t: KitchenTicket, settings: PosSettings): PosRecentOrder {
@@ -135,7 +141,7 @@ function mapTicket(t: KitchenTicket, settings: PosSettings): PosRecentOrder {
           subtotal,
           0,
           settings.servicePct,
-          settings.taxPct,
+          effectiveTaxPct(settings),
           t.deliveryChargePkr ?? 0,
         ).total
       : null;

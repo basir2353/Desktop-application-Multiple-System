@@ -56,11 +56,14 @@ import {
   type PosCartLine,
 } from "../../lib/posCart";
 import {
+  formatSessionPrintName,
   printReceiptDetailed,
   printKotDetailed,
+  resolveSessionPrintName,
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../lib/printTicket";
+import { fetchOrgUsers } from "../../api/users";
 import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
@@ -95,6 +98,7 @@ import {
   type DeliverySettings,
 } from "../../lib/deliverySettings";
 import {
+  effectiveTaxPct,
   loadPosSettings,
   POS_SETTINGS_CHANGED_EVENT,
   type PosSettings,
@@ -259,9 +263,16 @@ export function PosPage(): JSX.Element {
   const seatingModalShown = useSessionStore((s) => s.seatingModalShown);
   const markSeatingModalShown = useSessionStore((s) => s.markSeatingModalShown);
   const sessionUserId = useSessionStore((s) => s.claims?.sub) ?? "pos-local";
-  const sessionUserLabel = sessionUserId.includes("@")
-    ? sessionUserId.split("@")[0]
-    : sessionUserId;
+  const orgUsersQuery = useQuery({
+    queryKey: ["org-users"],
+    queryFn: fetchOrgUsers,
+    staleTime: 5 * 60_000,
+  });
+  // Depends on orgUsersQuery.data so label updates after UUID→email cache fills.
+  const sessionUserLabel = useMemo(
+    () => resolveSessionPrintName(sessionUserId) || "Staff",
+    [sessionUserId, orgUsersQuery.data],
+  );
   const [orderTypeModalOpen, setOrderTypeModalOpen] = useState(!orderTypeModalShown);
   const [modeConfirmed, setModeConfirmed] = useState(orderTypeModalShown);
   const [editingOrder, setEditingOrder] = useState<PosEditingOrder>(null);
@@ -329,7 +340,8 @@ export function PosPage(): JSX.Element {
     return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
   }, [branch?.code]);
 
-  const { servicePct: defaultServicePct, taxPct } = posSettings;
+  const { servicePct: defaultServicePct } = posSettings;
+  const taxPct = effectiveTaxPct(posSettings);
 
   useEffect(() => {
     setTicketServicePct(defaultServicePct);
@@ -934,7 +946,8 @@ export function PosPage(): JSX.Element {
       !lineBlocksBillDiscount(selectedCartLine) &&
       itemEligibility.discountableSubtotal > 0,
   );
-  const showTaxRow = itemEligibility.taxableSubtotal > 0;
+  // Tax row only when tax is enabled in Settings and cart has taxable lines.
+  const showTaxRow = posSettings.taxEnabled && taxPct > 0 && itemEligibility.taxableSubtotal > 0;
 
   const autoDiscountEnabled = posSettings.autoDiscountEnabled;
   const autoDiscountPct = posSettings.autoDiscountPct;
@@ -1039,6 +1052,7 @@ export function PosPage(): JSX.Element {
 
   function buildPrintPayload(): Omit<PrintTicketInput, "kind"> {
     const lines = printOrderedCart();
+    const staffName = formatSessionPrintName(useSessionStore.getState().claims?.sub) || sessionUserLabel;
     return {
       branchName: branch?.name ?? "POPS",
       branchCode: branch?.code ?? "—",
@@ -1046,7 +1060,10 @@ export function PosPage(): JSX.Element {
       modeLabel,
       tableLabel: posPrintTableLabel(mode, tableLabel, staffFoodPersonName, staffFoodConsumerType),
       notes: orderNotes,
-      waiterName: mode === "staff-food" && staffFoodPersonName ? staffFoodPersonName : undefined,
+      waiterName:
+        mode === "staff-food" && staffFoodPersonName
+          ? staffFoodPersonName
+          : staffName || "POS Counter",
       lines: lines.map((line) => ({
         label: formatMenuItemPrintLabel({
           name: line.item.name,
@@ -1525,7 +1542,11 @@ export function PosPage(): JSX.Element {
         orderRef: sharedOrderRef ?? nextOrderRef(branch!.code),
         tableLabel: billTableLabel,
         waiterName:
-          mode === "staff-food" && staffFoodPersonName ? staffFoodPersonName : "POS Counter",
+          mode === "staff-food" && staffFoodPersonName
+            ? staffFoodPersonName
+            : formatSessionPrintName(useSessionStore.getState().claims?.sub) ||
+              sessionUserLabel ||
+              "POS Counter",
         notes: orderNotes,
         lines: cartToBillLines(effectiveCart),
         discountPct: discount > 0 ? discountPct : undefined,
@@ -1569,6 +1590,10 @@ export function PosPage(): JSX.Element {
         await persistStaffFoodRecord();
       }
       const sessionUserId = useSessionStore.getState().claims?.sub;
+      const printedBy =
+        resolveSessionPrintName(sessionUserId) ||
+        resolveSessionPrintName(bill.waiterName) ||
+        sessionUserLabel;
       const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
       const payload = withPrinterProfile(
         {
@@ -1576,7 +1601,7 @@ export function PosPage(): JSX.Element {
           // Prefer saved bill totals/lines so auto print matches manual reprint.
           orderRef: bill.orderRef ?? orderRef,
           billRef: bill.billRef,
-          waiterName: bill.waiterName,
+          waiterName: printedBy,
           lines: bill.lines.map((line) => ({
             label: line.label,
             qty: line.qty,
@@ -1682,7 +1707,10 @@ export function PosPage(): JSX.Element {
           branchCode: branch!.code,
           orderRef: groupRef,
           tableLabel: billTableLabel,
-          waiterName: "POS Counter",
+          waiterName:
+            formatSessionPrintName(useSessionStore.getState().claims?.sub) ||
+            sessionUserLabel ||
+            "POS Counter",
           notes: orderNotes ? `${orderNotes} · ${split.label}` : split.label,
           lines: cartToBillLines(split.lines),
           discountPkr: shareDiscount > 0 ? shareDiscount : undefined,
@@ -1707,6 +1735,9 @@ export function PosPage(): JSX.Element {
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
       const sessionUserId = useSessionStore.getState().claims?.sub;
+      const printedBy =
+        resolveSessionPrintName(sessionUserId) ||
+        sessionUserLabel;
       const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
       let printOk = true;
       for (const bill of bills) {
@@ -1715,7 +1746,10 @@ export function PosPage(): JSX.Element {
             ...buildPrintPayload(),
             billRef: bill.billRef,
             orderRef: bill.orderRef ?? bill.billRef,
-            waiterName: bill.waiterName,
+            waiterName:
+              printedBy ||
+              resolveSessionPrintName(bill.waiterName) ||
+              sessionUserLabel,
             lines: bill.lines.map((line) => ({
               label: line.label,
               qty: line.qty,
@@ -2952,12 +2986,14 @@ export function PosPage(): JSX.Element {
                     </span>
                   </div>
                 ) : null}
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                  <span>Service {ticketServicePct}%</span>
-                  <span className="tabular-nums text-slate-900 dark:text-slate-300">
-                    {service.toLocaleString()}
-                  </span>
-                </div>
+                {ticketServicePct > 0 && service > 0 ? (
+                  <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                    <span>Service {ticketServicePct}%</span>
+                    <span className="tabular-nums text-slate-900 dark:text-slate-300">
+                      {service.toLocaleString()}
+                    </span>
+                  </div>
+                ) : null}
                 {showTaxRow ? (
                   <div className="flex justify-between text-slate-600 dark:text-slate-400">
                     <span>Tax {taxPct}%</span>
@@ -2965,12 +3001,7 @@ export function PosPage(): JSX.Element {
                       {tax.toLocaleString()}
                     </span>
                   </div>
-                ) : (
-                  <div className="flex justify-between text-sky-600 dark:text-sky-400">
-                    <span>Tax</span>
-                    <span className="tabular-nums">Exempt</span>
-                  </div>
-                )}
+                ) : null}
                 {mode === "delivery" && deliveryCharge > 0 ? (
                   <div className="flex justify-between text-slate-600 dark:text-slate-400">
                     <span>Delivery</span>

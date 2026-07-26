@@ -1,0 +1,414 @@
+import { Button } from "@platform/ui";
+import { useEffect, useMemo, useState } from "react";
+import {
+  DEFAULT_KOT_PRINT_SETTINGS,
+  KOT_FIELD_GROUPS,
+  KOT_FIELD_LABELS,
+  KOT_PRINT_SETTINGS_CHANGED_EVENT,
+  loadKotPrintSettings,
+  newKotCustomLine,
+  normalizeKotPrintSettings,
+  saveKotPrintSettings,
+  type KotPrintSettings,
+  type KotReceiptFields,
+} from "../lib/kotPrintSettings";
+import { buildPrintPreviewHtml, type PrintTicketInput } from "../lib/printTicket";
+import {
+  THERMAL_PRINT_SETTINGS_CHANGED_EVENT,
+  loadThermalPrintSettings,
+} from "../lib/thermalPrintSettings";
+import { fieldInputClass, fieldSelectClass } from "../lib/themeClasses";
+
+type Props = {
+  branchName: string;
+  branchCode: string;
+  onNotice?: (message: string) => void;
+};
+
+function sampleKotInput(branchName: string, branchCode: string): Omit<PrintTicketInput, "kind"> {
+  return {
+    branchName,
+    branchCode,
+    orderRef: "ORD-3",
+    modeLabel: "Takeaway",
+    tableLabel: "Takeaway",
+    waiterName: "Owner",
+    printerName: "Kitchen1",
+    notes: undefined,
+    lines: [
+      { label: "Family Combo 4", qty: 1, unitPrice: 0 },
+      { label: "Malai Boti", qty: 1, unitPrice: 0 },
+      { label: "Mint Margarita", qty: 1, unitPrice: 0 },
+      { label: "Mutton Handi (Half)", qty: 1, unitPrice: 0 },
+    ],
+    subtotal: 0,
+    discount: 0,
+    service: 0,
+    tax: 0,
+    total: 0,
+    servicePct: 0,
+    discountPct: 0,
+  };
+}
+
+export function KotCustomizationPanel({
+  branchName,
+  branchCode,
+  onNotice,
+}: Props): JSX.Element {
+  const [draft, setDraft] = useState<KotPrintSettings>(() => loadKotPrintSettings(branchCode));
+  const [dirty, setDirty] = useState(false);
+  const [thermalTick, setThermalTick] = useState(0);
+
+  useEffect(() => {
+    setDraft(loadKotPrintSettings(branchCode));
+    setDirty(false);
+  }, [branchCode]);
+
+  useEffect(() => {
+    function onChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (detail?.branchCode === branchCode) {
+        setDraft(loadKotPrintSettings(branchCode));
+        setDirty(false);
+      }
+    }
+    window.addEventListener(KOT_PRINT_SETTINGS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(KOT_PRINT_SETTINGS_CHANGED_EVENT, onChanged);
+  }, [branchCode]);
+
+  useEffect(() => {
+    function onThermal(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!detail?.branchCode || detail.branchCode === branchCode) {
+        setThermalTick((n) => n + 1);
+      }
+    }
+    window.addEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, onThermal);
+    return () => window.removeEventListener(THERMAL_PRINT_SETTINGS_CHANGED_EVENT, onThermal);
+  }, [branchCode]);
+
+  const previewHtml = useMemo(() => {
+    void loadThermalPrintSettings(branchCode);
+    return buildPrintPreviewHtml({
+      ...sampleKotInput(branchName, branchCode),
+      kind: "kot",
+      kotSettings: draft,
+    });
+  }, [branchName, branchCode, draft, thermalTick]);
+
+  const paperPx = useMemo(() => {
+    const paper = loadThermalPrintSettings(branchCode).defaultPaperSize;
+    if (paper === "58mm") return 280;
+    if (paper === "A4") return 420;
+    return 340;
+  }, [branchCode, thermalTick]);
+
+  function patch(partial: Partial<KotPrintSettings>): void {
+    setDraft((prev) => normalizeKotPrintSettings({ ...prev, ...partial }));
+    setDirty(true);
+  }
+
+  function patchField(key: keyof KotReceiptFields, value: boolean): void {
+    patch({ fields: { ...draft.fields, [key]: value } });
+  }
+
+  function insertCustomInOrder(
+    order: string[],
+    lineId: string,
+    zone: (typeof draft.customLines)[number]["zone"],
+  ): string[] {
+    const next = order.filter((id) => id !== lineId);
+    const anchor =
+      zone === "header"
+        ? "documentTitle"
+        : zone === "beforeItems"
+          ? "timestamp"
+          : zone === "afterItems"
+            ? "items"
+            : "footer";
+    const idx = next.indexOf(anchor);
+    if (idx < 0) return [...next, lineId];
+    next.splice(idx + 1, 0, lineId);
+    return next;
+  }
+
+  function addLine(): void {
+    const line = newKotCustomLine({ text: "Custom kitchen note", zone: "beforeItems" });
+    patch({
+      customLines: [...draft.customLines, line],
+      blockOrder: insertCustomInOrder(draft.blockOrder, line.id, line.zone),
+    });
+  }
+
+  function updateLine(id: string, partial: Partial<(typeof draft.customLines)[number]>): void {
+    const nextLines = draft.customLines.map((l) => (l.id === id ? { ...l, ...partial } : l));
+    const line = nextLines.find((l) => l.id === id);
+    patch({
+      customLines: nextLines,
+      blockOrder:
+        line && partial.zone
+          ? insertCustomInOrder(draft.blockOrder, id, line.zone)
+          : draft.blockOrder,
+    });
+  }
+
+  function removeLine(id: string): void {
+    patch({
+      customLines: draft.customLines.filter((l) => l.id !== id),
+      blockOrder: draft.blockOrder.filter((x) => x !== id),
+    });
+  }
+
+  function save(): void {
+    saveKotPrintSettings(branchCode, draft);
+    setDirty(false);
+    onNotice?.("Kitchen ticket template saved — live KOTs use this layout.");
+  }
+
+  function resetDefaults(): void {
+    setDraft(DEFAULT_KOT_PRINT_SETTINGS);
+    setDirty(true);
+  }
+
+  return (
+    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
+      <div className="space-y-4">
+        <section className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-xs text-slate-500">
+            Header alignment
+            <select
+              className={`mt-1 w-full ${fieldSelectClass}`}
+              value={draft.headerAlign}
+              onChange={(e) =>
+                patch({ headerAlign: e.target.value as KotPrintSettings["headerAlign"] })
+              }
+            >
+              <option value="center">Center</option>
+              <option value="left">Left</option>
+            </select>
+          </label>
+          <label className="block text-xs text-slate-500">
+            Base font size (px)
+            <input
+              type="number"
+              min={12}
+              max={22}
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.baseFontSize}
+              onChange={(e) => patch({ baseFontSize: Number(e.target.value) || 15 })}
+            />
+          </label>
+        </section>
+
+        <section className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Header &amp; footer text
+          </div>
+          <label className="block text-xs text-slate-500">
+            Kitchen / business name
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.headerBusinessName}
+              onChange={(e) => patch({ headerBusinessName: e.target.value })}
+              placeholder={branchName || "Uses branch name when empty"}
+            />
+          </label>
+          <label className="block text-xs text-slate-500">
+            Subtitle
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.headerSubtitle}
+              onChange={(e) => patch({ headerSubtitle: e.target.value })}
+              placeholder="e.g. Hot kitchen"
+            />
+          </label>
+          <label className="block text-xs text-slate-500">
+            Ticket title
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.documentTitle}
+              onChange={(e) => patch({ documentTitle: e.target.value })}
+              placeholder="Kitchen Order"
+            />
+          </label>
+          <label className="block text-xs text-slate-500">
+            Title when order is updated
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.documentTitleUpdate}
+              onChange={(e) => patch({ documentTitleUpdate: e.target.value })}
+              placeholder="Kitchen Order — UPDATE"
+            />
+          </label>
+          <label className="block text-xs text-slate-500">
+            Footer
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.footerText}
+              onChange={(e) => patch({ footerText: e.target.value })}
+            />
+          </label>
+          <label className="block text-xs text-slate-500">
+            Footer secondary
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={draft.footerSecondaryText}
+              onChange={(e) => patch({ footerSecondaryText: e.target.value })}
+            />
+          </label>
+        </section>
+
+        <section className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Kitchen options
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={draft.emphasizeOrderMeta}
+              onChange={(e) => patch({ emphasizeOrderMeta: e.target.checked })}
+            />
+            Bold / enlarge order type &amp; table
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={draft.itemUnderlineSeparator}
+              onChange={(e) => patch({ itemUnderlineSeparator: e.target.checked })}
+            />
+            Underline under each item
+          </label>
+        </section>
+
+        <section className="space-y-4 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Show / hide sections
+          </div>
+          {KOT_FIELD_GROUPS.map((group) => (
+            <div key={group.label}>
+              <div className="text-xs font-medium text-slate-600 dark:text-slate-300">{group.label}</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {group.keys.map((key) => (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400"
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-amber-500"
+                      checked={draft.fields[key]}
+                      onChange={(e) => patchField(key, e.target.checked)}
+                    />
+                    {KOT_FIELD_LABELS[key]}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Custom lines
+            </div>
+            <Button type="button" variant="ghost" className="text-[10px]" onClick={addLine}>
+              + Add line
+            </Button>
+          </div>
+          {draft.customLines.length === 0 ? (
+            <p className="text-[11px] text-slate-500">No custom lines yet.</p>
+          ) : (
+            draft.customLines.map((line) => (
+              <div
+                key={line.id}
+                className="space-y-2 rounded-md border border-slate-200 p-2 dark:border-slate-700"
+              >
+                <input
+                  className={`w-full ${fieldInputClass}`}
+                  value={line.text}
+                  onChange={(e) => updateLine(line.id, { text: e.target.value })}
+                />
+                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={line.enabled}
+                      onChange={(e) => updateLine(line.id, { enabled: e.target.checked })}
+                    />
+                    On
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={line.bold}
+                      onChange={(e) => updateLine(line.id, { bold: e.target.checked })}
+                    />
+                    Bold
+                  </label>
+                  <select
+                    className={fieldSelectClass}
+                    value={line.zone}
+                    onChange={(e) =>
+                      updateLine(line.id, {
+                        zone: e.target.value as (typeof line)["zone"],
+                      })
+                    }
+                  >
+                    <option value="header">After header</option>
+                    <option value="beforeItems">Before items</option>
+                    <option value="afterItems">After items</option>
+                    <option value="footer">In footer</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="text-rose-400 hover:text-rose-300"
+                    onClick={() => removeLine(line.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </section>
+
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" className="text-xs" onClick={save} disabled={!dirty}>
+            Save kitchen template
+          </Button>
+          <Button type="button" variant="ghost" className="text-xs" onClick={resetDefaults}>
+            Reset defaults
+          </Button>
+          {dirty ? (
+            <span className="self-center text-[10px] font-semibold text-amber-400">Unsaved</span>
+          ) : null}
+        </div>
+      </div>
+
+      <aside className="xl:sticky xl:top-4">
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Kitchen print preview (matches printer)
+        </div>
+        <div
+          className="mx-auto overflow-hidden rounded-lg border border-slate-700 bg-white"
+          style={{ width: paperPx }}
+        >
+          <iframe
+            title="Kitchen KOT preview"
+            srcDoc={previewHtml}
+            className="block h-[min(70vh,520px)] border-0 bg-white"
+            style={{ width: paperPx }}
+            sandbox="allow-same-origin"
+          />
+        </div>
+        <p className="mt-2 text-center text-[10px] text-slate-500">
+          Same layout as kitchen Auto print · paper from Thermal / printer profile (58mm is scaled smaller)
+        </p>
+      </aside>
+    </div>
+  );
+}

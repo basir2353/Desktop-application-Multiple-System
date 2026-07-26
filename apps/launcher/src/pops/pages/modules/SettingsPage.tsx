@@ -9,6 +9,10 @@ import {
   type PosSettings,
 } from "../../lib/posSettings";
 import {
+  loadBillPrintSettings,
+  saveBillPrintSettings,
+} from "../../lib/billPrintSettings";
+import {
   authorizeTerminal,
   getOrCreateTerminalId,
   loadAuthorizedTerminals,
@@ -41,7 +45,13 @@ export function SettingsPage(): JSX.Element {
 
   const preview = useMemo(() => {
     const sampleSubtotal = 10_000;
-    const taxPct = draft.taxByPaymentMethod ? draft.cashTaxPct : draft.taxEnabled ? draft.taxPct : 0;
+    const taxPct = draft.taxByPaymentMethod
+      ? draft.taxEnabled
+        ? draft.cashTaxPct
+        : 0
+      : draft.taxEnabled
+        ? draft.taxPct
+        : 0;
     const autoDisc = draft.autoDiscountEnabled
       ? Math.round(sampleSubtotal * (draft.autoDiscountPct / 100))
       : 0;
@@ -51,10 +61,24 @@ export function SettingsPage(): JSX.Element {
   function apply(): void {
     if (!branch?.code) return;
     const next = normalizePosSettings(draft);
+    // If tax master toggle is off, force payment-method tax off too.
+    if (!next.taxEnabled) {
+      next.taxByPaymentMethod = false;
+    }
     savePosSettings(branch.code, next);
+    // Keep bill print template in sync: off means hide Tax line on next prints.
+    const billPrint = loadBillPrintSettings(branch.code);
+    saveBillPrintSettings(branch.code, {
+      ...billPrint,
+      fields: { ...billPrint.fields, tax: next.taxEnabled },
+    });
     setSaved(next);
     setDraft(next);
-    setNotice("POS charges saved. They apply to new tickets immediately.");
+    setNotice(
+      next.taxEnabled
+        ? "POS charges saved. Tax is ON for new tickets."
+        : "POS charges saved. Tax is OFF — new bills will not add or show tax.",
+    );
   }
 
   function reset(): void {
@@ -108,6 +132,7 @@ export function SettingsPage(): JSX.Element {
           <input
             type="checkbox"
             checked={draft.taxByPaymentMethod}
+            disabled={!draft.taxEnabled}
             onChange={(e) => setDraft((prev) => ({ ...prev, taxByPaymentMethod: e.target.checked }))}
           />
           Different tax rates by payment method (cash 16%, card 8%)
@@ -178,7 +203,7 @@ export function SettingsPage(): JSX.Element {
               max={30}
               value={draft.cashTaxPct}
               onChange={(e) => setDraft((prev) => ({ ...prev, cashTaxPct: Number(e.target.value) || 0 }))}
-              disabled={!draft.taxByPaymentMethod}
+              disabled={!draft.taxByPaymentMethod || !draft.taxEnabled}
               className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
             />
           </label>
@@ -190,7 +215,7 @@ export function SettingsPage(): JSX.Element {
               max={30}
               value={draft.cardTaxPct}
               onChange={(e) => setDraft((prev) => ({ ...prev, cardTaxPct: Number(e.target.value) || 0 }))}
-              disabled={!draft.taxByPaymentMethod}
+              disabled={!draft.taxByPaymentMethod || !draft.taxEnabled}
               className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
             />
           </label>

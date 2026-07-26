@@ -111,8 +111,8 @@ export function PosOrderDetailModal({ order, onClose }: Props): JSX.Element {
             <div className="mt-4 space-y-1 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs">
               <Row label="Subtotal" value={detail.subtotal} />
               {detail.discount > 0 ? <Row label="Discount" value={-detail.discount} /> : null}
-              <Row label="Service" value={detail.service} />
-              <Row label="Tax" value={detail.tax} />
+              {detail.service > 0 ? <Row label="Service" value={detail.service} /> : null}
+              {detail.tax > 0 ? <Row label="Tax" value={detail.tax} /> : null}
               <div className="flex justify-between border-t border-slate-800 pt-2 text-sm font-semibold text-white">
                 <span>Total</span>
                 <span>Rs {detail.total.toLocaleString()}</span>

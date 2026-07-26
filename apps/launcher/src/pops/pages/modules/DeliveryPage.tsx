@@ -15,6 +15,7 @@ import {
 } from "../../api/delivery";
 import { fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
 import { fetchPopsBranches } from "../../api/operations";
+import { fetchOrgUsers } from "../../api/users";
 import {
   buildDeliveryOrders,
   deliveryOrderCharge,
@@ -38,12 +39,13 @@ import {
   type UnifiedOrder,
 } from "../../lib/orderHistory";
 import {
+  formatSessionPrintName,
   printKotDetailed,
   printReceiptDetailed,
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../lib/printTicket";
-import { resolveKotPrinter, resolveReceiptPrinter } from "../../lib/printerRouting";
+import { resolveKotPrinter, resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRouting";
 import {
   cardClass,
   emptyStateBoxClass,
@@ -93,6 +95,7 @@ function ticketToPrint(
   ticket: KitchenTicket,
   branchName: string,
   branchCode: string,
+  printedByName?: string,
 ): Omit<PrintTicketInput, "kind"> {
   const items = deliveryOrderItemsSummary({
     source: "kitchen",
@@ -105,6 +108,7 @@ function ticketToPrint(
     qty: line.qty,
     unitPrice: 0,
   }));
+  const by = printedByName?.trim() || ticket.createdByName?.trim() || undefined;
 
   return {
     branchName,
@@ -112,6 +116,7 @@ function ticketToPrint(
     orderRef: ticket.orderRef ?? ticket.ticketRef,
     modeLabel: "Delivery",
     tableLabel: ticket.stationLabel,
+    waiterName: by,
     lines: lines.length > 0 ? lines : [{ label: items || "Items", qty: 1, unitPrice: 0 }],
     subtotal: 0,
     discount: 0,
@@ -218,6 +223,13 @@ export function DeliveryPage(): JSX.Element {
     enabled: Boolean(branch?.code),
     queryFn: () => fetchCompletedOrders(branch!.code),
     refetchInterval: 5_000,
+  });
+
+  // Warm UUID→name cache so print "By" shows staff name, not user id.
+  useQuery({
+    queryKey: ["org-users"],
+    queryFn: fetchOrgUsers,
+    staleTime: 5 * 60_000,
   });
 
   const ticketsQuery = useQuery({
@@ -901,10 +913,12 @@ export function DeliveryPage(): JSX.Element {
                           className="h-7 text-xs"
                           onClick={() => {
                             void (async () => {
-                              const profile = resolveReceiptPrinter(
-                                branch.code,
+                              const sessionUserId = useSessionStore.getState().claims?.sub;
+                              const printUserId = resolvePrintUserId(
+                                sessionUserId,
                                 selected.bill.waiterId,
                               );
+                              const profile = resolveReceiptPrinter(branch.code, printUserId);
                               const result = await printReceiptDetailed(
                                 withPrinterProfile(
                                   billToPrint(branch.name, branch.code, selected.bill),
@@ -913,8 +927,8 @@ export function DeliveryPage(): JSX.Element {
                               );
                               setNotice(
                                 result.ok
-                                  ? `Receipt printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : ""}.`
-                                  : `Reprint failed: ${result.error ?? "check printer assignment"}.`,
+                                  ? `Receipt printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : profile?.name ? ` → ${profile.name}` : ""}.`
+                                  : `Reprint failed: ${result.error ?? "assign a receipt printer to this user in Printer settings"}.`,
                               );
                             })();
                           }}
@@ -927,17 +941,23 @@ export function DeliveryPage(): JSX.Element {
                           className="h-7 text-xs"
                           onClick={() => {
                             void (async () => {
-                              const profile = resolveKotPrinter(branch.code, null, undefined, "kitchen");
+                              const actorId = useSessionStore.getState().claims?.sub;
+                              const profile = resolveKotPrinter(branch.code, null, actorId, "kitchen");
                               const result = await printKotDetailed(
                                 withPrinterProfile(
-                                  ticketToPrint(selected.ticket, branch.name, branch.code),
+                                  ticketToPrint(
+                                    selected.ticket,
+                                    branch.name,
+                                    branch.code,
+                                    formatSessionPrintName(actorId),
+                                  ),
                                   profile,
                                 ),
                               );
                               setNotice(
                                 result.ok
-                                  ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : ""}.`
-                                  : `KOT print failed: ${result.error ?? "check printer assignment"}.`,
+                                  ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : profile?.name ? ` → ${profile.name}` : ""}.`
+                                  : `KOT print failed: ${result.error ?? "assign a kitchen printer to this user in Printer settings"}.`,
                               );
                             })();
                           }}

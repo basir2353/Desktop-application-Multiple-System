@@ -210,10 +210,18 @@ export function PosSplitBillModal({
                       ))}
                     </ul>
                     <div className="mt-2 space-y-0.5 border-t border-slate-800 pt-2">
-                      <div className="flex justify-between text-slate-500">
-                        <span>Service ({servicePct}%)</span>
-                        <span>Rs {split.totals.service.toLocaleString()}</span>
-                      </div>
+                      {split.totals.service > 0 ? (
+                        <div className="flex justify-between text-slate-500">
+                          <span>Service ({servicePct}%)</span>
+                          <span>Rs {split.totals.service.toLocaleString()}</span>
+                        </div>
+                      ) : null}
+                      {split.totals.tax > 0 ? (
+                        <div className="flex justify-between text-slate-500">
+                          <span>Tax ({taxPct}%)</span>
+                          <span>Rs {split.totals.tax.toLocaleString()}</span>
+                        </div>
+                      ) : null}
                       <div className="flex justify-between font-semibold text-white">
                         <span>Total</span>
                         <span>Rs {split.totals.total.toLocaleString()}</span>

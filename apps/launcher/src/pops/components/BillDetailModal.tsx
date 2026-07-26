@@ -140,8 +140,12 @@ export function BillDetailModal({
             {bill.discount > 0 ? (
               <TotalRow label="Discount" value={-bill.discount} accent="danger" />
             ) : null}
-            <TotalRow label={`Service (${bill.servicePct}%)`} value={bill.service} />
-            <TotalRow label={`Tax (${bill.taxPct}%)`} value={bill.tax} />
+            {bill.service > 0 ? (
+              <TotalRow label={`Service (${bill.servicePct}%)`} value={bill.service} />
+            ) : null}
+            {bill.tax > 0 ? (
+              <TotalRow label={`Tax (${bill.taxPct}%)`} value={bill.tax} />
+            ) : null}
             {bill.deliveryChargePkr > 0 ? (
               <TotalRow label="Delivery" value={bill.deliveryChargePkr} />
             ) : null}

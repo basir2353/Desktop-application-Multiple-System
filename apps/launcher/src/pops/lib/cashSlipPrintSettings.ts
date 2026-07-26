@@ -38,6 +38,7 @@ function normalizeLines(
       if (!raw || typeof raw !== "object") return null;
       const row = raw as { id?: string; text?: string; bold?: boolean; enabled?: boolean };
       const text = String(row.text ?? "").slice(0, 100);
+      if (/^\s*signature\s*:?\s*_+\s*$/i.test(text)) return null;
       return {
         id: String(row.id ?? `c-${i}`),
         text,

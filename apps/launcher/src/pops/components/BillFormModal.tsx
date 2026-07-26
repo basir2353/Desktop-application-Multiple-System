@@ -18,6 +18,7 @@ import { discountAmountFromPct } from "../lib/posDiscount";
 import { billChannelLabel } from "../lib/orderSales";
 import { type PrintTicketInput } from "../lib/printTicket";
 import type { BillPrintSettings } from "../lib/billPrintSettings";
+import { loadPosSettings } from "../lib/posSettings";
 import { fieldInputClass, fieldSelectClass, linkDangerClass } from "../lib/themeClasses";
 
 export type BillFormValues = {
@@ -107,25 +108,30 @@ export function BillFormModal({
   onClose,
   onSubmit,
 }: Props): JSX.Element {
-  const [form, setForm] = useState<BillFormValues>(() =>
-    mode === "edit" && bill
-      ? billToForm(bill, defaultServicePct, defaultTaxPct)
-      : defaultForm(defaultServicePct, defaultTaxPct),
-  );
+  const taxEnabled = loadPosSettings(branchCode).taxEnabled;
+  const [form, setForm] = useState<BillFormValues>(() => {
+    const base =
+      mode === "edit" && bill
+        ? billToForm(bill, defaultServicePct, defaultTaxPct)
+        : defaultForm(defaultServicePct, defaultTaxPct);
+    if (!taxEnabled) return { ...base, taxPct: 0 };
+    return base;
+  });
   const [menuPick, setMenuPick] = useState("");
 
   const totals = useMemo(() => {
     const validLines = form.lines.filter((l) => l.label.trim() && l.qty > 0);
     const subtotal = validLines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
     const discount = discountAmountFromPct(form.discountPct, subtotal);
+    const taxPct = taxEnabled ? form.taxPct : 0;
     return computeCheckoutTotals(
       validLines,
       discount,
       form.servicePct,
-      form.taxPct,
+      taxPct,
       form.deliveryChargePkr,
     );
-  }, [form]);
+  }, [form, taxEnabled]);
 
   const previewInput = useMemo((): Omit<PrintTicketInput, "kind"> => {
     const validLines = form.lines.filter((l) => l.label.trim() && l.qty > 0);
@@ -152,10 +158,10 @@ export function BillFormModal({
       deliveryCharge: form.deliveryChargePkr > 0 ? form.deliveryChargePkr : undefined,
       total: totals.total,
       servicePct: form.servicePct,
-      taxPct: form.taxPct,
+      taxPct: taxEnabled ? form.taxPct : 0,
       discountPct: form.discountPct,
     };
-  }, [form, totals, mode, bill, branchName, branchCode]);
+  }, [form, totals, mode, bill, branchName, branchCode, taxEnabled]);
 
   function addItemLine(): void {
     setForm((f) => ({ ...f, lines: [...f.lines.filter((l) => l.label.trim()), emptyLine()] }));
@@ -189,7 +195,12 @@ export function BillFormModal({
       mode === "create" && form.saveAs === "completed"
         ? [{ method: form.payments[0]?.method ?? "cash", amount: totals.total }]
         : form.payments;
-    onSubmit({ ...form, lines, payments });
+    onSubmit({
+      ...form,
+      lines,
+      payments,
+      taxPct: taxEnabled ? form.taxPct : 0,
+    });
   }
 
   return (
@@ -378,10 +389,16 @@ export function BillFormModal({
                   type="number"
                   min={0}
                   max={30}
-                  className={`mt-1 w-full ${fieldInputClass}`}
-                  value={form.taxPct}
+                  className={`mt-1 w-full ${fieldInputClass} disabled:opacity-50`}
+                  value={taxEnabled ? form.taxPct : 0}
+                  disabled={!taxEnabled}
                   onChange={(e) => setForm((f) => ({ ...f, taxPct: Number(e.target.value) || 0 }))}
                 />
+                {!taxEnabled ? (
+                  <span className="mt-1 block text-[10px] text-slate-400">
+                    Tax is off in Settings — this bill will not add tax.
+                  </span>
+                ) : null}
               </label>
               <label className="block text-xs text-slate-500">
                 Delivery (PKR)

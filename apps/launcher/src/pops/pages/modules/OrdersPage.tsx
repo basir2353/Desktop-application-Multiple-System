@@ -32,7 +32,7 @@ import { ChangeOrderTableModal } from "../../components/ChangeOrderTableModal";
 import { OrderDetailModal } from "../../components/OrderDetailModal";
 import { ReceiptPrintPreviewModal } from "../../components/ReceiptPrintPreviewModal";
 import { billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
-import { resolveReceiptPrinter } from "../../lib/printerRouting";
+import { resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRouting";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
@@ -220,8 +220,9 @@ export function OrdersPage(): JSX.Element {
   function reprint(bill: Bill): void {
     const branchCode = branch?.code ?? "—";
     const branchName = branch?.name ?? "POPS";
-    const profile = resolveReceiptPrinter(branch?.code, bill.waiterId);
-    const assigned = getWaiterPrinter(branch?.code, bill.waiterId);
+    const printUserId = resolvePrintUserId(claims?.sub, bill.waiterId);
+    const profile = resolveReceiptPrinter(branch?.code, printUserId);
+    const assigned = getWaiterPrinter(branch?.code, printUserId);
     setPrintPreview({
       input: {
         ...billToPrintInput(branchName, branchCode, bill),

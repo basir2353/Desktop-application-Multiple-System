@@ -104,7 +104,8 @@ export type BillPrintSettings = {
 export const DEFAULT_BILL_RECEIPT_FIELDS: BillReceiptFields = {
   branchName: true,
   headerSubtitle: true,
-  documentTitle: true,
+  /** Hidden by default — thermal slips use business name only (no "TAX INVOICE"). */
+  documentTitle: false,
   orderRef: true,
   orderType: true,
   tableLabel: true,
@@ -144,12 +145,12 @@ export const BILL_SYSTEM_BLOCK_LABELS: Record<BillSystemBlockId, string> = {
 
 export const DEFAULT_BILL_PRINT_SETTINGS: BillPrintSettings = {
   baseFontSize: 14,
-  layout: "standard",
+  layout: "compact",
   headerAlign: "center",
   headerBusinessName: "",
   headerSubtitle: "",
-  documentTitle: "Tax Invoice",
-  footerText: "Thank you — visit again",
+  documentTitle: "TAX INVOICE",
+  footerText: "THANK YOU — VISIT AGAIN",
   footerSecondaryText: "",
   fields: DEFAULT_BILL_RECEIPT_FIELDS,
   customLines: [],
@@ -165,7 +166,7 @@ export const BILL_CUSTOM_LINE_ZONE_LABELS: Record<BillCustomLineZone, string> = 
 };
 
 export const BILL_LINE_FONT_MIN = 10;
-export const BILL_LINE_FONT_MAX = 28;
+export const BILL_LINE_FONT_MAX = 35;
 
 export function newBillCustomLine(
   partial?: Partial<Omit<BillCustomLine, "id">> & { id?: string },
@@ -254,7 +255,7 @@ const STORAGE_KEY = "pops-bill-print-settings-v2";
 const ACTIVE_TEMPLATE_KEY = "pops-bill-print-active-template-v1";
 
 export const BILL_FONT_SIZE_MIN = 10;
-export const BILL_FONT_SIZE_MAX = 20;
+export const BILL_FONT_SIZE_MAX = 35;
 
 export const BILL_FIELD_GROUPS: { label: string; keys: (keyof BillReceiptFields)[] }[] = [
   {
@@ -287,11 +288,11 @@ export const BILL_FIELD_LABELS: Record<keyof BillReceiptFields, string> = {
   branchName: "Business name",
   headerSubtitle: "Header subtitle",
   documentTitle: "Document title",
-  orderRef: "Order reference",
+  orderRef: "Order #",
   orderType: "Order type",
   tableLabel: "Table / station",
-  billRef: "Bill reference",
-  waiterName: "Waiter",
+  billRef: "Invoice #",
+  waiterName: "Cashier / staff",
   printerName: "Printer",
   notes: "Notes",
   timestamp: "Date & time",
@@ -302,7 +303,7 @@ export const BILL_FIELD_LABELS: Record<keyof BillReceiptFields, string> = {
   subtotal: "Subtotal",
   discount: "Discount",
   service: "Service charge",
-  tax: "Tax",
+  tax: "Sales tax",
   delivery: "Delivery",
   total: "Grand total",
   footer: "Footer message",
@@ -320,7 +321,10 @@ function clampLineFont(value: number): number {
 }
 
 function normalizeFields(input: Partial<BillReceiptFields> | undefined): BillReceiptFields {
-  return { ...DEFAULT_BILL_RECEIPT_FIELDS, ...input };
+  const merged = { ...DEFAULT_BILL_RECEIPT_FIELDS, ...input };
+  // Keep document title off unless the user explicitly re-enabled it in customization
+  // after this default change (saved settings still win via ...input).
+  return merged;
 }
 
 function normalizeCustomLines(input: unknown): BillCustomLine[] {
@@ -334,6 +338,8 @@ function normalizeCustomLines(input: unknown): BillCustomLine[] {
         ? (row.zone as BillCustomLineZone)
         : "footer";
       const text = String(row.text ?? "").slice(0, 120);
+      // Drop signature underline lines — no longer used on receipts.
+      if (/^\s*signature\s*:?\s*_+\s*$/i.test(text)) return null;
       return {
         id: String(row.id ?? `line-${index}`),
         text,
@@ -469,7 +475,7 @@ export function normalizeBillPrintSettings(input: Partial<BillPrintSettings>): B
 }
 
 export function loadBillPrintSettings(branchCode: string | undefined): BillPrintSettings {
-  if (!branchCode) return DEFAULT_BILL_PRINT_SETTINGS;
+  if (!branchCode) return { ...DEFAULT_BILL_PRINT_SETTINGS, fields: { ...DEFAULT_BILL_RECEIPT_FIELDS } };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
@@ -478,12 +484,17 @@ export function loadBillPrintSettings(branchCode: string | undefined): BillPrint
         const legacy = JSON.parse(legacyRaw) as Record<string, Partial<BillPrintSettings>>;
         return normalizeBillPrintSettings(migrateLegacy(legacy[branchCode]));
       }
-      return DEFAULT_BILL_PRINT_SETTINGS;
+      return { ...DEFAULT_BILL_PRINT_SETTINGS, fields: { ...DEFAULT_BILL_RECEIPT_FIELDS } };
     }
     const parsed = JSON.parse(raw) as Record<string, Partial<BillPrintSettings>>;
-    return normalizeBillPrintSettings(migrateLegacy(parsed[branchCode]));
+    const next = normalizeBillPrintSettings(migrateLegacy(parsed[branchCode]));
+    // One-time: hide TAX INVOICE on thermal slips (was on by default).
+    if (next.fields.documentTitle && /^tax\s*invoice$/i.test(next.documentTitle.trim())) {
+      next.fields = { ...next.fields, documentTitle: false };
+    }
+    return next;
   } catch {
-    return DEFAULT_BILL_PRINT_SETTINGS;
+    return { ...DEFAULT_BILL_PRINT_SETTINGS, fields: { ...DEFAULT_BILL_RECEIPT_FIELDS } };
   }
 }
 

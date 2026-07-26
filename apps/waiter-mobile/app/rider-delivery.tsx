@@ -5,6 +5,7 @@ import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts
 import { fetchMyDeliveries, updateDeliveryStatus } from "../src/api/delivery";
 import { fetchBranchMenu } from "../src/api/menu";
 import { Button, Card, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
+import { DeliveryMap } from "../src/components/DeliveryMap";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
@@ -91,6 +92,10 @@ export default function RiderDeliveryDetailScreen() {
           <Text style={styles.value}>{order.customerName}</Text>
           <Text style={[styles.label, { marginTop: 12 }]}>Delivery address</Text>
           <Text style={styles.value}>{order.customerAddress}</Text>
+        </Card>
+
+        <Card style={styles.section}>
+          <DeliveryMap address={order.customerAddress} title="Google Maps" height={240} />
         </Card>
 
         <Card style={styles.section}>

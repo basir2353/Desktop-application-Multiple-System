@@ -10,6 +10,7 @@ import {
   updateKitchenTicket,
 } from "../../api/kitchen";
 import { fetchPopsBranches } from "../../api/operations";
+import { fetchOrgUsers } from "../../api/users";
 import { isMonitoringBranch, storeBranchCodes } from "../../lib/branchScope";
 import { OrderDetailModal } from "../../components/OrderDetailModal";
 import {
@@ -21,8 +22,14 @@ import {
   unifiedOrderTotal,
   type UnifiedOrder,
 } from "../../lib/orderHistory";
-import { printKotDetailed, withPrinterProfile, type PrintTicketInput } from "../../lib/printTicket";
+import {
+  formatSessionPrintName,
+  printKotDetailed,
+  withPrinterProfile,
+  type PrintTicketInput,
+} from "../../lib/printTicket";
 import { resolveKotPrinter } from "../../lib/printerRouting";
+import { useSessionStore } from "../../../stores/sessionStore";
 import {
   ModuleCountBadge,
   ModuleFilterBar,
@@ -62,12 +69,14 @@ function ticketToPrint(
   ticket: KitchenTicket,
   branchName: string,
   branchCode: string,
+  printedByName?: string,
 ): Omit<PrintTicketInput, "kind"> {
   const lines = parseItemsSummary(ticket.itemsSummary).map((line) => ({
     label: line.label,
     qty: line.qty,
     unitPrice: 0,
   }));
+  const by = printedByName?.trim() || ticket.createdByName?.trim() || undefined;
 
   return {
     branchName,
@@ -75,6 +84,7 @@ function ticketToPrint(
     orderRef: ticket.orderRef ?? ticket.ticketRef,
     modeLabel: "Order",
     tableLabel: ticket.stationLabel,
+    waiterName: by,
     lines: lines.length > 0 ? lines : [{ label: ticket.itemsSummary || "Items", qty: 1, unitPrice: 0 }],
     subtotal: 0,
     discount: 0,
@@ -112,6 +122,13 @@ export function KitchenPage(): JSX.Element {
   const [notice, setNotice] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const monitoringView = isMonitoringBranch(branch?.code);
+
+  // Warm UUID→name cache so KOT "By" shows staff name, not user id.
+  useQuery({
+    queryKey: ["org-users"],
+    queryFn: fetchOrgUsers,
+    staleTime: 5 * 60_000,
+  });
 
   const branchesQuery = useQuery({
     queryKey: ["operations", "branches"],
@@ -430,13 +447,15 @@ export function KitchenPage(): JSX.Element {
                       className="text-[11px] text-amber-300 hover:text-amber-200"
                       onClick={() => {
                         void (async () => {
-                          const base = ticketToPrint(r.ticket, branch.name, branch.code);
-                          const profile = resolveKotPrinter(branch.code, null, undefined, "kitchen");
+                          const actorId = useSessionStore.getState().claims?.sub;
+                          const printedBy = formatSessionPrintName(actorId);
+                          const base = ticketToPrint(r.ticket, branch.name, branch.code, printedBy);
+                          const profile = resolveKotPrinter(branch.code, null, actorId, "kitchen");
                           const result = await printKotDetailed(withPrinterProfile(base, profile));
                           setNotice(
                             result.ok
-                              ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : ""}.`
-                              : `KOT print failed: ${result.error ?? "check printer assignment"}.`,
+                              ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : profile?.name ? ` → ${profile.name}` : ""}.`
+                              : `KOT print failed: ${result.error ?? "assign a kitchen printer to this user in Printer settings"}.`,
                           );
                         })();
                       }}

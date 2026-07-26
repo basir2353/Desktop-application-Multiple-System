@@ -30,7 +30,7 @@ struct SystemPrinterInfo {
     is_default: bool,
     is_shared: bool,
     state: String,
-    /// Fax / PDF / OneNote — shown in UI but not assignable for POS tickets.
+    /// Fax / PDF / OneNote — badge only; still printable.
     is_virtual: bool,
 }
 
@@ -151,7 +151,6 @@ Get-Printer | Select-Object Name, DriverName, PortName, Shared, Default, Printer
 }
 
 /// Enumerates printers installed on the OS (Windows Print Spooler / CUPS).
-/// Includes virtual devices with `is_virtual` so the UI can explain why Fax/PDF are skipped.
 #[tauri::command]
 fn list_system_printers() -> Vec<SystemPrinterInfo> {
     let mut printers: Vec<SystemPrinterInfo> = get_printers()
@@ -178,9 +177,180 @@ fn escape_powershell_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-/// Fallback for drivers that reject StartDocPrinterW from the printers crate.
-/// Runs hidden so Windows Terminal / console never flashes during POS printing.
-fn print_via_powershell(printer_name: &str, path: &str) -> Result<(), String> {
+/// Build ESC/POS bytes for local restaurant thermal printers (Xprinter / Rongta / Epson clones).
+/// Uses ASCII (+ '?' for non-ASCII) so RAW jobs do not garble like UTF-8 did.
+fn build_escpos_bytes(content: &str) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(content.len() + 32);
+    // ESC @ — initialize
+    out.extend_from_slice(&[0x1B, 0x40]);
+    // ESC a 0 — left align (fills roll from the left edge)
+    out.extend_from_slice(&[0x1B, 0x61, 0x00]);
+    // ESC ! 0 — Font A, normal size
+    out.extend_from_slice(&[0x1B, 0x21, 0x00]);
+    // ESC 3 n — line spacing (tighter, less vertical stretch)
+    out.extend_from_slice(&[0x1B, 0x33, 0x40]);
+
+    for line in content.lines() {
+        for ch in line.chars() {
+            let b = if ch.is_ascii() && ch != '\0' {
+                ch as u8
+            } else {
+                b'?'
+            };
+            out.push(b);
+        }
+        out.push(b'\n');
+    }
+    // Short feed then partial cut — long feeds leave a large blank on the *next* slip.
+    out.extend_from_slice(&[0x0A, 0x0A]);
+    out.extend_from_slice(&[0x1D, 0x56, 0x01]);
+    out
+}
+
+fn print_raw_escpos(printer_name: &str, content: &str, job_name: &str) -> Result<u64, String> {
+    let printer =
+        find_printer(printer_name).ok_or_else(|| format!("Printer not found: {printer_name}"))?;
+    let bytes = build_escpos_bytes(content);
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let temp_path = std::env::temp_dir().join(format!("pops-escpos-{stamp}.bin"));
+    fs::write(&temp_path, &bytes).map_err(|e| format!("Could not write ESC/POS temp: {e}"))?;
+    let path_str = temp_path
+        .to_str()
+        .ok_or_else(|| "Temp print path is not valid UTF-8".to_string())?
+        .to_string();
+
+    let options = PrinterJobOptions {
+        name: Some(job_name),
+        raw_properties: &[("copies", "1"), ("document-format", "application/octet-stream")],
+        ..PrinterJobOptions::none()
+    };
+    let result = printer.print_file(&path_str, options);
+    let _ = fs::remove_file(&temp_path);
+    match result {
+        Ok(job_id) => Ok(job_id),
+        Err(e) => Err(format!("ESC/POS raw print failed: {e:?}")),
+    }
+}
+
+/// GDI PrintDocument with thermal paper width + small monospace font.
+/// Fixes the classic Out-Printer problem: letter page + large font → huge L/R margins on 58/80mm.
+fn print_via_gdi_thermal(printer_name: &str, path: &str, paper_width_mm: u32) -> Result<(), String> {
+    let width_mm = match paper_width_mm {
+        0..=64 => 58,
+        65..=100 => 80,
+        _ => paper_width_mm.min(210),
+    };
+    // Hundredths of an inch (Windows PaperSize).
+    let width_hi = if width_mm <= 58 { 228 } else if width_mm <= 80 { 315 } else { 827 };
+    // Continuous thermal roll (~3276mm). Avoid short 297mm forms that zoom text.
+    let height_hi = 12897;
+    // Larger bold type — readable on 203 DPI 80mm / 3" rolls.
+    let font_pt = if width_mm <= 58 { 8.0 } else { 9.0 };
+    let want80 = if width_mm >= 70 { 1 } else { 0 };
+
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$printerName = '{printer}'
+$path = '{path}'
+$want80 = {want80}
+$content = [System.IO.File]::ReadAllText($path)
+$lines = $content -split "`r?`n"
+$doc = New-Object System.Drawing.Printing.PrintDocument
+$doc.PrinterSettings.PrinterName = $printerName
+if (-not $doc.PrinterSettings.IsValid) {{ throw "Printer not valid: $printerName" }}
+$doc.DocumentName = 'POPS Thermal'
+$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+$picked = $null
+$bestScore = -1
+foreach ($ps in $doc.PrinterSettings.PaperSizes) {{
+  $n = [string]$ps.PaperName
+  $w = [int]$ps.Width
+  $h = [int]$ps.Height
+  $match = $false
+  if ($want80 -eq 1) {{
+    if ($n -match '80\s*x|80\s*mm|3\s*inch|3"|352|GIANT|plusIII') {{ $match = $true }}
+    elseif ($w -ge 280 -and $w -le 360) {{ $match = $true }}
+  }} else {{
+    if ($n -match '58\s*x|58\s*mm|2\s*inch|2"') {{ $match = $true }}
+    elseif ($w -ge 200 -and $w -le 250) {{ $match = $true }}
+  }}
+  if (-not $match) {{ continue }}
+  $score = ($h * 100) + $w
+  if ($n -match '3276') {{ $score += 5000000 }}
+  if ($n -match 'GIANT') {{ $score += 50000 }}
+  if ($h -ge 5000) {{ $score += 200000 }}
+  if ($score -gt $bestScore) {{ $picked = $ps; $bestScore = $score }}
+}}
+if ($picked -ne $null) {{
+  $doc.DefaultPageSettings.PaperSize = $picked
+}} else {{
+  $paper = New-Object System.Drawing.Printing.PaperSize('POPS Thermal', {width_hi}, {height_hi})
+  try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
+}}
+$doc.DefaultPageSettings.Landscape = $false
+$font = New-Object System.Drawing.Font('Consolas', {font_pt}, [System.Drawing.FontStyle]::Bold)
+$brush = [System.Drawing.Brushes]::Black
+$script:idx = 0
+$doc.add_PrintPage({{
+  param($s, $e)
+  $e.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Display
+  $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+  $lineH = [math]::Ceiling($font.GetHeight($e.Graphics))
+  $x = 1.0
+  $y = 0.0
+  $maxY = $e.PageBounds.Height - 4
+  while ($script:idx -lt $lines.Length) {{
+    if (($y + $lineH) -gt $maxY -and $y -gt 0) {{
+      $e.HasMorePages = $true
+      return
+    }}
+    $e.Graphics.DrawString($lines[$script:idx], $font, $brush, $x, $y)
+    $y += $lineH
+    $script:idx++
+  }}
+  $e.HasMorePages = $false
+}})
+$doc.Print()
+$font.Dispose()
+$doc.Dispose()
+"#,
+        printer = escape_powershell_single_quoted(printer_name),
+        path = escape_powershell_single_quoted(path),
+        width_hi = width_hi,
+        height_hi = height_hi,
+        font_pt = font_pt,
+        want80 = want80,
+    );
+
+    let output = command_no_window("powershell")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .map_err(|e| format!("GDI thermal print failed to start: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "GDI thermal print failed: {}",
+        stderr.trim().chars().take(280).collect::<String>()
+    ))
+}
+
+/// Legacy Out-Printer fallback (works for PDF / XPS virtual printers).
+fn print_via_out_printer(printer_name: &str, path: &str) -> Result<(), String> {
     let script = format!(
         "Get-Content -LiteralPath '{}' -Raw | Out-Printer -Name '{}'",
         escape_powershell_single_quoted(path),
@@ -210,53 +380,42 @@ fn print_via_powershell(printer_name: &str, path: &str) -> Result<(), String> {
 
 /// Sends plain-text content directly to a named OS printer (no print dialog).
 ///
-/// Auto POS prints must match manual quality. Many Windows thermal drivers:
-/// - accept `print_file` / RAW and return Ok while printing garbage
-/// - render correctly via GDI `Out-Printer` (same path as a normal Windows print)
+/// Physical thermal (Pakistan restaurant 58/80mm):
+///   1) ESC/POS RAW — fills roll edge-to-edge
+///   2) GDI PrintDocument with thermal PaperSize + Consolas — no A4 margins
+///   3) Out-Printer / text spooler fallback
 ///
-/// So we prefer PowerShell Out-Printer first, then TEXT print_file.
-/// RAW byte jobs are never used for receipts (they garbled auto prints).
+/// Virtual PDF/XPS: Out-Printer first (Save dialog works).
 #[tauri::command]
 fn print_to_printer(
     printer_name: String,
     content: String,
     job_name: Option<String>,
     copies: Option<u32>,
+    paper_width_mm: Option<u32>,
 ) -> Result<u64, String> {
-    if is_virtual_printer(&printer_name, "", "") {
-        return Err(format!(
-            "\"{printer_name}\" is a virtual Windows printer (Fax/PDF). Link a real kitchen/receipt printer in Printer → Profiles."
-        ));
-    }
-
     let printer =
         find_printer(&printer_name).ok_or_else(|| format!("Printer not found: {printer_name}"))?;
 
-    if is_virtual_printer(&printer.name, &printer.driver_name, &printer.port_name) {
-        return Err(format!(
-            "\"{}\" is a virtual Windows printer (Fax/PDF). Link a real kitchen/receipt printer in Printer → Profiles.",
-            printer.name
-        ));
-    }
-
     let copies = copies.unwrap_or(1).max(1);
     let job_label = job_name.unwrap_or_else(|| "POPS Print".to_string());
-    let mut last_job_id = 0u64;
+    let paper_mm = paper_width_mm.unwrap_or(80).max(40);
+    let virtual_target = is_virtual_printer(
+        &printer.name,
+        &printer.driver_name,
+        &printer.port_name,
+    );
 
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let temp_path = std::env::temp_dir().join(format!("pops-print-{stamp}.txt"));
-    // UTF-8 BOM helps Windows GDI / Out-Printer render receipt text correctly.
+    // UTF-8 BOM helps GDI / Out-Printer; ESC/POS path uses its own ASCII conversion.
     let mut bytes = vec![0xEFu8, 0xBB, 0xBF];
     bytes.extend_from_slice(content.as_bytes());
     if !content.ends_with('\n') {
         bytes.push(b'\n');
-    }
-    // Form-feed helps some thermal drivers cut/eject after the job.
-    if !content.contains('\u{000C}') {
-        bytes.push(b'\x0C');
     }
     fs::write(&temp_path, &bytes).map_err(|e| format!("Could not write temp print file: {e}"))?;
 
@@ -265,6 +424,9 @@ fn print_to_printer(
         .ok_or_else(|| "Temp print path is not valid UTF-8".to_string())?
         .to_string();
 
+    let mut last_job_id = 0u64;
+    let mut last_err = String::new();
+
     for i in 0..copies {
         let name = if copies > 1 {
             format!("{job_label} ({}/{})", i + 1, copies)
@@ -272,26 +434,59 @@ fn print_to_printer(
             job_label.clone()
         };
 
-        // 1) Hidden PowerShell Out-Printer — same GDI path that prints correctly manually.
-        if print_via_powershell(&printer_name, &path_str).is_ok() {
-            last_job_id = 1;
-            continue;
+        let mut printed = false;
+
+        if !virtual_target {
+            // 1) GDI with correct roll width — fixes left/right empty margins on 58/80mm.
+            // Prefer this before RAW: some drivers accept RAW and return Ok while printing garbage.
+            match print_via_gdi_thermal(&printer_name, &path_str, paper_mm) {
+                Ok(()) => {
+                    last_job_id = 1;
+                    printed = true;
+                }
+                Err(e) => last_err = e,
+            }
+            // 2) ESC/POS RAW — good for Xprinter / Rongta / Epson-clone USB when GDI fails.
+            if !printed {
+                if let Ok(job_id) = print_raw_escpos(&printer_name, &content, &name) {
+                    last_job_id = job_id;
+                    printed = true;
+                }
+            }
         }
 
-        // 2) TEXT file via spooler only if Out-Printer failed to start.
-        let options = PrinterJobOptions {
-            name: Some(name.as_str()),
-            raw_properties: &[("copies", "1"), ("document-format", "text/plain")],
-            ..PrinterJobOptions::none()
-        };
-        match printer.print_file(&path_str, options) {
-            Ok(job_id) => last_job_id = job_id,
-            Err(text_err) => {
-                let _ = fs::remove_file(&temp_path);
-                return Err(format!(
-                    "Print failed on {printer_name}: Out-Printer and text spooler both failed ({text_err:?})"
-                ));
+        // 3) Out-Printer — PDF/XPS and last-resort for odd drivers.
+        if !printed {
+            match print_via_out_printer(&printer_name, &path_str) {
+                Ok(()) => {
+                    last_job_id = 1;
+                    printed = true;
+                }
+                Err(e) => last_err = e,
             }
+        }
+
+        // 4) Text spooler.
+        if !printed {
+            let options = PrinterJobOptions {
+                name: Some(name.as_str()),
+                raw_properties: &[("copies", "1"), ("document-format", "text/plain")],
+                ..PrinterJobOptions::none()
+            };
+            match printer.print_file(&path_str, options) {
+                Ok(job_id) => {
+                    last_job_id = job_id;
+                    printed = true;
+                }
+                Err(text_err) => {
+                    last_err = format!("text spooler failed ({text_err:?}); last={last_err}");
+                }
+            }
+        }
+
+        if !printed {
+            let _ = fs::remove_file(&temp_path);
+            return Err(format!("Print failed on {printer_name}: {last_err}"));
         }
     }
 
@@ -299,10 +494,190 @@ fn print_to_printer(
     Ok(last_job_id)
 }
 
+/// Prints a PNG to a named OS printer via GDI — preserves styled HTML receipt layout.
+#[tauri::command]
+fn print_image_to_printer(
+    printer_name: String,
+    png_bytes: Vec<u8>,
+    job_name: Option<String>,
+    copies: Option<u32>,
+    paper_width_mm: Option<u32>,
+) -> Result<u64, String> {
+    let _printer =
+        find_printer(&printer_name).ok_or_else(|| format!("Printer not found: {printer_name}"))?;
+
+    if png_bytes.is_empty() {
+        return Err("PNG image was empty.".to_string());
+    }
+
+    let copies = copies.unwrap_or(1).max(1);
+    let job_label = job_name.unwrap_or_else(|| "POPS Receipt".to_string());
+    let paper_mm = paper_width_mm.unwrap_or(80).max(40);
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let temp_path = std::env::temp_dir().join(format!("pops-receipt-{stamp}.png"));
+    fs::write(&temp_path, &png_bytes).map_err(|e| format!("Could not write temp PNG: {e}"))?;
+    let path_str = temp_path
+        .to_str()
+        .ok_or_else(|| "Temp PNG path is not valid UTF-8".to_string())?
+        .to_string();
+
+    match print_via_gdi_image(&printer_name, &path_str, paper_mm, &job_label, copies) {
+        Ok(()) => {
+            let _ = fs::remove_file(&temp_path);
+            Ok(1)
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(e)
+        }
+    }
+}
+
+fn print_via_gdi_image(
+    printer_name: &str,
+    png_path: &str,
+    paper_width_mm: u32,
+    job_name: &str,
+    copies: u32,
+) -> Result<(), String> {
+    let width_mm = match paper_width_mm {
+        0..=64 => 58,
+        65..=100 => 80,
+        _ => paper_width_mm.min(210),
+    };
+    // Hundredths of an inch — 80mm ≈ 3.15" → 315; 58mm ≈ 2.28" → 228.
+    let width_hi = if width_mm <= 58 {
+        228
+    } else if width_mm <= 80 {
+        315
+    } else {
+        827
+    };
+    // Continuous thermal roll (~3276mm). Short forms like 80x297 cause driver/PDF-style zoom.
+    let height_hi = 12897;
+    let want80 = if width_mm >= 70 { 1 } else { 0 };
+
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$printerName = '{printer}'
+$path = '{path}'
+$jobName = '{job}'
+$copies = {copies}
+$want80 = {want80}
+$widthHi = {width_hi}
+$heightHi = {height_hi}
+$img = [System.Drawing.Image]::FromFile($path)
+try {{
+  for ($c = 1; $c -le $copies; $c++) {{
+    $doc = New-Object System.Drawing.Printing.PrintDocument
+    $doc.PrinterSettings.PrinterName = $printerName
+    if (-not $doc.PrinterSettings.IsValid) {{ throw "Printer not valid: $printerName" }}
+    $doc.DocumentName = if ($copies -gt 1) {{ "$jobName ($c/$copies)" }} else {{ $jobName }}
+    $doc.PrinterSettings.Copies = 1
+    $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+    $picked = $null
+    $bestScore = -1
+    foreach ($ps in $doc.PrinterSettings.PaperSizes) {{
+      $n = [string]$ps.PaperName
+      $w = [int]$ps.Width
+      $h = [int]$ps.Height
+      $match = $false
+      if ($want80 -eq 1) {{
+        if ($n -match '80\s*x|80\s*mm|3\s*inch|3"|352|GIANT|plusIII|72\s*mm|76\s*mm|79\s*mm') {{ $match = $true }}
+        elseif ($w -ge 280 -and $w -le 360) {{ $match = $true }}
+      }} else {{
+        if ($n -match '58\s*x|58\s*mm|2\s*inch|2"') {{ $match = $true }}
+        elseif ($w -ge 200 -and $w -le 250) {{ $match = $true }}
+      }}
+      if (-not $match) {{ continue }}
+      # Prefer continuous roll (3276) over short page (297) — short pages zoom/blur text.
+      $score = ($h * 100) + $w
+      if ($n -match '3276') {{ $score += 5000000 }}
+      if ($n -match 'GIANT') {{ $score += 50000 }}
+      if ($h -ge 5000) {{ $score += 200000 }}
+      if ($score -gt $bestScore) {{ $picked = $ps; $bestScore = $score }}
+    }}
+    if ($picked -ne $null) {{
+      $doc.DefaultPageSettings.PaperSize = $picked
+    }} else {{
+      $paper = New-Object System.Drawing.Printing.PaperSize('POPS Receipt', $widthHi, $heightHi)
+      try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
+    }}
+    $doc.DefaultPageSettings.Landscape = $false
+    $script:srcY = 0
+    $doc.add_PrintPage({{
+      param($s, $e)
+      $e.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Display
+      $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+      $e.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+      $e.Graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighSpeed
+      $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+      $originX = [math]::Max(0, -$e.PageSettings.HardMarginX)
+      $originY = [math]::Max(0, -$e.PageSettings.HardMarginY)
+      $pageW = [math]::Max(1, $e.PageBounds.Width - 1)
+      $pageH = [math]::Max(1, $e.PageBounds.Height - 1)
+      $scale = $pageW / [double]$img.Width
+      $remain = $img.Height - $script:srcY
+      $srcH = [math]::Min($remain, [math]::Ceiling($pageH / $scale))
+      $drawH = [math]::Ceiling($srcH * $scale)
+      $srcRect = New-Object System.Drawing.Rectangle(0, [int]$script:srcY, $img.Width, [int]$srcH)
+      $destRect = New-Object System.Drawing.Rectangle([int]$originX, [int]$originY, [int]$pageW, [int]$drawH)
+      $e.Graphics.DrawImage($img, $destRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
+      $script:srcY += [int]$srcH
+      $e.HasMorePages = ($script:srcY -lt $img.Height)
+    }})
+    $doc.Print()
+    $doc.Dispose()
+  }}
+}} finally {{
+  $img.Dispose()
+}}
+"#,
+        printer = escape_powershell_single_quoted(printer_name),
+        path = escape_powershell_single_quoted(png_path),
+        job = escape_powershell_single_quoted(job_name),
+        copies = copies,
+        want80 = want80,
+        width_hi = width_hi,
+        height_hi = height_hi,
+    );
+
+    let output = command_no_window("powershell")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .map_err(|e| format!("GDI image print failed to start: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "GDI image print failed: {}",
+        stderr.trim().chars().take(280).collect::<String>()
+    ))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![list_system_printers, print_to_printer])
+        .invoke_handler(tauri::generate_handler![
+            list_system_printers,
+            print_to_printer,
+            print_image_to_printer
+        ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .expect("failed to run tauri application");
 }

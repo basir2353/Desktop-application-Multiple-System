@@ -28,14 +28,18 @@ export type ThermalPrintSettings = {
 
 export const DEFAULT_THERMAL_PRINT_SETTINGS: ThermalPrintSettings = {
   defaultPaperSize: "80mm",
-  marginMm: 2,
+  /** Keep near zero so 80mm / 3" rolls fill edge-to-edge. */
+  marginMm: 1,
   receiptLayout: "columns",
-  showUnitPrice: false,
+  showUnitPrice: true,
   compactMoney: true,
   showCurrencyPrefix: false,
-  /** Conservative — many 58mm heads clip past ~30–32 glyphs. */
-  charsPerLine58: 30,
-  charsPerLine80: 42,
+  /**
+   * ESC/POS Font A on 80mm = 48 chars (standard). GDI Consolas is sized to match.
+   * 58mm Font A ≈ 32; we use 32 printable with a small safety margin.
+   */
+  charsPerLine58: 32,
+  charsPerLine80: 48,
 };
 
 export const THERMAL_PRINT_SETTINGS_CHANGED_EVENT = "pops-thermal-print-settings-changed";
@@ -66,8 +70,8 @@ export function normalizeThermalPrintSettings(
     showUnitPrice: input?.showUnitPrice ?? base.showUnitPrice,
     compactMoney: input?.compactMoney ?? base.compactMoney,
     showCurrencyPrefix: input?.showCurrencyPrefix ?? base.showCurrencyPrefix,
-    charsPerLine58: clamp(Number(input?.charsPerLine58), 24, 40, base.charsPerLine58),
-    charsPerLine80: clamp(Number(input?.charsPerLine80), 32, 56, base.charsPerLine80),
+    charsPerLine58: clamp(Number(input?.charsPerLine58), 24, 48, base.charsPerLine58),
+    charsPerLine80: clamp(Number(input?.charsPerLine80), 40, 64, base.charsPerLine80),
   };
 }
 
@@ -92,6 +96,19 @@ export function loadThermalPrintSettings(branchCode: string | undefined | null):
         showUnitPrice: true,
         showCurrencyPrefix: false,
       });
+    }
+    // Migrate old under-width 80mm (42) → standard 48 so rolls fill correctly.
+    if (parsed.charsPerLine80 > 0 && parsed.charsPerLine80 < 48) {
+      return normalizeThermalPrintSettings({
+        ...parsed,
+        charsPerLine80: 48,
+        receiptLayout: parsed.defaultPaperSize === "80mm" ? "columns" : parsed.receiptLayout,
+        showUnitPrice:
+          parsed.defaultPaperSize === "80mm" ? true : parsed.showUnitPrice,
+      });
+    }
+    if (parsed.charsPerLine58 > 0 && parsed.charsPerLine58 < 28) {
+      return normalizeThermalPrintSettings({ ...parsed, charsPerLine58: 32 });
     }
     return parsed;
   } catch {
@@ -118,9 +135,10 @@ export function saveThermalPrintSettings(
 
 export function thermalContentWidthMm(paper: PrinterPaperSize, marginMm: number): number {
   const page = paper === "58mm" ? 58 : paper === "A4" ? 190 : 80;
-  // Extra ~2mm safety: many ESC/POS / Windows drivers keep a non-printable edge.
-  const hardwareSafe = paper === "58mm" ? 4 : paper === "80mm" ? 4 : 2;
-  return Math.max(36, page - marginMm * 2 - hardwareSafe);
+  // Fill the roll — tiny edge only (was leaving a large empty band on 80mm / 3").
+  const edge = paper === "A4" ? 2 : paper === "80mm" ? 0 : 1;
+  const m = Math.max(0, Math.min(2, marginMm));
+  return Math.max(40, page - m * 2 - edge);
 }
 
 export function thermalCharsPerLine(

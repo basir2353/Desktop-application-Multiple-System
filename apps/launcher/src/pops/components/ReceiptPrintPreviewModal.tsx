@@ -6,7 +6,7 @@ import {
 } from "../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
 import {
-  buildTicketHtml,
+  buildPrintPreviewHtml,
   printReceiptAsync,
   type PrintTicketInput,
 } from "../lib/printTicket";
@@ -78,7 +78,7 @@ export function ReceiptPrintPreviewModal({
     [input, printerName, systemPrinterName, settings],
   );
 
-  const html = useMemo(() => buildTicketHtml(ticketInput), [ticketInput]);
+  const html = useMemo(() => buildPrintPreviewHtml(ticketInput), [ticketInput]);
 
   async function handlePrint(): Promise<void> {
     if (printing) return;
@@ -118,6 +118,7 @@ export function ReceiptPrintPreviewModal({
             <p className="mt-0.5 truncate text-[11px] text-slate-400">
               {input.orderRef}
               {input.billRef ? ` · ${input.billRef}` : ""} · {input.modeLabel}
+              {" · same design as printer"}
             </p>
           </div>
           <button

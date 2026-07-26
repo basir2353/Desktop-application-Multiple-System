@@ -9,7 +9,7 @@ import {
   type ThermalPrintSettings,
   type ThermalReceiptLayout,
 } from "../lib/thermalPrintSettings";
-import { buildTicketHtml, printTestPageAsync } from "../lib/printTicket";
+import { buildPrintPreviewHtml, printTestPageAsync } from "../lib/printTicket";
 import { sampleBillPrintInput } from "../lib/billSampleReceipt";
 import { listSystemPrintersDetailed } from "../lib/systemPrinters";
 import {
@@ -20,6 +20,7 @@ import {
 } from "../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
 import { BillCustomizationPanel } from "./BillCustomizationPanel";
+import { KotCustomizationPanel } from "./KotCustomizationPanel";
 import { usePopsStore } from "../../stores/popsStore";
 
 type Props = {
@@ -77,7 +78,6 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
   const [billSettings, setBillSettings] = useState<BillPrintSettings>(() =>
     loadBillPrintSettings(branchCode),
   );
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     setDraft(loadThermalPrintSettings(branchCode));
@@ -109,7 +109,8 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
 
   useEffect(() => {
     void listSystemPrintersDetailed().then((result) => {
-      const names = (result.usable ?? []).map((p) => p.name);
+      // All Windows printers (USB, network, PDF, XPS, …) for Auto test prints.
+      const names = (result.printers ?? result.usable ?? []).map((p) => p.name);
       setOsPrinters(names);
       setTestPrinter((prev) => prev || names[0] || "");
     });
@@ -118,13 +119,13 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
   const previewHtml = useMemo(() => {
     const settings =
       resolveBillPrintSettingsForReceipt(branchCode) ?? billSettings;
-    return buildTicketHtml({
+    return buildPrintPreviewHtml({
       ...sampleBillPrintInput(branchName, branchCode),
       kind: "receipt",
       paperSize: draft.defaultPaperSize,
       billPrintSettings: settings,
     });
-  }, [branchCode, branchName, billSettings, draft.defaultPaperSize]);
+  }, [branchCode, branchName, billSettings, draft]);
 
   function patch(partial: Partial<ThermalPrintSettings>): void {
     setDraft((prev) => normalizeThermalPrintSettings({ ...prev, ...partial }));
@@ -208,11 +209,12 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
           </div>
         </div>
 
-        <ol className="relative mt-5 grid gap-2 sm:grid-cols-3">
+        <ol className="relative mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {[
             { n: 1, t: "Paper", d: "Roll size & amounts" },
             { n: 2, t: "Test", d: "Send a sample bill" },
-            { n: 3, t: "Edit slip", d: "Text, color, order" },
+            { n: 3, t: "Bill slip", d: "Invoice text & fields" },
+            { n: 4, t: "Kitchen", d: "KOT ticket layout" },
           ].map((s) => (
             <li
               key={s.n}
@@ -261,7 +263,7 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
                         onClick={() =>
                           patch({
                             defaultPaperSize: opt.id,
-                            receiptLayout: opt.id === "58mm" ? "clear" : "columns",
+                            receiptLayout: "columns",
                             showUnitPrice: opt.id === "80mm",
                           })
                         }
@@ -375,26 +377,20 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
               </div>
 
               <div>
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
-                  onClick={() => setShowAdvanced((v) => !v)}
-                >
-                  {showAdvanced ? "Hide advanced" : "Show advanced (margin)"}
-                </button>
-                {showAdvanced ? (
-                  <label className="mt-3 block max-w-[12rem]">
-                    <span className="text-xs text-slate-400">Side margin (mm)</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={8}
-                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-                      value={draft.marginMm}
-                      onChange={(e) => patch({ marginMm: Number(e.target.value) })}
-                    />
-                  </label>
-                ) : null}
+                <label className="block max-w-[12rem]">
+                  <span className="text-xs text-slate-400">Side margin (mm)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={8}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+                    value={draft.marginMm}
+                    onChange={(e) => patch({ marginMm: Number(e.target.value) })}
+                  />
+                </label>
+                <p className="mt-1 text-[10px] text-slate-500">
+                  If the right edge is cut off, raise this to 2–3 mm, or switch paper to 58mm / Stacked.
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-4">
@@ -440,8 +436,8 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
             </div>
             {osPrinters.length === 0 ? (
               <p className="mt-3 text-[11px] text-slate-500">
-                No Windows printers found. Add a printer in All Printers, or use the browser print
-                dialog from Orders → Reprint.
+                No Windows printers found. In the browser, link Microsoft Print to PDF under All Printers — print
+                opens the Windows dialog where PDF / XPS appear. Or use the desktop app for silent Auto print.
               </p>
             ) : null}
           </SectionCard>
@@ -462,7 +458,7 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
               />
             </div>
             <p className="mt-3 text-center text-[10px] text-slate-500">
-              Preview uses sample items · same format as customer bills
+              Preview matches Auto print · same layout as your thermal printer
             </p>
           </SectionCard>
         </aside>
@@ -470,7 +466,7 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
 
       <SectionCard
         step={3}
-        title="Edit the print slip"
+        title="Edit the bill / invoice slip"
         subtitle="Change business name, title, footer, colors, and which sections appear. Drag lines to reorder."
       >
         <div className="mb-4 flex flex-wrap gap-2 text-[11px] text-slate-400">
@@ -493,6 +489,18 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
           settings={billSettings}
           onChange={setBillSettings}
           onSave={() => persistBillSettings(billSettings)}
+          onNotice={notify}
+        />
+      </SectionCard>
+
+      <SectionCard
+        step={4}
+        title="Edit the kitchen ticket (KOT)"
+        subtitle="Same idea as the bill slip — title, footer, which fields show, custom lines. Preview matches Auto print."
+      >
+        <KotCustomizationPanel
+          branchName={branchName}
+          branchCode={branchCode}
           onNotice={notify}
         />
       </SectionCard>

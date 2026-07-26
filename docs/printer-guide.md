@@ -28,10 +28,10 @@ Simple steps to set up printers in POPS and print from POS.
    - **Receipt** = bills / Pay / Print invoice  
    - **Kitchen** = food tickets (KOT)  
    - **Bar** = drink tickets  
-5. Link a **real Windows printer** (USB or network).
+5. Link a **Windows printer** (USB, network, or **Print to PDF** / XPS if you want file saves).
 6. Click **Add profile**.
 
-**Important:** Do **not** choose XPS, PDF, Fax, or OneNote. Those cannot print POS tickets.
+**Tip:** Physical printers are best for the kitchen counter. PDF/XPS are fine for Auto save-to-file testing or offices without a thermal printer.
 
 You can add the name first and link the Windows printer later if needed.
 
@@ -138,19 +138,19 @@ Or assign waiters inside **Printer by Section** on the Waiter / Cashier section.
 
 ### Add profile button did nothing / error
 
-Usually you picked **Microsoft XPS Document Writer**.
+Check the message at the top of the Printer page.
 
-- Choose a real printer, or  
-- Leave OS printer empty, add the profile, then link a real printer later  
+- Link any Windows printer (Epson, network, **Microsoft Print to PDF**, XPS, …).
+- Or leave OS printer empty, add the profile, then link later.
 
-Error messages appear at the top of the Printer page.
+PDF/XPS Auto may show a Windows “Save as” dialog — that is normal.
 
 ---
 
 ## Checklist
 
-- [ ] Real printers added under **All Printers**  
-- [ ] Each linked to a real Windows printer (not XPS/PDF)  
+- [ ] Printers added under **All Printers** (USB/network and/or PDF/XPS)  
+- [ ] Each linked to a Windows printer for Auto  
 - [ ] Paper size set under **Print Settings** + each profile  
 - [ ] **Kitchen** section has kitchen printer(s)  
 - [ ] **Bar** section has bar printer (if needed)  
@@ -165,8 +165,8 @@ Error messages appear at the top of the Printer page.
 
 | Do | Don’t |
 |----|--------|
-| Use real printers (Epson, Star, network) | Use XPS, PDF, Fax, OneNote |
-| Use clear names (`Counter 1 Receipt`) | Use one unclear name for everything |
+| Link any Windows printer you need (Epson, network, PDF, XPS) | Leave every profile unlinked if you want silent Auto |
+| Use clear names (`Counter 1 Receipt`, `PDF Receipt`) | Use one unclear name for everything |
 | Manage with **Printer by Section** | Rely only on legacy assignment |
 | Let each cashier use **My printers** | Share one wrong default for everyone |
 
@@ -191,13 +191,20 @@ Click **Hide legacy assignment** to close it again.
 
 1. Your **My printers** receipt  
 2. Else branch default receipt  
-3. Else any receipt profile  
+3. Else first online **OS-linked** receipt profile (Auto)  
+4. Else any receipt profile  
 
 **Kitchen / Bar ticket**
 
 1. Section printers (if you are assigned to that section, those printers are used)  
 2. Else your personal Kitchen / Bar printer  
 3. Else branch default for that type  
+
+**Auto vs manual**
+
+- **Auto (linked OS printer):** prints silently to that device (PDF/XPS may ask where to save).  
+- **If Auto fails:** Windows print dialog opens (same path as manual).  
+- **Not linked:** Windows print dialog — pick the printer yourself.  
 
 ---
 

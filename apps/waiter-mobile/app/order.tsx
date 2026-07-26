@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { DeliveryMap } from "../src/components/DeliveryMap";
 import { createBill, fetchOrders, updateBill } from "../src/api/billing";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { fetchRiders } from "../src/api/delivery";
@@ -673,6 +674,9 @@ export default function OrderScreen() {
               onChangeText={setDeliveryAddress}
               style={styles.deliveryInput}
             />
+            {deliveryAddress.trim().length >= 4 ? (
+              <DeliveryMap address={deliveryAddress} title="Google Maps preview" height={200} />
+            ) : null}
             {ridersQuery.isLoading ? (
               <ActivityIndicator color={colors.accent} />
             ) : activeRiders.length === 0 ? (

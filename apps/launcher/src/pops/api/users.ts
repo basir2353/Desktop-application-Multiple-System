@@ -15,6 +15,7 @@ import {
 import { platformFetch } from "@platform/auth-client";
 import { authFetch } from "../../lib/authFetch";
 import { getApiBaseUrl } from "../../lib/apiBase";
+import { cacheOrgUsersForPrint } from "../lib/printTicket";
 
 /**
  * Live Railway API may omit newer fields (`active`, `navAllowlist`).
@@ -54,7 +55,9 @@ export async function fetchOrgUsers(): Promise<OrgUser[]> {
   if (!res.ok) throw new Error(`Users failed: ${res.status}`);
   const json: unknown = await res.json();
   if (!Array.isArray(json)) throw new Error("Invalid users response");
-  return json.map((row) => normalizeOrgUser(row));
+  const users = json.map((row) => normalizeOrgUser(row));
+  cacheOrgUsersForPrint(users);
+  return users;
 }
 
 export async function fetchPendingInvites(): Promise<PendingInvite[]> {

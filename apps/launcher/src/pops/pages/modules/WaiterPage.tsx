@@ -22,6 +22,7 @@ import {
   listPrintersByType,
   PRINTER_ROUTING_CHANGED_EVENT,
   resolveKotPrinter,
+  resolvePrinterForUser,
   resolveReceiptPrinter,
   setUserPrinterForType,
 } from "../../lib/printerRouting";
@@ -48,6 +49,13 @@ import {
   pillInactiveClass,
   subtleClass,
 } from "../../lib/themeClasses";
+import {
+  effectiveTaxPct,
+  loadPosSettings,
+  POS_SETTINGS_CHANGED_EVENT,
+  type PosSettings,
+} from "../../lib/posSettings";
+import { computeTicketTotals } from "../../lib/posDiscount";
 
 type CartLine = { item: ApiMenuItem; qty: number; sortOrder: number };
 
@@ -70,8 +78,6 @@ type StoredLastOrder = {
   cart: CartLine[];
   notes: string;
 };
-
-const SERVICE_PCT = 10;
 
 function storageKey(branchCode: string): string {
   return `pops-waiter-drafts-v1-${branchCode}`;
@@ -204,6 +210,22 @@ export function WaiterPage(): JSX.Element {
 
   const branchCode = branch?.code ?? "";
   const canManageWaiters = sessionCanManageUsers(claims);
+  const [posSettings, setPosSettings] = useState<PosSettings>(() => loadPosSettings(undefined));
+
+  useEffect(() => {
+    setPosSettings(loadPosSettings(branchCode || undefined));
+  }, [branchCode]);
+
+  useEffect(() => {
+    function onPosSettingsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branchCode || detail?.branchCode === branchCode) {
+        setPosSettings(loadPosSettings(branchCode || undefined));
+      }
+    }
+    window.addEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+    return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+  }, [branchCode]);
 
   useEffect(() => {
     if (!branchCode) return;
@@ -379,9 +401,12 @@ export function WaiterPage(): JSX.Element {
     : [];
 
   const subtotal = cart.reduce((s, l) => s + l.item.price * l.qty, 0);
-  const service = Math.round(subtotal * (SERVICE_PCT / 100));
-  const tax = Math.round((subtotal + service) * 0.15);
-  const total = subtotal + service + tax;
+  const servicePct = posSettings.servicePct;
+  const taxPct = effectiveTaxPct(posSettings);
+  const ticketTotals = computeTicketTotals(subtotal, 0, servicePct, taxPct);
+  const service = ticketTotals.service;
+  const tax = ticketTotals.tax;
+  const total = ticketTotals.total;
 
   function tableIsBooked(tableNumber: string): boolean {
     return floorTables.find((t) => t.tableNumber === tableNumber)?.bookingStatus === "booked";
@@ -453,7 +478,14 @@ export function WaiterPage(): JSX.Element {
           section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
             ? ("bar" as const)
             : ("kitchen" as const);
-        const profile = resolveKotPrinter(branchCode, group.sectionId, waiterId, preferredType);
+        const profile =
+          resolveKotPrinter(branchCode, group.sectionId, waiterId, preferredType) ??
+          resolveKotPrinter(
+            branchCode,
+            group.sectionId,
+            useSessionStore.getState().claims?.sub,
+            preferredType,
+          );
         const payload = withPrinterProfile(
           {
             branchName: branch?.name ?? "POPS",
@@ -553,7 +585,8 @@ export function WaiterPage(): JSX.Element {
           menuItemId: line.item.id,
         })),
         notes: notes.trim() || undefined,
-        servicePct: SERVICE_PCT,
+        servicePct,
+        taxPct,
       });
     },
     onSuccess: () => {
@@ -583,7 +616,11 @@ export function WaiterPage(): JSX.Element {
     }
     try {
       const bill = await createBillMutation.mutateAsync();
-      const profile = resolveReceiptPrinter(branchCode, waiterId);
+      const sessionUserId = useSessionStore.getState().claims?.sub;
+      // Selected waiter's printer first; else logged-in user's assignment; else branch default.
+      const profile =
+        resolvePrinterForUser(branchCode, waiterId, "receipt") ??
+        resolveReceiptPrinter(branchCode, sessionUserId);
       const assigned = getWaiterPrinter(branchCode, waiterId);
       const payload: Omit<PrintTicketInput, "kind"> = withPrinterProfile(
         {
@@ -1311,14 +1348,18 @@ export function WaiterPage(): JSX.Element {
                   <span className={mutedClass}>Subtotal</span>
                   <span className="tabular-nums text-slate-900 dark:text-white">Rs {subtotal.toLocaleString()}</span>
                 </div>
-                <div className="mt-1 flex items-center justify-between text-xs">
-                  <span className={mutedClass}>Service ({SERVICE_PCT}%)</span>
-                  <span className="tabular-nums text-slate-900 dark:text-white">Rs {service.toLocaleString()}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between text-xs">
-                  <span className={mutedClass}>Tax (15%)</span>
-                  <span className="tabular-nums text-slate-900 dark:text-white">Rs {tax.toLocaleString()}</span>
-                </div>
+                {service > 0 ? (
+                  <div className="mt-1 flex items-center justify-between text-xs">
+                    <span className={mutedClass}>Service ({servicePct}%)</span>
+                    <span className="tabular-nums text-slate-900 dark:text-white">Rs {service.toLocaleString()}</span>
+                  </div>
+                ) : null}
+                {tax > 0 ? (
+                  <div className="mt-1 flex items-center justify-between text-xs">
+                    <span className={mutedClass}>Tax ({taxPct}%)</span>
+                    <span className="tabular-nums text-slate-900 dark:text-white">Rs {tax.toLocaleString()}</span>
+                  </div>
+                ) : null}
                 <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-sm font-semibold dark:border-slate-700">
                   <span className="text-slate-900 dark:text-white">Total</span>
                   <span className="tabular-nums text-amber-700 dark:text-amber-300">

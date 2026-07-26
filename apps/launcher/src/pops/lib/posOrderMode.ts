@@ -119,8 +119,13 @@ export function posPrintTableLabel(
   staffConsumerType: StaffFoodConsumerType = "staff",
 ): string {
   if (mode === "dine-in") return tableLabel?.trim() || "No table";
-  if (mode === "takeaway") return "Takeaway";
-  if (mode === "delivery") return "Delivery";
+  // Takeaway/Delivery mode is already printed as modeLabel — avoid duplicate lines.
+  if (mode === "takeaway") return "";
+  if (mode === "delivery") {
+    const extra = tableLabel?.trim() || "";
+    if (!extra || extra.toLowerCase() === "delivery") return "";
+    return extra;
+  }
   if (mode === "online") return "Online order";
   if (mode === "staff-food") {
     return posStationLabel(mode, tableLabel, staffPerson, staffConsumerType);

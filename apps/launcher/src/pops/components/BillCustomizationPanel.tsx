@@ -388,17 +388,27 @@ export function BillCustomizationPanel({
             </div>
             <div>
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                Starter layouts
+                Inspiration templates
               </div>
-              <div className="flex flex-wrap gap-1.5">
+              <p className="mb-2 text-[10px] leading-snug text-slate-500">
+                Cafe / bakery / restaurant styles for ideas only — click to clone, then edit your
+                name, address, and footer.
+              </p>
+              <div className="grid gap-1.5 sm:grid-cols-1">
                 {starterBillPrintTemplates().map((starter) => (
                   <button
                     key={starter.name}
                     type="button"
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    title={starter.description}
+                    className="rounded-md border border-slate-300 bg-white px-2.5 py-2 text-left hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
                     onClick={() => cloneStarter(starter.name, starter.settings)}
                   >
-                    + {starter.name}
+                    <div className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                      + {starter.name}
+                    </div>
+                    <div className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                      {starter.description}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -625,6 +635,9 @@ export function BillCustomizationPanel({
         </div>
 
         <div className="space-y-4">
+          <p className="text-[11px] text-slate-500">
+            Drag blocks to reorder. The printer preview under this matches Auto print exactly.
+          </p>
           <BillReceiptLayoutCanvas
             settings={draft}
             branchName={branchName}
@@ -636,7 +649,7 @@ export function BillCustomizationPanel({
             input={previewInput}
             branchCode={branchCode}
             printSettings={draft}
-            title="Print preview"
+            title="Print preview (matches printer)"
           />
         </div>
       </div>

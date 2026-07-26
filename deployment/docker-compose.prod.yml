@@ -19,7 +19,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: backend/api/Dockerfile
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -48,7 +48,7 @@ services:
   api-migrate:
     build:
       context: ..
-      dockerfile: backend/api/Dockerfile
+      dockerfile: backend/Dockerfile
     profiles: ["tools"]
     depends_on:
       postgres:
