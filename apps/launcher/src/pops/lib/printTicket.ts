@@ -23,6 +23,7 @@ import {
 } from "./kotPrintSettings";
 import { toPng } from "html-to-image";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
+import { loadReceiptPoweredBy } from "./receiptBranding";
 import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter } from "./systemPrinters";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
@@ -591,7 +592,7 @@ export function buildThermalPlainText(
   if ((fields.orderRef !== false || fields.orderType !== false) && orderValue) {
     out.push(plainLabelValueLine("ORDER", orderValue, width));
   }
-  if (fields.tableLabel !== false && tableText) {
+  if (fields.tableLabel !== false && tableText && tableText.toLowerCase() !== modeText.toLowerCase()) {
     out.push(plainLabelValueLine("TABLE", tableText, width));
   }
   if (fields.billRef !== false && input.billRef?.trim()) {
@@ -607,13 +608,8 @@ export function buildThermalPlainText(
   }
   pushCustomsBetween("notes", "timestamp");
 
-  if (fields.timestamp !== false || fields.branchCode !== false) {
-    const stamp = [
-      fields.branchCode !== false ? business.toUpperCase() : "",
-      fields.timestamp !== false ? formatThermalPrintedAt() : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
+  if (fields.timestamp !== false) {
+    const stamp = formatThermalPrintedAt();
     if (stamp) out.push(centerLine(stamp, width));
   }
   pushCustomsBetween("timestamp", "items");
@@ -710,6 +706,13 @@ export function buildThermalPlainText(
 
   if (fields?.footer !== false) {
     pushRule();
+    // Platform branding — always above Thank you; not part of user bill customization.
+    const poweredBy = loadReceiptPoweredBy().trim();
+    if (poweredBy) {
+      for (const w of wrapWords(poweredBy, width)) {
+        out.push(centerLine(w, width));
+      }
+    }
     const footer =
       (billSettings.footerText || "THANK YOU — VISIT AGAIN").trim() ||
       "THANK YOU — VISIT AGAIN";
@@ -854,7 +857,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         fields.orderType && input.modeLabel.trim()
           ? metaRow("Type", input.modeLabel.trim(), true)
           : null,
-        fields.tableLabel && input.tableLabel?.trim()
+        fields.tableLabel &&
+        input.tableLabel?.trim() &&
+        input.tableLabel.trim().toLowerCase() !== input.modeLabel.trim().toLowerCase()
           ? metaRow("Table", input.tableLabel.trim(), true)
           : null,
         fields.billRef && input.billRef ? metaRow("Bill", input.billRef) : null,
@@ -913,7 +918,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const displayBusinessName =
     isReceipt && billSettings.headerBusinessName.trim()
       ? billSettings.headerBusinessName.trim()
-      : input.branchName;
+      : !isReceipt && kotSettings.headerBusinessName.trim()
+        ? kotSettings.headerBusinessName.trim()
+        : input.branchName;
   const showHeaderSubtitle =
     isReceipt && fields!.headerSubtitle && billSettings.headerSubtitle.trim().length > 0;
   const showFooterPrimary = isReceipt && fields!.footer;
@@ -921,6 +928,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     isReceipt && fields!.footerSecondary && billSettings.footerSecondaryText.trim().length > 0;
   const showHeaderBlock =
     isReceipt && fields && (fields.branchName || fields.documentTitle || showHeaderSubtitle);
+  /** KOT: show company once in header; date alone under meta (not branch code again). */
+  const kotTimestampHtml = !isReceipt
+    ? `<div class="timestamp">${escapeHtml(printedAt)}</div>`
+    : "";
 
   const itemsHtml = showClearItems
     ? `<div class="clear-items">${clearItemBlocks}</div>`
@@ -968,13 +979,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
                 ? `<p class="notes${blockInkClass(billSettings, "notes")}" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(input.notes)}</p>`
                 : "";
             case "timestamp":
-              return fields.timestamp || fields.branchCode
-                ? `<div class="timestamp${blockInkClass(billSettings, "timestamp")}" style="text-align:center;${blockStyleInline(billSettings, "timestamp", receiptFonts.timestamp)}">${[
-                    fields.branchCode ? escapeHtml(displayBusinessName.toUpperCase()) : "",
-                    fields.timestamp ? escapeHtml(printedAt) : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}</div>`
+              return fields.timestamp
+                ? `<div class="timestamp${blockInkClass(billSettings, "timestamp")}" style="text-align:center;${blockStyleInline(billSettings, "timestamp", receiptFonts.timestamp)}">${escapeHtml(printedAt)}</div>`
                 : "";
             case "items":
               return itemsHtml
@@ -986,7 +992,20 @@ export function buildTicketHtml(input: PrintTicketInput): string {
                 : "";
             case "footer":
               return showFooterPrimary
-                ? `<div class="footer${blockInkClass(billSettings, "footer")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footer", receiptFonts.footer)}">${escapeHtml(billSettings.footerText)}</div>`
+                ? `<div class="footer${blockInkClass(billSettings, "footer")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footer", receiptFonts.footer)}">${
+                    (() => {
+                      const poweredBy = loadReceiptPoweredBy().trim();
+                      const thankYou = escapeHtml(billSettings.footerText || "Thank you — visit again");
+                      return [
+                        poweredBy
+                          ? `<div class="powered-by" style="font-size:${Math.max(9, receiptFonts.footer - 1)}px;font-weight:500;margin-bottom:4px;letter-spacing:0.02em;">${escapeHtml(poweredBy)}</div>`
+                          : "",
+                        `<div class="thank-you">${thankYou}</div>`,
+                      ]
+                        .filter(Boolean)
+                        .join("");
+                    })()
+                  }</div>`
                 : "";
             case "footerSecondary":
               return showFooterSecondary
@@ -1304,6 +1323,11 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border: ${narrowPaper ? "1px" : "1.5px"} solid #000;
       border-radius: 2px;
       padding: ${kotChipPad};
+      /* Keep ORD-2 / Takeaway on one line — never split after the hyphen. */
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: keep-all;
+      flex-shrink: 0;
     }
     .notes {
       margin: ${narrowPaper ? "-2px 0 6px" : "-6px 0 12px"};
@@ -1674,13 +1698,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     ${fields!.documentTitle ? `<div class="doc-type">${escapeHtml(title)}</div>` : ""}
   </header>`
     : `<header class="header">
-    <div class="branch-name">${escapeHtml(input.branchName)}</div>
+    <div class="branch-name">${escapeHtml(displayBusinessName)}</div>
     <div class="doc-type">${escapeHtml(title)}</div>
   </header>`}
   ${metaRows ? `<div class="meta">${metaRows}</div>` : ""}
   ${kotUpdateBanner}
   ${input.notes ? `<p class="notes">${escapeHtml(input.notes)}</p>` : ""}
-  <div class="timestamp">${escapeHtml(input.branchCode)} · ${escapeHtml(printedAt)}</div>
+  ${kotTimestampHtml}
   <div class="kot-mid-space" aria-hidden="true"></div>
   ${showItemTable
     ? `<table class="items">

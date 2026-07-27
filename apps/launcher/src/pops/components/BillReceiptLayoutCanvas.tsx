@@ -77,7 +77,7 @@ function isBlockEnabled(settings: BillPrintSettings, blockId: string): boolean {
     case "notes":
       return f.notes;
     case "timestamp":
-      return f.timestamp || f.branchCode;
+      return f.timestamp;
     case "items":
       return f.itemQty || f.itemAmount || f.itemHeaders;
     case "totals":
@@ -127,7 +127,7 @@ function setBlockEnabled(
       break;
     case "timestamp":
       fields.timestamp = enabled;
-      fields.branchCode = enabled;
+      // Do not toggle branchCode — that used to reprint the company name on the date line.
       break;
     case "items":
       fields.itemHeaders = enabled;

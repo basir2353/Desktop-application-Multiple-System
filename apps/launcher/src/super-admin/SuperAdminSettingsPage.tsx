@@ -2,6 +2,11 @@ import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { fetchPlatformSettings, updatePlatformSettings } from "../lib/platformApi";
+import {
+  DEFAULT_RECEIPT_POWERED_BY,
+  loadReceiptPoweredBy,
+  saveReceiptBranding,
+} from "../pops/lib/receiptBranding";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
 
 const DEFAULT_KEYS = [
@@ -15,7 +20,13 @@ export function SuperAdminSettingsPage(): JSX.Element {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["platform", "settings"], queryFn: fetchPlatformSettings });
   const [entries, setEntries] = useState<Record<string, string>>({});
+  const [poweredBy, setPoweredBy] = useState(DEFAULT_RECEIPT_POWERED_BY);
   const [message, setMessage] = useState<string | null>(null);
+  const [brandingMessage, setBrandingMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPoweredBy(loadReceiptPoweredBy());
+  }, []);
 
   useEffect(() => {
     if (!settings.data) return;
@@ -36,6 +47,12 @@ export function SuperAdminSettingsPage(): JSX.Element {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Save failed"),
   });
 
+  function savePoweredBy(): void {
+    const next = saveReceiptBranding({ poweredBy });
+    setPoweredBy(next.poweredBy);
+    setBrandingMessage("Receipt powered-by line saved. Prints above Thank you on every bill.");
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -44,6 +61,44 @@ export function SuperAdminSettingsPage(): JSX.Element {
           Platform-wide configuration that can apply to every installation.
         </p>
       </div>
+
+      <section className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+        <div>
+          <h3 className={`text-sm font-semibold ${headingClass}`}>Receipt powered-by line</h3>
+          <p className={`mt-1 text-xs ${mutedClass}`}>
+            Prints above “Thank you — visit again” on every receipt. Restaurant admins cannot edit this —
+            only Super Admin.
+          </p>
+        </div>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600 dark:text-slate-300">Text</span>
+          <input
+            className={fieldInputClass}
+            value={poweredBy}
+            onChange={(e) => setPoweredBy(e.target.value)}
+            placeholder={DEFAULT_RECEIPT_POWERED_BY}
+          />
+        </label>
+        {brandingMessage ? (
+          <p className="text-sm text-emerald-700 dark:text-emerald-400">{brandingMessage}</p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={savePoweredBy}>
+            Save powered-by
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setPoweredBy(DEFAULT_RECEIPT_POWERED_BY);
+              saveReceiptBranding({ poweredBy: DEFAULT_RECEIPT_POWERED_BY });
+              setBrandingMessage("Reset to default powered-by line.");
+            }}
+          >
+            Reset default
+          </Button>
+        </div>
+      </section>
 
       {settings.isLoading ? (
         <p className={mutedClass}>Loading…</p>

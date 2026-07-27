@@ -114,7 +114,8 @@ export const DEFAULT_BILL_RECEIPT_FIELDS: BillReceiptFields = {
   printerName: false,
   notes: true,
   timestamp: true,
-  branchCode: true,
+  /** Unused on print — company name must not repeat on the date line. */
+  branchCode: false,
   itemHeaders: true,
   itemQty: true,
   itemAmount: true,
@@ -136,7 +137,7 @@ export const BILL_SYSTEM_BLOCK_LABELS: Record<BillSystemBlockId, string> = {
   documentTitle: "Document title",
   meta: "Order details",
   notes: "Notes",
-  timestamp: "Date & branch",
+  timestamp: "Date & time",
   items: "Items table",
   totals: "Totals",
   footer: "Footer message",
@@ -268,7 +269,7 @@ export const BILL_FIELD_GROUPS: { label: string; keys: (keyof BillReceiptFields)
   },
   {
     label: "Footer meta",
-    keys: ["timestamp", "branchCode"],
+    keys: ["timestamp"],
   },
   {
     label: "Line items",
@@ -296,7 +297,7 @@ export const BILL_FIELD_LABELS: Record<keyof BillReceiptFields, string> = {
   printerName: "Printer",
   notes: "Notes",
   timestamp: "Date & time",
-  branchCode: "Branch code",
+  branchCode: "Branch code (unused)",
   itemHeaders: "Column headers",
   itemQty: "Quantity column",
   itemAmount: "Amount column",
@@ -322,8 +323,8 @@ function clampLineFont(value: number): number {
 
 function normalizeFields(input: Partial<BillReceiptFields> | undefined): BillReceiptFields {
   const merged = { ...DEFAULT_BILL_RECEIPT_FIELDS, ...input };
-  // Keep document title off unless the user explicitly re-enabled it in customization
-  // after this default change (saved settings still win via ...input).
+  // Never reprint company name on the date line (legacy "branchCode" flag).
+  merged.branchCode = false;
   return merged;
 }
 

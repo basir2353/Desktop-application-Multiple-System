@@ -34,6 +34,7 @@ import {
   type BillReceiptTemplateAssignmentStore,
 } from "../lib/billReceiptTemplateAssignments";
 import { sampleBillPrintInput } from "../lib/billSampleReceipt";
+import { loadReceiptPoweredBy } from "../lib/receiptBranding";
 import {
   loadPrinterRouting,
   resolveReceiptPrinter,
@@ -582,6 +583,17 @@ export function BillCustomizationPanel({
                 onChange={(e) => patch({ footerText: e.target.value })}
               />
             </label>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Powered by (above Thank you)
+              </div>
+              <p className="mt-0.5 text-[10px] text-slate-400">
+                Always prints on receipts. Only Super Admin can change this.
+              </p>
+              <p className="mt-1 text-xs font-medium text-slate-700 dark:text-slate-200">
+                {loadReceiptPoweredBy()}
+              </p>
+            </div>
             <label className="block text-xs text-slate-500">
               Footer secondary
               <input
