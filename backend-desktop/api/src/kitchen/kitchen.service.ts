@@ -33,16 +33,22 @@ export class KitchenService {
     private readonly closing: ClosingService,
   ) {}
 
-  async listTickets(organizationId: string, branchCode: string) {
+  async listTickets(organizationId: string, branchCode: string, scope: "active" | "done" | "all" = "active") {
     const branch = await this.resolveBranch(organizationId, branchCode);
+    const statusFilter =
+      scope === "done"
+        ? eq(popsKitchenTickets.status, "done")
+        : scope === "all"
+          ? undefined
+          : ne(popsKitchenTickets.status, "done");
+
     const rows = await this.db
       .select()
       .from(popsKitchenTickets)
       .where(
-        and(
-          eq(popsKitchenTickets.branchId, branch.id),
-          ne(popsKitchenTickets.status, "done"),
-        ),
+        statusFilter
+          ? and(eq(popsKitchenTickets.branchId, branch.id), statusFilter)
+          : eq(popsKitchenTickets.branchId, branch.id),
       )
       .orderBy(desc(popsKitchenTickets.priority), asc(popsKitchenTickets.createdAt));
 

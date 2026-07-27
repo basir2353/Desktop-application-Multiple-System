@@ -16,6 +16,7 @@ import {
 import * as bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  applyOrgModuleCeiling,
   permissionsForPlatformRole,
   permissionsForPopsRole,
   systemTypeSchema,
@@ -421,6 +422,12 @@ export class AuthService implements OnModuleInit {
       );
     }
 
+    if (org.licenceExpiresAt && org.licenceExpiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException(
+        "Software licence expired. Contact the platform administrator to renew (5-day or monthly).",
+      );
+    }
+
     if (m.active === false) {
       await this.security.logEvent({
         organizationId: m.organizationId,
@@ -450,7 +457,10 @@ export class AuthService implements OnModuleInit {
       return await this.issueTokens({
         userId: user.id,
         organizationId: m.organizationId,
-        permissions: normalizePermissions(m.permissions, m.role),
+        permissions: applyOrgModuleCeiling(
+          normalizePermissions(m.permissions, m.role),
+          org.enabledModules,
+        ),
         role: m.role,
         branchScope: m.branchScope ?? "all",
         platformRole: null,
@@ -484,6 +494,11 @@ export class AuthService implements OnModuleInit {
     const org = orgRows[0];
     if (!org || org.status !== "active") {
       throw new UnauthorizedException("This business is not active.");
+    }
+    if (org.licenceExpiresAt && org.licenceExpiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException(
+        "Software licence expired. Contact the platform administrator to renew.",
+      );
     }
     const systemType = parseSystemType(org.systemType);
 
@@ -536,7 +551,10 @@ export class AuthService implements OnModuleInit {
       return this.issueTokens({
         userId: row.userId,
         organizationId: row.organizationId,
-        permissions: normalizePermissions(row.permissions, row.role),
+        permissions: applyOrgModuleCeiling(
+          normalizePermissions(row.permissions, row.role),
+          org.enabledModules,
+        ),
         role: row.role,
         branchScope: row.branchScope ?? "all",
         platformRole: null,
@@ -605,11 +623,17 @@ export class AuthService implements OnModuleInit {
     if (row0.org.status !== "active") {
       throw new UnauthorizedException(`This business is ${row0.org.status}.`);
     }
+    if (row0.org.licenceExpiresAt && row0.org.licenceExpiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException("Software licence expired. Contact the platform administrator to renew.");
+    }
 
     return this.issueTokens({
       userId: rt.userId,
       organizationId: m.organizationId,
-      permissions: normalizePermissions(m.permissions, m.role),
+      permissions: applyOrgModuleCeiling(
+        normalizePermissions(m.permissions, m.role),
+        row0.org.enabledModules,
+      ),
       role: m.role,
       branchScope: m.branchScope ?? "all",
       platformRole: null,

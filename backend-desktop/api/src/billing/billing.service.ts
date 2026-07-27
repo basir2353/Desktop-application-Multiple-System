@@ -642,7 +642,12 @@ export class BillingService implements OnApplicationBootstrap {
   }
 
   private mapBill(row: typeof popsBills.$inferSelect, riderName: string | null = null) {
-    const lines = JSON.parse(row.linesJson) as CreateBill["lines"];
+    let lines: CreateBill["lines"] = [];
+    try {
+      lines = JSON.parse(row.linesJson) as CreateBill["lines"];
+    } catch {
+      lines = [];
+    }
     let payments: { method: string; amount: number }[] = [];
     if (row.paymentsJson) {
       try {

@@ -119,10 +119,16 @@ if (!ensureCriticalSchema()) {
   console.warn("[railway] ensure-schema had errors — continuing; login may fail if columns are missing.");
 }
 
-try {
-  await runSeedBoot();
-} catch (err) {
-  console.warn("[railway] Seed boot failed — continuing:", err instanceof Error ? err.message : err);
+// Skip slow seed boot on Railway by default (was delaying/blocking healthy rollouts).
+const skipSeed = (process.env.RAILWAY_SKIP_SEED_BOOT ?? "1") !== "0";
+if (skipSeed) {
+  console.warn("[railway] Skipping seed boot (RAILWAY_SKIP_SEED_BOOT=1).");
+} else {
+  try {
+    await runSeedBoot();
+  } catch (err) {
+    console.warn("[railway] Seed boot failed — continuing:", err instanceof Error ? err.message : err);
+  }
 }
 
 startApi();

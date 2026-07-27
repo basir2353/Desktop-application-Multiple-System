@@ -1,0 +1,472 @@
+function pushCustomLinePlain(
+  out: string[],
+  settings: BillPrintSettings,
+  lineId: string,
+  width: number,
+  align: "center" | "left",
+): void {
+  const line = settings.customLines.find((row) => row.id === lineId);
+  if (!line || !line.enabled || !line.text.trim()) return;
+  const text = line.bold ? line.text.trim().toUpperCase() : line.text.trim();
+  for (const w of wrapWords(text, width)) {
+    out.push(align === "left" ? padRight(w, width).slice(0, width) : centerLine(w, width));
+  }
+}
+
+function pushKotCustomLinePlain(
+  out: string[],
+  lines: KotCustomLine[],
+  lineId: string,
+  width: number,
+  align: "center" | "left",
+): void {
+  const line = lines.find((row) => row.id === lineId);
+  if (!line || !line.enabled || !line.text.trim()) return;
+  const text = line.bold ? line.text.trim().toUpperCase() : line.text.trim();
+  for (const w of wrapWords(text, width)) {
+    out.push(align === "left" ? padRight(w, width).slice(0, width) : centerLine(w, width));
+  }
+}
+
+/**
+ * Kitchen ticket plain text — honors full KOT customization (same WYSIWYG path as bill).
+ */
+function buildKotThermalPlainText(
+  input: PrintTicketInput,
+  thermal: ThermalPrintSettings,
+): string {
+  const kot =
+    input.kotSettings ??
+    (input.branchCode ? loadKotPrintSettings(input.branchCode) : DEFAULT_KOT_PRINT_SETTINGS);
+  const paper = resolvePaperSize(input, thermal);
+  const width = thermalCharsPerLine(paper, thermal);
+  const fields = kot.fields;
+  const dash = "-".repeat(width);
+  const equals = "=".repeat(width);
+  const out: string[] = [];
+  const align = kot.headerAlign === "left" ? ("left" as const) : ("center" as const);
+  const pushBlank = () => out.push("");
+  const pushAligned = (text: string) => {
+    for (const w of wrapWords(text, width)) {
+      out.push(align === "left" ? w : centerLine(w, width));
+    }
+  };
+  const pushWrapped = (text: string) => {
+    for (const w of wrapWords(text, width)) out.push(w);
+  };
+  const pushKv = (label: string, value: string) => {
+    const left = label.trim();
+    const right = value.trim();
+    if (!left && !right) return;
+    if (left.length + right.length + 1 <= width) {
+      out.push(padRight(left, width - right.length) + right);
+      return;
+    }
+    pushWrapped(left);
+    for (const w of wrapWords(right, width)) out.push(padLeft(w, width));
+  };
+  const pushCustomsBetween = (afterId: string, beforeId: string) => {
+    const order = kot.blockOrder;
+    const a = order.indexOf(afterId);
+    const b = order.indexOf(beforeId);
+    if (a < 0 || b < 0 || b <= a) return;
+    for (const id of order.slice(a + 1, b)) {
+      if (!isKotSystemBlock(id)) pushKotCustomLinePlain(out, kot.customLines, id, width, align);
+    }
+  };
+
+  const business = kot.headerBusinessName.trim() || input.branchName;
+  if (fields.branchName) pushAligned(business);
+  if (fields.headerSubtitle && kot.headerSubtitle.trim()) {
+    pushAligned(kot.headerSubtitle.trim());
+  }
+  const title = input.isOrderUpdate ? kot.documentTitleUpdate : kot.documentTitle;
+  if (fields.documentTitle) pushAligned(title.toUpperCase());
+  out.push(equals);
+  pushCustomsBetween("documentTitle", "meta");
+
+  const modeText = input.modeLabel.trim();
+  const tableText = input.tableLabel?.trim() || "";
+  const tableDistinct =
+    Boolean(tableText) && tableText.toLowerCase() !== modeText.toLowerCase();
+
+  if (fields.orderRef) pushWrapped(input.orderRef);
+  if (fields.orderType) {
+    pushWrapped(kot.emphasizeOrderMeta ? modeText.toUpperCase() : modeText);
+  }
+  if (tableDistinct && fields.tableLabel) {
+    pushWrapped(kot.emphasizeOrderMeta ? tableText.toUpperCase() : tableText);
+  }
+  if (fields.waiterName && input.waiterName) {
+    pushKv("By", input.waiterName);
+  }
+  pushCustomsBetween("meta", "notes");
+
+  if (fields.notes && input.notes) {
+    pushBlank();
+    for (const w of wrapWords(`Note: ${input.notes}`, width)) out.push(w);
+  }
+  pushCustomsBetween("notes", "timestamp");
+
+  const printedAt = new Date().toLocaleString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  if (fields.timestamp) {
+    const timeLine = `Time ${printedAt}`;
+    if (timeLine.length <= width) out.push(timeLine);
+    else pushKv("Time", printedAt);
+  }
+  pushCustomsBetween("timestamp", "items");
+  out.push(dash);
+
+  const showQty = fields.itemQty;
+  const qtyW = showQty ? Math.min(4, Math.max(3, Math.floor(width * 0.12))) : 0;
+  const itemW = Math.max(6, width - (showQty ? qtyW + 1 : 0));
+  if (fields.itemHeaders) {
+    out.push(
+      showQty ? `${padRight("QTY", qtyW)} ${padRight("ITEM", itemW)}` : padRight("ITEM", width),
+    );
+    out.push(dash);
+  }
+  for (const row of input.lines) {
+    const nameLines = wrapWords(row.label, itemW);
+    nameLines.forEach((name, idx) => {
+      if (showQty) {
+        out.push(
+          `${padRight(idx === 0 ? String(row.qty) : "", qtyW)} ${padRight(name, itemW)}`,
+        );
+      } else {
+        out.push(padRight(name, width));
+      }
+    });
+    if (kot.itemUnderlineSeparator) out.push(dash);
+  }
+  if (kot.itemUnderlineSeparator && out[out.length - 1] === dash) out.pop();
+
+  pushCustomsBetween("items", "totals");
+
+  if (fields.itemTotals) {
+    out.push(dash);
+    out.push(
+      `Items: ${input.lines.length}   Qty: ${input.lines.reduce((s, l) => s + l.qty, 0)}`.slice(
+        0,
+        width,
+      ),
+    );
+  }
+  pushCustomsBetween("totals", "footer");
+
+  if (fields.footer && kot.footerText.trim()) {
+    pushBlank();
+    pushAligned(kot.footerText.trim().toUpperCase());
+  }
+  if (fields.footerSecondary && kot.footerSecondaryText.trim()) {
+    pushAligned(kot.footerSecondaryText.trim());
+  }
+  const order = kot.blockOrder;
+  const a = Math.max(order.indexOf("footer"), order.indexOf("footerSecondary"));
+  for (const id of order.slice(a + 1)) {
+    if (!isKotSystemBlock(id)) pushKotCustomLinePlain(out, kot.customLines, id, width, align);
+  }
+
+  out.push("");
+  return out.join("\n");
+}
+
+/**
+ * Fixed-width plain text for physical thermal printers (named OS spooler path).
+ * "clear" layout stacks item + amount so nothing clips on 58mm paper.
+ */
+export function buildThermalPlainText(
+  input: PrintTicketInput,
+  thermalOverride?: ThermalPrintSettings,
+): string {
+  const thermal =
+    thermalOverride ??
+    (input.branchCode
+      ? loadThermalPrintSettings(input.branchCode)
+      : DEFAULT_THERMAL_PRINT_SETTINGS);
+  if (input.kind !== "receipt") {
+    return buildKotThermalPlainText(input, thermal);
+  }
+  const paper = resolvePaperSize(input, thermal);
+  const width = thermalCharsPerLine(paper, thermal);
+  const compact = thermal.compactMoney;
+  activeShowCurrencyPrefix = thermal.showCurrencyPrefix === true;
+  const isReceipt = true;
+  const billSettings =
+    input.billPrintSettings ??
+    (input.branchCode
+      ? resolveBillPrintSettingsForReceipt(input.branchCode)
+      : DEFAULT_BILL_PRINT_SETTINGS);
+  const fields = billSettings.fields;
+  const kotSettings = null;
+  const useClearLayout =
+    isReceipt && (thermal.receiptLayout === "clear" || paper === "58mm");
+  const showPrice =
+    isReceipt &&
+    !useClearLayout &&
+    Boolean(fields?.itemAmount) &&
+    thermal.showUnitPrice;
+  const showAmt = isReceipt && Boolean(fields?.itemAmount);
+  const dash = "-".repeat(width);
+  const equals = "=".repeat(width);
+  const out: string[] = [];
+
+  const pushBlank = () => out.push("");
+
+  const business =
+    isReceipt && billSettings.headerBusinessName.trim()
+      ? billSettings.headerBusinessName.trim()
+      : input.branchName;
+  if (!isReceipt || fields?.branchName !== false) {
+    for (const w of wrapWords(business, width)) out.push(centerLine(w, width));
+  }
+  if (isReceipt && fields?.headerSubtitle && billSettings.headerSubtitle.trim()) {
+    for (const w of wrapWords(billSettings.headerSubtitle.trim(), width)) {
+      out.push(centerLine(w, width));
+    }
+  }
+  const title = isReceipt
+    ? billSettings.documentTitle
+    : input.isOrderUpdate
+      ? "KITCHEN ORDER - UPDATE"
+      : "KITCHEN ORDER";
+  if (!isReceipt || fields?.documentTitle !== false) {
+    out.push(centerLine(title.toUpperCase(), width));
+  }
+  out.push(equals);
+
+  const pushWrapped = (text: string) => {
+    for (const w of wrapWords(text, width)) out.push(w);
+  };
+  const pushKv = (label: string, value: string) => {
+    const left = label.trim();
+    const right = value.trim();
+    if (!left && !right) return;
+    if (left.length + right.length + 1 <= width) {
+      out.push(padRight(left, width - right.length) + right);
+      return;
+    }
+    pushWrapped(left);
+    for (const w of wrapWords(right, width)) {
+      out.push(padLeft(w, width));
+    }
+  };
+  // Avoid "Takeaway" / "Delivery" printing twice (modeLabel === tableLabel).
+  const modeText = input.modeLabel.trim();
+  const tableText = input.tableLabel?.trim() || "";
+  const tableDistinct =
+    Boolean(tableText) && tableText.toLowerCase() !== modeText.toLowerCase();
+
+  if (!isReceipt || fields?.orderRef !== false) {
+    pushWrapped(input.orderRef);
+  }
+  if (!isReceipt || fields?.orderType !== false) {
+    if (!isReceipt && kotSettings?.emphasizeOrderMeta) {
+      pushWrapped(modeText.toUpperCase());
+    } else {
+      pushWrapped(modeText);
+    }
+  }
+  if (tableDistinct && (!isReceipt || fields?.tableLabel !== false)) {
+    if (!isReceipt && kotSettings?.emphasizeOrderMeta) {
+      pushWrapped(tableText.toUpperCase());
+    } else {
+      pushWrapped(tableText);
+    }
+  }
+  if (input.billRef && (!isReceipt || fields?.billRef !== false)) {
+    pushKv("Bill", input.billRef);
+  }
+  if (input.waiterName && (!isReceipt || fields?.waiterName !== false)) {
+    pushKv("By", input.waiterName);
+  }
+  const printedAt = new Date().toLocaleString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  if (!isReceipt || fields?.timestamp !== false) {
+    // Keep time on one line when possible (avoids "Time" / date / clock split on thermal).
+    const timeLine = `Time ${printedAt}`;
+    if (timeLine.length <= width) {
+      out.push(timeLine);
+    } else {
+      pushKv("Time", printedAt);
+    }
+  }
+  if (input.notes && (!isReceipt || fields?.notes !== false)) {
+    pushBlank();
+    for (const w of wrapWords(`Note: ${input.notes}`, width)) out.push(w);
+  }
+  const plainAlign =
+    isReceipt && billSettings.headerAlign === "left" ? ("left" as const) : ("center" as const);
+  const pushCustomsBetween = (afterId: string, beforeId: string) => {
+    if (!isReceipt) return;
+    const order = billSettings.blockOrder;
+    const a = order.indexOf(afterId);
+    const b = order.indexOf(beforeId);
+    if (a < 0 || b < 0 || b <= a) return;
+    for (const id of order.slice(a + 1, b)) {
+      if (!isBillSystemBlock(id)) pushCustomLinePlain(out, billSettings, id, width, plainAlign);
+    }
+  };
+  pushCustomsBetween("documentTitle", "meta");
+  pushCustomsBetween("meta", "notes");
+  pushCustomsBetween("notes", "timestamp");
+  pushCustomsBetween("timestamp", "items");
+  out.push(dash);
+
+  if (isReceipt && showAmt && useClearLayout) {
+    // Clear stacked layout: each item is fully readable on narrow paper.
+    for (const row of input.lines) {
+      const lineTotal = formatMoney(row.unitPrice * row.qty, compact);
+      const unit = formatMoney(row.unitPrice, compact);
+      const head = `${row.qty} x ${row.label}`;
+      for (const w of wrapWords(head, width)) out.push(w);
+      if (row.qty > 1) {
+        out.push(padLeft(`@ ${unit}`, width));
+      }
+      out.push(padLeft(lineTotal, width));
+      pushBlank();
+    }
+    if (out[out.length - 1] === "") out.pop();
+  } else if (isReceipt && showAmt) {
+    // Prefer no unit-price on very narrow rolls so AMOUNT never clips.
+    const wantPrice = showPrice && width >= 36;
+    const amountSamples = input.lines.map((row) => formatMoney(row.unitPrice * row.qty, compact));
+    const cols = receiptPlainColumns(width, wantPrice, amountSamples);
+    if (fields?.itemHeaders !== false) {
+      out.push(
+        plainReceiptItemRow(
+          "QTY",
+          "ITEM",
+          cols.showPrice ? "AMT" : "AMT",
+          cols,
+          cols.showPrice ? "PRICE" : "",
+        ),
+      );
+      out.push(dash);
+    }
+    for (const row of input.lines) {
+      const amt = formatMoney(row.unitPrice * row.qty, compact);
+      const price = formatMoney(row.unitPrice, compact);
+      const qty = String(row.qty);
+      const nameLines = wrapWords(row.label, cols.itemW);
+      nameLines.forEach((name, idx) => {
+        out.push(
+          plainReceiptItemRow(
+            idx === 0 ? qty : "",
+            name,
+            idx === 0 ? amt : "",
+            cols,
+            idx === 0 ? price : "",
+          ),
+        );
+      });
+    }
+  } else {
+    // Kitchen ticket: left-aligned Qty | Item (same idea as bill columns).
+    const qtyW = Math.min(4, Math.max(3, Math.floor(width * 0.12)));
+    const itemW = Math.max(6, width - qtyW - 1);
+    out.push(`${padRight("QTY", qtyW)} ${padRight("ITEM", itemW)}`);
+    out.push(dash);
+    for (const row of input.lines) {
+      const nameLines = wrapWords(row.label, itemW);
+      nameLines.forEach((name, idx) => {
+        out.push(
+          `${padRight(idx === 0 ? String(row.qty) : "", qtyW)} ${padRight(name, itemW)}`,
+        );
+      });
+      if (kotSettings?.itemUnderlineSeparator) {
+        out.push(dash);
+      }
+    }
+    if (kotSettings?.itemUnderlineSeparator && out[out.length - 1] === dash) {
+      out.pop();
+    }
+  }
+
+  if (isReceipt && fields) {
+    const order = billSettings.blockOrder;
+    const a = order.indexOf("items");
+    const b = order.indexOf("totals");
+    if (a >= 0 && b > a) {
+      for (const id of order.slice(a + 1, b)) {
+        if (!isBillSystemBlock(id)) pushCustomLinePlain(out, billSettings, id, width, plainAlign);
+      }
+    }
+  }
+
+  if (isReceipt && fields) {
+    out.push(dash);
+    const pushTotal = (label: string, value: string) => {
+      out.push(plainLabelValueLine(label, value, width));
+    };
+    if (fields.subtotal) pushTotal("Subtotal", formatMoney(input.subtotal, compact));
+    if (fields.discount && input.discount > 0) {
+      pushTotal(
+        `Discount${input.discountPct > 0 ? ` ${input.discountPct}%` : ""}`,
+        `-${formatMoney(input.discount, compact)}`,
+      );
+    }
+    if (fields.service) {
+      pushTotal(`Service ${input.servicePct}%`, formatMoney(input.service, compact));
+    }
+    if (fields.tax) {
+      pushTotal(`Tax ${input.taxPct ?? 15}%`, formatMoney(input.tax, compact));
+    }
+    if (fields.delivery && (input.deliveryCharge ?? 0) > 0) {
+      pushTotal("Delivery", formatMoney(input.deliveryCharge!, compact));
+    }
+    if (fields.total) {
+      out.push(equals);
+      pushTotal("TOTAL", formatMoney(input.total, compact));
+      out.push(equals);
+    }
+  } else if (!isReceipt) {
+    if (kotSettings?.showItemTotals) {
+      out.push(dash);
+      out.push(
+        `Items: ${input.lines.length}   Qty: ${input.lines.reduce((s, l) => s + l.qty, 0)}`.slice(
+          0,
+          width,
+        ),
+      );
+    }
+  }
+
+  if (isReceipt && fields?.footer !== false) {
+    pushBlank();
+    for (const w of wrapWords(billSettings.footerText || "THANK YOU --- VISIT AGAIN", width)) {
+      out.push(centerLine(w.toUpperCase(), width));
+    }
+    if (fields?.footerSecondary && billSettings.footerSecondaryText.trim()) {
+      for (const w of wrapWords(billSettings.footerSecondaryText.trim(), width)) {
+        out.push(centerLine(w, width));
+      }
+    }
+  }
+  if (isReceipt) {
+    const order = billSettings.blockOrder;
+    const a = Math.max(order.indexOf("footer"), order.indexOf("footerSecondary"));
+    for (const id of order.slice(a + 1)) {
+      if (!isBillSystemBlock(id)) pushCustomLinePlain(out, billSettings, id, width, plainAlign);
+    }
+  } else if (!isReceipt) {
+    pushBlank();
+    out.push(centerLine(input.isOrderUpdate ? "KITCHEN COPY - UPDATE" : "KITCHEN COPY", width));
+  }
+  // One trailing blank is enough for tear / cut — extra blanks become top margin on the next slip.
+  out.push("");
+  return out.join("\n");
+}

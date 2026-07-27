@@ -6,11 +6,15 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import {
   createBusinessSchema,
+  createLicencePaymentSchema,
+  grantLicenceDaysSchema,
   resetPlatformUserPasswordSchema,
+  sendLicenceRemindersSchema,
   updateBusinessSchema,
   updatePlatformSettingsSchema,
 } from "@platform/contracts";
@@ -79,6 +83,64 @@ export class PlatformController {
   deleteBusiness(@CurrentUser() user: AccessJwtPayload, @Param("businessId") businessId: string) {
     this.platform.assertSuperAdmin(user);
     return this.platform.deleteBusiness(businessId);
+  }
+
+  @Post("businesses/:businessId/grant-licence")
+  @RequirePermissions("platform.businesses.manage")
+  grantLicence(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("businessId") businessId: string,
+    @Body() body: unknown,
+  ) {
+    this.platform.assertSuperAdmin(user);
+    const input = grantLicenceDaysSchema.parse(body);
+    return this.platform.grantLicenceDays(user, businessId, input);
+  }
+
+  @Get("licence-payments")
+  @RequirePermissions("platform.businesses.manage")
+  listLicencePayments(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("businessId") businessId?: string,
+  ) {
+    this.platform.assertSuperAdmin(user);
+    return this.platform.listLicencePayments(businessId);
+  }
+
+  @Get("licence-payments/monthly-status")
+  @RequirePermissions("platform.businesses.manage")
+  monthlyLicenceStatus(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("year") yearRaw?: string,
+    @Query("month") monthRaw?: string,
+  ) {
+    this.platform.assertSuperAdmin(user);
+    const year = yearRaw ? Number(yearRaw) : undefined;
+    const month = monthRaw ? Number(monthRaw) : undefined;
+    return this.platform.getMonthlyLicenceStatus(
+      Number.isFinite(year) ? year : undefined,
+      Number.isFinite(month) ? month : undefined,
+    );
+  }
+
+  @Post("licence-payments/send-reminders")
+  @RequirePermissions("platform.businesses.manage")
+  sendLicenceReminders(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    this.platform.assertSuperAdmin(user);
+    const input = sendLicenceRemindersSchema.parse(body ?? {});
+    return this.platform.sendLicenceReminders(input);
+  }
+
+  @Post("businesses/:businessId/licence-payments")
+  @RequirePermissions("platform.businesses.manage")
+  recordLicencePayment(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("businessId") businessId: string,
+    @Body() body: unknown,
+  ) {
+    this.platform.assertSuperAdmin(user);
+    const input = createLicencePaymentSchema.parse(body);
+    return this.platform.recordLicencePayment(user, businessId, input);
   }
 
   @Get("users")

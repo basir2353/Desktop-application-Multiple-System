@@ -1,15 +1,18 @@
-# Monorepo API deploy — Railway Root Directory MUST be empty (repo root).
-# Dockerfile path is relative to repo root: backend/Dockerfile
+# Prefer the standalone backend-desktop service config.
+# If this file is used from the monorepo root (Root Directory empty),
+# Railway must still build backend-desktop/Dockerfile and start /app/api/...
 #
-# If your service uses Root Directory = backend-desktop instead, see
-# backend-desktop/railway.toml (Dockerfile path = Dockerfile).
+# Recommended Railway UI settings (avoids relying on this root file):
+#   Root Directory: backend-desktop
+#   Dockerfile path: Dockerfile
+#   See backend-desktop/railway.toml
 
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "backend/Dockerfile"
+dockerfilePath = "backend-desktop/Dockerfile"
 
 [deploy]
-startCommand = "node /app/backend/api/scripts/start-railway.mjs"
+startCommand = "node /app/api/scripts/start-railway.mjs"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

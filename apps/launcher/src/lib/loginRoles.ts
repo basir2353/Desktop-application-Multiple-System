@@ -50,6 +50,12 @@ export const DEMO_OWNER_PASSWORD = "Owner@12345";
 export const DEMO_SUPER_ADMIN_EMAIL = "superadmin@pops.platform";
 export const DEMO_SUPER_ADMIN_PASSWORD = "SuperAdmin@123";
 
+const DEMO_ADMIN_EMAIL_BY_SYSTEM: Record<BusinessSystemId, string> = {
+  restaurant: "admin.restaurant@pops.demo",
+  pharmacy: "admin.pharmacy@pops.demo",
+  "general-store": "admin.store@pops.demo",
+};
+
 function restaurantStaff(): LoginRoleOption[] {
   const byId = Object.fromEntries(POPS_ROLE_TEMPLATES.map((r) => [r.id, r.label])) as Record<
     PopsRole,
@@ -75,7 +81,7 @@ export function loginRolesForSystem(systemId: BusinessSystemId): {
         id: "admin",
         label: "Admin",
         description: "Full pharmacy control, users, and inventory",
-        demoEmail: DEMO_EMAIL.admin,
+        demoEmail: DEMO_ADMIN_EMAIL_BY_SYSTEM.pharmacy,
       },
       staff: [
         {
@@ -112,7 +118,7 @@ export function loginRolesForSystem(systemId: BusinessSystemId): {
         id: "admin",
         label: "Super admin",
         description: "Full store control and user management",
-        demoEmail: DEMO_EMAIL.admin,
+        demoEmail: DEMO_ADMIN_EMAIL_BY_SYSTEM["general-store"],
       },
       staff: [
         {
@@ -148,7 +154,7 @@ export function loginRolesForSystem(systemId: BusinessSystemId): {
       id: "admin",
       label: "Admin",
       description: "Head office, users & access, and full ERP control",
-      demoEmail: DEMO_EMAIL.admin,
+      demoEmail: DEMO_ADMIN_EMAIL_BY_SYSTEM.restaurant,
     },
     staff: restaurantStaff(),
   };

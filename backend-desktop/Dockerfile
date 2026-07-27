@@ -1,5 +1,9 @@
 # Standalone Railway image — build from backend-desktop/ (Root Directory = backend-desktop).
 #
+# Live hosted API:
+#   https://backend-desktop-production-5505.up.railway.app
+#   Health: https://backend-desktop-production-5505.up.railway.app/health
+#
 #   docker build -f Dockerfile -t platform-api .
 #
 # Railway settings:
@@ -24,6 +28,7 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/api ./api
+# pnpm .bin symlinks may lose execute bits across COPY layers
 RUN find /app/node_modules/.bin -type f -o -type l | xargs chmod +x 2>/dev/null || true
 RUN mkdir -p /app/api/data/uploads
 EXPOSE 3000

@@ -51,6 +51,7 @@ export const createRiderSchema = z.object({
   name: z.string().min(1).max(80),
   email: z.string().email().min(3).max(320),
   password: z.string().min(8).max(128),
+  /** 4-digit PIN for mobile rider app quick login. */
   pin: z.string().regex(/^\d{4}$/).optional(),
   phone: z.string().max(32).optional(),
   cnic: z.string().max(20).optional(),
@@ -69,6 +70,7 @@ export const updateRiderSchema = z.object({
   active: z.boolean().optional(),
   email: z.string().email().min(3).max(320).optional(),
   password: z.string().min(8).max(128).optional(),
+  /** Set or replace the 4-digit mobile login PIN. */
   pin: z.string().regex(/^\d{4}$/).optional(),
 });
 
