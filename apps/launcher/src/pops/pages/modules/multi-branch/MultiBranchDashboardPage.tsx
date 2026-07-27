@@ -1,9 +1,10 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPopsBranch } from "../../../api/operations";
 import { fetchMultiBranchOverview } from "../../../api/multi-branch";
 import { formatPkr, mbInputClass, useMultiBranchAccess } from "../../../hooks/useMultiBranch";
+import { useActiveSystemId } from "../../../../hooks/useActiveSystemId";
 import { usePopsStore, type PopsBranch } from "../../../../stores/popsStore";
 import { erpEntryPathForRole } from "../../../lib/roleAccess";
 import { Badge } from "../../../ui/Badge";
@@ -25,6 +26,7 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
 export function MultiBranchDashboardPage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const systemId = useActiveSystemId();
   const { setBranch, displayRole } = usePopsStore();
   const { canManage } = useMultiBranchAccess();
   const [showCreate, setShowCreate] = useState(false);
@@ -39,14 +41,29 @@ export function MultiBranchDashboardPage(): JSX.Element {
 
   const createMutation = useMutation({
     mutationFn: createPopsBranch,
-    onSuccess: () => {
+    onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ["multi-branch"] });
       void queryClient.invalidateQueries({ queryKey: ["operations", "branches"] });
       setForm({ name: "", city: "", code: "" });
       setShowCreate(false);
       setNotice("Branch created. Chart of accounts initialized.");
+      if (created?.id && created.code) {
+        setBranch({
+          id: created.id,
+          code: created.code,
+          name: created.name,
+          city: created.city,
+        });
+      }
     },
   });
+
+  const hasNoBranches =
+    overviewQuery.isSuccess && (overviewQuery.data?.branches.length ?? 0) === 0;
+
+  useEffect(() => {
+    if (hasNoBranches && canManage) setShowCreate(true);
+  }, [hasNoBranches, canManage]);
 
   if (overviewQuery.isLoading) return <MbLoading />;
   if (overviewQuery.isError) return <MbError message={(overviewQuery.error as Error).message} />;
@@ -62,22 +79,28 @@ export function MultiBranchDashboardPage(): JSX.Element {
       city: row.city,
     };
     setBranch(b);
-    navigate(erpEntryPathForRole("restaurant", displayRole));
+    navigate(erpEntryPathForRole(systemId, displayRole));
   }
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Multi-branch control"
-        subtitle="Central monitoring, consolidated reports, transfers, and branch pricing — linked to POS, inventory, and accounting."
+        title={hasNoBranches ? "Create your first branch" : "Multi-branch control"}
+        subtitle={
+          hasNoBranches
+            ? "Add a branch to unlock POS, inventory, pricing, and the rest of the ERP."
+            : "Central monitoring, consolidated reports, transfers, and branch pricing — linked to POS, inventory, and accounting."
+        }
         actions={
           <>
-            <Link
-              to="/pops/multi-branch/transfers"
-              className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800"
-            >
-              Inter-branch transfer
-            </Link>
+            {!hasNoBranches ? (
+              <Link
+                to="/pops/multi-branch/transfers"
+                className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800"
+              >
+                Inter-branch transfer
+              </Link>
+            ) : null}
             {canManage ? (
               <button
                 type="button"

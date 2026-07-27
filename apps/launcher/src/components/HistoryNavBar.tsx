@@ -1,5 +1,6 @@
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useNavigationHistory } from "../hooks/useNavigationHistory";
+import { useSessionStore } from "../stores/sessionStore";
 import { ThemeToggle } from "./ThemeToggle";
 
 const navBtnClass =
@@ -7,7 +8,16 @@ const navBtnClass =
 
 export function HistoryNavBar(): JSX.Element {
   const location = useLocation();
+  const navigate = useNavigate();
+  const accessToken = useSessionStore((s) => s.accessToken);
   const { canGoBack, canGoForward, goBack, goForward } = useNavigationHistory();
+
+  const isSuperAdminLogin =
+    location.pathname === "/login" &&
+    new URLSearchParams(location.search).get("role") === "super_admin";
+  const isSuperAdminArea = location.pathname.startsWith("/super-admin");
+
+  const showSuperAdminLogin = !accessToken && !isSuperAdminLogin && !isSuperAdminArea;
 
   return (
     <header className="sticky top-0 z-[100] flex items-center gap-2 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:border-slate-800/90 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">
@@ -24,6 +34,15 @@ export function HistoryNavBar(): JSX.Element {
         Forward →
       </button>
       <div className="ml-auto flex items-center gap-2">
+        {showSuperAdminLogin ? (
+          <button
+            type="button"
+            className={`${navBtnClass} font-semibold text-amber-700 dark:text-amber-400`}
+            onClick={() => navigate("/login?role=super_admin")}
+          >
+            Super Admin Login
+          </button>
+        ) : null}
         <ThemeToggle compact />
         <span className="hidden max-w-[50%] truncate text-xs text-slate-500 sm:inline" title={location.pathname}>
           {location.pathname}

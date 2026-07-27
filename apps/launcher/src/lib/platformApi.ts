@@ -4,6 +4,7 @@ import {
   licenceReminderResultSchema,
   monthlyLicenceStatusSchema,
   platformAnalyticsSchema,
+  platformPublicInfoSchema,
   platformSettingsSchema,
   platformUserSchema,
   systemTypeSchema,
@@ -15,13 +16,16 @@ import {
   type LicenceReminderResult,
   type MonthlyLicenceStatus,
   type PlatformAnalytics,
+  type PlatformPublicInfo,
   type PlatformSettings,
   type PlatformUser,
   type SendLicenceReminders,
   type SystemType,
   type UpdateBusiness,
   type UpdatePlatformSettings,
+  type UpdatePlatformUser,
 } from "@platform/contracts";
+import { getApiBaseUrl } from "./apiBase";
 import { authFetch } from "./authFetch";
 
 async function readJson<T>(res: Response, parse: (json: unknown) => T): Promise<T> {
@@ -41,6 +45,11 @@ async function readJson<T>(res: Response, parse: (json: unknown) => T): Promise<
   return parse(json);
 }
 
+export async function fetchPlatformPublicInfo(): Promise<PlatformPublicInfo> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/platform/public-info`);
+  return readJson(res, (json) => platformPublicInfoSchema.parse(json));
+}
+
 export async function fetchPlatformAnalytics(): Promise<PlatformAnalytics> {
   const res = await authFetch("/v1/platform/analytics");
   return readJson(res, (json) => platformAnalyticsSchema.parse(json));
@@ -49,6 +58,11 @@ export async function fetchPlatformAnalytics(): Promise<PlatformAnalytics> {
 export async function fetchPlatformBusinesses(): Promise<Business[]> {
   const res = await authFetch("/v1/platform/businesses");
   return readJson(res, (json) => businessSchema.array().parse(json));
+}
+
+export async function fetchPlatformBusiness(businessId: string): Promise<Business> {
+  const res = await authFetch(`/v1/platform/businesses/${businessId}`);
+  return readJson(res, (json) => businessSchema.parse(json));
 }
 
 export async function createPlatformBusiness(input: CreateBusiness): Promise<Business> {
@@ -142,6 +156,18 @@ export async function recordLicencePayment(
 export async function fetchPlatformUsers(): Promise<PlatformUser[]> {
   const res = await authFetch("/v1/platform/users");
   return readJson(res, (json) => platformUserSchema.array().parse(json));
+}
+
+export async function updatePlatformUser(
+  userId: string,
+  input: UpdatePlatformUser,
+): Promise<PlatformUser> {
+  const res = await authFetch(`/v1/platform/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readJson(res, (json) => platformUserSchema.parse(json));
 }
 
 export async function resetPlatformUserPassword(userId: string, password: string): Promise<void> {

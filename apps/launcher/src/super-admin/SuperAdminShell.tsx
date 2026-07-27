@@ -1,6 +1,8 @@
 import { Button } from "@platform/ui";
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { fetchPlatformSettings } from "../lib/platformApi";
 import { useSessionStore } from "../stores/sessionStore";
 import { headingClass, mutedClass } from "../pops/lib/themeClasses";
 
@@ -16,6 +18,15 @@ export function SuperAdminShell(): JSX.Element {
   const navigate = useNavigate();
   const clear = useSessionStore((s) => s.clear);
   const claims = useSessionStore((s) => s.claims);
+  const settings = useQuery({
+    queryKey: ["platform", "settings"],
+    queryFn: fetchPlatformSettings,
+    staleTime: 60_000,
+  });
+  const supportEmail =
+    typeof settings.data?.entries.support_email === "string"
+      ? settings.data.entries.support_email.trim()
+      : "";
 
   function logout(): void {
     clear();
@@ -32,7 +43,8 @@ export function SuperAdminShell(): JSX.Element {
             </p>
             <h1 className={`text-xl font-semibold ${headingClass}`}>Super Admin</h1>
             <p className={`text-sm ${mutedClass}`}>
-              Manage every business system and client installation
+              Manage businesses, users, licences, and global platform settings
+              {supportEmail ? ` · ${supportEmail}` : ""}
             </p>
           </div>
           <div className="flex items-center gap-2">

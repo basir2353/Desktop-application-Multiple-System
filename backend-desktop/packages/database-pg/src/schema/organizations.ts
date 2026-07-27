@@ -1,4 +1,4 @@
-import { jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * A business / client installation.
@@ -20,6 +20,10 @@ export const organizations = pgTable("organizations", {
    * null = all modules allowed; [] = lock down to basic ERP only.
    */
   enabledModules: jsonb("enabled_modules").$type<string[] | null>(),
+  /** Super Admin grants FBR tax-authority integration for this business. */
+  fbrEnabled: boolean("fbr_enabled").notNull().default(false),
+  /** Super Admin grants PRA tax-authority integration for this business. */
+  praEnabled: boolean("pra_enabled").notNull().default(false),
   createdBy: uuid("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

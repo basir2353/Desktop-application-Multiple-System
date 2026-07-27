@@ -82,6 +82,8 @@ export const businessSchema = z.object({
   licenceExpiresAt: z.string().nullable(),
   /** null = all modules; otherwise Super Admin ceiling. */
   enabledModules: z.array(z.string()).nullable().optional(),
+  fbrEnabled: z.boolean().default(false),
+  praEnabled: z.boolean().default(false),
   createdBy: z.string().uuid().nullable(),
   createdAt: z.string(),
   adminEmail: z.string().nullable().optional(),
@@ -101,6 +103,8 @@ export const createBusinessSchema = z.object({
   licencePlan: z.string().min(1).max(64).optional(),
   licenceExpiresAt: z.string().datetime().optional(),
   enabledModules: z.array(z.string()).nullable().optional(),
+  fbrEnabled: z.boolean().optional(),
+  praEnabled: z.boolean().optional(),
 });
 
 export const updateBusinessSchema = z.object({
@@ -110,6 +114,8 @@ export const updateBusinessSchema = z.object({
   licencePlan: z.string().min(1).max(64).nullable().optional(),
   licenceExpiresAt: z.string().datetime().nullable().optional(),
   enabledModules: z.array(z.string()).nullable().optional(),
+  fbrEnabled: z.boolean().optional(),
+  praEnabled: z.boolean().optional(),
 });
 
 export const grantLicenceDaysSchema = z.object({
@@ -244,6 +250,15 @@ export const resetPlatformUserPasswordSchema = z.object({
   password: z.string().min(8).max(128),
 });
 
+export const USER_ACCOUNT_STATUSES = ["active", "inactive", "suspended"] as const;
+export const userAccountStatusSchema = z.enum(USER_ACCOUNT_STATUSES);
+export type UserAccountStatus = z.infer<typeof userAccountStatusSchema>;
+
+export const updatePlatformUserSchema = z.object({
+  status: userAccountStatusSchema.optional(),
+  name: z.string().min(1).max(200).optional(),
+});
+
 export const platformSettingsSchema = z.object({
   entries: z.record(z.string(), z.unknown()),
 });
@@ -252,12 +267,19 @@ export const updatePlatformSettingsSchema = z.object({
   entries: z.record(z.string(), z.unknown()),
 });
 
+export const platformPublicInfoSchema = z.object({
+  supportEmail: z.string().nullable(),
+  maintenanceMessage: z.string().nullable(),
+});
+
 export const platformAnalyticsSchema = z.object({
   totalBusinesses: z.number().int().nonnegative(),
   activeBusinesses: z.number().int().nonnegative(),
   suspendedBusinesses: z.number().int().nonnegative(),
   inactiveBusinesses: z.number().int().nonnegative(),
   totalUsers: z.number().int().nonnegative(),
+  expiredLicences: z.number().int().nonnegative(),
+  expiringSoonLicences: z.number().int().nonnegative(),
   bySystemType: z.array(
     z.object({
       systemType: systemTypeSchema,
@@ -265,6 +287,7 @@ export const platformAnalyticsSchema = z.object({
     }),
   ),
   recentBusinesses: z.array(businessSchema).max(20),
+  licenceAlerts: z.array(businessSchema).max(20),
 });
 
 export type Business = z.infer<typeof businessSchema>;
@@ -279,8 +302,10 @@ export type SendLicenceReminders = z.infer<typeof sendLicenceRemindersSchema>;
 export type LicenceReminderResult = z.infer<typeof licenceReminderResultSchema>;
 export type OrgAlert = z.infer<typeof orgAlertSchema>;
 export type PlatformUser = z.infer<typeof platformUserSchema>;
+export type UpdatePlatformUser = z.infer<typeof updatePlatformUserSchema>;
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;
 export type UpdatePlatformSettings = z.infer<typeof updatePlatformSettingsSchema>;
+export type PlatformPublicInfo = z.infer<typeof platformPublicInfoSchema>;
 export type PlatformAnalytics = z.infer<typeof platformAnalyticsSchema>;
 
 /** Clamp membership permissions to Super Admin org module ceiling. */

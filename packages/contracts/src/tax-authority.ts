@@ -69,8 +69,18 @@ export const praConnectSchema = z.object({
 });
 export type PraConnectInput = z.infer<typeof praConnectSchema>;
 
+/** Super Admin–granted FBR / PRA flags for the signed-in business (no branch required). */
+export const taxAuthorityFeaturesSchema = z.object({
+  fbrEnabled: z.boolean(),
+  praEnabled: z.boolean(),
+});
+export type TaxAuthorityFeatures = z.infer<typeof taxAuthorityFeaturesSchema>;
+
 export const taxAuthorityStatusSchema = z.object({
   branchCode: z.string(),
+  /** Super Admin–granted feature flags for this business. */
+  fbrEnabled: z.boolean().default(false),
+  praEnabled: z.boolean().default(false),
   company: z.object({
     companyName: z.string().default(""),
     ntn: z.string().default(""),

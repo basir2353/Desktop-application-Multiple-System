@@ -11,6 +11,7 @@ import { usePopsStore } from "../../stores/popsStore";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { PopsAlertCenter } from "../components/PopsAlertCenter";
 import { LicencePaymentAlertBanner } from "../components/LicencePaymentAlertBanner";
+import { BranchAutoConnect } from "../components/BranchAutoConnect";
 import {
   loadPosHeaderVisible,
   POS_HEADER_VISIBLE_EVENT,
@@ -101,6 +102,7 @@ export function PopsShell(): JSX.Element {
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <BranchAutoConnect />
       {sidebarOpen ? (
         <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-600 bg-slate-700 text-slate-100 md:flex">
           <div className="shrink-0 border-b border-slate-600 bg-slate-800 px-4 py-4">

@@ -1,8 +1,8 @@
 # Backend API + PostgreSQL (self-host / local Docker)
 #
 # Live hosted API (Railway):
-#   https://backend-desktop-production-5505.up.railway.app
-#   Health: https://backend-desktop-production-5505.up.railway.app/health
+#   https://platformapi-production-39aa.up.railway.app
+#   Health: https://platformapi-production-39aa.up.railway.app/health
 #
 # Build context is this folder (backend-desktop/), not the monorepo root.
 # From this folder:
@@ -52,7 +52,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:1420,tauri://localhost}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://127.0.0.1:3000}
       # Live Railway (reference only — this compose runs your own API container):
-      # LIVE_API_URL=https://backend-desktop-production-5505.up.railway.app
+      # LIVE_API_URL=https://platformapi-production-39aa.up.railway.app
     ports:
       - "${API_HOST_PORT:-3000}:3000"
     volumes:

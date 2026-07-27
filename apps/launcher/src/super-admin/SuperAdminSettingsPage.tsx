@@ -1,4 +1,5 @@
 import { Button } from "@platform/ui";
+import { LICENCE_PLANS } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { fetchPlatformSettings, updatePlatformSettings } from "../lib/platformApi";
@@ -10,10 +11,30 @@ import {
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
 
 const DEFAULT_KEYS = [
-  { key: "support_email", label: "Support email", placeholder: "support@example.com" },
-  { key: "maintenance_message", label: "Maintenance message", placeholder: "Optional banner text" },
-  { key: "default_licence_plan", label: "Default licence plan", placeholder: "standard" },
-  { key: "session_policy", label: "Session policy note", placeholder: "e.g. 15m access tokens" },
+  {
+    key: "support_email",
+    label: "Support email",
+    placeholder: "support@example.com",
+    help: "Shown on login screens when maintenance mode is on.",
+  },
+  {
+    key: "maintenance_message",
+    label: "Maintenance message",
+    placeholder: "Optional banner text shown on all login screens",
+    help: "Leave empty to hide the banner. Non-empty text is shown globally.",
+  },
+  {
+    key: "default_licence_plan",
+    label: "Default licence plan",
+    placeholder: "standard",
+    help: "Applied when creating a new business if no plan is chosen.",
+  },
+  {
+    key: "session_policy",
+    label: "Session policy note",
+    placeholder: "e.g. 15m access tokens",
+    help: "Internal note for operators (not enforced automatically).",
+  },
 ] as const;
 
 export function SuperAdminSettingsPage(): JSX.Element {
@@ -41,8 +62,9 @@ export function SuperAdminSettingsPage(): JSX.Element {
   const saveMut = useMutation({
     mutationFn: () => updatePlatformSettings({ entries }),
     onSuccess: async () => {
-      setMessage("Global settings saved.");
+      setMessage("Global settings saved. Maintenance banner and default plan take effect immediately.");
       await qc.invalidateQueries({ queryKey: ["platform", "settings"] });
+      await qc.invalidateQueries({ queryKey: ["platform", "public-info"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Save failed"),
   });
@@ -58,7 +80,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
       <div>
         <h2 className={`text-lg font-semibold ${headingClass}`}>Global settings</h2>
         <p className={`mt-1 text-sm ${mutedClass}`}>
-          Platform-wide configuration that can apply to every installation.
+          Platform-wide configuration applied to every installation.
         </p>
       </div>
 
@@ -114,12 +136,38 @@ export function SuperAdminSettingsPage(): JSX.Element {
           {DEFAULT_KEYS.map((row) => (
             <label key={row.key} className="block text-sm">
               <span className="mb-1 block text-slate-600 dark:text-slate-300">{row.label}</span>
-              <input
-                className={fieldInputClass}
-                placeholder={row.placeholder}
-                value={entries[row.key] ?? ""}
-                onChange={(e) => setEntries((prev) => ({ ...prev, [row.key]: e.target.value }))}
-              />
+              {row.key === "default_licence_plan" ? (
+                <select
+                  className={fieldInputClass}
+                  value={entries[row.key] || "standard"}
+                  onChange={(e) => setEntries((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                >
+                  {LICENCE_PLANS.map((plan) => (
+                    <option key={plan} value={plan}>
+                      {plan}
+                    </option>
+                  ))}
+                  {entries[row.key] &&
+                  !LICENCE_PLANS.includes(entries[row.key] as (typeof LICENCE_PLANS)[number]) ? (
+                    <option value={entries[row.key]}>{entries[row.key]}</option>
+                  ) : null}
+                </select>
+              ) : row.key === "maintenance_message" ? (
+                <textarea
+                  className={`${fieldInputClass} min-h-[5rem]`}
+                  placeholder={row.placeholder}
+                  value={entries[row.key] ?? ""}
+                  onChange={(e) => setEntries((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                />
+              ) : (
+                <input
+                  className={fieldInputClass}
+                  placeholder={row.placeholder}
+                  value={entries[row.key] ?? ""}
+                  onChange={(e) => setEntries((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                />
+              )}
+              <span className={`mt-1 block text-xs ${mutedClass}`}>{row.help}</span>
             </label>
           ))}
           {message ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{message}</p> : null}

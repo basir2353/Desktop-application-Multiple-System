@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -19,11 +20,11 @@ import {
   type TaxInvoiceSourceType,
 } from "@platform/contracts";
 import {
+  organizations,
   popsBills,
   popsBranches,
   pharmacySales,
   storeSales,
-  organizations,
   taxAuthorityInvoices,
   taxAuthorityProfiles,
   type PlatformPgDb,
@@ -56,28 +57,19 @@ export class TaxAuthorityService {
   constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
 
   async getFeatures(organizationId: string): Promise<{ fbrEnabled: boolean; praEnabled: boolean }> {
-    const rows = await this.db
-      .select({
-        fbrEnabled: organizations.fbrEnabled,
-        praEnabled: organizations.praEnabled,
-      })
-      .from(organizations)
-      .where(eq(organizations.id, organizationId))
-      .limit(1);
-    const row = rows[0];
-    return {
-      fbrEnabled: Boolean(row?.fbrEnabled),
-      praEnabled: Boolean(row?.praEnabled),
-    };
+    return this.getOrgTaxFeatures(organizationId);
   }
 
   async getStatus(organizationId: string, branchCode: string): Promise<TaxAuthorityStatus> {
     const branch = await this.resolveBranch(organizationId, branchCode);
+    const features = await this.getOrgTaxFeatures(organizationId);
     const profile = await this.getProfile(organizationId, branch.id);
 
     if (!profile) {
       return {
         branchCode: branch.code,
+        fbrEnabled: features.fbrEnabled,
+        praEnabled: features.praEnabled,
         company: {
           companyName: "",
           ntn: "",
@@ -114,6 +106,8 @@ export class TaxAuthorityService {
 
     return {
       branchCode: branch.code,
+      fbrEnabled: features.fbrEnabled,
+      praEnabled: features.praEnabled,
       company: {
         companyName: profile.companyName,
         ntn: profile.ntn,
@@ -149,6 +143,7 @@ export class TaxAuthorityService {
   }
 
   async connectFbr(organizationId: string, body: unknown): Promise<TaxConnectResult> {
+    await this.assertOrgTaxEnabled(organizationId, "fbr");
     const input = this.parseOrThrow(fbrConnectSchema, body);
     this.assertRequiredConnectFields(input.company, input.clientSecret, input.posId, input.terminalId);
 
@@ -201,6 +196,7 @@ export class TaxAuthorityService {
   }
 
   async connectPra(organizationId: string, body: unknown): Promise<TaxConnectResult> {
+    await this.assertOrgTaxEnabled(organizationId, "pra");
     const input = this.parseOrThrow(praConnectSchema, body);
     this.assertRequiredConnectFields(
       input.company,
@@ -256,6 +252,7 @@ export class TaxAuthorityService {
   }
 
   async refreshFbrToken(organizationId: string, branchCode: string): Promise<TaxConnectResult> {
+    await this.assertOrgTaxEnabled(organizationId, "fbr");
     const branch = await this.resolveBranch(organizationId, branchCode);
     const profile = await this.requireProfile(organizationId, branch.id);
     if (!profile.fbrClientSecret) {
@@ -284,6 +281,7 @@ export class TaxAuthorityService {
   }
 
   async refreshPraToken(organizationId: string, branchCode: string): Promise<TaxConnectResult> {
+    await this.assertOrgTaxEnabled(organizationId, "pra");
     const branch = await this.resolveBranch(organizationId, branchCode);
     const profile = await this.requireProfile(organizationId, branch.id);
     if (!profile.praPassword || !profile.praRegistrationNumber) {
@@ -330,6 +328,7 @@ export class TaxAuthorityService {
   }
 
   async sendInvoice(organizationId: string, authority: "fbr" | "pra", body: unknown) {
+    await this.assertOrgTaxEnabled(organizationId, authority);
     const input = this.parseOrThrow(sendTaxInvoiceSchema, body);
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     const profile = await this.requireProfile(organizationId, branch.id);
@@ -425,12 +424,23 @@ export class TaxAuthorityService {
     taxAmountPkr: number;
   }): Promise<void> {
     try {
+      const features = await this.getOrgTaxFeatures(params.organizationId);
       const profile = await this.getProfile(params.organizationId, params.branchId);
       if (!profile) return;
 
       const authorities: Array<"fbr" | "pra"> = [];
-      if (profile.fbrStatus === "connected" || profile.fbrStatus === "expired") authorities.push("fbr");
-      if (profile.praStatus === "connected" || profile.praStatus === "expired") authorities.push("pra");
+      if (
+        features.fbrEnabled &&
+        (profile.fbrStatus === "connected" || profile.fbrStatus === "expired")
+      ) {
+        authorities.push("fbr");
+      }
+      if (
+        features.praEnabled &&
+        (profile.praStatus === "connected" || profile.praStatus === "expired")
+      ) {
+        authorities.push("pra");
+      }
       if (authorities.length === 0) return;
 
       for (const authority of authorities) {
@@ -1038,6 +1048,37 @@ export class TaxAuthorityService {
       };
     }
     throw new Error("PRA invoice URL is not configured on the server (PRA_INVOICE_URL).");
+  }
+
+  private async getOrgTaxFeatures(
+    organizationId: string,
+  ): Promise<{ fbrEnabled: boolean; praEnabled: boolean }> {
+    const rows = await this.db
+      .select({
+        fbrEnabled: organizations.fbrEnabled,
+        praEnabled: organizations.praEnabled,
+      })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
+    const row = rows[0];
+    return {
+      fbrEnabled: Boolean(row?.fbrEnabled),
+      praEnabled: Boolean(row?.praEnabled),
+    };
+  }
+
+  private async assertOrgTaxEnabled(
+    organizationId: string,
+    authority: "fbr" | "pra",
+  ): Promise<void> {
+    const features = await this.getOrgTaxFeatures(organizationId);
+    const enabled = authority === "fbr" ? features.fbrEnabled : features.praEnabled;
+    if (!enabled) {
+      throw new ForbiddenException(
+        `${authority.toUpperCase()} is not enabled for this business. Contact the platform Super Admin.`,
+      );
+    }
   }
 
   private mapInvoice(row: typeof taxAuthorityInvoices.$inferSelect): TaxInvoice {

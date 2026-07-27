@@ -1,11 +1,13 @@
 import {
   fbrConnectSchema,
   praConnectSchema,
+  taxAuthorityFeaturesSchema,
   taxAuthorityStatusSchema,
   taxConnectResultSchema,
   taxInvoiceSchema,
   type FbrConnectInput,
   type PraConnectInput,
+  type TaxAuthorityFeatures,
   type TaxAuthorityStatus,
   type TaxConnectResult,
   type TaxInvoice,
@@ -16,6 +18,12 @@ async function readError(res: Response): Promise<string> {
   const err = (await res.json().catch(() => null)) as { message?: string | string[] } | null;
   if (!err?.message) return `Request failed: ${res.status}`;
   return Array.isArray(err.message) ? err.message.join(", ") : err.message;
+}
+
+export async function fetchTaxAuthorityFeatures(): Promise<TaxAuthorityFeatures> {
+  const res = await authFetch("/v1/tax-authority/features");
+  if (!res.ok) throw new Error(await readError(res));
+  return taxAuthorityFeaturesSchema.parse(await res.json());
 }
 
 export async function fetchTaxAuthorityStatus(branchCode: string): Promise<TaxAuthorityStatus> {

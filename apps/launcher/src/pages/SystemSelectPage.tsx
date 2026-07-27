@@ -1,5 +1,4 @@
-import { Button } from "@platform/ui";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { ThemeToggle } from "../components/ThemeToggle";
 import {
   businessSystemIdFromSystemType,
@@ -70,7 +69,6 @@ function SystemCard({
 }
 
 export function SystemSelectPage(): JSX.Element {
-  const navigate = useNavigate();
   const [params] = useSearchParams();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
@@ -133,12 +131,7 @@ export function SystemSelectPage(): JSX.Element {
             Sign in to the system you administer. System admins cannot switch modules after login.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ThemeToggle compact />
-          <Button variant="ghost" className="text-xs" onClick={() => navigate("/login?role=super_admin")}>
-            Super Admin
-          </Button>
-        </div>
+        <ThemeToggle compact />
       </header>
 
       <div className="mt-10 grid gap-5 md:grid-cols-3">

@@ -14,6 +14,7 @@ import {
   erpEntryPathForRole,
   filterBranchesByScope,
 } from "../lib/roleAccess";
+import { canEnterErpWithoutBranch } from "../components/BranchGate";
 import { normalizeMembershipRole } from "../../lib/loginRoles";
 import { usePopsStore, type PopsBranch, type PopsRole } from "../../stores/popsStore";
 
@@ -48,6 +49,9 @@ function toPopsBranch(row: { id: string; code: string; name: string; city: strin
   return { id: row.id, code: row.code, name: row.name, city: row.city };
 }
 
+/** First-time setup: admins land in Multi-branch to create the first location. */
+const NO_BRANCH_SETUP_PATH = "/pops/multi-branch";
+
 export function BranchSelectPage(): JSX.Element {
   const navigate = useNavigate();
   const accessToken = useSessionStore((s) => s.accessToken);
@@ -63,6 +67,7 @@ export function BranchSelectPage(): JSX.Element {
   const roles = systemId === "pharmacy" ? pharmacyRoles : systemId === "general-store" ? storeRoles : restaurantRoles;
   const permissions = claims?.permissions ?? [];
   const canManageUsers = canManageOrgUsers(permissions);
+  const canSetupWithoutBranch = canEnterErpWithoutBranch(permissions);
   const assignedRole = normalizeMembershipRole(claims?.role) ?? displayRole;
 
   const branchesQuery = useQuery({
@@ -77,6 +82,7 @@ export function BranchSelectPage(): JSX.Element {
   );
 
   const allBranches = apiBranches;
+  const noBranchesYet = branchesQuery.isSuccess && apiBranches.length === 0;
 
   const [selected, setSelected] = useState<PopsBranch | null>(
     allBranches.find((b) => !isMonitoringBranch(b.code)) ?? allBranches[0] ?? null,
@@ -87,7 +93,6 @@ export function BranchSelectPage(): JSX.Element {
       setBranch(null);
       return;
     }
-    // Drop stale branch when API set changed (e.g. local vs Railway) or branch was deleted.
     if (
       persistedBranch &&
       branchesQuery.isSuccess &&
@@ -108,9 +113,38 @@ export function BranchSelectPage(): JSX.Element {
     }
   }, [allBranches, selected]);
 
+  // No branches yet: admins enter the main system to create/manage the first branch.
+  useEffect(() => {
+    if (!noBranchesYet || !canSetupWithoutBranch) return;
+    setDisplayRole(assignedRole);
+    navigate(NO_BRANCH_SETUP_PATH, { replace: true });
+  }, [noBranchesYet, canSetupWithoutBranch, assignedRole, setDisplayRole, navigate]);
+
   function continueToDashboard(): void {
-    if (selected) setBranch(selected);
+    if (noBranchesYet && canSetupWithoutBranch) {
+      setDisplayRole(assignedRole);
+      navigate(NO_BRANCH_SETUP_PATH);
+      return;
+    }
+    if (!selected) return;
+    setBranch(selected);
     navigate(erpEntryPathForRole(systemId, assignedRole));
+  }
+
+  if (noBranchesYet && canSetupWithoutBranch) {
+    return (
+      <div className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+        <div className="mx-auto max-w-lg text-center">
+          <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${system.accentClass}`}>
+            {system.shortName}
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">Setting up your system</h1>
+          <p className="mt-2 text-sm text-slate-400">
+            No branches yet — opening the control panel so you can create the first branch and manage the business.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -138,8 +172,7 @@ export function BranchSelectPage(): JSX.Element {
               ) : null}
               {!branchesQuery.isLoading && !branchesQuery.isError && apiBranches.length === 0 ? (
                 <p className="mt-3 text-xs text-slate-500">
-                  No branches in your organization yet. Ask an admin to add one from Multi-branch, or run the API seed
-                  (`pnpm dev:api` after `pnpm db:push`).
+                  No branches in your organization yet. An admin must create the first branch from Multi-branch.
                 </p>
               ) : null}
               <div className="mt-4 space-y-2">
@@ -227,13 +260,22 @@ export function BranchSelectPage(): JSX.Element {
           </div>
         </div>
 
-        <div className="mt-10 flex flex-wrap justify-center gap-3">
-          <Button onClick={continueToDashboard} disabled={!selected}>
-            Open dashboard
+        <div className="mt-8 flex flex-col items-center gap-3">
+          <Button
+            type="button"
+            className="min-w-[12rem]"
+            disabled={!selected && !(noBranchesYet && canSetupWithoutBranch)}
+            onClick={continueToDashboard}
+          >
+            {noBranchesYet && canSetupWithoutBranch ? "Open system setup" : "Open dashboard"}
           </Button>
-          <Button variant="ghost" onClick={() => navigate("/", { replace: true })}>
+          <button
+            type="button"
+            className="text-xs text-slate-500 hover:text-slate-300"
+            onClick={() => navigate("/platform")}
+          >
             Platform shell
-          </Button>
+          </button>
         </div>
       </div>
     </div>

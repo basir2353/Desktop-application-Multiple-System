@@ -21,6 +21,7 @@ import { generalStoreRoutes } from "./routes/generalStoreRoutes";
 import { sharedRoutes } from "./routes/sharedRoutes";
 import { HistoryNavBar } from "./components/HistoryNavBar";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
+import { MaintenanceBanner } from "./components/MaintenanceBanner";
 import { useOfflineSync } from "./hooks/useOfflineSync";
 import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
@@ -30,6 +31,7 @@ import { isSuperAdminClaims } from "./lib/jwt";
 import { SuperAdminShell } from "./super-admin/SuperAdminShell";
 import { SuperAdminOverviewPage } from "./super-admin/SuperAdminOverviewPage";
 import { SuperAdminBusinessesPage } from "./super-admin/SuperAdminBusinessesPage";
+import { SuperAdminBusinessDetailPage } from "./super-admin/SuperAdminBusinessDetailPage";
 import { SuperAdminUsersPage } from "./super-admin/SuperAdminUsersPage";
 import { SuperAdminLicencesPage } from "./super-admin/SuperAdminLicencesPage";
 import { SuperAdminSettingsPage } from "./super-admin/SuperAdminSettingsPage";
@@ -91,6 +93,7 @@ export function App(): JSX.Element {
         <NavigationHistoryProvider>
         <>
           <HistoryNavBar />
+          <MaintenanceBanner />
           <ConnectivityBanner />
           <RootErrorBoundary>
           <Routes>
@@ -108,6 +111,7 @@ export function App(): JSX.Element {
           >
             <Route index element={<SuperAdminOverviewPage />} />
             <Route path="businesses" element={<SuperAdminBusinessesPage />} />
+            <Route path="businesses/:businessId" element={<SuperAdminBusinessDetailPage />} />
             <Route path="users" element={<SuperAdminUsersPage />} />
             <Route path="licences" element={<SuperAdminLicencesPage />} />
             <Route path="settings" element={<SuperAdminSettingsPage />} />

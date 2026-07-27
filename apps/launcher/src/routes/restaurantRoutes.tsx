@@ -130,21 +130,6 @@ const DeliveryPage = lazy(() =>
   import("../pops/pages/modules/DeliveryPage").then((m) => ({ default: m.DeliveryPage })),
 );
 const CrmPage = lazy(() => import("../pops/pages/modules/CrmPage").then((m) => ({ default: m.CrmPage })));
-const MultiBranchDashboardPage = lazy(() =>
-  import("../pops/pages/modules/multi-branch/MultiBranchDashboardPage").then((m) => ({ default: m.MultiBranchDashboardPage })),
-);
-const InterBranchTransfersPage = lazy(() =>
-  import("../pops/pages/modules/multi-branch/InterBranchTransfersPage").then((m) => ({ default: m.InterBranchTransfersPage })),
-);
-const BranchReceivePage = lazy(() =>
-  import("../pops/pages/modules/multi-branch/BranchReceivePage").then((m) => ({ default: m.BranchReceivePage })),
-);
-const BranchPricingPage = lazy(() =>
-  import("../pops/pages/modules/multi-branch/BranchPricingPage").then((m) => ({ default: m.BranchPricingPage })),
-);
-const ConsolidatedReportsPage = lazy(() =>
-  import("../pops/pages/modules/multi-branch/ConsolidatedReportsPage").then((m) => ({ default: m.ConsolidatedReportsPage })),
-);
 const SyncPage = lazy(() => import("../pops/pages/modules/SyncPage").then((m) => ({ default: m.SyncPage })));
 const ReportsPage = lazy(() => import("../pops/pages/modules/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const KitchenCancellationsPage = lazy(() =>
@@ -209,11 +194,6 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="hr/salary-slips" element={<SalarySlipsPage />} />
       <Route path="delivery" element={<DeliveryPage />} />
       <Route path="crm" element={<CrmPage />} />
-      <Route path="multi-branch" element={<MultiBranchDashboardPage />} />
-      <Route path="multi-branch/transfers" element={<InterBranchTransfersPage />} />
-      <Route path="multi-branch/receive" element={<BranchReceivePage />} />
-      <Route path="multi-branch/pricing" element={<BranchPricingPage />} />
-      <Route path="multi-branch/reports" element={<ConsolidatedReportsPage />} />
       <Route path="sync" element={<SyncPage />} />
       <Route path="reports" element={<ReportsPage />} />
       <Route path="reports/kitchen-cancellations" element={<KitchenCancellationsPage />} />

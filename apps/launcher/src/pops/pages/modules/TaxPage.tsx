@@ -1,6 +1,7 @@
 import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import {
   connectFbr,
   connectPra,
@@ -9,11 +10,18 @@ import {
   refreshFbrToken,
   refreshPraToken,
 } from "../../../lib/taxAuthorityApi";
+import { useActiveSystemId } from "../../../hooks/useActiveSystemId";
 import { usePopsStore } from "../../../stores/popsStore";
+import { isTaxAuthorityEnabled, useTaxAuthorityFeatures } from "../../hooks/useTaxAuthorityFeatures";
+import { erpEntryPathForRole } from "../../lib/roleAccess";
 import { fieldInputClass, fieldSelectClass, mutedClass, panelClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
+
+/** Org-level attachment when the business has no store branch selected. */
+const MAIN_SYSTEM_BRANCH_CODE = "MAIN";
+const MAIN_SYSTEM_BRANCH_NAME = "Main System";
 
 type CompanyForm = {
   companyName: string;
@@ -85,38 +93,47 @@ function formatWhen(iso: string | null | undefined): string {
 
 export function TaxPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
+  const displayRole = usePopsStore((s) => s.displayRole);
+  const systemId = useActiveSystemId();
   const qc = useQueryClient();
-  const branchCode = branch?.code ?? "";
+  const branchCode = branch?.code || MAIN_SYSTEM_BRANCH_CODE;
+  const branchLabel = branch?.name || MAIN_SYSTEM_BRANCH_NAME;
+  const onMainSystem = !branch?.code;
+  const taxFeatures = useTaxAuthorityFeatures();
+  const taxEnabled = isTaxAuthorityEnabled(taxFeatures.data);
 
-  const [company, setCompany] = useState<CompanyForm>(emptyCompany());
+  const [company, setCompany] = useState<CompanyForm>(
+    emptyCompany(MAIN_SYSTEM_BRANCH_NAME, MAIN_SYSTEM_BRANCH_CODE),
+  );
   const [fbr, setFbr] = useState<FbrForm>(emptyFbr());
-  const [pra, setPra] = useState<PraForm>(emptyPra());
+  const [pra, setPra] = useState<PraForm>(emptyPra(MAIN_SYSTEM_BRANCH_CODE));
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ["tax-authority", "status", branchCode],
-    enabled: Boolean(branchCode),
+    enabled: taxEnabled,
     queryFn: () => fetchTaxAuthorityStatus(branchCode),
   });
 
   const invoicesQuery = useQuery({
     queryKey: ["tax-authority", "invoices", branchCode],
-    enabled: Boolean(branchCode),
+    enabled: taxEnabled,
     queryFn: () => fetchTaxInvoices(branchCode),
     refetchInterval: 30_000,
   });
 
   useEffect(() => {
-    if (!branch) return;
+    const name = branch?.name || MAIN_SYSTEM_BRANCH_NAME;
+    const code = branch?.code || MAIN_SYSTEM_BRANCH_CODE;
     setCompany((prev) => ({
       ...prev,
-      branchName: prev.branchName || branch.name,
-      branchCode: prev.branchCode || branch.code,
+      branchName: prev.branchName || name,
+      branchCode: prev.branchCode || code,
     }));
     setPra((prev) => ({
       ...prev,
-      praBranchCode: prev.praBranchCode || branch.code,
+      praBranchCode: prev.praBranchCode || code,
     }));
   }, [branch]);
 
@@ -129,8 +146,8 @@ export function TaxPage(): JSX.Element {
       strn: data.company.strn ?? "",
       businessType: data.company.businessType ?? "",
       province: data.company.province ?? "",
-      branchName: data.company.branchName || branch?.name || "",
-      branchCode: data.company.branchCode || branch?.code || "",
+      branchName: data.company.branchName || branchLabel,
+      branchCode: data.company.branchCode || branchCode,
     });
     setFbr((prev) => ({
       clientId: data.fbr.clientId ?? "",
@@ -145,15 +162,14 @@ export function TaxPage(): JSX.Element {
       registrationNumber: data.pra.registrationNumber ?? "",
       username: data.pra.username ?? "",
       password: prev.password || "",
-      praBranchCode: data.pra.praBranchCode || branch?.code || "",
+      praBranchCode: data.pra.praBranchCode || branchCode,
       environment: data.pra.environment,
     }));
-  }, [statusQuery.data, branch?.name, branch?.code]);
+  }, [statusQuery.data, branchLabel, branchCode]);
 
   const connectFbrMut = useMutation({
-    mutationFn: () => {
-      if (!branchCode) throw new Error("Select a branch first.");
-      return connectFbr({
+    mutationFn: () =>
+      connectFbr({
         branchCode,
         company,
         clientId: fbr.clientId,
@@ -161,8 +177,7 @@ export function TaxPage(): JSX.Element {
         posId: fbr.posId,
         terminalId: fbr.terminalId,
         environment: fbr.environment,
-      });
-    },
+      }),
     onSuccess: async (res) => {
       setError(null);
       setMessage(res.message);
@@ -195,9 +210,8 @@ export function TaxPage(): JSX.Element {
   };
 
   const connectPraMut = useMutation({
-    mutationFn: () => {
-      if (!branchCode) throw new Error("Select a branch first.");
-      return connectPra({
+    mutationFn: () =>
+      connectPra({
         branchCode,
         company,
         registrationNumber: pra.registrationNumber,
@@ -205,8 +219,7 @@ export function TaxPage(): JSX.Element {
         password: pra.password,
         praBranchCode: pra.praBranchCode,
         environment: pra.environment,
-      });
-    },
+      }),
     onSuccess: async (res) => {
       setError(null);
       setMessage(res.message);
@@ -272,26 +285,40 @@ export function TaxPage(): JSX.Element {
     },
   });
 
-  if (!branch?.code) {
-    return <PageHeader title="FBR & PRA Integration" subtitle="Select a branch to configure tax authority connections." />;
+  if (taxFeatures.isLoading) {
+    return (
+      <PageHeader title="FBR & PRA Integration" subtitle="Checking tax authority access…" />
+    );
+  }
+
+  if (!taxEnabled) {
+    return <Navigate to={erpEntryPathForRole(systemId, displayRole)} replace />;
   }
 
   const fbrStatus = statusQuery.data?.fbr.status ?? "disconnected";
   const praStatus = statusQuery.data?.pra.status ?? "disconnected";
+  const fbrEnabled = statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false;
+  const praEnabled = statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled ?? false;
   const invoices = invoicesQuery.data ?? [];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="FBR & PRA Integration"
-        subtitle={`Connect ${branch.name} (${branch.code}) once — invoices submit automatically after sales.`}
+        subtitle={
+          onMainSystem
+            ? "No store branch yet — connecting to the main business system. Invoices submit automatically after sales."
+            : `Connect ${branchLabel} (${branchCode}) once — invoices submit automatically after sales.`
+        }
       />
 
       <div className={`grid gap-3 sm:grid-cols-2 ${panelClass} p-4`}>
         <div>
           <p className="text-xs uppercase tracking-wide text-slate-500">FBR status</p>
           <div className="mt-1 flex items-center gap-2">
-            <Badge tone={statusTone(fbrStatus)}>{fbrStatus === "connected" ? "Connected" : fbrStatus}</Badge>
+            <Badge tone={fbrEnabled ? statusTone(fbrStatus) : "neutral"}>
+              {!fbrEnabled ? "Not enabled" : fbrStatus === "connected" ? "Connected" : fbrStatus}
+            </Badge>
             <span className={`text-sm ${mutedClass}`}>
               Last: {formatWhen(statusQuery.data?.fbr.connectedAt)}
             </span>
@@ -300,7 +327,9 @@ export function TaxPage(): JSX.Element {
         <div>
           <p className="text-xs uppercase tracking-wide text-slate-500">PRA status</p>
           <div className="mt-1 flex items-center gap-2">
-            <Badge tone={statusTone(praStatus)}>{praStatus === "connected" ? "Connected" : praStatus}</Badge>
+            <Badge tone={praEnabled ? statusTone(praStatus) : "neutral"}>
+              {!praEnabled ? "Not enabled" : praStatus === "connected" ? "Connected" : praStatus}
+            </Badge>
             <span className={`text-sm ${mutedClass}`}>
               Last: {formatWhen(statusQuery.data?.pra.connectedAt)}
             </span>
@@ -347,6 +376,12 @@ export function TaxPage(): JSX.Element {
 
       <section className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">FBR Settings</h3>
+        {!fbrEnabled ? (
+          <p className={`text-sm ${mutedClass}`}>
+            FBR is disabled for this business by the platform Super Admin.
+          </p>
+        ) : (
+        <>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600 dark:text-slate-300">Client ID</span>
@@ -408,10 +443,18 @@ export function TaxPage(): JSX.Element {
             {connectFbrMut.isPending || refreshFbrMut.isPending ? "Connecting…" : "Connect FBR"}
           </Button>
         </div>
+        </>
+        )}
       </section>
 
       <section className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">PRA Settings</h3>
+        {!praEnabled ? (
+          <p className={`text-sm ${mutedClass}`}>
+            PRA is disabled for this business by the platform Super Admin.
+          </p>
+        ) : (
+        <>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600 dark:text-slate-300">Registration Number</span>
@@ -473,6 +516,8 @@ export function TaxPage(): JSX.Element {
             {connectPraMut.isPending || refreshPraMut.isPending ? "Connecting…" : "Connect PRA"}
           </Button>
         </div>
+        </>
+        )}
       </section>
 
       <section className="space-y-3">
