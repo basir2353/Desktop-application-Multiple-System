@@ -127,6 +127,48 @@ export function exportMenuExcel(menu: BranchMenu, branchCode: string): void {
   );
 }
 
+/**
+ * Download a blank XLSX file so users can fill the correct sheet/column names.
+ * Import parser reads mainly the "Menu Items" sheet.
+ */
+export function downloadMenuImportTemplateExcel(branchCode?: string): void {
+  const categoryTemplateRows = [
+    {
+      Name: "",
+      "Sort Order": 0,
+      Active: "",
+    },
+  ];
+
+  const menuTemplateRows = [
+    {
+      Category: "",
+      "Item Name": "",
+      Featured: "",
+      Active: "",
+      "Sort Order": 0,
+      "Variant Label": "",
+      Size: "",
+      Price: 0,
+      Barcode: "",
+    },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(categoryTemplateRows), "Categories");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(menuTemplateRows), MENU_ITEMS_SHEET);
+
+  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const date = new Date().toISOString().slice(0, 10);
+  const code = branchCode ? `-${branchCode}` : "";
+  downloadBlob(
+    new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    `menu-import-template${code}-${date}.xlsx`,
+  );
+}
+
 export function parseMenuImportFile(buffer: ArrayBuffer, filename: string): MenuImportRow[] {
   const lower = filename.toLowerCase();
   const wb = lower.endsWith(".csv")

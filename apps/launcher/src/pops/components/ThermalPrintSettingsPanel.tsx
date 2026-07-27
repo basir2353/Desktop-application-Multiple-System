@@ -2,6 +2,7 @@ import { Button } from "@platform/ui";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
+  isNarrowPaperWidth,
   loadThermalPrintSettings,
   normalizeThermalPrintSettings,
   paperSizeLabel,
@@ -24,6 +25,11 @@ import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAs
 import { BillCustomizationPanel } from "./BillCustomizationPanel";
 import { KotCustomizationPanel } from "./KotCustomizationPanel";
 import { usePopsStore } from "../../stores/popsStore";
+import {
+  loadPrinterRouting,
+  resolveReceiptPrinter,
+  updatePrinterProfile,
+} from "../lib/printerRouting";
 
 type Props = {
   branchCode: string;
@@ -125,20 +131,61 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
       ...sampleBillPrintInput(branchName, branchCode),
       kind: "receipt",
       paperSize: draft.defaultPaperSize,
+      thermal: draft,
       billPrintSettings: settings,
     });
   }, [branchCode, branchName, billSettings, draft]);
 
   function patch(partial: Partial<ThermalPrintSettings>): void {
-    setDraft((prev) => normalizeThermalPrintSettings({ ...prev, ...partial }));
+    setDraft((prev) => {
+      const next = normalizeThermalPrintSettings({ ...prev, ...partial });
+      // Keep layout sensible for the effective roll width (including Custom mm).
+      if (partial.defaultPaperSize != null || partial.customPaperWidthMm != null) {
+        const narrow = isNarrowPaperWidth(next.defaultPaperSize, next.customPaperWidthMm);
+        if (narrow && partial.receiptLayout === undefined) {
+          return normalizeThermalPrintSettings({
+            ...next,
+            receiptLayout: "clear",
+            showUnitPrice: false,
+          });
+        }
+        if (!narrow && partial.receiptLayout === undefined) {
+          return normalizeThermalPrintSettings({
+            ...next,
+            receiptLayout: "columns",
+            showUnitPrice: true,
+          });
+        }
+      }
+      return next;
+    });
     setDirty(true);
   }
 
   function saveThermal(): void {
     const next = saveThermalPrintSettings(branchCode, draft);
+    // Live Auto-print uses each receipt printer profile's paperSize — keep them in sync.
+    const routing = loadPrinterRouting(branchCode);
+    const receiptIds = new Set<string>();
+    const primary = resolveReceiptPrinter(branchCode);
+    if (primary) receiptIds.add(primary.id);
+    for (const p of routing.printers) {
+      if (p.printerType === "receipt") receiptIds.add(p.id);
+    }
+    for (const id of receiptIds) {
+      updatePrinterProfile(branchCode, id, { paperSize: next.defaultPaperSize });
+    }
     setDraft(next);
     setDirty(false);
-    notify?.("Paper settings saved.");
+    const widthLabel =
+      next.defaultPaperSize === "custom"
+        ? `${next.customPaperWidthMm}mm custom`
+        : next.defaultPaperSize;
+    notify?.(
+      receiptIds.size > 0
+        ? `Paper settings saved (${widthLabel}) — applied to ${receiptIds.size} receipt printer(s).`
+        : `Paper settings saved (${widthLabel}).`,
+    );
   }
 
   function resetDefaults(): void {
@@ -172,6 +219,7 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
   }
 
   const paperLabel = paperSizeLabel(draft.defaultPaperSize, draft.customPaperWidthMm);
+  const previewWidthPx = previewPaperWidthPx(draft.defaultPaperSize, draft.customPaperWidthMm);
 
   return (
     <div className="space-y-8">
@@ -262,9 +310,6 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
                         onClick={() =>
                           patch({
                             defaultPaperSize: opt.id,
-                            receiptLayout:
-                              opt.id === "58mm" ? draft.receiptLayout : "columns",
-                            showUnitPrice: opt.id !== "58mm",
                           })
                         }
                         className={`rounded-xl border px-3 py-3 text-left transition ${
@@ -293,14 +338,18 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
                       step={1}
                       className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
                       value={draft.customPaperWidthMm}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const mm = raw === "" ? draft.customPaperWidthMm : Number(raw);
                         patch({
                           defaultPaperSize: "custom",
-                          customPaperWidthMm: Number(e.target.value),
-                        })
-                      }
+                          customPaperWidthMm: mm,
+                        });
+                      }}
                     />
-                    <span className="mt-1 block text-[10px] text-slate-500">48–120 mm (e.g. 100 for 100mm rolls)</span>
+                    <span className="mt-1 block text-[10px] text-slate-500">
+                      48–120 mm — preview updates live; click Save to apply to printers
+                    </span>
                   </label>
                 ) : null}
               </div>
@@ -469,16 +518,20 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
             title="Live preview"
             subtitle="Updates as you change paper or the slip below."
           >
-            <div className="overflow-hidden rounded-xl border border-slate-700 bg-white shadow-inner">
+            <div
+              className="mx-auto overflow-x-auto overflow-y-hidden rounded-xl border border-slate-700 bg-white shadow-inner"
+              style={{ maxWidth: "100%" }}
+            >
               <iframe
                 title="Bill preview"
                 srcDoc={previewHtml}
-                className="block h-[min(70vh,560px)] w-full border-0 bg-white"
+                className="block h-[min(70vh,560px)] border-0 bg-white"
+                style={{ width: previewWidthPx, maxWidth: "none" }}
                 sandbox="allow-same-origin"
               />
             </div>
             <p className="mt-3 text-center text-[10px] text-slate-500">
-              Preview matches Auto print · same layout as your thermal printer
+              Preview width follows paper mm ({paperLabel}) · same layout as Auto print
             </p>
           </SectionCard>
         </aside>

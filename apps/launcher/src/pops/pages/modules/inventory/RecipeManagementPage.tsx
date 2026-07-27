@@ -7,6 +7,7 @@ import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } f
 import { linkDangerClass, linkWarningClass, noticeSuccessClass } from "../../../lib/themeClasses";
 import {
   exportRecipesExcel,
+  downloadRecipeImportTemplateExcel,
   importRecipeRows,
   parseRecipeImportFile,
 } from "../../../lib/recipeImportExport";
@@ -145,6 +146,12 @@ export function RecipeManagementPage(): JSX.Element {
     setTransferNotice("Recipes exported to Excel.");
   }
 
+  function handleDownloadRecipeImportTemplate(): void {
+    if (!branch?.code) return;
+    downloadRecipeImportTemplateExcel(branch.code);
+    setTransferNotice("Recipe import template downloaded.");
+  }
+
   async function handleImportRecipesFile(file: File): Promise<void> {
     if (!branch?.code) return;
     setTransferBusy(true);
@@ -224,6 +231,14 @@ export function RecipeManagementPage(): JSX.Element {
                 onClick={handleExportRecipesExcel}
               >
                 Export Excel
+              </Button>
+              <Button
+                variant="ghost"
+                className="text-xs"
+                disabled={transferBusy || query.isLoading}
+                onClick={handleDownloadRecipeImportTemplate}
+              >
+                Download template
               </Button>
               <Button
                 className="text-xs"

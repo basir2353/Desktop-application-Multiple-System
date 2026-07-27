@@ -128,6 +128,51 @@ export function exportRecipesExcel(recipes: Recipe[], branchCode: string): void 
   );
 }
 
+/**
+ * Download a blank XLSX file so users can fill the correct sheet/column names.
+ * Import parser reads mainly the "Recipe Lines" sheet.
+ */
+export function downloadRecipeImportTemplateExcel(branchCode?: string): void {
+  const recipeSummaryTemplateRows = [
+    {
+      "Recipe Name": "",
+      "Menu Dish": "",
+      Version: "",
+      "Portion Size": "",
+      Active: "",
+      "Total Cost": 0,
+      "Ingredient Count": 0,
+    },
+  ];
+
+  const recipeLinesTemplateRows = [
+    {
+      "Recipe Name": "",
+      "Menu Dish": "",
+      Version: "",
+      "Portion Size": "",
+      Active: "",
+      Ingredient: "",
+      Qty: 0,
+      Unit: "g",
+    },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recipeSummaryTemplateRows), "Recipes");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recipeLinesTemplateRows), RECIPE_LINES_SHEET);
+
+  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const date = new Date().toISOString().slice(0, 10);
+  const code = branchCode ? `-${branchCode}` : "";
+  downloadBlob(
+    new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    `recipes-import-template${code}-${date}.xlsx`,
+  );
+}
+
 export function parseRecipeImportFile(buffer: ArrayBuffer, filename: string): RecipeImportRow[] {
   const lower = filename.toLowerCase();
   const wb = lower.endsWith(".csv")

@@ -29,6 +29,7 @@ import {
   isNarrowPaperWidth,
   isWidePaperWidth,
   loadThermalPrintSettings,
+  normalizeThermalPrintSettings,
   paperWidthMm,
   receiptRenderWidthPx,
   thermalCharsPerLine,
@@ -59,6 +60,8 @@ export type PrintTicketInput = {
   systemPrinterName?: string;
   copies?: number;
   paperSize?: PrinterPaperSize;
+  /** Override branch thermal defaults (preview / unsaved draft). */
+  thermal?: ThermalPrintSettings;
   notes?: string;
   lines: PrintLine[];
   subtotal: number;
@@ -169,7 +172,16 @@ function resolvePaperSize(
   input: Pick<PrintTicketInput, "paperSize" | "branchCode">,
   thermal: ThermalPrintSettings,
 ): PrinterPaperSize {
+  // Custom mm must win over a stale profile "80mm" — otherwise the PNG stays 80mm-wide
+  // while GDI uses a wider page (or vice versa) and the slip looks stretched/zoomed.
+  if (thermal.defaultPaperSize === "custom") return "custom";
   return input.paperSize ?? thermal.defaultPaperSize;
+}
+
+function resolveThermalSettings(input: PrintTicketInput): ThermalPrintSettings {
+  if (input.thermal) return normalizeThermalPrintSettings(input.thermal);
+  if (input.branchCode) return loadThermalPrintSettings(input.branchCode);
+  return DEFAULT_THERMAL_PRINT_SETTINGS;
 }
 
 function padRight(text: string, width: number): string {
@@ -502,10 +514,7 @@ export function buildThermalPlainText(
   thermalOverride?: ThermalPrintSettings,
 ): string {
   const thermal =
-    thermalOverride ??
-    (input.branchCode
-      ? loadThermalPrintSettings(input.branchCode)
-      : DEFAULT_THERMAL_PRINT_SETTINGS);
+    thermalOverride ?? resolveThermalSettings(input);
   if (input.kind !== "receipt") {
     return buildKotThermalPlainText(input, thermal);
   }
@@ -734,10 +743,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     (input.branchCode
       ? resolveBillPrintSettingsForReceipt(input.branchCode)
       : DEFAULT_BILL_PRINT_SETTINGS);
-  const thermal =
-    input.branchCode
-      ? loadThermalPrintSettings(input.branchCode)
-      : DEFAULT_THERMAL_PRINT_SETTINGS;
+  const thermal = resolveThermalSettings(input);
   const paperSize = resolvePaperSize(input, thermal);
   const narrowPaper = isNarrowPaperWidth(paperSize, thermal.customPaperWidthMm);
   const marginMm = thermal.marginMm;
@@ -2207,9 +2213,7 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
       : "KOT";
   const systemPrinterName = input.systemPrinterName?.trim();
   const copies = Math.max(1, input.copies ?? 1);
-  const thermal = input.branchCode
-    ? loadThermalPrintSettings(input.branchCode)
-    : DEFAULT_THERMAL_PRINT_SETTINGS;
+  const thermal = resolveThermalSettings(input);
   const paper = resolvePaperSize(input, thermal);
   // Same styled HTML for preview, Auto print, and dialog — never a different slip.
   const styledHtml = buildTicketHtml(input);
@@ -2287,6 +2291,7 @@ export async function printTestPageAsync(
     ...sample,
     kind: "receipt",
     paperSize: paper,
+    thermal,
     copies,
     printerName: printerName.trim() || "Test printer",
     systemPrinterName: printerName.trim() || undefined,

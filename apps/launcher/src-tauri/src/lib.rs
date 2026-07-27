@@ -235,21 +235,28 @@ fn print_raw_escpos(printer_name: &str, content: &str, job_name: &str) -> Result
     }
 }
 
+fn normalize_paper_width_mm(paper_width_mm: u32) -> u32 {
+    match paper_width_mm {
+        0..=47 => 48,
+        48..=210 => paper_width_mm,
+        _ => 210,
+    }
+}
+
+fn mm_to_hundredths_inch(mm: u32) -> u32 {
+    ((mm as f64 / 25.4) * 100.0).round().max(1.0) as u32
+}
+
 /// GDI PrintDocument with thermal paper width + small monospace font.
 /// Fixes the classic Out-Printer problem: letter page + large font → huge L/R margins on 58/80mm.
 fn print_via_gdi_thermal(printer_name: &str, path: &str, paper_width_mm: u32) -> Result<(), String> {
-    let width_mm = match paper_width_mm {
-        0..=64 => 58,
-        65..=100 => 80,
-        _ => paper_width_mm.min(210),
-    };
+    let width_mm = normalize_paper_width_mm(paper_width_mm);
     // Hundredths of an inch (Windows PaperSize).
-    let width_hi = if width_mm <= 58 { 228 } else if width_mm <= 80 { 315 } else { 827 };
+    let width_hi = mm_to_hundredths_inch(width_mm);
     // Continuous thermal roll (~3276mm). Avoid short 297mm forms that zoom text.
     let height_hi = 12897;
     // Larger bold type — readable on 203 DPI 80mm / 3" rolls.
-    let font_pt = if width_mm <= 58 { 8.0 } else { 9.0 };
-    let want80 = if width_mm >= 70 { 1 } else { 0 };
+    let font_pt = if width_mm <= 62 { 8.0 } else { 9.0 };
 
     let script = format!(
         r#"
@@ -257,7 +264,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $printerName = '{printer}'
 $path = '{path}'
-$want80 = {want80}
+$targetWidth = {width_hi}
 $content = [System.IO.File]::ReadAllText($path)
 $lines = $content -split "`r?`n"
 $doc = New-Object System.Drawing.Printing.PrintDocument
@@ -265,32 +272,19 @@ $doc.PrinterSettings.PrinterName = $printerName
 if (-not $doc.PrinterSettings.IsValid) {{ throw "Printer not valid: $printerName" }}
 $doc.DocumentName = 'POPS Thermal'
 $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
-$picked = $null
-$bestScore = -1
+$paper = New-Object System.Drawing.Printing.PaperSize('POPS Thermal', {width_hi}, {height_hi})
+try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
+$exact = $null
 foreach ($ps in $doc.PrinterSettings.PaperSizes) {{
-  $n = [string]$ps.PaperName
   $w = [int]$ps.Width
   $h = [int]$ps.Height
-  $match = $false
-  if ($want80 -eq 1) {{
-    if ($n -match '80\s*x|80\s*mm|3\s*inch|3"|352|GIANT|plusIII') {{ $match = $true }}
-    elseif ($w -ge 280 -and $w -le 360) {{ $match = $true }}
-  }} else {{
-    if ($n -match '58\s*x|58\s*mm|2\s*inch|2"') {{ $match = $true }}
-    elseif ($w -ge 200 -and $w -le 250) {{ $match = $true }}
+  if ([math]::Abs($w - $targetWidth) -le 2 -and $h -ge 1000) {{
+    $exact = $ps
+    if ([string]$ps.PaperName -match '3276|GIANT') {{ break }}
   }}
-  if (-not $match) {{ continue }}
-  $score = ($h * 100) + $w
-  if ($n -match '3276') {{ $score += 5000000 }}
-  if ($n -match 'GIANT') {{ $score += 50000 }}
-  if ($h -ge 5000) {{ $score += 200000 }}
-  if ($score -gt $bestScore) {{ $picked = $ps; $bestScore = $score }}
 }}
-if ($picked -ne $null) {{
-  $doc.DefaultPageSettings.PaperSize = $picked
-}} else {{
-  $paper = New-Object System.Drawing.Printing.PaperSize('POPS Thermal', {width_hi}, {height_hi})
-  try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
+if ($exact -ne $null) {{
+  $doc.DefaultPageSettings.PaperSize = $exact
 }}
 $doc.DefaultPageSettings.Landscape = $false
 $font = New-Object System.Drawing.Font('Consolas', {font_pt}, [System.Drawing.FontStyle]::Bold)
@@ -324,7 +318,6 @@ $doc.Dispose()
         width_hi = width_hi,
         height_hi = height_hi,
         font_pt = font_pt,
-        want80 = want80,
     );
 
     let output = command_no_window("powershell")
@@ -544,22 +537,11 @@ fn print_via_gdi_image(
     job_name: &str,
     copies: u32,
 ) -> Result<(), String> {
-    let width_mm = match paper_width_mm {
-        0..=64 => 58,
-        65..=100 => 80,
-        _ => paper_width_mm.min(210),
-    };
-    // Hundredths of an inch — 80mm ≈ 3.15" → 315; 58mm ≈ 2.28" → 228.
-    let width_hi = if width_mm <= 58 {
-        228
-    } else if width_mm <= 80 {
-        315
-    } else {
-        827
-    };
+    let width_mm = normalize_paper_width_mm(paper_width_mm);
+    // Hundredths of an inch.
+    let width_hi = mm_to_hundredths_inch(width_mm);
     // Continuous thermal roll (~3276mm). Short forms like 80x297 cause driver/PDF-style zoom.
     let height_hi = 12897;
-    let want80 = if width_mm >= 70 { 1 } else { 0 };
 
     let script = format!(
         r#"
@@ -569,7 +551,7 @@ $printerName = '{printer}'
 $path = '{path}'
 $jobName = '{job}'
 $copies = {copies}
-$want80 = {want80}
+$targetWidth = {width_hi}
 $widthHi = {width_hi}
 $heightHi = {height_hi}
 $img = [System.Drawing.Image]::FromFile($path)
@@ -581,33 +563,21 @@ try {{
     $doc.DocumentName = if ($copies -gt 1) {{ "$jobName ($c/$copies)" }} else {{ $jobName }}
     $doc.PrinterSettings.Copies = 1
     $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
-    $picked = $null
-    $bestScore = -1
+    # Exact custom PaperSize for the requested mm — avoid nearest 58/80 that mismatches
+    # the PNG canvas (stretch-to-page then looks like zoom / "khich").
+    $paper = New-Object System.Drawing.Printing.PaperSize('POPS Receipt', $widthHi, $heightHi)
+    try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
+    $exact = $null
     foreach ($ps in $doc.PrinterSettings.PaperSizes) {{
-      $n = [string]$ps.PaperName
       $w = [int]$ps.Width
       $h = [int]$ps.Height
-      $match = $false
-      if ($want80 -eq 1) {{
-        if ($n -match '80\s*x|80\s*mm|3\s*inch|3"|352|GIANT|plusIII|72\s*mm|76\s*mm|79\s*mm') {{ $match = $true }}
-        elseif ($w -ge 280 -and $w -le 360) {{ $match = $true }}
-      }} else {{
-        if ($n -match '58\s*x|58\s*mm|2\s*inch|2"') {{ $match = $true }}
-        elseif ($w -ge 200 -and $w -le 250) {{ $match = $true }}
+      if ([math]::Abs($w - $targetWidth) -le 2 -and $h -ge 1000) {{
+        $exact = $ps
+        if ([string]$ps.PaperName -match '3276|GIANT') {{ break }}
       }}
-      if (-not $match) {{ continue }}
-      # Prefer continuous roll (3276) over short page (297) — short pages zoom/blur text.
-      $score = ($h * 100) + $w
-      if ($n -match '3276') {{ $score += 5000000 }}
-      if ($n -match 'GIANT') {{ $score += 50000 }}
-      if ($h -ge 5000) {{ $score += 200000 }}
-      if ($score -gt $bestScore) {{ $picked = $ps; $bestScore = $score }}
     }}
-    if ($picked -ne $null) {{
-      $doc.DefaultPageSettings.PaperSize = $picked
-    }} else {{
-      $paper = New-Object System.Drawing.Printing.PaperSize('POPS Receipt', $widthHi, $heightHi)
-      try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
+    if ($exact -ne $null) {{
+      $doc.DefaultPageSettings.PaperSize = $exact
     }}
     $doc.DefaultPageSettings.Landscape = $false
     $script:srcY = 0
@@ -622,12 +592,18 @@ try {{
       $originY = [math]::Max(0, -$e.PageSettings.HardMarginY)
       $pageW = [math]::Max(1, $e.PageBounds.Width - 1)
       $pageH = [math]::Max(1, $e.PageBounds.Height - 1)
-      $scale = $pageW / [double]$img.Width
+      # Draw at the *intended* roll width (hundredths of an inch), not PageBounds.
+      # If the driver falls back to Letter/A4, stretching to PageBounds zooms the slip.
+      $drawW = [int]$widthHi
+      if ($drawW -gt $pageW) {{ $drawW = $pageW }}
+      if ($drawW -lt 1) {{ $drawW = $pageW }}
+      $scale = $drawW / [double]$img.Width
       $remain = $img.Height - $script:srcY
       $srcH = [math]::Min($remain, [math]::Ceiling($pageH / $scale))
       $drawH = [math]::Ceiling($srcH * $scale)
+      $x = [int]($originX + [math]::Max(0, ($pageW - $drawW) / 2))
       $srcRect = New-Object System.Drawing.Rectangle(0, [int]$script:srcY, $img.Width, [int]$srcH)
-      $destRect = New-Object System.Drawing.Rectangle([int]$originX, [int]$originY, [int]$pageW, [int]$drawH)
+      $destRect = New-Object System.Drawing.Rectangle($x, [int]$originY, [int]$drawW, [int]$drawH)
       $e.Graphics.DrawImage($img, $destRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
       $script:srcY += [int]$srcH
       $e.HasMorePages = ($script:srcY -lt $img.Height)
@@ -643,7 +619,6 @@ try {{
         path = escape_powershell_single_quoted(png_path),
         job = escape_powershell_single_quoted(job_name),
         copies = copies,
-        want80 = want80,
         width_hi = width_hi,
         height_hi = height_hi,
     );

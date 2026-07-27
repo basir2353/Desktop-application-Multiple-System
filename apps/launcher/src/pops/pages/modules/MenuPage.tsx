@@ -39,6 +39,7 @@ import { isHappyHourActive } from "../../lib/posHappyHour";
 import {
   exportMenuExcel,
   importMenuRows,
+  downloadMenuImportTemplateExcel,
   parseMenuImportFile,
 } from "../../lib/menuImportExport";
 import {
@@ -896,6 +897,12 @@ export function MenuPage(): JSX.Element {
     setMenuTransferNotice("Menu exported to Excel.");
   }
 
+  function handleDownloadMenuImportTemplate(): void {
+    if (!branch?.code) return;
+    downloadMenuImportTemplateExcel(branch.code);
+    setMenuTransferNotice("Menu import template downloaded.");
+  }
+
   async function handleImportMenuFile(file: File): Promise<void> {
     if (!branch?.code) return;
     setMenuTransferBusy(true);
@@ -976,6 +983,14 @@ export function MenuPage(): JSX.Element {
               onClick={handleExportMenuExcel}
             >
               Export Excel
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              disabled={menuTransferBusy || menuQuery.isLoading}
+              onClick={handleDownloadMenuImportTemplate}
+            >
+              Download template
             </Button>
             <Button
               className="text-xs"

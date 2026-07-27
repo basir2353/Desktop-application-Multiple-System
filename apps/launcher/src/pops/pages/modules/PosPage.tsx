@@ -63,6 +63,7 @@ import {
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../lib/printTicket";
+import { loadThermalPrintSettings } from "../../lib/thermalPrintSettings";
 import { fetchOrgUsers } from "../../api/users";
 import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
@@ -1623,10 +1624,15 @@ export function PosPage(): JSX.Element {
       );
       // One receipt dialog only — never re-open from profile copies when using the OS dialog.
       const posAction = intent === "invoice" ? "order" : "pay";
+      const thermal = loadThermalPrintSettings(branch?.code);
+      const paperSize =
+        thermal.defaultPaperSize === "custom"
+          ? "custom"
+          : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
       const result = await printReceiptDetailed({
         ...payload,
-        // Always honor the receipt printer profile paper (58mm / 80mm / A4).
-        paperSize: receiptProfile?.paperSize ?? payload.paperSize,
+        paperSize,
+        thermal,
         billPrintSettings: resolveBillPrintSettingsForReceipt(
           branch?.code,
           receiptProfile?.id,
@@ -1765,9 +1771,15 @@ export function PosPage(): JSX.Element {
           },
           receiptProfile,
         );
+        const thermal = loadThermalPrintSettings(branch?.code);
+        const paperSize =
+          thermal.defaultPaperSize === "custom"
+            ? "custom"
+            : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
         const result = await printReceiptDetailed({
           ...payload,
-          paperSize: receiptProfile?.paperSize ?? payload.paperSize,
+          paperSize,
+          thermal,
           billPrintSettings: resolveBillPrintSettingsForReceipt(
             branch?.code,
             receiptProfile?.id,
