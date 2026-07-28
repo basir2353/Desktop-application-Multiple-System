@@ -110,8 +110,11 @@ export function TaxPage(): JSX.Element {
   const branchCode = branch?.code || MAIN_SYSTEM_BRANCH_CODE;
   const branchLabel = branch?.name || MAIN_SYSTEM_BRANCH_NAME;
   const isStore = systemId === "general-store";
+  /** Keep Tax page reachable from sidebar even before Super Admin enables FBR/PRA. */
+  const alwaysShowTaxPage = isStore || systemId === "restaurant";
   const taxFeatures = useTaxAuthorityFeatures();
-  const taxEnabled = isTaxAuthorityEnabled(taxFeatures.data);
+  // Restaurant / general store: unlock connect UI even if platform flags are off or features API is missing.
+  const taxEnabled = alwaysShowTaxPage || isTaxAuthorityEnabled(taxFeatures.data);
   const onMainSystem = !branch?.code;
 
   const [company, setCompany] = useState<CompanyForm>(
@@ -124,13 +127,13 @@ export function TaxPage(): JSX.Element {
 
   const statusQuery = useQuery({
     queryKey: ["tax-authority", "status", branchCode],
-    enabled: taxEnabled,
+    enabled: taxEnabled || alwaysShowTaxPage,
     queryFn: () => fetchTaxAuthorityStatus(branchCode),
   });
 
   const invoicesQuery = useQuery({
     queryKey: ["tax-authority", "invoices", branchCode],
-    enabled: taxEnabled,
+    enabled: taxEnabled || alwaysShowTaxPage,
     queryFn: () => fetchTaxInvoices(branchCode),
     refetchInterval: 30_000,
   });
@@ -319,16 +322,21 @@ export function TaxPage(): JSX.Element {
     );
   }
 
-  // Restaurant/pharmacy: leave if Super Admin has not enabled FBR/PRA.
-  // General store: keep the page so staff can open Tax & compliance from the sidebar.
-  if (!taxEnabled && !isStore) {
+  // Pharmacy: leave if Super Admin has not enabled FBR/PRA.
+  // Restaurant + general store: keep the page so staff can open FBR / PRA from the sidebar.
+  if (!taxEnabled && !alwaysShowTaxPage) {
     return <Navigate to={erpEntryPathForRole(systemId, displayRole)} replace />;
   }
 
   const fbrStatus = statusQuery.data?.fbr.status ?? "disconnected";
   const praStatus = statusQuery.data?.pra.status ?? "disconnected";
-  const fbrEnabled = statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false;
-  const praEnabled = statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled ?? false;
+  // Restaurant/store unlock connect forms; pharmacy still respects Super Admin flags.
+  const fbrEnabled = alwaysShowTaxPage
+    ? true
+    : (statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false);
+  const praEnabled = alwaysShowTaxPage
+    ? true
+    : (statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled ?? false);
   const invoices = invoicesQuery.data ?? [];
   const showCompany = section === "overview";
   const showFbr = section === "overview" || section === "fbr";
@@ -340,19 +348,17 @@ export function TaxPage(): JSX.Element {
       <PageHeader
         title={isStore ? "General Store — FBR & PRA" : "FBR & PRA Integration"}
         subtitle={
-          !taxEnabled
-            ? "Ask platform Super Admin to enable FBR and/or PRA for this business, then connect credentials here."
-            : onMainSystem
-              ? isStore
-                ? "No store branch yet — connect FBR/PRA on the main business. Invoices submit automatically after POS sales."
-                : "No store branch yet — connecting to the main business system. Invoices submit automatically after sales."
-              : isStore
-                ? `Connect General Store branch ${branchLabel} (${branchCode}) once — fiscal invoices submit automatically after checkout.`
-                : `Connect ${branchLabel} (${branchCode}) once — invoices submit automatically after sales.`
+          onMainSystem
+            ? isStore
+              ? "No store branch yet — connect FBR/PRA on the main business. Invoices submit automatically after POS sales."
+              : "No store branch yet — connecting to the main business system. Invoices submit automatically after sales."
+            : isStore
+              ? `Connect General Store branch ${branchLabel} (${branchCode}) once — fiscal invoices submit automatically after checkout.`
+              : `Connect ${branchLabel} (${branchCode}) once — invoices submit automatically after sales.`
         }
       />
 
-      {isStore ? (
+      {alwaysShowTaxPage ? (
         <div className="flex flex-wrap gap-2">
           {(
             [
@@ -378,7 +384,7 @@ export function TaxPage(): JSX.Element {
         </div>
       ) : null}
 
-      {!taxEnabled ? (
+      {!alwaysShowTaxPage && !isTaxAuthorityEnabled(taxFeatures.data) ? (
         <div className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}>
           FBR / PRA is not enabled yet for this business. After Super Admin turns on FBR and/or PRA, return here to connect credentials. Sales will then submit fiscal invoices automatically.
         </div>

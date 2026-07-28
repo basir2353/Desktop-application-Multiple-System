@@ -22,6 +22,30 @@ async function readError(res: Response): Promise<string> {
 
 export async function fetchTaxAuthorityFeatures(): Promise<TaxAuthorityFeatures> {
   const res = await authFetch("/v1/tax-authority/features");
+  // Older hosted APIs omit this route — unlock FBR/PRA so restaurant/store can connect credentials.
+  if (res.status === 404) {
+    return { fbrEnabled: true, praEnabled: true };
+  }
+  if (!res.ok) throw new Error(await readError(res));
+  return taxAuthorityFeaturesSchema.parse(await res.json());
+}
+
+/** Org Admin / Incharge: enable or disable FBR and/or PRA for this business. */
+export async function updateTaxAuthorityFeatures(patch: {
+  fbrEnabled?: boolean;
+  praEnabled?: boolean;
+}): Promise<TaxAuthorityFeatures> {
+  const res = await authFetch("/v1/tax-authority/features", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (res.status === 404) {
+    return {
+      fbrEnabled: patch.fbrEnabled ?? true,
+      praEnabled: patch.praEnabled ?? true,
+    };
+  }
   if (!res.ok) throw new Error(await readError(res));
   return taxAuthorityFeaturesSchema.parse(await res.json());
 }

@@ -18,6 +18,8 @@ const STATEMENTS = [
   `ALTER TABLE pops_cash_movements ADD COLUMN IF NOT EXISTS party_kind text`,
   `ALTER TABLE pops_cash_movements ADD COLUMN IF NOT EXISTS client_request_id text`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS enabled_modules jsonb`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fbr_enabled boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_enabled boolean NOT NULL DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS licence_payments (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

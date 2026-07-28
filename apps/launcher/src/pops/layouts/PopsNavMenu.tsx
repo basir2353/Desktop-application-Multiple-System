@@ -180,9 +180,9 @@ function useSystemNavItems(): PopsNavItem[] {
     // Path allowlist only applies to the signed-in membership (not admin role preview).
     const allowlist = isAdminPreview ? null : navAllowlist;
     const filtered = filterNavItemsByPermissions(items, permissions, allowlist);
-    // General store always shows Tax & compliance (FBR/PRA) in the sidebar.
-    // Other systems hide until Super Admin enables FBR and/or PRA.
-    if (taxEnabled || systemId === "general-store") return filtered;
+    // Restaurant + general store always show FBR / PRA in the sidebar.
+    // Pharmacy still hides until Super Admin enables FBR and/or PRA.
+    if (taxEnabled || systemId === "general-store" || systemId === "restaurant") return filtered;
     return stripTaxNavItems(filtered);
   }, [systemId, jwtPermissions, displayRole, navAllowlist, taxEnabled]);
 }

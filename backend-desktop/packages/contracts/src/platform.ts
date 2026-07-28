@@ -278,8 +278,9 @@ export const platformAnalyticsSchema = z.object({
   suspendedBusinesses: z.number().int().nonnegative(),
   inactiveBusinesses: z.number().int().nonnegative(),
   totalUsers: z.number().int().nonnegative(),
-  expiredLicences: z.number().int().nonnegative(),
-  expiringSoonLicences: z.number().int().nonnegative(),
+  // Defaults keep older hosted APIs (missing licence rollups) from breaking Overview.
+  expiredLicences: z.number().int().nonnegative().default(0),
+  expiringSoonLicences: z.number().int().nonnegative().default(0),
   bySystemType: z.array(
     z.object({
       systemType: systemTypeSchema,
@@ -287,7 +288,7 @@ export const platformAnalyticsSchema = z.object({
     }),
   ),
   recentBusinesses: z.array(businessSchema).max(20),
-  licenceAlerts: z.array(businessSchema).max(20),
+  licenceAlerts: z.array(businessSchema).max(20).default([]),
 });
 
 export type Business = z.infer<typeof businessSchema>;

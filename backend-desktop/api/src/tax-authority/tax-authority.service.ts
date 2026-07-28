@@ -104,8 +104,8 @@ export class TaxAuthorityService {
   }
 
   async getStatus(organizationId: string, branchCode: string): Promise<TaxAuthorityStatus> {
-    const branch = await this.resolveBranch(organizationId, branchCode);
     const features = await this.getFeatures(organizationId);
+    const branch = await this.resolveBranch(organizationId, branchCode);
     const profile = await this.getProfile(organizationId, branch.id);
 
     if (!profile) {

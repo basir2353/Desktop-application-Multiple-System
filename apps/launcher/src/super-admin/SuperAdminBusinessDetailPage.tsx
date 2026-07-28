@@ -69,11 +69,39 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         fbrEnabled,
         praEnabled,
       }),
-    onSuccess: async () => {
-      setMessage("Business saved.");
+    onSuccess: async (saved) => {
+      setFbrEnabled(Boolean(saved.fbrEnabled));
+      setPraEnabled(Boolean(saved.praEnabled));
+      setMessage(
+        saved.fbrEnabled || saved.praEnabled
+          ? `Saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"}`
+          : "Business saved.",
+      );
       await qc.invalidateQueries({ queryKey: ["platform"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Save failed"),
+  });
+
+  const saveTaxMut = useMutation({
+    mutationFn: () => updatePlatformBusiness(businessId, { fbrEnabled, praEnabled }),
+    onSuccess: async (saved) => {
+      const applied =
+        Boolean(saved.fbrEnabled) === Boolean(fbrEnabled) &&
+        Boolean(saved.praEnabled) === Boolean(praEnabled);
+      setFbrEnabled(Boolean(saved.fbrEnabled));
+      setPraEnabled(Boolean(saved.praEnabled));
+      if (!applied) {
+        setMessage(
+          "Tax settings were not applied by the server. Hosted API is outdated — redeploy backend-desktop.",
+        );
+      } else {
+        setMessage(
+          `Tax settings saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"}`,
+        );
+      }
+      await qc.invalidateQueries({ queryKey: ["platform", "businesses", businessId] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Tax settings save failed"),
   });
 
   const statusMut = useMutation({
@@ -169,7 +197,17 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         </div>
       </div>
 
-      {message ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{message}</p> : null}
+      {message ? (
+        <p
+          className={`text-sm ${
+            /fail|error|denied|required|not applied|outdated/i.test(message)
+              ? "text-red-600 dark:text-red-400"
+              : "text-emerald-700 dark:text-emerald-400"
+          }`}
+        >
+          {message}
+        </p>
+      ) : null}
 
       <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
         <h3 className={`text-base font-semibold ${headingClass}`}>Business & licence</h3>
@@ -245,8 +283,8 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
             </span>
           </label>
         </div>
-        <Button type="button" disabled={saveMut.isPending || name.trim().length < 2} onClick={() => saveMut.mutate()}>
-          {saveMut.isPending ? "Saving…" : "Save tax settings"}
+        <Button type="button" disabled={saveTaxMut.isPending} onClick={() => saveTaxMut.mutate()}>
+          {saveTaxMut.isPending ? "Saving…" : "Save tax settings"}
         </Button>
       </section>
 
