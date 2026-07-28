@@ -298,13 +298,34 @@ function forceApplicationId(buildGradlePath, packageId) {
 /** Force short react-native path so Windows CMake stays under MAX_PATH (260). */
 function patchExpoModulesCoreReactNativeDir(buildPaths) {
   const monorepoRoot = resolve(join(buildPaths.appRoot, "..", ".."));
-  const rnShort = join(monorepoRoot, "node_modules", "react-native").replace(/\\/g, "/");
-  if (!existsSync(join(monorepoRoot, "node_modules", "react-native"))) {
-    console.warn("[build-apk] Short react-native path missing:", rnShort);
+  const shortRnCandidates = [
+    process.env.POPS_RN_PATH,
+    "C:\\rn",
+    join(monorepoRoot, "node_modules", "react-native"),
+  ].filter(Boolean);
+  let rnShort = null;
+  for (const candidate of shortRnCandidates) {
+    if (existsSync(join(candidate, "package.json"))) {
+      rnShort = candidate.replace(/\\/g, "/");
+      break;
+    }
+  }
+  if (!rnShort) {
+    console.warn("[build-apk] Short react-native path missing");
     return;
   }
 
   const gradleFiles = [];
+  const shortEmcCandidates = [
+    process.env.POPS_EMC_PATH,
+    "C:\\emc",
+    join(monorepoRoot, "node_modules", "expo-modules-core"),
+  ].filter(Boolean);
+  for (const emcRoot of shortEmcCandidates) {
+    const g = join(emcRoot, "android", "build.gradle");
+    if (existsSync(g)) gradleFiles.push(g);
+  }
+
   const direct = join(monorepoRoot, "node_modules", "expo-modules-core", "android", "build.gradle");
   if (existsSync(direct)) gradleFiles.push(direct);
 
@@ -321,11 +342,10 @@ function patchExpoModulesCoreReactNativeDir(buildPaths) {
     /: file\(providers\.exec \{\s*workingDir\(rootDir\)\s*commandLine\("node", "--print", "require\.resolve\('react-native\/package\.json'\)"\)\s*\}\.standardOutput\.asText\.get\(\)\.trim\(\)\)\.parent/;
   const replacement = `: file("${rnShort}")`;
 
-  for (const gradlePath of gradleFiles) {
+  for (const gradlePath of [...new Set(gradleFiles)]) {
     let text = readFileSync(gradlePath, "utf8");
     if (text.includes(`file("${rnShort}")`)) continue;
     if (!needle.test(text)) {
-      // already patched differently or upstream changed — try looser replace
       const loose = text.replace(
         /commandLine\("node", "--print", "require\.resolve\('react-native\/package\.json'\)"\)[\s\S]*?\.parent/,
         `/* patched */\n  : file("${rnShort}")`,
@@ -339,8 +359,25 @@ function patchExpoModulesCoreReactNativeDir(buildPaths) {
       text = text.replace(needle, replacement);
     }
     writeFileSync(gradlePath, text);
-    console.log(`[build-apk] Patched REACT_NATIVE_DIR → ${rnShort}`);
+    console.log(`[build-apk] Patched REACT_NATIVE_DIR → ${rnShort} in ${gradlePath}`);
   }
+}
+
+function writeLocalProperties(androidDirPath) {
+  const sdk =
+    process.env.ANDROID_HOME ||
+    process.env.ANDROID_SDK_ROOT ||
+    (isWin
+      ? join(process.env.LOCALAPPDATA || "", "Android", "Sdk")
+      : join(process.env.HOME || "", "Android", "Sdk"));
+  if (!sdk || !existsSync(sdk)) {
+    console.warn("[build-apk] Android SDK not found — set ANDROID_HOME before building");
+    return;
+  }
+  const propsPath = join(androidDirPath, "local.properties");
+  const sdkDir = sdk.replace(/\\/g, "/");
+  writeFileSync(propsPath, `sdk.dir=${sdkDir}\n`, "utf8");
+  console.log(`[build-apk] Wrote local.properties → ${sdkDir}`);
 }
 
 function applyAndroidPatches(buildPaths) {
@@ -350,6 +387,7 @@ function applyAndroidPatches(buildPaths) {
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
   forceApplicationId(buildGradle, variant.packageId);
   patchExpoModulesCoreReactNativeDir(buildPaths);
+  writeLocalProperties(buildPaths.androidDir);
 }
 
 function clearAutolinkingCache(androidDirPath) {
@@ -402,6 +440,24 @@ function seedAutolinkingJson(buildPaths, apiUrl) {
       /([A-Za-z]:[\\/](?:[^"\\]+[\\/])*?)node_modules[\\/]\.pnpm[\\/][^"\\]+[\\/]node_modules[\\/]([^"\\/]+)/g,
       (_m, _prefix, pkg) => join(monorepoRoot, "node_modules", pkg).replace(/\\/g, "\\\\"),
     );
+    // Prefer ultra-short physical copies when present (avoids CMAKE_OBJECT_PATH_MAX).
+    if (existsSync("C:\\emc\\package.json")) {
+      text = text.replace(
+        /([A-Za-z]:[\\/][^"]*[\\/]expo-modules-core)(?=[\\/"] )/g,
+        "C:\\\\emc",
+      );
+      text = text.split("expo-modules-core").length
+        ? text.replace(
+            /"root":\s*"[^"]*expo-modules-core"/g,
+            '"root":"C:\\\\emc"',
+          )
+        : text;
+      text = text.replace(/"path":\s*"[^"]*expo-modules-core"/g, '"path":"C:\\\\emc"');
+    }
+    if (existsSync("C:\\rn\\package.json")) {
+      text = text.replace(/"root":\s*"[^"]*react-native"/g, '"root":"C:\\\\rn"');
+      text = text.replace(/"path":\s*"[^"]*[\\/]react-native"/g, '"path":"C:\\\\rn"');
+    }
     writeFileSync(outFile, text);
   } catch (err) {
     console.warn("[build-apk] autolinking path rewrite skipped:", err instanceof Error ? err.message : err);
@@ -428,6 +484,10 @@ clearAutolinkingCache(paths.androidDir);
 seedAutolinkingJson(paths, apiUrl);
 
 console.log("[build-apk] Assembling release APK…");
+const androidSdk =
+  process.env.ANDROID_HOME ||
+  process.env.ANDROID_SDK_ROOT ||
+  (isWin ? join(process.env.LOCALAPPDATA || "", "Android", "Sdk") : "");
 const gradleEnv = {
   EXPO_PUBLIC_API_BASE_URL: apiUrl,
   EXPO_PUBLIC_APP_VARIANT: variant.envVariant,
@@ -435,6 +495,9 @@ const gradleEnv = {
   EXPO_NO_METRO_WORKSPACE_ROOT: "1",
   NODE_OPTIONS: "--max-old-space-size=4096",
   ORG_GRADLE_PROJECT_reactNativeArchitectures: "arm64-v8a",
+  ...(androidSdk && existsSync(androidSdk)
+    ? { ANDROID_HOME: androidSdk, ANDROID_SDK_ROOT: androidSdk }
+    : {}),
 };
 
 // Metro writes sourcemaps here before Gradle creates the folder (clean prebuild).

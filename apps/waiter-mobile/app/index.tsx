@@ -210,7 +210,7 @@ export default function LoginScreen() {
   const roleCopy = isAdminApp
     ? {
         title: "Admin / Incharge",
-        subtitle: "Dashboard, users, activity, and PRA controls.",
+        subtitle: "Full dashboard — sales, users, activity, and PRA.",
         demoPin: undefined as string | undefined,
       }
     : ROLE_DEFAULTS[roleTab];
@@ -223,7 +223,7 @@ export default function LoginScreen() {
             <Title>{appName}</Title>
             <Subtitle>
               {isAdminApp
-                ? "Admin login — full dashboard, users, and PRA settings."
+                ? "Admin login — sales dashboard, users, activity, and PRA."
                 : "One Staff APK · Waiter or Rider · then Email or PIN below."}
             </Subtitle>
           </View>

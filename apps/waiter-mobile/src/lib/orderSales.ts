@@ -1,0 +1,157 @@
+import type { Bill } from "@platform/contracts";
+
+const KARACHI_TZ = "Asia/Karachi";
+
+export function formatPkr(amount: number): string {
+  return `Rs ${Math.round(amount).toLocaleString("en-PK")}`;
+}
+
+export function karachiDateKey(date: Date | string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: KARACHI_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(typeof date === "string" ? new Date(date) : date);
+}
+
+export function karachiTime(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: KARACHI_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
+}
+
+function shiftDateKey(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days, 12));
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Calendar day in Asia/Karachi (midnight–midnight). */
+export function currentBusinessDateKey(): string {
+  return karachiDateKey(new Date());
+}
+
+export function payableCompletedOrders(orders: Bill[]): Bill[] {
+  return orders.filter(
+    (o) =>
+      (o.status === "completed" || o.status === "held") &&
+      !o.billRef.endsWith("-SEED") &&
+      o.total > 0,
+  );
+}
+
+export type OrderChannelLabel =
+  | "Dine-in"
+  | "Takeaway"
+  | "Delivery"
+  | "Online Orders"
+  | "Foodpanda Orders"
+  | "Staff Food";
+
+export function billChannelLabel(tableLabel: string): OrderChannelLabel {
+  const label = tableLabel.trim().toLowerCase();
+  if (label.includes("staff food") || label.includes("staff-food") || label.startsWith("sf-")) {
+    return "Staff Food";
+  }
+  if (label.includes("foodpanda") || label.startsWith("fp-")) return "Foodpanda Orders";
+  if (label.includes("online") || label.startsWith("ol-")) return "Online Orders";
+  if (label === "delivery" || label.startsWith("dl-")) return "Delivery";
+  if (label.includes("takeaway") || label.startsWith("tw-")) return "Takeaway";
+  return "Dine-in";
+}
+
+export type OrderSalesMetrics = {
+  todayAmountPkr: number;
+  yesterdayAmountPkr: number;
+  allCompletedAmountPkr: number;
+  changePercent: number;
+  orderCount: number;
+  todayOrderCount: number;
+  recentSales: { time: string; type: string; ref: string; amount: number }[];
+};
+
+export function salesMetricsFromOrders(orders: Bill[]): OrderSalesMetrics {
+  const completed = payableCompletedOrders(orders);
+  const todayKey = currentBusinessDateKey();
+  const yesterdayKey = shiftDateKey(todayKey, -1);
+
+  const todayOrders = completed.filter((o) => karachiDateKey(o.createdAt) === todayKey);
+  const yesterdayOrders = completed.filter((o) => karachiDateKey(o.createdAt) === yesterdayKey);
+
+  const todayAmountPkr = todayOrders.reduce((s, o) => s + o.total, 0);
+  const yesterdayAmountPkr = yesterdayOrders.reduce((s, o) => s + o.total, 0);
+  const allCompletedAmountPkr = completed.reduce((s, o) => s + o.total, 0);
+  const changePercent =
+    yesterdayAmountPkr > 0
+      ? Math.round(((todayAmountPkr - yesterdayAmountPkr) / yesterdayAmountPkr) * 100)
+      : 0;
+
+  const recentSales = [...completed]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 12)
+    .map((order) => ({
+      time: karachiTime(order.createdAt),
+      type: billChannelLabel(order.tableLabel),
+      ref: order.orderRef ?? order.billRef,
+      amount: order.total,
+    }));
+
+  return {
+    todayAmountPkr,
+    yesterdayAmountPkr,
+    allCompletedAmountPkr,
+    changePercent,
+    orderCount: completed.length,
+    todayOrderCount: todayOrders.length,
+    recentSales,
+  };
+}
+
+export type ChannelSales = { label: OrderChannelLabel; amount: number; count: number };
+
+export function channelSalesFromOrders(orders: Bill[]): ChannelSales[] {
+  const completed = payableCompletedOrders(orders);
+  const channels: OrderChannelLabel[] = [
+    "Dine-in",
+    "Takeaway",
+    "Delivery",
+    "Online Orders",
+    "Foodpanda Orders",
+    "Staff Food",
+  ];
+  return channels
+    .map((label) => {
+      const rows = completed.filter((o) => billChannelLabel(o.tableLabel) === label);
+      return {
+        label,
+        amount: rows.reduce((s, o) => s + o.total, 0),
+        count: rows.length,
+      };
+    })
+    .filter((c) => c.count > 0);
+}
+
+export type TopProduct = { label: string; qty: number; revenue: number };
+
+export function topProductsFromOrders(orders: Bill[], limit = 20): TopProduct[] {
+  const map = new Map<string, TopProduct>();
+  for (const order of payableCompletedOrders(orders)) {
+    for (const line of order.lines ?? []) {
+      const label = line.label?.trim() || "Item";
+      const existing = map.get(label) ?? { label, qty: 0, revenue: 0 };
+      existing.qty += line.qty;
+      existing.revenue += line.unitPrice * line.qty;
+      map.set(label, existing);
+    }
+  }
+  return [...map.values()].sort((a, b) => b.revenue - a.revenue).slice(0, limit);
+}
+
+export function filterOrdersByDate(orders: Bill[], dateKey: string | null): Bill[] {
+  if (!dateKey) return payableCompletedOrders(orders);
+  return payableCompletedOrders(orders).filter((o) => karachiDateKey(o.createdAt) === dateKey);
+}
