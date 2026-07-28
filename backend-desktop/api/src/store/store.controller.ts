@@ -16,6 +16,7 @@ import {
   validateStoreCouponSchema,
   validateStoreGiftCardSchema,
   updateStoreCustomerTierSchema,
+  updateStoreProductSchema,
   createStorePurchaseOrderSchema,
   createStorePurchaseRequisitionSchema,
   createStoreSaleSchema,
@@ -100,6 +101,16 @@ export class StoreController {
   @RequirePermissions("pops.inventory.manage")
   createProduct(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.store.createProduct(user.organizationId, createStoreProductSchema.parse(body));
+  }
+
+  @Patch("products/:productId")
+  @RequirePermissions("pops.inventory.manage")
+  updateProduct(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("productId") productId: string,
+    @Body() body: unknown,
+  ) {
+    return this.store.updateProduct(user.organizationId, productId, updateStoreProductSchema.parse(body));
   }
 
   @Delete("products/:productId")

@@ -1,3 +1,4 @@
+import { Button } from "@platform/ui";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -15,6 +16,17 @@ import { PageHeader } from "../../pops/ui/PageHeader";
 import { StoreDataTable } from "../ui/StoreUi";
 import { Badge } from "../../pops/ui/Badge";
 import { noticeErrorClass } from "../../pops/lib/themeClasses";
+
+const storeReportTypes = [
+  { label: "Stock reports", to: "/pops/store/reports/stock", hint: "Current stock, movement, dead stock, fast/slow movers" },
+  { label: "Peak hours", to: "/pops/store/reports/peak-hours", hint: "Busy periods and transaction volume by hour" },
+  { label: "Employee report", to: "/pops/store/reports/employees", hint: "Cashier and staff sales performance" },
+  { label: "Wastage report", to: "/pops/store/reports/wastage", hint: "Write-offs and wastage tracking" },
+  { label: "Profit / loss", to: "/pops/store/reports/profit-loss", hint: "Revenue, COGS, margins, top products" },
+  { label: "Inventory valuation", to: "/pops/store/reports/inventory", hint: "Stock value and movement transactions" },
+  { label: "Tax (PRA/FBR)", to: "/pops/tax", hint: "Fiscal invoice status and authority connection" },
+  { label: "Consolidated multi-branch", to: "/pops/multi-branch/reports", hint: "Cross-branch consolidated view" },
+];
 
 export function StoreReportsPage(): JSX.Element {
   const { branch } = useStoreAccess();
@@ -36,11 +48,22 @@ export function StoreReportsPage(): JSX.Element {
   const stock = stockQuery.data;
 
   return (
-    <div className="space-y-5">
-      <PageHeader title="Reports hub" subtitle="Inventory, financial, and business intelligence reports." />
+    <div className="space-y-4">
+      <PageHeader
+        title="Reports & analytics"
+        subtitle="General Store — saved layouts, comparisons, and exports (same workflow as Restaurant Reports)."
+        actions={
+          <>
+            <Button variant="ghost" className="text-xs">
+              Schedule email
+            </Button>
+            <Button className="text-xs">Export Excel</Button>
+          </>
+        }
+      />
 
       <StoreReportDateFilter
-        description="Set the period for all report summaries below. Each report page uses the same date & time filter."
+        description="Set the period for report summaries. Each report page uses the same date & time filter."
         fromLocal={filter.fromLocal}
         toLocal={filter.toLocal}
         periodLabel={filter.periodLabel}
@@ -67,34 +90,47 @@ export function StoreReportsPage(): JSX.Element {
         <StoreStatCard label="Fast movers" value={stock?.fastMoving.length ?? "—"} />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Link
-          to="/pops/store/reports/stock"
-          className="group rounded-xl border border-slate-200 p-5 transition hover:border-sky-400 hover:shadow-md dark:border-slate-800 dark:hover:border-sky-600"
-        >
-          <h3 className="text-sm font-semibold text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
-            Stock reports
-          </h3>
-          <p className="mt-1 text-xs text-slate-500">Current stock, movement, dead stock, fast/slow movers</p>
-        </Link>
-        <Link
-          to="/pops/store/reports/profit-loss"
-          className="group rounded-xl border border-slate-200 p-5 transition hover:border-sky-400 hover:shadow-md dark:border-slate-800 dark:hover:border-sky-600"
-        >
-          <h3 className="text-sm font-semibold text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
-            Profit / loss
-          </h3>
-          <p className="mt-1 text-xs text-slate-500">Revenue, COGS, margins, top products</p>
-        </Link>
-        <Link
-          to="/pops/store/reports/inventory"
-          className="group rounded-xl border border-slate-200 p-5 transition hover:border-sky-400 hover:shadow-md dark:border-slate-800 dark:hover:border-sky-600"
-        >
-          <h3 className="text-sm font-semibold text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
-            Inventory valuation
-          </h3>
-          <p className="mt-1 text-xs text-slate-500">Stock value and filtered movement transactions</p>
-        </Link>
+      <div className="grid gap-4 lg:grid-cols-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900/40 lg:col-span-1">
+          <div className="text-xs font-semibold uppercase text-slate-500">Report</div>
+          <ul className="mt-2 space-y-1">
+            {storeReportTypes.map((r) => (
+              <li key={r.label}>
+                <Link
+                  to={r.to}
+                  className="block w-full rounded px-2 py-1.5 text-left text-sm text-emerald-700 hover:bg-slate-100 dark:text-emerald-300 dark:hover:bg-slate-800"
+                >
+                  {r.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/30 lg:col-span-3">
+          <div className="text-sm text-slate-700 dark:text-slate-300">
+            Pick a report on the left, or open{" "}
+            <Link className="text-emerald-600 underline dark:text-emerald-400" to="/pops/store/reports/stock">
+              Stock reports
+            </Link>{" "}
+            /{" "}
+            <Link className="text-emerald-600 underline dark:text-emerald-400" to="/pops/store/reports/profit-loss">
+              Profit / loss
+            </Link>{" "}
+            for live General Store data.
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {storeReportTypes.slice(0, 6).map((r) => (
+              <Link
+                key={r.to}
+                to={r.to}
+                className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 transition hover:border-sky-400 hover:bg-sky-50/50 dark:border-slate-700 dark:bg-slate-950/40 dark:hover:border-sky-600"
+              >
+                <div className="text-sm font-semibold text-slate-900 dark:text-white">{r.label}</div>
+                <p className="mt-1 text-xs text-slate-500">{r.hint}</p>
+              </Link>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

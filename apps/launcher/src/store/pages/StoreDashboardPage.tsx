@@ -14,10 +14,10 @@ const CHART_COLORS = ["#0ea5e9", "#6366f1", "#8b5cf6", "#f59e0b", "#ef4444", "#1
 
 function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }): JSX.Element {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
       <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h2>
       {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
-      <div className="mt-4">{children}</div>
+      <div className="mt-4 min-w-0 overflow-hidden">{children}</div>
     </div>
   );
 }
@@ -107,23 +107,27 @@ export function StoreDashboardPage(): JSX.Element {
         </ChartCard>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-3">
         <ChartCard title="Stock health">
-          <AnimatedDonutChart segments={stockSegments} formatValue={(n) => String(n)} emptyMessage="No stock data" />
+          <AnimatedDonutChart segments={stockSegments} emptyMessage="No stock data" />
         </ChartCard>
         <ChartCard title="Category stock">
           <AnimatedDonutChart
+            legendBelow
             segments={m.categoryStock.map((c, i) => ({ label: c.label, value: c.value, color: CHART_COLORS[i % CHART_COLORS.length]! }))}
-            formatValue={(n) => String(n)}
             emptyMessage="No category data"
           />
         </ChartCard>
         <ChartCard title="Warehouse summary">
-          <ul className="space-y-2">
+          <ul className="min-w-0 space-y-3">
             {m.warehouseSummary.map((w) => (
-              <li key={w.name} className="flex items-center justify-between text-sm">
-                <span className="text-slate-700 dark:text-slate-200">{w.name}</span>
-                <span className="font-medium tabular-nums text-slate-900 dark:text-white">{w.stock.toLocaleString()} units · {formatPkr(w.value)}</span>
+              <li key={w.name} className="min-w-0 text-sm">
+                <div className="truncate font-medium text-slate-900 dark:text-white" title={w.name}>{w.name}</div>
+                <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-slate-600 dark:text-slate-300">
+                  <span className="tabular-nums">{w.stock.toLocaleString()} units</span>
+                  <span className="text-slate-400">·</span>
+                  <span className="break-all tabular-nums">{formatPkr(w.value)}</span>
+                </div>
               </li>
             ))}
           </ul>

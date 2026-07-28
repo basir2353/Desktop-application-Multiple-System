@@ -28,7 +28,7 @@ export const storeNavItems: PopsNavItem[] = [
     label: "Purchase",
     children: [
       { path: "store/purchase/requisitions", label: "Requisitions" },
-      { path: "store/purchase/orders", label: "Purchase orders" },
+      { path: "store/purchase/orders", label: "Purchasing" },
       { path: "store/purchase/grn", label: "Goods receiving (GRN)" },
       { path: "store/purchase/returns", label: "Purchase returns" },
       { path: "store/suppliers", label: "Suppliers" },
@@ -36,12 +36,21 @@ export const storeNavItems: PopsNavItem[] = [
   },
   {
     type: "group",
+    label: "Point of Sale",
+    children: [
+      { path: "store/pos", label: "Sales Receipt" },
+      { path: "store/pos-bookmarks", label: "Quick Pick bookmarks" },
+      { path: "store/pay-in-out", label: "Pay In / Pay Out" },
+      { path: "store/shifts", label: "Shifts & cash" },
+      { path: "store/setup", label: "POS setup" },
+      { path: "store/shortcuts", label: "POS shortcuts (F1–F12)" },
+    ],
+  },
+  {
+    type: "group",
     label: "Sales",
     children: [
-      { path: "store/pos", label: "Point of sale" },
-      { path: "store/shifts", label: "Shifts & cash" },
-      { path: "store/promotions", label: "Promotions" },
-      { path: "store/shortcuts", label: "POS shortcuts" },
+      { path: "store/promotions", label: "Automatic Discounts" },
       { path: "store/price-checker", label: "Price checker" },
       { path: "store/coupons", label: "Coupons" },
       { path: "store/gift-cards", label: "Gift cards" },
@@ -55,18 +64,49 @@ export const storeNavItems: PopsNavItem[] = [
     type: "group",
     label: "Reports",
     children: [
+      { path: "store/reports", label: "Overview" },
       { path: "store/reports/stock", label: "Stock reports" },
       { path: "store/reports/peak-hours", label: "Peak hours" },
       { path: "store/reports/employees", label: "Employee report" },
       { path: "store/reports/wastage", label: "Wastage report" },
       { path: "store/reports/profit-loss", label: "Profit / loss" },
       { path: "store/reports/inventory", label: "Inventory valuation" },
-      { path: "store/reports", label: "Reports hub" },
     ],
   },
+  {
+    type: "group",
+    label: "Multi-branch",
+    children: [
+      { path: "multi-branch", label: "Overview" },
+      { path: "multi-branch/transfers", label: "Transfers" },
+      { path: "multi-branch/receive", label: "Receive" },
+      { path: "multi-branch/pricing", label: "Branch pricing" },
+      { path: "multi-branch/reports", label: "Consolidated report" },
+    ],
+  },
+  {
+    type: "group",
+    label: "Tax & compliance",
+    children: [
+      { path: "tax", label: "Overview" },
+      { path: "tax/fbr", label: "FBR" },
+      { path: "tax/pra", label: "PRA" },
+      { path: "tax/invoices", label: "Invoice queue" },
+    ],
+  },
+  { type: "link", path: "printer", label: "Printer" },
+  { type: "link", path: "closing", label: "Closing" },
+  { type: "link", path: "sync", label: "Sync & backup" },
   { type: "link", path: "auth", label: "Users & roles" },
-  { type: "link", path: "tax", label: "FBR / PRA" },
-  { type: "link", path: "notifications", label: "Notifications" },
+  {
+    type: "group",
+    label: "Notifications",
+    children: [
+      { path: "notifications", label: "Overview" },
+      { path: "notifications/templates", label: "Templates" },
+    ],
+  },
+  { type: "link", path: "security", label: "Security" },
   { type: "link", path: "settings", label: "Settings" },
 ];
 

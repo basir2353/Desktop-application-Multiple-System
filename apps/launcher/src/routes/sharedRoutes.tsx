@@ -22,6 +22,9 @@ const PrinterPage = lazy(() =>
 const ClosingPage = lazy(() =>
   import("../pops/pages/modules/ClosingPage").then((m) => ({ default: m.ClosingPage })),
 );
+const SyncPage = lazy(() =>
+  import("../pops/pages/modules/SyncPage").then((m) => ({ default: m.SyncPage })),
+);
 const MultiBranchDashboardPage = lazy(() =>
   import("../pops/pages/modules/multi-branch/MultiBranchDashboardPage").then((m) => ({
     default: m.MultiBranchDashboardPage,
@@ -58,8 +61,12 @@ export function sharedRoutes(): JSX.Element {
       <Route path="security" element={<SecurityPage />} />
       <Route path="settings" element={<SettingsPage />} />
       <Route path="tax" element={<TaxPage />} />
+      <Route path="tax/fbr" element={<TaxPage />} />
+      <Route path="tax/pra" element={<TaxPage />} />
+      <Route path="tax/invoices" element={<TaxPage />} />
       <Route path="printer" element={<PrinterPage />} />
       <Route path="closing" element={<ClosingPage />} />
+      <Route path="sync" element={<SyncPage />} />
       {/* Branch create/manage must be available before any branch exists. */}
       <Route path="multi-branch" element={<MultiBranchDashboardPage />} />
       <Route path="multi-branch/transfers" element={<InterBranchTransfersPage />} />

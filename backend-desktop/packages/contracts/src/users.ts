@@ -184,6 +184,7 @@ export const POPS_ROLE_TEMPLATES: RoleTemplate[] = [
     label: "Manager",
     permissions: [
       "pops.read",
+      "pops.users.manage",
       "pops.menu.manage",
       "pops.inventory.manage",
       "pops.hr.manage",

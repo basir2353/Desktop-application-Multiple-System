@@ -1,16 +1,51 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
-import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts";
+import { DELIVERY_STATUS_LABELS, type DeliveryOrder, type DeliveryStatus } from "@platform/contracts";
 import { fetchMyDeliveries, updateDeliveryStatus } from "../src/api/delivery";
 import { fetchBranchMenu } from "../src/api/menu";
 import { Button, Card, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
-import { DeliveryMap } from "../src/components/DeliveryMap";
+import { DeliveryMap, mapsDestinationQuery } from "../src/components/DeliveryMap";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
+
+function looksLikePhone(value: string): boolean {
+  const v = value.trim();
+  return /^\+?\d[\d\s()-]{5,}$/.test(v) && !/[a-zA-Z\u0600-\u06FF]{2,}/.test(v);
+}
+
+/** Prefer real street/area address — never use phone number as map destination. */
+function resolveRiderMapAddress(order: DeliveryOrder): string {
+  const primary = (order.customerAddress ?? "").trim();
+  if (primary && primary !== "—" && mapsDestinationQuery(primary)) return primary;
+
+  const notes = (order.notes ?? "").trim();
+  if (!notes) return primary || "—";
+
+  // Notes may be "Delivery · name · phone · address" or a plain address.
+  if (notes.includes("·") || /^delivery\b/i.test(notes)) {
+    const parts = notes
+      .split("·")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const dIdx = parts.findIndex((p) => p.toLowerCase() === "delivery");
+    const rest = dIdx >= 0 ? parts.slice(dIdx + 1) : parts;
+    if (rest.length >= 3 && looksLikePhone(rest[1])) {
+      const addr = rest.slice(2).join(" · ");
+      if (mapsDestinationQuery(addr)) return addr;
+    }
+    if (rest.length >= 2) {
+      const addr = rest[rest.length - 1];
+      if (mapsDestinationQuery(addr)) return addr;
+    }
+  }
+
+  if (mapsDestinationQuery(notes)) return notes;
+  return primary || notes || "—";
+}
 
 export default function RiderDeliveryDetailScreen() {
   const router = useRouter();
@@ -91,11 +126,11 @@ export default function RiderDeliveryDetailScreen() {
           <Text style={styles.label}>Customer</Text>
           <Text style={styles.value}>{order.customerName}</Text>
           <Text style={[styles.label, { marginTop: 12 }]}>Delivery address</Text>
-          <Text style={styles.value}>{order.customerAddress}</Text>
+          <Text style={styles.value}>{resolveRiderMapAddress(order)}</Text>
         </Card>
 
         <Card style={styles.section}>
-          <DeliveryMap address={order.customerAddress} title="Google Maps" height={240} />
+          <DeliveryMap address={resolveRiderMapAddress(order)} title="Google Maps" height={240} />
         </Card>
 
         <Card style={styles.section}>

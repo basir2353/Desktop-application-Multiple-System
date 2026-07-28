@@ -10,6 +10,7 @@ import {
   getErpEntryPath,
 } from "../lib/businessSystems";
 import {
+  clearDeviceInstall,
   getEffectiveSystemLock,
   getInstalledSystemId,
   recordDeviceInstall,
@@ -20,6 +21,7 @@ import {
   parseLoginRoleParam,
   roleSelectPath,
   DEMO_OWNER_PASSWORD,
+  DEMO_STAFF_PASSWORD,
   DEMO_SUPER_ADMIN_EMAIL,
   DEMO_SUPER_ADMIN_PASSWORD,
 } from "../lib/loginRoles";
@@ -79,7 +81,13 @@ export function LoginPage(): JSX.Element {
     if (!roleMeta) return;
     setEmail(roleMeta.demoEmail ?? "");
     setPinEmail(roleMeta.demoEmail ?? "");
-    setPassword(isSuperAdminLogin ? DEMO_SUPER_ADMIN_PASSWORD : DEMO_OWNER_PASSWORD);
+    if (isSuperAdminLogin) {
+      setPassword(DEMO_SUPER_ADMIN_PASSWORD);
+    } else if (roleMeta.kind === "admin") {
+      setPassword(DEMO_OWNER_PASSWORD);
+    } else {
+      setPassword(DEMO_STAFF_PASSWORD);
+    }
     setMode("password");
     setError(null);
   }, [roleMeta?.id, roleMeta?.kind, roleMeta?.demoEmail, isSuperAdminLogin]);
@@ -259,15 +267,18 @@ export function LoginPage(): JSX.Element {
           ← Change role
         </button>
         <div className="flex items-center gap-2">
-          {systemLock ? null : (
-            <button
-              type="button"
-              onClick={() => navigate("/")}
-              className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-            >
-              System
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              clearDeviceInstall();
+              useSystemStore.getState().clearSystem();
+              clearSession();
+              window.location.assign("/?reset-install=1");
+            }}
+            className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+          >
+            ← Systems
+          </button>
           <ThemeToggle />
         </div>
       </div>

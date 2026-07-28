@@ -86,7 +86,11 @@ export default function RiderDeliveriesScreen() {
                   </View>
                 </View>
                 <Text style={styles.customer}>{order.customerName}</Text>
-                <Text style={styles.address}>{order.customerAddress}</Text>
+                <Text style={styles.address}>
+                  {order.customerAddress && !/^\+?\d[\d\s()-]{5,}$/.test(order.customerAddress.trim())
+                    ? order.customerAddress
+                    : order.notes?.trim() || order.customerAddress}
+                </Text>
                 <Text style={styles.items} numberOfLines={2}>
                   {order.itemsSummary.split(" · Delivery")[0]}
                 </Text>

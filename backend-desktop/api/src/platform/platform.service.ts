@@ -102,6 +102,8 @@ export class PlatformService {
         licencePlan: organizations.licencePlan,
         licenceExpiresAt: organizations.licenceExpiresAt,
         enabledModules: organizations.enabledModules,
+        fbrEnabled: organizations.fbrEnabled,
+        praEnabled: organizations.praEnabled,
         createdBy: organizations.createdBy,
         createdAt: organizations.createdAt,
       })
@@ -761,8 +763,19 @@ export class PlatformService {
       suspendedBusinesses: businesses.filter((b) => b.status === "suspended").length,
       inactiveBusinesses: businesses.filter((b) => b.status === "inactive").length,
       totalUsers: allUsers.length,
+      expiredLicences: businesses.filter((b) => b.licenceExpired).length,
+      expiringSoonLicences: businesses.filter(
+        (b) => !b.licenceExpired && typeof b.licenceDaysLeft === "number" && b.licenceDaysLeft <= 30,
+      ).length,
       bySystemType,
       recentBusinesses: businesses.slice(0, 10),
+      licenceAlerts: businesses
+        .filter(
+          (b) =>
+            b.licenceExpired ||
+            (typeof b.licenceDaysLeft === "number" && b.licenceDaysLeft <= 30),
+        )
+        .slice(0, 20),
     };
   }
 
@@ -781,6 +794,8 @@ export class PlatformService {
       licencePlan: string | null;
       licenceExpiresAt: Date | null;
       enabledModules?: string[] | null;
+      fbrEnabled?: boolean;
+      praEnabled?: boolean;
       createdBy: string | null;
       createdAt: Date;
     },
@@ -801,6 +816,8 @@ export class PlatformService {
       licencePlan: row.licencePlan,
       licenceExpiresAt: expiresAt?.toISOString() ?? null,
       enabledModules: row.enabledModules ?? null,
+      fbrEnabled: row.fbrEnabled ?? false,
+      praEnabled: row.praEnabled ?? false,
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
       adminEmail: extras?.adminEmail ?? null,

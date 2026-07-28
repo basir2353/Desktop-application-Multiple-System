@@ -26,14 +26,23 @@ const StoreBarcodePage = lazy(() =>
 const StorePosPage = lazy(() =>
   import("../store/pages/StorePosPage").then((m) => ({ default: m.StorePosPage })),
 );
+const StorePosBookmarksPage = lazy(() =>
+  import("../store/pages/StorePosBookmarksPage").then((m) => ({ default: m.StorePosBookmarksPage })),
+);
 const StorePromotionsPage = lazy(() =>
   import("../store/pages/StoreExtendedPages").then((m) => ({ default: m.StorePromotionsPage })),
 );
 const StoreShiftPage = lazy(() =>
   import("../store/pages/StoreExtendedPages").then((m) => ({ default: m.StoreShiftPage })),
 );
+const StorePayInOutPage = lazy(() =>
+  import("../store/pages/StorePayInOutPage").then((m) => ({ default: m.StorePayInOutPage })),
+);
+const StoreSetupPage = lazy(() =>
+  import("../store/pages/StoreSetupPage").then((m) => ({ default: m.StoreSetupPage })),
+);
 const StoreShortcutsPage = lazy(() =>
-  import("../store/pages/StoreExtendedPages").then((m) => ({ default: m.StoreShortcutsPage })),
+  import("../store/pages/StorePosShortcutsPage").then((m) => ({ default: m.StoreShortcutsPage })),
 );
 const StoreCustomerDisplayPage = lazy(() =>
   import("../store/pages/StoreCustomerDisplayPage").then((m) => ({ default: m.StoreCustomerDisplayPage })),
@@ -117,7 +126,10 @@ export function generalStoreRoutes(): JSX.Element {
       <Route path="store/batches" element={<StoreBatchesPage />} />
       <Route path="store/barcode" element={<StoreBarcodePage />} />
       <Route path="store/pos" element={<StorePosPage />} />
+      <Route path="store/pos-bookmarks" element={<StorePosBookmarksPage />} />
+      <Route path="store/pay-in-out" element={<StorePayInOutPage />} />
       <Route path="store/shifts" element={<StoreShiftPage />} />
+      <Route path="store/setup" element={<StoreSetupPage />} />
       <Route path="store/promotions" element={<StorePromotionsPage />} />
       <Route path="store/shortcuts" element={<StoreShortcutsPage />} />
       <Route path="store/customer-display" element={<StoreCustomerDisplayPage />} />

@@ -1,6 +1,11 @@
 import type { Bill, KitchenTicket, MenuItem } from "@platform/contracts";
 import * as Print from "expo-print";
+import { Alert } from "react-native";
 import { extractKitchenNotes } from "./loadOrder";
+import {
+  activeKitchenPrinters,
+  loadMobilePrinterSettings,
+} from "./mobilePrinterSettings";
 import { formatPkr, orderRefFromTicket } from "./orderDisplay";
 import { kitchenTicketTotal } from "./orderHistory";
 
@@ -191,8 +196,18 @@ function buildReceiptHtml(branchName: string, branchCode: string, bill: Bill): s
 </html>`;
 }
 
-async function printHtml(html: string): Promise<boolean> {
+async function printHtml(html: string, hint?: string): Promise<boolean> {
   try {
+    if (hint?.trim()) {
+      await new Promise<void>((resolve) => {
+        Alert.alert(
+          "Select printer",
+          `In the print dialog, choose:\n\n${hint.trim()}`,
+          [{ text: "Continue", onPress: () => resolve() }],
+          { cancelable: false },
+        );
+      });
+    }
     await Print.printAsync({ html });
     return true;
   } catch {
@@ -200,12 +215,32 @@ async function printHtml(html: string): Promise<boolean> {
   }
 }
 
+async function printKitchenHtml(html: string): Promise<boolean> {
+  const settings = await loadMobilePrinterSettings();
+  const kitchens = activeKitchenPrinters(settings);
+  // One print job only — listing assigned kitchens helps the waiter pick the right device.
+  // (Looping printAsync caused duplicate kitchen tickets / double publish.)
+  const hint =
+    kitchens.length === 0
+      ? "Kitchen printer (any assigned kitchen device)"
+      : kitchens.length === 1
+        ? `Kitchen printer: ${kitchens[0]}`
+        : `Kitchen printers (pick one):\n${kitchens.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
+  return printHtml(html, hint);
+}
+
+async function printBillHtml(html: string): Promise<boolean> {
+  const settings = await loadMobilePrinterSettings();
+  const bill = settings.billPrinter.trim() || "Cashier / Billing printer";
+  return printHtml(html, bill);
+}
+
 export async function printBillReceipt(
   branchName: string,
   branchCode: string,
   bill: Bill,
 ): Promise<boolean> {
-  return printHtml(buildReceiptHtml(branchName, branchCode, bill));
+  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill));
 }
 
 /** Print a customer bill from cart / ticket lines (before or without a saved bill). */
@@ -271,7 +306,7 @@ export async function printCartBill(input: {
   <p style="text-align:center;margin-top:16px;font-weight:600">*** BILL ***</p>
 </body>
 </html>`;
-  return printHtml(html);
+  return printBillHtml(html);
 }
 
 /** Print kitchen / dine-in / delivery order ticket (KOT). */
@@ -295,7 +330,7 @@ export async function printKitchenOrder(
     lines,
     total: kitchenTicketTotal(ticket, menuItems),
   });
-  return printHtml(html);
+  return printKitchenHtml(html);
 }
 
 /** Print current cart as an order ticket before/without a saved ticket id. */
@@ -320,5 +355,5 @@ export async function printCartOrder(input: {
     lines: input.lines,
     total: input.total,
   });
-  return printHtml(html);
+  return printKitchenHtml(html);
 }

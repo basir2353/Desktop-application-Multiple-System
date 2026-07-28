@@ -16,23 +16,48 @@ export function isActiveDeliveryOrder(order: UnifiedOrder): boolean {
   return order.source === "kitchen" && order.ticket.status !== "done";
 }
 
-/** Parse "Delivery · {name} · {address}" from bill notes or ticket items summary. */
+/** Parse "Delivery · {name} · {phone?} · {address}" from bill notes or ticket items summary. */
 export function parseDeliveryContact(text: string | null | undefined): {
   customer: string;
   address: string;
+  phone: string;
 } {
-  if (!text?.trim()) return { customer: "—", address: "—" };
+  if (!text?.trim()) return { customer: "—", address: "—", phone: "" };
 
-  const parts = text.split("·").map((p) => p.trim());
+  const parts = text
+    .split("·")
+    .map((p) => p.trim())
+    .filter(Boolean);
   const deliveryIdx = parts.findIndex((p) => p.toLowerCase() === "delivery");
-  if (deliveryIdx >= 0) {
-    return {
-      customer: parts[deliveryIdx + 1]?.trim() || "—",
-      address: parts[deliveryIdx + 2]?.trim() || "—",
-    };
+  const rest = deliveryIdx >= 0 ? parts.slice(deliveryIdx + 1) : [];
+
+  const looksLikePhone = (value: string): boolean =>
+    /^\+?\d[\d\s()-]{5,}$/.test(value.trim()) && !/[a-zA-Z]{2,}/.test(value);
+
+  if (rest.length >= 3) {
+    const customer = rest[0] || "—";
+    if (looksLikePhone(rest[1])) {
+      return { customer, phone: rest[1], address: rest.slice(2).join(" · ") || "—" };
+    }
+    return { customer, phone: "", address: rest.slice(1).join(" · ") || "—" };
   }
 
-  return { customer: "—", address: "—" };
+  if (rest.length === 2) {
+    if (looksLikePhone(rest[0]) && !looksLikePhone(rest[1])) {
+      return { customer: "—", phone: rest[0], address: rest[1] };
+    }
+    if (looksLikePhone(rest[1]) && !looksLikePhone(rest[0])) {
+      return { customer: rest[0], phone: rest[1], address: "—" };
+    }
+    return { customer: rest[0] || "—", phone: "", address: rest[1] || "—" };
+  }
+
+  if (rest.length === 1) {
+    if (looksLikePhone(rest[0])) return { customer: "—", phone: rest[0], address: "—" };
+    return { customer: rest[0], phone: "", address: "—" };
+  }
+
+  return { customer: "—", address: "—", phone: "" };
 }
 
 export function deliveryOrderContact(order: UnifiedOrder): { customer: string; address: string } {

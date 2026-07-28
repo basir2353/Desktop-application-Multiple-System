@@ -131,7 +131,23 @@ export function getErpEntryPath(systemId: BusinessSystemId, hasBranch: boolean):
   return "/pops/pos";
 }
 
-const SHARED_ERP_PATHS = new Set(["auth", "notifications", "settings"]);
+/** Shared across restaurant / pharmacy / general-store (must not be treated as restaurant-only). */
+const SHARED_ERP_PATH_PREFIXES = [
+  "auth",
+  "notifications",
+  "settings",
+  "tax",
+  "printer",
+  "closing",
+  "security",
+  "sync",
+  "multi-branch",
+] as const;
+
+function isSharedErpSubpath(sub: string): boolean {
+  if (!sub || sub === "branches") return true;
+  return SHARED_ERP_PATH_PREFIXES.some((p) => sub === p || sub.startsWith(`${p}/`));
+}
 
 /** Infer business system from the current `/pops` route, when unambiguous. */
 export function resolveBusinessSystemFromPath(pathname: string): BusinessSystemId | null {
@@ -144,14 +160,12 @@ export function resolveBusinessSystemFromPath(pathname: string): BusinessSystemI
   return null;
 }
 
-/** True for restaurant-only screens (not pharmacy, store, or shared settings/auth). */
+/** True for restaurant-only screens (not pharmacy, store, or shared ERP modules). */
 export function isRestaurantExclusivePath(pathname: string): boolean {
   const sub = pathname.replace(/^\/pops\/?/, "").replace(/\/$/, "");
-  if (!sub || sub === "branches") return false;
   if (sub.startsWith("pharmacy/") || sub === "pharmacy") return false;
   if (sub.startsWith("store/") || sub === "store") return false;
-  if (SHARED_ERP_PATHS.has(sub)) return false;
-  if (sub.startsWith("notifications/")) return false;
+  if (isSharedErpSubpath(sub)) return false;
   return true;
 }
 

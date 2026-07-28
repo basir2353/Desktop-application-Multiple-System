@@ -149,6 +149,21 @@ function renderMobileItem(item: PopsNavItem): JSX.Element {
   return <PopsNavGroupMobile key={item.label} group={item} />;
 }
 
+function isTaxNavPath(path: string): boolean {
+  return path === "tax" || path.startsWith("tax/");
+}
+
+function stripTaxNavItems(items: PopsNavItem[]): PopsNavItem[] {
+  return items
+    .map((item) => {
+      if (item.type === "link") return isTaxNavPath(item.path) ? null : item;
+      const children = item.children.filter((c) => !isTaxNavPath(c.path));
+      if (children.length === 0) return null;
+      return { ...item, children };
+    })
+    .filter((item): item is PopsNavItem => item != null);
+}
+
 function useSystemNavItems(): PopsNavItem[] {
   const systemId = useActiveSystemId();
   const jwtPermissions = useSessionStore((s) => s.claims?.permissions ?? []);
@@ -165,9 +180,10 @@ function useSystemNavItems(): PopsNavItem[] {
     // Path allowlist only applies to the signed-in membership (not admin role preview).
     const allowlist = isAdminPreview ? null : navAllowlist;
     const filtered = filterNavItemsByPermissions(items, permissions, allowlist);
-    // Hide FBR/PRA until Super Admin enables at least one for this business.
-    if (taxEnabled) return filtered;
-    return filtered.filter((item) => !(item.type === "link" && item.path === "tax"));
+    // General store always shows Tax & compliance (FBR/PRA) in the sidebar.
+    // Other systems hide until Super Admin enables FBR and/or PRA.
+    if (taxEnabled || systemId === "general-store") return filtered;
+    return stripTaxNavItems(filtered);
   }, [systemId, jwtPermissions, displayRole, navAllowlist, taxEnabled]);
 }
 

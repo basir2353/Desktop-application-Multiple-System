@@ -23,6 +23,22 @@ export const DEFAULT_PRINTER_SECTIONS: PrinterSection[] = [
   { id: "delivery", name: "Delivery", icon: "🛵", color: "#34d399", enabled: true, isSystem: true, sortOrder: 8 },
 ];
 
+/** General Store defaults — same printer workflow, retail-oriented sections. */
+export const DEFAULT_STORE_PRINTER_SECTIONS: PrinterSection[] = [
+  { id: "receipt", name: "Receipt", icon: "🧾", color: "#a3e635", enabled: true, isSystem: true, sortOrder: 0 },
+  { id: "counter", name: "Counter", icon: "🛒", color: "#38bdf8", enabled: true, isSystem: true, sortOrder: 1 },
+  { id: "warehouse", name: "Warehouse", icon: "📦", color: "#fb923c", enabled: true, isSystem: true, sortOrder: 2 },
+  { id: "returns", name: "Returns", icon: "↩️", color: "#f472b6", enabled: true, isSystem: true, sortOrder: 3 },
+  { id: "label", name: "Label", icon: "🏷️", color: "#22d3ee", enabled: true, isSystem: true, sortOrder: 4 },
+  { id: "back-office", name: "Back office", icon: "🖨️", color: "#94a3b8", enabled: true, isSystem: true, sortOrder: 5 },
+];
+
+export type PrinterSectionPreset = "restaurant" | "general-store";
+
+export function defaultPrinterSectionsFor(preset: PrinterSectionPreset = "restaurant"): PrinterSection[] {
+  return preset === "general-store" ? DEFAULT_STORE_PRINTER_SECTIONS : DEFAULT_PRINTER_SECTIONS;
+}
+
 export const PRINTER_SECTIONS_CHANGED_EVENT = "pops-printer-sections-changed";
 
 const STORAGE_KEY = "pops-printer-sections-v1";
@@ -46,11 +62,26 @@ function writeAll(data: Record<string, PrinterSection[]>, branchCode: string): v
   }
 }
 
-export function loadPrinterSections(branchCode: string | undefined): PrinterSection[] {
-  if (!branchCode) return DEFAULT_PRINTER_SECTIONS;
+export function loadPrinterSections(
+  branchCode: string | undefined,
+  preset: PrinterSectionPreset = "restaurant",
+): PrinterSection[] {
+  const defaults = defaultPrinterSectionsFor(preset);
+  if (!branchCode) return defaults;
   const all = readAll();
   const stored = all[branchCode];
-  if (!stored || stored.length === 0) return DEFAULT_PRINTER_SECTIONS;
+  if (!stored || stored.length === 0) return defaults;
+
+  // General Store: replace leftover restaurant Kitchen/Bar defaults with store sections.
+  if (
+    preset === "general-store" &&
+    stored.some((s) => s.id === "kitchen" || s.id === "bar") &&
+    !stored.some((s) => s.id === "receipt")
+  ) {
+    savePrinterSections(branchCode, defaults);
+    return defaults;
+  }
+
   return [...stored].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 

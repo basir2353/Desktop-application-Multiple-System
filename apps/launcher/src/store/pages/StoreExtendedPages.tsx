@@ -8,32 +8,35 @@ import { noticeErrorClass } from "../../pops/lib/themeClasses";
 import {
   closeStoreShift,
   createStorePromotion,
-  fetchStoreCashMovements,
+  fetchStoreCategories,
   fetchStoreOpenShift,
-  fetchStorePosShortcuts,
   fetchStoreProducts,
   fetchStorePromotions,
   fetchStoreShifts,
+  fetchStoreSuppliers,
   openStoreShift,
-  recordStoreCashMovement,
   toggleStorePromotion,
-  upsertStorePosShortcut,
 } from "../api/store";
+import {
+  buildPromotionPayload,
+  StoreAutomaticDiscountWizard,
+  type PromoWizardDraft,
+} from "../components/StoreAutomaticDiscountWizard";
 import { formatPkr, useInvalidateStore, useStoreAccess } from "../hooks/useStore";
+import { loadStoreCashSetup } from "../lib/storeCashSetup";
 import { getTerminalId } from "../lib/storePosSync";
-import { touchButtonEmoji } from "../lib/storePromotions";
+import { describePromotionRule } from "../lib/storePromotions";
 import { StoreField, StoreInput, StoreSelect } from "../ui/StoreUi";
+import { Link } from "react-router-dom";
 
 export function StoreShiftPage(): JSX.Element {
   const { branch } = useStoreAccess();
   const invalidate = useInvalidateStore();
   const terminalId = getTerminalId();
-  const [cashierName, setCashierName] = useState("");
-  const [openingCash, setOpeningCash] = useState("0");
+  const setup = loadStoreCashSetup(branch?.code);
+  const [cashierName, setCashierName] = useState(setup.defaultCashierName);
+  const [openingCash, setOpeningCash] = useState(String(setup.defaultOpeningCashPkr));
   const [closingCash, setClosingCash] = useState("");
-  const [paidType, setPaidType] = useState<"paid_in" | "paid_out">("paid_out");
-  const [paidAmount, setPaidAmount] = useState("");
-  const [paidReason, setPaidReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const openShiftQuery = useQuery({
@@ -68,28 +71,23 @@ export function StoreShiftPage(): JSX.Element {
 
   const openShift = openShiftQuery.data;
 
-  const cashMovementsQuery = useQuery({
-    queryKey: ["store", "cash-movements", openShift?.id],
-    enabled: Boolean(openShift?.id),
-    queryFn: () => fetchStoreCashMovements(openShift!.id),
-  });
-
-  const paidMutation = useMutation({
-    mutationFn: () =>
-      recordStoreCashMovement({
-        branchCode: branch!.code,
-        shiftId: openShift!.id,
-        type: paidType,
-        amountPkr: Number(paidAmount),
-        reason: paidReason.trim(),
-      }),
-    onSuccess: () => { invalidate(); setPaidAmount(""); setPaidReason(""); cashMovementsQuery.refetch(); },
-    onError: (e: Error) => setError(e.message),
-  });
-
   return (
     <div className="space-y-5">
       <PageHeader title="Shift & cash reconciliation" subtitle={`Terminal ${terminalId} — compare expected vs actual cash at shift close.`} />
+      <div className="flex flex-wrap gap-2 text-xs">
+        <Link
+          to="/pops/store/pay-in-out"
+          className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-1.5 font-semibold text-emerald-300 hover:bg-emerald-500/20"
+        >
+          Open Pay In / Pay Out
+        </Link>
+        <Link
+          to="/pops/store/setup"
+          className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-300 hover:border-slate-500"
+        >
+          General Store setup
+        </Link>
+      </div>
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
 
       {openShift ? (
@@ -109,26 +107,13 @@ export function StoreShiftPage(): JSX.Element {
               Close shift & reconcile
             </button>
           </form>
-
-          <div className="mt-5 border-t border-emerald-500/20 pt-4">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Cash paid-in / paid-out</h3>
-            <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); paidMutation.mutate(); }}>
-              <StoreSelect value={paidType} onChange={(e) => setPaidType(e.target.value as typeof paidType)}>
-                <option value="paid_in">Cash in (change deposit)</option>
-                <option value="paid_out">Cash out (vendor/expense)</option>
-              </StoreSelect>
-              <StoreInput type="number" min={1} placeholder="Amount" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} required />
-              <StoreInput placeholder="Reason" value={paidReason} onChange={(e) => setPaidReason(e.target.value)} required className="min-w-[180px]" />
-              <button type="submit" disabled={!paidAmount || !paidReason.trim()} className="rounded-lg border border-emerald-600 px-3 py-2 text-xs font-semibold text-emerald-700">Record</button>
-            </form>
-            {(cashMovementsQuery.data ?? []).length > 0 ? (
-              <ul className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-400">
-                {(cashMovementsQuery.data ?? []).map((m) => (
-                  <li key={m.id}>{m.type === "paid_in" ? "+" : "−"}{formatPkr(m.amountPkr)} — {m.reason}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Record drawer Pay In / Pay Out on the dedicated{" "}
+            <Link className="text-emerald-400 hover:underline" to="/pops/store/pay-in-out">
+              Pay In / Pay Out
+            </Link>{" "}
+            page (with slips & reason presets).
+          </p>
         </div>
       ) : (
         <form className="rounded-xl border border-slate-200 p-4 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); openMutation.mutate(); }}>
@@ -161,9 +146,7 @@ export function StorePromotionsPage(): JSX.Element {
   const { branch, canManage } = useStoreAccess();
   const invalidate = useInvalidateStore();
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [type, setType] = useState<"percent_off" | "buy_x_get_y" | "fixed_bundle" | "mix_match" | "cross_sell" | "category_off">("percent_off");
-  const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const promotionsQuery = useQuery({
     queryKey: ["store", "promotions", branch?.code],
@@ -177,23 +160,26 @@ export function StorePromotionsPage(): JSX.Element {
     queryFn: () => fetchStoreProducts(branch!.code),
   });
 
+  const categoriesQuery = useQuery({
+    queryKey: ["store", "categories", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchStoreCategories(branch!.code),
+  });
+
+  const suppliersQuery = useQuery({
+    queryKey: ["store", "suppliers", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchStoreSuppliers(branch!.code),
+  });
+
   const createMutation = useMutation({
-    mutationFn: () =>
-      createStorePromotion({
-        branchCode: branch!.code,
-        name: name.trim(),
-        type,
-        productIds: selectedProducts,
-        config:
-          type === "percent_off"
-            ? { percent: 20 }
-            : type === "buy_x_get_y"
-              ? { buyQty: 2, getQty: 1 }
-              : type === "fixed_bundle"
-                ? { bundlePrice: 500 }
-                : { anyQty: 3, fixedPrice: 1000 },
-      }),
-    onSuccess: () => { invalidate(); setName(""); setError(null); },
+    mutationFn: (draft: PromoWizardDraft) =>
+      createStorePromotion(buildPromotionPayload(branch!.code, draft)),
+    onSuccess: () => {
+      invalidate();
+      setWizardOpen(false);
+      setError(null);
+    },
     onError: (e: Error) => setError(e.message),
   });
 
@@ -204,118 +190,91 @@ export function StorePromotionsPage(): JSX.Element {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Promotions & bundles" subtitle="Buy 2 Get 1, combo deals, mix & match, and percentage discounts — applied automatically at POS." />
+      <PageHeader
+        title="Discount Pricing"
+        subtitle="Automatic discounts applied at POS for scheduled sales, multi-buy deals, and percentage off."
+      />
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
 
-      {canManage ? (
-        <form className="rounded-xl border border-slate-200 p-4 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); createMutation.mutate(); }}>
-          <h2 className="text-sm font-semibold">Create promotion</h2>
-          <div className="mt-2 grid gap-2 sm:grid-cols-3">
-            <StoreInput placeholder="Promotion name" value={name} onChange={(e) => setName(e.target.value)} required />
-            <StoreSelect value={type} onChange={(e) => setType(e.target.value as typeof type)}>
-              <option value="percent_off">% off</option>
-              <option value="buy_x_get_y">Buy X Get Y</option>
-              <option value="fixed_bundle">Combo bundle</option>
-              <option value="mix_match">Mix & match</option>
-              <option value="cross_sell">Cross-sell</option>
-              <option value="category_off">Category %</option>
-            </StoreSelect>
-            <button type="submit" disabled={!name.trim() || createMutation.isPending} className="rounded-lg bg-sky-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Add promotion</button>
+      <section className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-5 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-3xl">
+            <h2 className="text-xl font-semibold text-emerald-800 dark:text-emerald-300">Automatic Discounts</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              Select items and define discount pricing automatically applied for things like:
+            </p>
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">
+              <li>A temporary or scheduled sale (e.g., Friday through Sunday)</li>
+              <li>Buy X for $Y (e.g., buy 3 for $10.00)</li>
+              <li>Buy X and get Y% off (e.g., buy 12 and get 10% off all 12)</li>
+              <li>Get Y% off item (e.g., buy item and get 15% off)</li>
+            </ul>
           </div>
-          <StoreSelect multiple value={selectedProducts} onChange={(e) => setSelectedProducts(Array.from(e.target.selectedOptions, (o) => o.value))} className="mt-2 h-24">
-            {(productsQuery.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </StoreSelect>
-          <p className="mt-1 text-xs text-slate-500">Hold Ctrl/Cmd to select products for targeted promos.</p>
-        </form>
+          {canManage ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-md bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-500"
+              onClick={() => { setError(null); setWizardOpen(true); }}
+            >
+              Set Up Automatic Discount
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      {wizardOpen && canManage ? (
+        <StoreAutomaticDiscountWizard
+          products={productsQuery.data ?? []}
+          categories={categoriesQuery.data ?? []}
+          suppliers={suppliersQuery.data ?? []}
+          saving={createMutation.isPending}
+          onCancel={() => setWizardOpen(false)}
+          onSave={(draft) => createMutation.mutate(draft)}
+        />
       ) : null}
 
       <SimpleTable<StorePromotion>
         rowKey={(r) => r.id}
         columns={[
           { key: "name", header: "Name" },
-          { key: "type", header: "Type" },
-          { key: "isActive", header: "Active", render: (r) => (
-            <button type="button" onClick={() => canManage && toggleMutation.mutate({ id: r.id, isActive: !r.isActive })} className="text-xs font-medium text-sky-600">
-              {r.isActive ? "Active" : "Inactive"}
-            </button>
-          ) },
-          { key: "config", header: "Rules", render: (r) => JSON.stringify(r.config) },
+          { key: "type", header: "Type", render: (r) => describePromotionRule(r) },
+          {
+            key: "isActive",
+            header: "Active",
+            render: (r) => (
+              <button
+                type="button"
+                onClick={() => canManage && toggleMutation.mutate({ id: r.id, isActive: !r.isActive })}
+                className="text-xs font-medium text-sky-600"
+              >
+                {r.isActive ? "Active" : "Inactive"}
+              </button>
+            ),
+          },
+          {
+            key: "scope",
+            header: "Applies to",
+            render: (r) => {
+              const cfg = (r.config ?? {}) as Record<string, unknown>;
+              const scope = String(cfg.scope ?? (r.productIds.length ? "custom" : "all"));
+              if (scope === "custom") return `${r.productIds.length} item(s)`;
+              if (scope === "department") return "Department";
+              if (scope === "vendor") return "Vendor";
+              if (scope === "named") return `Name: ${String(cfg.nameContains ?? "")}`;
+              return "All items";
+            },
+          },
+          {
+            key: "schedule",
+            header: "Schedule",
+            render: (r) =>
+              r.startsAt || r.endsAt
+                ? `${r.startsAt ? new Date(r.startsAt).toLocaleString() : "—"} → ${r.endsAt ? new Date(r.endsAt).toLocaleString() : "—"}`
+                : "Always",
+          },
         ]}
         rows={promotionsQuery.data ?? []}
       />
-    </div>
-  );
-}
-
-export function StoreShortcutsPage(): JSX.Element {
-  const { branch, canManage } = useStoreAccess();
-  const invalidate = useInvalidateStore();
-  const [hotkey, setHotkey] = useState("F1");
-  const [label, setLabel] = useState("");
-  const [productId, setProductId] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const shortcutsQuery = useQuery({
-    queryKey: ["store", "shortcuts", branch?.code],
-    enabled: Boolean(branch?.code),
-    queryFn: () => fetchStorePosShortcuts(branch!.code),
-  });
-
-  const productsQuery = useQuery({
-    queryKey: ["store", "products", branch?.code],
-    enabled: Boolean(branch?.code),
-    queryFn: () => fetchStoreProducts(branch!.code),
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      upsertStorePosShortcut({
-        branchCode: branch!.code,
-        hotkey,
-        label: label.trim(),
-        productId,
-      }),
-    onSuccess: () => { invalidate(); setLabel(""); setError(null); },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  return (
-    <div className="space-y-5">
-      <PageHeader title="POS quick buttons" subtitle="Map F1–F12 to fast-moving items like bread, milk, and eggs." />
-      {error ? <div className={noticeErrorClass}>{error}</div> : null}
-
-      {canManage ? (
-        <form className="rounded-xl border border-slate-200 p-4 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); saveMutation.mutate(); }}>
-          <div className="grid gap-2 sm:grid-cols-4">
-            <StoreSelect value={hotkey} onChange={(e) => setHotkey(e.target.value)}>
-              {Array.from({ length: 12 }, (_, i) => `F${i + 1}`).map((k) => (
-                <option key={k} value={k}>{k}</option>
-              ))}
-            </StoreSelect>
-            <StoreInput placeholder="Button label" value={label} onChange={(e) => setLabel(e.target.value)} required />
-            <StoreSelect value={productId} onChange={(e) => setProductId(e.target.value)} required>
-              <option value="">Select product</option>
-              {(productsQuery.data ?? []).map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </StoreSelect>
-            <button type="submit" disabled={!label.trim() || !productId || saveMutation.isPending} className="rounded-lg bg-sky-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Save shortcut</button>
-          </div>
-        </form>
-      ) : null}
-
-      <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {(shortcutsQuery.data ?? []).map((s) => {
-          const product = (productsQuery.data ?? []).find((p) => p.id === s.productId);
-          return (
-          <div key={s.id} className="flex flex-col items-center gap-1 rounded-xl border border-slate-200 bg-white p-4 text-center dark:border-slate-800 dark:bg-slate-900/60">
-            <span className="text-2xl">{touchButtonEmoji(s.label, product)}</span>
-            <kbd className="rounded bg-slate-100 px-1 font-mono text-[10px] dark:bg-slate-800">{s.hotkey}</kbd>
-            <p className="text-sm font-semibold">{s.label}</p>
-            <p className="text-xs text-slate-500">{s.productName}</p>
-          </div>
-        );})}
-      </div>
     </div>
   );
 }

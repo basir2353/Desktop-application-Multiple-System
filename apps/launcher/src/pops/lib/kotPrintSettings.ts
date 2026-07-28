@@ -1,5 +1,12 @@
 /** Kitchen ticket (KOT) customization — same idea as bill slip, without money columns. */
 
+import {
+  DEFAULT_BILL_BLOCK_ORDER,
+  DEFAULT_BILL_RECEIPT_FIELDS,
+  normalizeBillPrintSettings,
+  type BillPrintSettings,
+} from "./billPrintSettings";
+
 export type KotHeaderAlign = "center" | "left";
 
 export type KotCustomLineZone = "header" | "beforeItems" | "afterItems" | "footer";
@@ -117,6 +124,49 @@ export const DEFAULT_KOT_PRINT_SETTINGS: KotPrintSettings = {
   blockOrder: [...DEFAULT_KOT_BLOCK_ORDER],
 };
 
+/** General Store slip defaults — same layout engine, retail wording. */
+export const DEFAULT_STORE_SLIP_PRINT_SETTINGS: KotPrintSettings = {
+  emphasizeOrderMeta: true,
+  itemUnderlineSeparator: false,
+  baseFontSize: 15,
+  headerAlign: "center",
+  headerBusinessName: "",
+  headerSubtitle: "",
+  documentTitle: "Sales Receipt",
+  documentTitleUpdate: "Sales Receipt — UPDATE",
+  footerText: "Thank you for shopping!",
+  footerSecondaryText: "",
+  fields: {
+    ...DEFAULT_KOT_RECEIPT_FIELDS,
+    tableLabel: false,
+  },
+  customLines: [],
+  blockOrder: [...DEFAULT_KOT_BLOCK_ORDER],
+};
+
+export type SlipPrintPreset = "restaurant" | "general-store";
+
+export function defaultSlipPrintSettings(preset: SlipPrintPreset = "restaurant"): KotPrintSettings {
+  return preset === "general-store" ? DEFAULT_STORE_SLIP_PRINT_SETTINGS : DEFAULT_KOT_PRINT_SETTINGS;
+}
+
+export const STORE_SLIP_FIELD_LABELS: Record<keyof KotReceiptFields, string> = {
+  branchName: "Store / business name",
+  headerSubtitle: "Header subtitle (e.g. Main counter)",
+  documentTitle: "Slip title",
+  orderRef: "Invoice / ticket ref",
+  orderType: "Sale type (Walk-in / Credit)",
+  tableLabel: "Counter / till",
+  waiterName: "Cashier / staff",
+  notes: "Notes",
+  timestamp: "Date & time",
+  itemHeaders: "Column headers (Qty · Name)",
+  itemQty: "Quantity column",
+  itemTotals: "Total items / quantity",
+  footer: "Footer message",
+  footerSecondary: "Footer secondary line",
+};
+
 export const KOT_FIELD_GROUPS: { label: string; keys: (keyof KotReceiptFields)[] }[] = [
   {
     label: "Header",
@@ -159,10 +209,14 @@ const STORAGE_KEY_V1 = "pops-kot-print-settings-v1";
 const STORAGE_KEY_V2 = "pops-kot-print-settings-v2";
 const STORAGE_KEY = "pops-kot-print-settings-v3";
 
-function migrateKotToClassicSlip(settings: KotPrintSettings): KotPrintSettings {
+function migrateKotToClassicSlip(
+  settings: KotPrintSettings,
+  preset: SlipPrintPreset = "restaurant",
+): KotPrintSettings {
+  const defaults = defaultSlipPrintSettings(preset);
   const footerText =
     !settings.footerText.trim() || settings.footerText.trim().toUpperCase() === "KITCHEN COPY"
-      ? DEFAULT_KOT_PRINT_SETTINGS.footerText
+      ? defaults.footerText
       : settings.footerText;
   // Strip the A/E legend that was briefly added at the bottom of kitchen slips.
   const rawSecondary = settings.footerSecondaryText.trim();
@@ -300,50 +354,117 @@ export function normalizeKotPrintSettings(input: Partial<KotPrintSettings> | nul
   };
 }
 
-function storageKey(branchCode: string): string {
-  return `${STORAGE_KEY}.${branchCode.trim().toUpperCase()}`;
+function storageKey(branchCode: string, preset: SlipPrintPreset = "restaurant"): string {
+  const suffix = preset === "general-store" ? "store-slip" : STORAGE_KEY;
+  return `${suffix}.${branchCode.trim().toUpperCase()}`;
 }
 
-export function loadKotPrintSettings(branchCode: string | undefined): KotPrintSettings {
-  if (!branchCode || typeof localStorage === "undefined") return DEFAULT_KOT_PRINT_SETTINGS;
+export function loadKotPrintSettings(
+  branchCode: string | undefined,
+  preset: SlipPrintPreset = "restaurant",
+): KotPrintSettings {
+  const defaults = defaultSlipPrintSettings(preset);
+  if (!branchCode || typeof localStorage === "undefined") return defaults;
   try {
-    const v3 = localStorage.getItem(storageKey(branchCode));
+    const v3 = localStorage.getItem(storageKey(branchCode, preset));
     if (v3) {
       return migrateKotToClassicSlip(
         normalizeKotPrintSettings(JSON.parse(v3) as Partial<KotPrintSettings>),
+        preset,
       );
     }
-    const v2 = localStorage.getItem(`${STORAGE_KEY_V2}.${branchCode.trim().toUpperCase()}`);
-    if (v2) {
-      return migrateKotToClassicSlip(
-        normalizeKotPrintSettings(JSON.parse(v2) as Partial<KotPrintSettings>),
-      );
-    }
-    // Migrate v1 map: { BRANCH: settings }
-    const v1map = localStorage.getItem(STORAGE_KEY_V1);
-    if (v1map) {
-      const parsed = JSON.parse(v1map) as Record<string, Partial<KotPrintSettings>>;
-      const legacy = parsed[branchCode] ?? parsed[branchCode.trim().toUpperCase()];
-      if (legacy) {
-        return migrateKotToClassicSlip(normalizeKotPrintSettings(legacy));
+    if (preset === "restaurant") {
+      const v2 = localStorage.getItem(`${STORAGE_KEY_V2}.${branchCode.trim().toUpperCase()}`);
+      if (v2) {
+        return migrateKotToClassicSlip(
+          normalizeKotPrintSettings(JSON.parse(v2) as Partial<KotPrintSettings>),
+          preset,
+        );
+      }
+      const v1map = localStorage.getItem(STORAGE_KEY_V1);
+      if (v1map) {
+        const parsed = JSON.parse(v1map) as Record<string, Partial<KotPrintSettings>>;
+        const legacy = parsed[branchCode] ?? parsed[branchCode.trim().toUpperCase()];
+        if (legacy) {
+          return migrateKotToClassicSlip(normalizeKotPrintSettings(legacy), preset);
+        }
       }
     }
-    return DEFAULT_KOT_PRINT_SETTINGS;
+    return defaults;
   } catch {
-    return DEFAULT_KOT_PRINT_SETTINGS;
+    return defaults;
   }
 }
 
-export function saveKotPrintSettings(branchCode: string, settings: KotPrintSettings): void {
+export function saveKotPrintSettings(
+  branchCode: string,
+  settings: KotPrintSettings,
+  preset: SlipPrintPreset = "restaurant",
+): void {
   const next = normalizeKotPrintSettings(settings);
   try {
-    localStorage.setItem(storageKey(branchCode), JSON.stringify(next));
+    localStorage.setItem(storageKey(branchCode, preset), JSON.stringify(next));
     window.dispatchEvent(
-      new CustomEvent(KOT_PRINT_SETTINGS_CHANGED_EVENT, { detail: { branchCode, settings: next } }),
+      new CustomEvent(KOT_PRINT_SETTINGS_CHANGED_EVENT, { detail: { branchCode, preset } }),
     );
   } catch {
-    // ignore storage errors
+    // ignore
   }
+}
+
+/** Map General Store slip designer → receipt engine (money columns + same header/footer/blocks). */
+export function storeSlipToBillPrintSettings(slip: KotPrintSettings): BillPrintSettings {
+  return normalizeBillPrintSettings({
+    baseFontSize: slip.baseFontSize,
+    layout: "compact",
+    headerAlign: slip.headerAlign,
+    headerBusinessName: slip.headerBusinessName,
+    headerSubtitle: slip.headerSubtitle,
+    documentTitle: slip.documentTitle || "Sales Receipt",
+    footerText: slip.footerText || "Thank you for shopping!",
+    footerSecondaryText: slip.footerSecondaryText,
+    fields: {
+      ...DEFAULT_BILL_RECEIPT_FIELDS,
+      branchName: slip.fields.branchName,
+      headerSubtitle: slip.fields.headerSubtitle,
+      documentTitle: slip.fields.documentTitle,
+      orderRef: slip.fields.orderRef,
+      orderType: slip.fields.orderType,
+      tableLabel: slip.fields.tableLabel,
+      billRef: slip.fields.orderRef,
+      waiterName: slip.fields.waiterName,
+      printerName: false,
+      notes: slip.fields.notes,
+      timestamp: slip.fields.timestamp,
+      branchCode: false,
+      itemHeaders: slip.fields.itemHeaders,
+      itemQty: slip.fields.itemQty,
+      itemAmount: true,
+      subtotal: true,
+      discount: true,
+      service: false,
+      tax: true,
+      delivery: false,
+      total: true,
+      footer: slip.fields.footer,
+      footerSecondary: slip.fields.footerSecondary,
+    },
+    customLines: slip.customLines.map((line) => ({
+      id: line.id,
+      text: line.text,
+      bold: line.bold,
+      zone: line.zone,
+      enabled: line.enabled,
+      fontSize: line.fontSize,
+      color: "",
+    })),
+    blockOrder: slip.blockOrder.length > 0 ? slip.blockOrder : [...DEFAULT_BILL_BLOCK_ORDER],
+    blockStyles: {},
+  });
+}
+
+export function loadStoreBillPrintSettings(branchCode: string | undefined): BillPrintSettings {
+  return storeSlipToBillPrintSettings(loadKotPrintSettings(branchCode, "general-store"));
 }
 
 /** Sample KOT for customization preview. */

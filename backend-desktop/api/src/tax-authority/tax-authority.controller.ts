@@ -1,10 +1,24 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
 import { TaxAuthorityService } from "./tax-authority.service";
+
+function assertCanToggleTaxFeatures(user: AccessJwtPayload): void {
+  const role = (user.role ?? "").toLowerCase();
+  const perms = new Set(user.permissions ?? []);
+  const isIncharge =
+    role === "admin" ||
+    role === "owner" ||
+    role === "manager" ||
+    perms.has("*") ||
+    perms.has("pops.users.manage");
+  if (!isIncharge) {
+    throw new ForbiddenException("Only Admin / Incharge can change PRA settings.");
+  }
+}
 
 @Controller()
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -75,6 +89,19 @@ export class TaxAuthorityController {
   @RequirePermissions("pops.read")
   features(@CurrentUser() user: AccessJwtPayload) {
     return this.tax.getFeatures(user.organizationId);
+  }
+
+  @Patch("v1/tax-authority/features")
+  @RequirePermissions("pops.read")
+  setFeatures(
+    @CurrentUser() user: AccessJwtPayload,
+    @Body() body: { praEnabled?: boolean; fbrEnabled?: boolean },
+  ) {
+    assertCanToggleTaxFeatures(user);
+    return this.tax.setFeatures(user.organizationId, {
+      praEnabled: typeof body?.praEnabled === "boolean" ? body.praEnabled : undefined,
+      fbrEnabled: typeof body?.fbrEnabled === "boolean" ? body.fbrEnabled : undefined,
+    });
   }
 
   @Get("v1/tax-authority/status")

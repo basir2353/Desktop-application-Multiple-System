@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useSystemReady } from "../hooks/useSystemReady";
 import { getBusinessSystem, isBusinessSystemId } from "../lib/businessSystems";
-import { getEffectiveSystemLock } from "../lib/deviceInstall";
+import { clearDeviceInstall, getEffectiveSystemLock } from "../lib/deviceInstall";
 import { loginPathForRole, loginRolesForSystem } from "../lib/loginRoles";
 import { mutedClass, screenCenterClass } from "../pops/lib/themeClasses";
 import { useSystemStore } from "../stores/systemStore";
@@ -53,17 +53,18 @@ export function RoleSelectPage(): JSX.Element {
     <div className="min-h-screen bg-slate-50 px-6 py-10 dark:bg-slate-950">
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 flex items-center justify-between gap-3">
-          {lockedId ? (
-            <span />
-          ) : (
-            <button
-              type="button"
-              onClick={() => navigate("/")}
-              className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-            >
-              ← Change system
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              clearDeviceInstall();
+              useSystemStore.getState().clearSystem();
+              useSessionStore.getState().clear();
+              window.location.assign("/?reset-install=1");
+            }}
+            className="text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+          >
+            ← Change system
+          </button>
           <ThemeToggle />
         </div>
 

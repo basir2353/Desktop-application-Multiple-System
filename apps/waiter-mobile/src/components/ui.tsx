@@ -293,15 +293,26 @@ export function QtyStepper({
   qty,
   onDecrement,
   onIncrement,
+  minQty = 0,
+  decrementDisabled,
 }: {
   qty: number;
   onDecrement: () => void;
   onIncrement: () => void;
+  /** Soft floor — decrement disabled at or below this qty. */
+  minQty?: number;
+  decrementDisabled?: boolean;
 }) {
+  const locked = Boolean(decrementDisabled) || qty <= minQty;
   return (
     <View style={styles.qtyStepper}>
-      <Pressable onPress={onDecrement} style={styles.qtyBtn} hitSlop={8}>
-        <Text style={styles.qtyBtnText}>−</Text>
+      <Pressable
+        onPress={onDecrement}
+        disabled={locked}
+        style={[styles.qtyBtn, locked && styles.qtyBtnDisabled]}
+        hitSlop={8}
+      >
+        <Text style={[styles.qtyBtnText, locked && styles.qtyBtnTextDisabled]}>−</Text>
       </Pressable>
       <Text style={styles.qtyValue}>{qty}</Text>
       <Pressable onPress={onIncrement} style={[styles.qtyBtn, styles.qtyBtnAccent]} hitSlop={8}>
@@ -319,8 +330,8 @@ export function LoginModeTabs({
   onChange: (mode: "password" | "pin") => void;
 }) {
   const options: { id: "password" | "pin"; label: string; hint: string }[] = [
-    { id: "password", label: "Sign In", hint: "Email & password" },
-    { id: "pin", label: "Login with PIN", hint: "4-digit branch PIN" },
+    { id: "password", label: "Email", hint: "Email & password" },
+    { id: "pin", label: "PIN", hint: "4-digit branch PIN" },
   ];
 
   return (
@@ -712,11 +723,17 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(245, 158, 11, 0.15)",
     borderColor: "rgba(245, 158, 11, 0.45)",
   },
+  qtyBtnDisabled: {
+    opacity: 0.35,
+  },
   qtyBtnText: {
     color: colors.text,
     fontSize: 18,
     fontWeight: "500",
     lineHeight: 20,
+  },
+  qtyBtnTextDisabled: {
+    color: colors.muted,
   },
   qtyBtnTextAccent: {
     color: colors.accent,

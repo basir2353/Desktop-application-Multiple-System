@@ -99,8 +99,12 @@ export function cartFromStoredLines(menuItems: MenuItem[], lines: StoredOrderLin
     const item = matchMenuItem(menuItems, line);
     if (!item) continue;
     const existing = cart.find((row) => row.item.id === item.id);
-    if (existing) existing.qty += line.qty;
-    else cart.push({ item, qty: line.qty });
+    if (existing) {
+      existing.qty += line.qty;
+      existing.printedQty = (existing.printedQty ?? 0) + line.qty;
+    } else {
+      cart.push({ item, qty: line.qty, printedQty: line.qty });
+    }
   }
   return cart;
 }

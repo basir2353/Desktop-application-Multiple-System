@@ -74,6 +74,7 @@ function requiredForPath(path: string): readonly string[] {
   if (NAV_PATH_ANY_OF[path]) return NAV_PATH_ANY_OF[path]!;
   const segments = path.split("/");
   const top = segments[0] ?? path;
+  if (top === "tax") return NAV_PATH_ANY_OF.tax!;
   if (top === "inventory") return NAV_PATH_ANY_OF.inventory!;
   if (top === "accounting") return NAV_PATH_ANY_OF.accounting!;
   if (top === "hr") return NAV_PATH_ANY_OF.hr!;

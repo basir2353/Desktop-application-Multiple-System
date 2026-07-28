@@ -18,7 +18,10 @@ import {
   PRINTER_SECTIONS_CHANGED_EVENT,
   updatePrinterSection,
   type PrinterSection,
+  type PrinterSectionPreset,
 } from "../../lib/printerSections";
+import { useActiveSystemId } from "../../../hooks/useActiveSystemId";
+import { fetchStoreCategories, fetchStoreProducts } from "../../../store/api/store";
 import {
   addPrinterProfile,
   deletePrinterProfile,
@@ -31,7 +34,8 @@ import {
   loadPrinterRouting,
   movePrinterPriority,
   PRINTER_ROUTING_CHANGED_EVENT,
-  PRINTER_TYPE_LABELS,
+  printerTypeLabel,
+  printerTypesForSystem,
   setCategorySections,
   setItemSections,
   setReceiptPrinter,
@@ -67,10 +71,9 @@ const SECTION_COLOR_CHOICES = [
   "#f59e0b", "#8b5cf6", "#38bdf8", "#ef4444", "#f472b6",
   "#22d3ee", "#a3e635", "#fb923c", "#34d399", "#94a3b8",
 ];
-const PRINTER_TYPES = Object.keys(PRINTER_TYPE_LABELS) as PrinterType[];
-
 const TABS = [
   { id: "printers", label: "All Printers" },
+  { id: "assign", label: "Assign Users" },
   { id: "by-section", label: "Printer by Section" },
   { id: "settings", label: "Print Settings" },
   { id: "categories", label: "Categories" },
@@ -78,6 +81,13 @@ const TABS = [
   { id: "preview", label: "Routing Preview" },
   { id: "queue", label: "Print Queue" },
 ] as const;
+
+/** Options for type dropdowns — includes legacy type if profile still has Kitchen/Bar on store. */
+function typeOptionsForProfile(isStore: boolean, current?: PrinterType): PrinterType[] {
+  const base = printerTypesForSystem(isStore);
+  if (current && !base.includes(current)) return [current, ...base];
+  return base;
+}
 type TabId = (typeof TABS)[number]["id"];
 
 function statusDot(state: SystemPrinterInfo["state"]): string {
@@ -96,19 +106,19 @@ function statusLabel(state: SystemPrinterInfo["state"]): string {
 }
 
 /** Shared hook: sections + routing state for a branch, kept in sync via change events. */
-function usePrinterConfig(branchCode: string) {
-  const [sections, setSections] = useState<PrinterSection[]>(() => loadPrinterSections(branchCode));
-  const [routingRevision, setRoutingRevision] = useState(0);
+function usePrinterConfig(branchCode: string, preset: PrinterSectionPreset = "restaurant") {
+  const [sections, setSections] = useState<PrinterSection[]>(() => loadPrinterSections(branchCode, preset));
   const [historyRevision, setHistoryRevision] = useState(0);
+  const [routingRevision, setRoutingRevision] = useState(0);
 
   useEffect(() => {
-    setSections(loadPrinterSections(branchCode));
-  }, [branchCode]);
+    setSections(loadPrinterSections(branchCode, preset));
+  }, [branchCode, preset]);
 
   useEffect(() => {
     function onSectionsChanged(event: Event): void {
       const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
-      if (detail?.branchCode === branchCode) setSections(loadPrinterSections(branchCode));
+      if (detail?.branchCode === branchCode) setSections(loadPrinterSections(branchCode, preset));
     }
     function onRoutingChanged(event: Event): void {
       const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
@@ -126,7 +136,7 @@ function usePrinterConfig(branchCode: string) {
       window.removeEventListener(PRINTER_ROUTING_CHANGED_EVENT, onRoutingChanged);
       window.removeEventListener(PRINT_HISTORY_CHANGED_EVENT, onHistoryChanged);
     };
-  }, [branchCode]);
+  }, [branchCode, preset]);
 
   const routing = useMemo(() => {
     void routingRevision;
@@ -182,12 +192,42 @@ function PrinterDashboardStats({
 }
 
 function printerTypeForSection(section: PrinterSection): PrinterType {
+  const id = section.id.toLowerCase();
   const n = section.name.toLowerCase();
-  if (n.includes("bar") || n.includes("drink") || n.includes("beverage")) return "bar";
-  if (n.includes("receipt") || n.includes("bill") || n.includes("cashier") || n.includes("counter")) {
+  if (id === "receipt" || n.includes("receipt") || n.includes("bill") || n.includes("cashier")) {
     return "receipt";
   }
+  if (id === "counter" || n.includes("counter")) return "counter";
+  if (id === "warehouse" || n.includes("warehouse")) return "warehouse";
+  if (id === "label" || n.includes("label")) return "label";
+  if (id === "returns" || n.includes("return")) return "receipt";
+  if (id === "back-office" || n.includes("back office") || n.includes("back-office")) {
+    return "other";
+  }
+  if (n.includes("bar") || n.includes("drink") || n.includes("beverage")) return "bar";
   return "kitchen";
+}
+
+function maybeSetDefaultPosPrinter(
+  branchCode: string,
+  profileId: string,
+  printerType: PrinterType,
+  sectionId?: string,
+): void {
+  const isPosType =
+    printerType === "receipt" ||
+    printerType === "counter" ||
+    sectionId === "receipt" ||
+    sectionId === "counter";
+  if (!isPosType) return;
+  const state = loadPrinterRouting(branchCode);
+  if (
+    !state.receiptPrinterId ||
+    printerType === "receipt" ||
+    sectionId === "receipt"
+  ) {
+    setReceiptPrinter(branchCode, profileId);
+  }
 }
 
 function PrinterSectionsTab({
@@ -202,6 +242,7 @@ function PrinterSectionsTab({
   categories,
   items,
   notify,
+  isStore = false,
 }: {
   branchCode: string;
   sections: PrinterSection[];
@@ -216,6 +257,7 @@ function PrinterSectionsTab({
   categories: { id: string; name: string }[];
   items: { id: string; name: string; categoryId: string }[];
   notify: (message: string) => void;
+  isStore?: boolean;
 }): JSX.Element {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [sectionSearch, setSectionSearch] = useState("");
@@ -295,7 +337,11 @@ function PrinterSectionsTab({
 
   function assignSystemPrinter(printer: SystemPrinterInfo): void {
     if (!selectedSection) {
-      notify("Select Kitchen or Bar on the left, then tap Use for…");
+      notify(
+        isStore
+          ? "Select Receipt or Counter on the left, then tap Use for…"
+          : "Select Kitchen or Bar on the left, then tap Use for…",
+      );
       return;
     }
     const printerType = printerTypeForSection(selectedSection);
@@ -321,6 +367,7 @@ function PrinterSectionsTab({
       });
     }
     togglePrinterForSection(branchCode, selectedSection.id, profile.id, true);
+    maybeSetDefaultPosPrinter(branchCode, profile.id, printerType, selectedSection.id);
     notify(
       printer.isVirtual
         ? `✓ ${printer.name} → ${selectedSection.name} (PDF/XPS Auto). Windows may ask where to save.`
@@ -345,7 +392,9 @@ function PrinterSectionsTab({
             <p className="mt-1 text-xs text-slate-500">
               {selectedSection
                 ? `Selected: ${selectedSection.name}. Tap “Use for ${selectedSection.name}” on a printer below.`
-                : "Select Kitchen or Bar on the left, then choose a printer."}
+                : isStore
+                  ? "Select Receipt or Counter on the left, then choose a printer."
+                  : "Select Kitchen or Bar on the left, then choose a printer."}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -369,7 +418,8 @@ function PrinterSectionsTab({
             <div className="col-span-full space-y-2 text-xs text-slate-400">
               <p>No printers detected on this computer.</p>
               <p>
-                Open Windows Settings → Printers, install your kitchen printer, then click{" "}
+                Open Windows Settings → Printers, install your{" "}
+                {isStore ? "receipt / counter" : "kitchen"} printer, then click{" "}
                 <span className="text-amber-300">Refresh printers</span>.
               </p>
             </div>
@@ -1132,16 +1182,19 @@ function PrinterProfilesTab({
   systemPrinters,
   staffLabelById,
   notify,
+  isStore = false,
 }: {
   branchCode: string;
   routing: PrinterRoutingState;
   systemPrinters: SystemPrinterInfo[];
   staffLabelById: Map<string, string>;
   notify: (message: string) => void;
+  isStore?: boolean;
 }): JSX.Element {
   const [newName, setNewName] = useState("");
-  const [newType, setNewType] = useState<PrinterType>("kitchen");
+  const [newType, setNewType] = useState<PrinterType>(isStore ? "receipt" : "kitchen");
   const [newOsPrinter, setNewOsPrinter] = useState("");
+  const addTypeOptions = printerTypesForSystem(isStore);
 
   const usableOsPrinters = useMemo(
     () => systemPrinters.filter((p) => !p.isVirtual),
@@ -1167,6 +1220,7 @@ function PrinterProfilesTab({
         printerType: newType,
         systemPrinterName: newOsPrinter || undefined,
       });
+      maybeSetDefaultPosPrinter(branchCode, profile.id, newType);
       setNewName("");
       setNewOsPrinter("");
       notify(
@@ -1182,20 +1236,30 @@ function PrinterProfilesTab({
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">Default receipt printer</div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+          {isStore ? "Default POS receipt printer" : "Default receipt printer"}
+        </div>
         <p className="mt-1 text-xs text-slate-500">
-          Used for POS Pay / Invoice / split bills. Branch: <span className="font-mono text-slate-300">{branchCode}</span>
+          {isStore
+            ? "Used when you tap Print / Pay on Point of Sale. Branch: "
+            : "Used for POS Pay / Invoice / split bills. Branch: "}
+          <span className="font-mono text-slate-300">{branchCode}</span>
         </p>
         <select
           className="mt-3 w-full max-w-md rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white"
           value={routing.receiptPrinterId ?? ""}
           onChange={(e) => setReceiptPrinter(branchCode, e.target.value || null)}
         >
-          <option value="">Auto — first online OS-linked Receipt printer</option>
+          <option value="">
+            {isStore
+              ? "Auto — first online OS-linked Receipt / Counter printer"
+              : "Auto — first online OS-linked Receipt printer"}
+          </option>
           {routing.printers.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
-              {p.systemPrinterName ? ` → ${p.systemPrinterName}` : ""} ({PRINTER_TYPE_LABELS[p.printerType]})
+              {p.systemPrinterName ? ` → ${p.systemPrinterName}` : ""} (
+              {printerTypeLabel(p.printerType, isStore)})
             </option>
           ))}
         </select>
@@ -1204,7 +1268,11 @@ function PrinterProfilesTab({
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">All printers</div>
         <p className="mt-1 text-xs text-slate-500">
-          Add a name, type (Kitchen / Bar / Receipt), and link any Windows printer — USB, network,{" "}
+          Add a name, type (
+          {isStore
+            ? "Receipt / Counter / Warehouse / Label / Other"
+            : "Kitchen / Bar / Receipt"}
+          ), and link any Windows printer — USB, network,{" "}
           <span className="text-slate-300">Microsoft Print to PDF</span>, XPS, and more. Auto POS print uses the
           linked device; if silent print fails, the Windows dialog opens (same as manual).
         </p>
@@ -1227,9 +1295,9 @@ function PrinterProfilesTab({
             value={newType}
             onChange={(e) => setNewType(e.target.value as PrinterType)}
           >
-            {PRINTER_TYPES.map((type) => (
+            {addTypeOptions.map((type) => (
               <option key={type} value={type}>
-                {PRINTER_TYPE_LABELS[type]}
+                {printerTypeLabel(type, isStore)}
               </option>
             ))}
           </select>
@@ -1310,15 +1378,15 @@ function PrinterProfilesTab({
                       <select
                         className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
                         value={printer.printerType}
-                        onChange={(e) =>
-                          updatePrinterProfile(branchCode, printer.id, {
-                            printerType: e.target.value as PrinterType,
-                          })
-                        }
+                        onChange={(e) => {
+                          const printerType = e.target.value as PrinterType;
+                          updatePrinterProfile(branchCode, printer.id, { printerType });
+                          maybeSetDefaultPosPrinter(branchCode, printer.id, printerType);
+                        }}
                       >
-                        {PRINTER_TYPES.map((type) => (
+                        {typeOptionsForProfile(isStore, printer.printerType).map((type) => (
                           <option key={type} value={type}>
-                            {PRINTER_TYPE_LABELS[type]}
+                            {printerTypeLabel(type, isStore)}
                           </option>
                         ))}
                       </select>
@@ -1332,6 +1400,13 @@ function PrinterProfilesTab({
                             updatePrinterProfile(branchCode, printer.id, {
                               systemPrinterName: e.target.value || undefined,
                             });
+                            if (e.target.value) {
+                              maybeSetDefaultPosPrinter(
+                                branchCode,
+                                printer.id,
+                                printer.printerType,
+                              );
+                            }
                           } catch (err) {
                             notify(err instanceof Error ? err.message : "Could not link printer.");
                           }
@@ -1531,11 +1606,13 @@ function PrinterAssignmentTab({
   routing,
   users,
   notify,
+  isStore = false,
 }: {
   branchCode: string;
   routing: PrinterRoutingState;
   users: { id: string; email: string; role: string }[];
   notify: (message: string) => void;
+  isStore?: boolean;
 }): JSX.Element {
   const [filterUser, setFilterUser] = useState("");
   const [filterCounter, setFilterCounter] = useState("");
@@ -1544,6 +1621,10 @@ function PrinterAssignmentTab({
   const [search, setSearch] = useState("");
   const counters = listAssignedCounters(branchCode);
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+  const typeOptions = printerTypesForSystem(isStore);
+  const quickAssignTypes: PrinterType[] = isStore
+    ? ["receipt", "counter", "warehouse"]
+    : ["kitchen", "bar", "receipt"];
 
   const filteredUsers = users.filter((u) => {
     if (filterUser && u.id !== filterUser) return false;
@@ -1564,8 +1645,8 @@ function PrinterAssignmentTab({
     for (const p of targets) toggleUserPrinter(branchCode, userId, p.id, assign);
     notify(
       assign
-        ? `Assigned all ${PRINTER_TYPE_LABELS[type]} printers to user.`
-        : `Removed all ${PRINTER_TYPE_LABELS[type]} printers from user.`,
+        ? `Assigned all ${printerTypeLabel(type, isStore)} printers to user.`
+        : `Removed all ${printerTypeLabel(type, isStore)} printers from user.`,
     );
   }
 
@@ -1573,13 +1654,14 @@ function PrinterAssignmentTab({
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">
-          Assign printers to users / waiters / riders
+          {isStore
+            ? "Assign printers to cashiers / staff"
+            : "Assign printers to users / waiters / riders"}
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          Jab waiter, rider, ya cashier Print dabaye, bill / KOT unke assigned printer se niklega (mobile /
-          USB / network — jo OS printer profile se linked ho). Ek user ke paas Receipt + Kitchen + Bar ho
-          sakte hain. Cashiers: POS → <span className="text-amber-300">My printers</span>. Waiters: Waiter
-          page → Printer assignments. Branch:{" "}
+          {isStore
+            ? "When a cashier prints from Point of Sale, the slip goes to their assigned Receipt / Counter printer (OS-linked USB, network, or PDF). Set Default POS receipt printer under All Printers if nobody has a personal assignment. Branch: "
+            : "Jab waiter, rider, ya cashier Print dabaye, bill / KOT unke assigned printer se niklega (mobile / USB / network — jo OS printer profile se linked ho). Ek user ke paas Receipt + Kitchen + Bar ho sakte hain. Cashiers: POS → My printers. Waiters: Waiter page → Printer assignments. Branch: "}
           <span className="font-mono text-slate-300">{branchCode}</span>
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -1629,9 +1711,9 @@ function PrinterAssignmentTab({
               onChange={(e) => setFilterType(e.target.value as PrinterType | "")}
             >
               <option value="">All types</option>
-              {PRINTER_TYPES.map((type) => (
+              {typeOptions.map((type) => (
                 <option key={type} value={type}>
-                  {PRINTER_TYPE_LABELS[type]}
+                  {printerTypeLabel(type, isStore)}
                 </option>
               ))}
             </select>
@@ -1646,7 +1728,7 @@ function PrinterAssignmentTab({
               <option value="">All printers</option>
               {routing.printers.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} ({PRINTER_TYPE_LABELS[p.printerType]})
+                  {p.name} ({printerTypeLabel(p.printerType, isStore)})
                 </option>
               ))}
             </select>
@@ -1661,12 +1743,14 @@ function PrinterAssignmentTab({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">User → Assigned printers</div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+          {isStore ? "Staff → Assigned printers" : "User → Assigned printers"}
+        </div>
         <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
           <table className="w-full min-w-[40rem] text-left text-xs">
             <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-2.5 py-2">User / Waiter</th>
+                <th className="px-2.5 py-2">{isStore ? "User / Cashier" : "User / Waiter"}</th>
                 <th className="px-2.5 py-2">Role</th>
                 <th className="px-2.5 py-2">Assigned printers</th>
                 <th className="px-2.5 py-2">Quick</th>
@@ -1709,6 +1793,12 @@ function PrinterAssignmentTab({
                                     checked={on}
                                     onChange={(e) => {
                                       toggleUserPrinter(branchCode, u.id, p.id, e.target.checked);
+                                      if (
+                                        e.target.checked &&
+                                        (p.printerType === "receipt" || p.printerType === "counter")
+                                      ) {
+                                        maybeSetDefaultPosPrinter(branchCode, p.id, p.printerType);
+                                      }
                                       notify(
                                         e.target.checked
                                           ? `Assigned ${p.name} → ${u.email}`
@@ -1719,7 +1809,7 @@ function PrinterAssignmentTab({
                                   <span>
                                     {p.name}
                                     <span className="ml-1 opacity-70">
-                                      · {PRINTER_TYPE_LABELS[p.printerType]}
+                                      · {printerTypeLabel(p.printerType, isStore)}
                                       {p.assignedCounter ? ` · ${p.assignedCounter}` : ""}
                                     </span>
                                   </span>
@@ -1732,21 +1822,21 @@ function PrinterAssignmentTab({
                           <p className="mt-1.5 text-[10px] text-slate-500">
                             {assigned.length} assigned:{" "}
                             {assigned
-                              .map((p) => `${p.name} (${PRINTER_TYPE_LABELS[p.printerType]})`)
+                              .map((p) => `${p.name} (${printerTypeLabel(p.printerType, isStore)})`)
                               .join(", ")}
                           </p>
                         ) : null}
                       </td>
                       <td className="px-2.5 py-2">
                         <div className="flex flex-col gap-1">
-                          {(["kitchen", "bar", "receipt"] as PrinterType[]).map((type) => (
+                          {quickAssignTypes.map((type) => (
                             <button
                               key={type}
                               type="button"
                               className="text-left text-[10px] text-sky-400 hover:text-sky-300"
                               onClick={() => assignAllOfType(u.id, type, true)}
                             >
-                              + All {PRINTER_TYPE_LABELS[type]}
+                              + All {printerTypeLabel(type, isStore)}
                             </button>
                           ))}
                           <button
@@ -1801,7 +1891,9 @@ function PrinterAssignmentTab({
                           <div className="text-[10px] text-sky-400">{p.systemPrinterName}</div>
                         ) : null}
                       </td>
-                      <td className="px-2.5 py-2 text-slate-400">{PRINTER_TYPE_LABELS[p.printerType]}</td>
+                      <td className="px-2.5 py-2 text-slate-400">
+                        {printerTypeLabel(p.printerType, isStore)}
+                      </td>
                       <td className="px-2.5 py-2 text-slate-400">{p.assignedCounter || "—"}</td>
                       <td className="px-2.5 py-2">
                         <span
@@ -2011,9 +2103,25 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
 }
 
 function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element {
+  const systemId = useActiveSystemId();
+  const isStore = systemId === "general-store";
+  const sectionPreset: PrinterSectionPreset = isStore ? "general-store" : "restaurant";
   const [activeTab, setActiveTab] = useState<TabId>("printers");
   const [notice, setNotice] = useState<string | null>(null);
-  const { sections, routing } = usePrinterConfig(branchCode);
+  const { sections, routing } = usePrinterConfig(branchCode, sectionPreset);
+
+  // Remap leftover Kitchen/Bar profile types to store roles once per branch.
+  useEffect(() => {
+    if (!isStore) return;
+    const state = loadPrinterRouting(branchCode);
+    for (const p of state.printers) {
+      if (p.printerType === "kitchen") {
+        updatePrinterProfile(branchCode, p.id, { printerType: "other" });
+      } else if (p.printerType === "bar") {
+        updatePrinterProfile(branchCode, p.id, { printerType: "counter" });
+      }
+    }
+  }, [isStore, branchCode]);
 
   const systemPrintersQuery = useQuery({
     queryKey: ["system-printers"],
@@ -2027,10 +2135,38 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branchCode, "printer-management"],
+    enabled: !isStore,
     queryFn: () => fetchBranchMenuAdmin(branchCode),
   });
-  const categories = menuQuery.data?.categories ?? [];
-  const items = menuQuery.data?.items ?? [];
+
+  const storeCategoriesQuery = useQuery({
+    queryKey: ["store", "categories", branchCode, "printer-management"],
+    enabled: isStore,
+    queryFn: () => fetchStoreCategories(branchCode),
+  });
+  const storeProductsQuery = useQuery({
+    queryKey: ["store", "products", branchCode, "printer-management"],
+    enabled: isStore,
+    queryFn: () => fetchStoreProducts(branchCode),
+  });
+
+  const categories = useMemo(() => {
+    if (isStore) {
+      return (storeCategoriesQuery.data ?? []).map((c) => ({ id: c.id, name: c.name }));
+    }
+    return menuQuery.data?.categories ?? [];
+  }, [isStore, storeCategoriesQuery.data, menuQuery.data?.categories]);
+
+  const items = useMemo(() => {
+    if (isStore) {
+      return (storeProductsQuery.data ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        categoryId: p.categoryId ?? "",
+      }));
+    }
+    return menuQuery.data?.items ?? [];
+  }, [isStore, storeProductsQuery.data, menuQuery.data?.items]);
 
   const assignableQuery = useQuery({
     queryKey: ["assignable-staff", branchCode, "printer-management"],
@@ -2046,13 +2182,24 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
 
   const assignablePeople = useMemo((): AssignablePerson[] => {
     const staff = assignableQuery.data ?? [];
-    return staff.map((person) => ({
+    const fromStaff = staff.map((person) => ({
       id: person.id,
       label: person.name || person.email,
       role: person.role,
       kind: person.role.toLowerCase() === "waiter" ? ("waiter" as const) : ("user" as const),
     }));
-  }, [assignableQuery.data]);
+    if (!isStore) return fromStaff;
+    const seen = new Set(fromStaff.map((p) => p.id));
+    const fromOrg = users
+      .filter((u) => !seen.has(u.id))
+      .map((u) => ({
+        id: u.id,
+        label: u.email,
+        role: String(u.role ?? "staff"),
+        kind: "user" as const,
+      }));
+    return [...fromOrg, ...fromStaff];
+  }, [assignableQuery.data, isStore, users]);
 
   const staffLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -2189,12 +2336,42 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
       </div>
 
       {activeTab === "printers" ? (
-        <PrinterProfilesTab
+        <div className="space-y-6">
+          <PrinterSectionsTab
+            branchCode={branchCode}
+            sections={sections}
+            routing={routing}
+            systemPrinters={systemPrinters}
+            allSystemPrinters={allSystemPrinters}
+            systemPrintersLoading={systemPrintersQuery.isLoading || systemPrintersQuery.isFetching}
+            systemPrintersError={systemPrintersError}
+            onRefreshSystemPrinters={() => void systemPrintersQuery.refetch()}
+            categories={categories}
+            items={items}
+            notify={notify}
+            isStore={isStore}
+          />
+          <PrinterProfilesTab
+            branchCode={branchCode}
+            routing={routing}
+            systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
+            staffLabelById={staffLabelById}
+            notify={notify}
+            isStore={isStore}
+          />
+        </div>
+      ) : null}
+      {activeTab === "assign" ? (
+        <PrinterAssignmentTab
           branchCode={branchCode}
           routing={routing}
-          systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
-          staffLabelById={staffLabelById}
+          users={users.map((u) => ({
+            id: u.id,
+            email: u.email,
+            role: u.role,
+          }))}
           notify={notify}
+          isStore={isStore}
         />
       ) : null}
       {activeTab === "by-section" ? (
@@ -2239,13 +2416,26 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
 
 export function PrinterPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
+  const systemId = useActiveSystemId();
+  const isStore = systemId === "general-store";
   const [notice, setNotice] = useState<string | null>(null);
   const [legacyOpen, setLegacyOpen] = useState(false);
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
-    enabled: Boolean(branch?.code),
+    enabled: Boolean(branch?.code) && !isStore,
     queryFn: () => fetchBranchMenuAdmin(branch!.code),
+  });
+
+  const storeCategoriesQuery = useQuery({
+    queryKey: ["store", "categories", branch?.code, "printer-page"],
+    enabled: Boolean(branch?.code) && isStore,
+    queryFn: () => fetchStoreCategories(branch!.code),
+  });
+  const storeProductsQuery = useQuery({
+    queryKey: ["store", "products", branch?.code, "printer-page"],
+    enabled: Boolean(branch?.code) && isStore,
+    queryFn: () => fetchStoreProducts(branch!.code),
   });
 
   const usersQuery = useQuery({
@@ -2259,34 +2449,57 @@ export function PrinterPage(): JSX.Element {
   );
 
   if (!branch?.code) {
-    return <PageHeader title="Printer" subtitle="Select a branch to configure printer settings." />;
+    return (
+      <PageHeader
+        title="Printer"
+        subtitle={
+          isStore
+            ? "Select a General Store branch to configure receipt and counter printers."
+            : "Select a branch to configure printer settings."
+        }
+      />
+    );
   }
 
-  const categories = menuQuery.data?.categories ?? [];
-  const items = menuQuery.data?.items ?? [];
+  const categories = isStore
+    ? (storeCategoriesQuery.data ?? []).map((c) => ({ id: c.id, name: c.name }))
+    : (menuQuery.data?.categories ?? []);
+  const items = isStore
+    ? (storeProductsQuery.data ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        categoryId: p.categoryId ?? "",
+      }))
+    : (menuQuery.data?.items ?? []);
   const users = usersQuery.data ?? [];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Printer"
-        subtitle={`Printer configuration for ${branch.name} (${branch.code}) — sections, profiles, routing, and KOT template.`}
+        subtitle={
+          isStore
+            ? `General Store printer setup for ${branch.name} (${branch.code}) — sections, profiles, routing, and receipt slips.`
+            : `Printer configuration for ${branch.name} (${branch.code}) — sections, profiles, routing, and KOT template.`
+        }
       />
 
       <PrinterManagement branchCode={branch.code} />
 
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">
-          Kitchen ticket customization
+          {isStore ? "Receipt / slip customization" : "Kitchen ticket customization"}
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          Full kitchen receipt editor — same style as bill customization. Preview matches Auto print.
-          Also available under Print Settings → step 4.
+          {isStore
+            ? "Design the slip shown on POS Order / Pay / Print. Click Save store slip template, then print from Point of Sale — layout and assigned printer apply automatically."
+            : "Full kitchen receipt editor — same style as bill customization. Preview matches Auto print. Also available under Print Settings → step 4."}
         </p>
         <div className="mt-4">
           <KotCustomizationPanel
             branchName={branch.name}
             branchCode={branch.code}
+            variant={isStore ? "store" : "restaurant"}
             onNotice={setNotice}
           />
         </div>

@@ -32,13 +32,18 @@ if (!VALID.has(edition)) {
 const extraArgs = process.argv.slice(3);
 
 const args = ["exec", "tauri", "build"];
-if (edition !== "suite") {
+{
   const configPath = join(tauriDir, `tauri.${edition}.conf.json`);
-  if (!existsSync(configPath)) {
+  // Suite uses tauri.suite.conf.json; single editions use their own overlay.
+  // Fall back to base tauri.conf.json only if the edition overlay is missing.
+  if (existsSync(configPath)) {
+    const configArg =
+      process.platform === "win32" && /\s/.test(configPath) ? `"${configPath}"` : configPath;
+    args.push("--config", configArg);
+  } else if (edition !== "suite") {
     console.error(`[build-edition] Missing config: ${configPath}`);
     process.exit(1);
   }
-  args.push("--config", configPath);
 }
 args.push(...extraArgs);
 

@@ -59,8 +59,17 @@ export const storeProducts = pgTable("store_products", {
   barcode: text("barcode"),
   qrCode: text("qr_code"),
   imageUrl: text("image_url"),
+  supplierId: uuid("supplier_id"),
   purchasePricePkr: integer("purchase_price_pkr").notNull().default(0),
+  orderCostPkr: integer("order_cost_pkr").notNull().default(0),
   sellingPricePkr: integer("selling_price_pkr").notNull().default(0),
+  salePricePkr: integer("sale_price_pkr").notNull().default(0),
+  mrpPricePkr: integer("mrp_price_pkr").notNull().default(0),
+  wholesalePricePkr: integer("wholesale_price_pkr").notNull().default(0),
+  customPricePkr: integer("custom_price_pkr").notNull().default(0),
+  marketSalePricePkr: integer("market_sale_price_pkr").notNull().default(0),
+  marginPct: integer("margin_pct").notNull().default(0),
+  markupPct: integer("markup_pct").notNull().default(0),
   taxPct: integer("tax_pct").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
   availableStock: integer("available_stock").notNull().default(0),
@@ -71,6 +80,20 @@ export const storeProducts = pgTable("store_products", {
   trackBatch: text("track_batch").notNull().default("no"),
   trackSerial: text("track_serial").notNull().default("no"),
   isWeighed: text("is_weighed").notNull().default("no"),
+  color: text("color"),
+  size: text("size"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Alternate barcodes / ALU codes for a product (primary UPC stays on store_products.barcode). Max 12 per product. */
+export const storeProductBarcodes = pgTable("store_product_barcodes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => storeProducts.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
+  isPrimary: text("is_primary").notNull().default("no"),
+  sortOrder: integer("sort_order").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -480,6 +503,8 @@ export const storeSaleLines = pgTable("store_sale_lines", {
   isWeighed: text("is_weighed").notNull().default("no"),
   unitPricePkr: integer("unit_price_pkr").notNull(),
   lineTotalPkr: integer("line_total_pkr").notNull(),
+  /** Optional receipt name for this sale only (does not change product master). */
+  displayName: text("display_name"),
   batchId: uuid("batch_id"),
 });
 

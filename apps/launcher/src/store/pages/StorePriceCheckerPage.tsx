@@ -24,6 +24,16 @@ export function StorePriceCheckerPage(): JSX.Element {
 
   const product = productQuery.data;
 
+  const otherLevels = product
+    ? [
+        { label: "Sale", price: product.salePrice ?? 0 },
+        { label: "MRP", price: product.mrpPrice ?? 0 },
+        { label: "Wholesale", price: product.wholesalePrice ?? 0 },
+        { label: "Custom", price: product.customPrice ?? 0 },
+        { label: "Market sale", price: product.marketSalePrice ?? 0 },
+      ].filter((l) => l.price > 0)
+    : [];
+
   return (
     <div className="flex min-h-[calc(100vh-6rem)] flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-8 text-white">
       <p className="text-sm uppercase tracking-[0.25em] text-sky-300">Price checker</p>
@@ -53,12 +63,31 @@ export function StorePriceCheckerPage(): JSX.Element {
       ) : product ? (
         <div className="mt-12 w-full max-w-xl rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
           <p className="text-lg text-slate-300">{product.name}</p>
-          <p className="mt-1 text-sm text-slate-500">{product.sku}{product.barcode ? ` · ${product.barcode}` : ""}</p>
-          <p className="mt-6 text-5xl font-bold text-sky-300">
+          <p className="mt-1 text-sm text-slate-500">
+            {product.sku}
+            {product.barcode ? ` · ${product.barcode}` : ""}
+            {(product.barcodes?.length ?? 0) > 1 ? ` · ${product.barcodes!.length} barcodes` : ""}
+          </p>
+          <p className="mt-2 text-xs uppercase tracking-wide text-sky-400/80">Regular price</p>
+          <p className="mt-2 text-5xl font-bold text-sky-300">
             {product.isWeighed ? `${formatPkr(product.sellingPrice)} / kg` : formatPkr(product.sellingPrice)}
           </p>
+          {otherLevels.length > 0 ? (
+            <div className="mt-6 grid gap-2 text-left sm:grid-cols-2">
+              {otherLevels.map((lvl) => (
+                <div key={lvl.label} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">{lvl.label}</p>
+                  <p className="text-lg font-semibold text-white">
+                    {product.isWeighed ? `${formatPkr(lvl.price)} / kg` : formatPkr(lvl.price)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <p className="mt-4 text-sm text-emerald-400">
-            {product.isWeighed ? `${(product.availableStock / 1000).toFixed(2)} kg in stock` : `${product.availableStock} in stock`}
+            {product.isWeighed
+              ? `${(product.availableStock / 1000).toFixed(2)} kg in stock`
+              : `${product.availableStock} in stock`}
           </p>
         </div>
       ) : activeQuery && productQuery.isError ? (

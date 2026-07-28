@@ -47,6 +47,8 @@ const DEMO_EMAIL: Partial<Record<PopsRole, string>> = {
 
 /** Demo password matching Railway / production seed (SEED_USER_PASSWORD). */
 export const DEMO_OWNER_PASSWORD = "Owner@12345";
+/** Demo staff password matching Railway / production seed (Staff@12345). */
+export const DEMO_STAFF_PASSWORD = "Staff@12345";
 export const DEMO_SUPER_ADMIN_EMAIL = "superadmin@pops.platform";
 export const DEMO_SUPER_ADMIN_PASSWORD = "SuperAdmin@123";
 

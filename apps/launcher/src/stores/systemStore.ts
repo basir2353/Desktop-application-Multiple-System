@@ -16,20 +16,21 @@ type SystemState = {
 // Single-system installers lock the store to their baked-in edition, and a
 // device that already has a system installed stays on that system. The picker
 // and any "switch system" action become no-ops so only that system is visible.
-const lockedSystemId = getEffectiveSystemLock();
-
+// Read the lock on each call so `/?reset-install=1` can unlock without a stale
+// module-level snapshot from first import.
 export const useSystemStore = create<SystemState>()(
   persist(
     (set) => ({
-      systemId: lockedSystemId,
-      setSystem: (systemId) => set({ systemId: lockedSystemId ?? systemId }),
-      clearSystem: () => set({ systemId: lockedSystemId }),
+      systemId: getEffectiveSystemLock(),
+      setSystem: (systemId) => set({ systemId: getEffectiveSystemLock() ?? systemId }),
+      clearSystem: () => set({ systemId: getEffectiveSystemLock() }),
     }),
     {
       name: "platform-system-v1",
       partialize: (s) => ({ systemId: s.systemId }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SystemState>;
+        const lockedSystemId = getEffectiveSystemLock();
         // A locked edition always wins over any previously persisted selection.
         if (lockedSystemId) {
           return { ...current, ...p, systemId: lockedSystemId };
@@ -52,7 +53,8 @@ export function useActiveBusinessSystem() {
 }
 
 export function readPersistedSystemId(): BusinessSystemId | null {
-  if (lockedSystemId) return lockedSystemId;
+  const locked = getEffectiveSystemLock();
+  if (locked) return locked;
   try {
     const raw = localStorage.getItem("platform-system-v1");
     if (!raw) return null;

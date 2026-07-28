@@ -13,6 +13,9 @@ type Props = {
   customerLoyaltyPoints: number;
   isSubmitting?: boolean;
   mode?: "complete" | "hold";
+  /** Prefill from Sales screen (default Cash). */
+  initialPaymentMethod?: StorePaymentMethod;
+  initialIsCredit?: boolean;
   onClose: () => void;
   onConfirm: (payload: {
     paymentMethod: StorePaymentMethod;
@@ -36,12 +39,16 @@ export function StoreCheckoutModal({
   customerLoyaltyPoints,
   isSubmitting = false,
   mode = "complete",
+  initialPaymentMethod = "Cash",
+  initialIsCredit = false,
   onClose,
   onConfirm,
 }: Props): JSX.Element {
-  const [payments, setPayments] = useState<StorePaymentLine[]>([defaultRow("Cash", total)]);
+  const [payments, setPayments] = useState<StorePaymentLine[]>([
+    defaultRow(initialPaymentMethod, total),
+  ]);
   const [loyaltyRedeem, setLoyaltyRedeem] = useState(initialLoyalty);
-  const [isCredit, setIsCredit] = useState(false);
+  const [isCredit, setIsCredit] = useState(initialIsCredit || initialPaymentMethod === "Credit");
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -57,8 +64,9 @@ export function StoreCheckoutModal({
   const change = Math.max(0, paid - netTotal);
 
   useEffect(() => {
-    setPayments([defaultRow("Cash", netTotal)]);
-  }, [netTotal]);
+    setPayments([defaultRow(initialPaymentMethod, netTotal)]);
+    setIsCredit(initialIsCredit || initialPaymentMethod === "Credit");
+  }, [netTotal, initialPaymentMethod, initialIsCredit]);
 
   function updatePayment(index: number, patch: Partial<StorePaymentLine>): void {
     setPayments((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));

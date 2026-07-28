@@ -10,7 +10,10 @@
     "ios": "expo run:ios",
     "build:apk": "NODE_ENV=production sh -c 'test -d android || expo prebuild --platform android; cd android && ./gradlew assembleRelease'",
     "build:apk:win": "node scripts/build-apk.mjs",
+    "build:staff-apk:win": "node scripts/build-apk.mjs staff",
+    "build:admin-apk:win": "node scripts/build-apk.mjs admin",
     "build:rider-apk:win": "node scripts/build-apk.mjs rider",
+    "build:waiter-apk:win": "node scripts/build-apk.mjs waiter",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

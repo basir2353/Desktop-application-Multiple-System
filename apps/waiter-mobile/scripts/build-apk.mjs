@@ -3,18 +3,38 @@
  * Build a release APK on Windows (or any OS with Java + Android SDK).
  *
  * Usage:
- *   pnpm build:apk:win           # waiter APK (default)
- *   pnpm build:apk:win rider     # rider APK
- *   pnpm build:waiter-apk         # from repo root
- *   pnpm build:rider-apk           # from repo root
+ *   pnpm build:apk:win            # staff APK (Waiter + Rider) — default
+ *   pnpm build:apk:win staff
+ *   pnpm build:apk:win admin
+ *   pnpm build:apk:win waiter     # legacy single-role
+ *   pnpm build:apk:win rider      # legacy single-role
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VARIANTS = {
+  staff: {
+    apkName: "pops-staff-release.apk",
+    packageId: "com.platform.pops.staff",
+    envVariant: "staff",
+  },
+  admin: {
+    apkName: "pops-admin-release.apk",
+    packageId: "com.platform.pops.admin",
+    envVariant: "admin",
+  },
   waiter: {
     apkName: "pops-waiter-release.apk",
     packageId: "com.platform.pops.waiter",
@@ -32,14 +52,31 @@ const appRoot = resolve(join(__dirname, ".."));
 const androidDir = join(appRoot, "android");
 const isWin = process.platform === "win32";
 
-const variantArg = process.argv[2] === "rider" ? "rider" : "waiter";
+const rawArg = (process.argv[2] ?? "staff").toLowerCase();
+const variantArg = Object.prototype.hasOwnProperty.call(VARIANTS, rawArg) ? rawArg : "staff";
 const variant = VARIANTS[variantArg];
 
+function resolvePnpmCmd() {
+  if (process.env.PNPM_CMD && existsSync(process.env.PNPM_CMD)) return process.env.PNPM_CMD;
+  if (isWin) {
+    const appData = process.env.APPDATA;
+    if (appData) {
+      const candidate = join(appData, "npm", "pnpm.cmd");
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return "pnpm";
+}
+
+const pnpmCmd = resolvePnpmCmd();
+
 function run(cmd, args, opts = {}) {
-  const result = spawnSync(cmd, args, {
+  const useShell = opts.shell ?? isWin;
+  const command = useShell && /\s/.test(cmd) ? `"${cmd}"` : cmd;
+  const result = spawnSync(command, args, {
     cwd: opts.cwd ?? appRoot,
     stdio: "inherit",
-    shell: opts.shell ?? isWin,
+    shell: useShell,
     env: { ...process.env, NODE_ENV: "production", ...opts.env },
   });
   if (result.status !== 0) {
@@ -212,8 +249,27 @@ function ensureAndroidProject(apiUrl, buildPaths) {
 
   if (!needsPrebuild) return;
 
+  // Prefer rename over expo --clean rmdir (Windows often locks android/ mid-build).
+  if (existsSync(buildPaths.androidDir)) {
+    const stale = `${buildPaths.androidDir}.stale-${Date.now()}`;
+    try {
+      renameSync(buildPaths.androidDir, stale);
+      console.log(`[build-apk] Moved locked android → ${stale}`);
+      try {
+        rmSync(stale, { recursive: true, force: true });
+      } catch {
+        /* leave stale dir */
+      }
+    } catch (err) {
+      console.warn(
+        "[build-apk] Could not move android dir:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   console.log(`[build-apk] Running expo prebuild for ${variantArg} (${variant.packageId})…`);
-  run("pnpm", ["exec", "expo", "prebuild", "--platform", "android", "--clean"], {
+  run(pnpmCmd, ["exec", "expo", "prebuild", "--platform", "android"], {
     cwd: buildPaths.appRoot,
     env: {
       EXPO_PUBLIC_API_BASE_URL: apiUrl,
@@ -239,12 +295,61 @@ function forceApplicationId(buildGradlePath, packageId) {
   }
 }
 
+/** Force short react-native path so Windows CMake stays under MAX_PATH (260). */
+function patchExpoModulesCoreReactNativeDir(buildPaths) {
+  const monorepoRoot = resolve(join(buildPaths.appRoot, "..", ".."));
+  const rnShort = join(monorepoRoot, "node_modules", "react-native").replace(/\\/g, "/");
+  if (!existsSync(join(monorepoRoot, "node_modules", "react-native"))) {
+    console.warn("[build-apk] Short react-native path missing:", rnShort);
+    return;
+  }
+
+  const gradleFiles = [];
+  const direct = join(monorepoRoot, "node_modules", "expo-modules-core", "android", "build.gradle");
+  if (existsSync(direct)) gradleFiles.push(direct);
+
+  const pnpmRoot = join(monorepoRoot, "node_modules", ".pnpm");
+  if (existsSync(pnpmRoot)) {
+    for (const entry of readdirSync(pnpmRoot)) {
+      if (!entry.startsWith("expo-modules-core@")) continue;
+      const g = join(pnpmRoot, entry, "node_modules", "expo-modules-core", "android", "build.gradle");
+      if (existsSync(g)) gradleFiles.push(g);
+    }
+  }
+
+  const needle =
+    /: file\(providers\.exec \{\s*workingDir\(rootDir\)\s*commandLine\("node", "--print", "require\.resolve\('react-native\/package\.json'\)"\)\s*\}\.standardOutput\.asText\.get\(\)\.trim\(\)\)\.parent/;
+  const replacement = `: file("${rnShort}")`;
+
+  for (const gradlePath of gradleFiles) {
+    let text = readFileSync(gradlePath, "utf8");
+    if (text.includes(`file("${rnShort}")`)) continue;
+    if (!needle.test(text)) {
+      // already patched differently or upstream changed — try looser replace
+      const loose = text.replace(
+        /commandLine\("node", "--print", "require\.resolve\('react-native\/package\.json'\)"\)[\s\S]*?\.parent/,
+        `/* patched */\n  : file("${rnShort}")`,
+      );
+      if (loose === text) {
+        console.warn("[build-apk] Could not patch REACT_NATIVE_DIR in", gradlePath);
+        continue;
+      }
+      text = loose;
+    } else {
+      text = text.replace(needle, replacement);
+    }
+    writeFileSync(gradlePath, text);
+    console.log(`[build-apk] Patched REACT_NATIVE_DIR → ${rnShort}`);
+  }
+}
+
 function applyAndroidPatches(buildPaths) {
   const buildGradle = join(buildPaths.androidDir, "app", "build.gradle");
   patchAndroidBuildGradle(buildGradle, buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
   forceApplicationId(buildGradle, variant.packageId);
+  patchExpoModulesCoreReactNativeDir(buildPaths);
 }
 
 function clearAutolinkingCache(androidDirPath) {
@@ -287,6 +392,20 @@ function seedAutolinkingJson(buildPaths, apiUrl) {
     process.exit(1);
   }
   writeFileSync(outFile, result.stdout.trim());
+  console.log(`[build-apk] Wrote ${outFile}`);
+
+  // Rewrite long .pnpm realpaths to short hoisted node_modules paths (Windows MAX_PATH).
+  try {
+    const monorepoRoot = resolve(join(buildPaths.appRoot, "..", ".."));
+    let text = readFileSync(outFile, "utf8");
+    text = text.replace(
+      /([A-Za-z]:[\\/](?:[^"\\]+[\\/])*?)node_modules[\\/]\.pnpm[\\/][^"\\]+[\\/]node_modules[\\/]([^"\\/]+)/g,
+      (_m, _prefix, pkg) => join(monorepoRoot, "node_modules", pkg).replace(/\\/g, "\\\\"),
+    );
+    writeFileSync(outFile, text);
+  } catch (err) {
+    console.warn("[build-apk] autolinking path rewrite skipped:", err instanceof Error ? err.message : err);
+  }
 
   const lockFiles = ["package.json", "yarn.lock", "package-lock.json", "react-native.config.js"];
   for (const name of lockFiles) {
@@ -314,6 +433,8 @@ const gradleEnv = {
   EXPO_PUBLIC_APP_VARIANT: variant.envVariant,
   APP_VARIANT: variant.envVariant,
   EXPO_NO_METRO_WORKSPACE_ROOT: "1",
+  NODE_OPTIONS: "--max-old-space-size=4096",
+  ORG_GRADLE_PROJECT_reactNativeArchitectures: "arm64-v8a",
 };
 
 // Metro writes sourcemaps here before Gradle creates the folder (clean prebuild).
@@ -327,14 +448,15 @@ mkdirSync(
 );
 
 const gradlew = join(paths.androidDir, isWin ? "gradlew.bat" : "gradlew");
+const gradleArgs = ["assembleRelease", "--no-daemon", "--stacktrace"];
 if (isWin) {
-  run("cmd.exe", ["/c", gradlew, "assembleRelease"], {
+  run("cmd.exe", ["/c", gradlew, ...gradleArgs], {
     cwd: paths.androidDir,
     env: gradleEnv,
     shell: false,
   });
 } else {
-  run(gradlew, ["assembleRelease"], { cwd: paths.androidDir, env: gradleEnv, shell: false });
+  run(gradlew, gradleArgs, { cwd: paths.androidDir, env: gradleEnv, shell: false });
 }
 
 if (!existsSync(paths.apkSrc)) {

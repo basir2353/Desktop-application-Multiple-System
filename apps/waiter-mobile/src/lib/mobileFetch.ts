@@ -46,15 +46,19 @@ export function wrapMobileNetworkError(baseUrl: string, err: unknown): Error {
   );
 }
 
-/** RN-safe fetch with plain headers, long timeout, and retries (Railway cold starts). */
+/** RN-safe fetch with plain headers, long timeout, and retries (Railway cold starts).
+ *  Never retry POST/PATCH/PUT/DELETE — a timed-out response can still have succeeded
+ *  on the server (duplicate kitchen tickets / bills). */
 export async function mobileFetch(url: string, init?: RequestInit): Promise<Response> {
   const headers = plainHeaders(init);
-  const method = init?.method ?? "GET";
+  const method = (init?.method ?? "GET").toUpperCase();
   const body = init?.body;
   const timeoutMs = Platform.OS === "android" ? ANDROID_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  const isSafeMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
+  const maxAttempts = isSafeMethod ? MAX_ATTEMPTS : 1;
 
   let lastError: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -69,7 +73,7 @@ export async function mobileFetch(url: string, init?: RequestInit): Promise<Resp
     } catch (err) {
       clearTimeout(timer);
       lastError = err;
-      if (!isRetryableNetworkError(err) || attempt + 1 >= MAX_ATTEMPTS) break;
+      if (!isSafeMethod || !isRetryableNetworkError(err) || attempt + 1 >= maxAttempts) break;
       await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
     }
   }

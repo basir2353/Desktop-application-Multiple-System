@@ -1,18 +1,21 @@
 import { Button } from "@platform/ui";
 import { useEffect, useMemo, useState } from "react";
 import {
-  DEFAULT_KOT_PRINT_SETTINGS,
   KOT_FIELD_GROUPS,
   KOT_FIELD_LABELS,
+  STORE_SLIP_FIELD_LABELS,
   KOT_PRINT_SETTINGS_CHANGED_EVENT,
   loadKotPrintSettings,
   newKotCustomLine,
   normalizeKotPrintSettings,
   saveKotPrintSettings,
+  defaultSlipPrintSettings,
+  storeSlipToBillPrintSettings,
   KOT_FONT_SIZE_MAX,
   KOT_FONT_SIZE_MIN,
   type KotPrintSettings,
   type KotReceiptFields,
+  type SlipPrintPreset,
 } from "../lib/kotPrintSettings";
 import { buildPrintPreviewHtml, type PrintTicketInput } from "../lib/printTicket";
 import {
@@ -25,6 +28,8 @@ import { fieldInputClass, fieldSelectClass } from "../lib/themeClasses";
 type Props = {
   branchName: string;
   branchCode: string;
+  /** Restaurant KOT vs General Store receipt/order slip. */
+  variant?: "restaurant" | "store";
   onNotice?: (message: string) => void;
 };
 
@@ -54,31 +59,60 @@ function sampleKotInput(branchName: string, branchCode: string): Omit<PrintTicke
   };
 }
 
+function sampleStoreInput(branchName: string, branchCode: string): Omit<PrintTicketInput, "kind"> {
+  return {
+    branchName,
+    branchCode,
+    orderRef: "INV-1042",
+    modeLabel: "Walk-in",
+    tableLabel: "Counter 1",
+    waiterName: "Cashier",
+    printerName: "Receipt",
+    notes: undefined,
+    lines: [
+      { label: "Lux Soap Bar 130g", qty: 2, unitPrice: 85 },
+      { label: "Dettol Antiseptic 500ml", qty: 1, unitPrice: 420 },
+      { label: "Surf Excel 1kg", qty: 1, unitPrice: 650 },
+      { label: "Nestle Milk Pack 1L", qty: 3, unitPrice: 210 },
+    ],
+    subtotal: 1870,
+    discount: 50,
+    service: 0,
+    tax: 0,
+    total: 1820,
+    servicePct: 0,
+    discountPct: 0,
+  };
+}
+
 export function KotCustomizationPanel({
   branchName,
   branchCode,
+  variant = "restaurant",
   onNotice,
 }: Props): JSX.Element {
-  const [draft, setDraft] = useState<KotPrintSettings>(() => loadKotPrintSettings(branchCode));
+  const preset: SlipPrintPreset = variant === "store" ? "general-store" : "restaurant";
+  const fieldLabels = variant === "store" ? STORE_SLIP_FIELD_LABELS : KOT_FIELD_LABELS;
+  const [draft, setDraft] = useState<KotPrintSettings>(() => loadKotPrintSettings(branchCode, preset));
   const [dirty, setDirty] = useState(false);
   const [thermalTick, setThermalTick] = useState(0);
 
   useEffect(() => {
-    setDraft(loadKotPrintSettings(branchCode));
+    setDraft(loadKotPrintSettings(branchCode, preset));
     setDirty(false);
-  }, [branchCode]);
+  }, [branchCode, preset]);
 
   useEffect(() => {
     function onChanged(event: Event): void {
-      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
-      if (detail?.branchCode === branchCode) {
-        setDraft(loadKotPrintSettings(branchCode));
-        setDirty(false);
-      }
+      const detail = (event as CustomEvent<{ branchCode?: string; preset?: SlipPrintPreset }>).detail;
+      if (detail?.branchCode !== branchCode) return;
+      if (detail.preset && detail.preset !== preset) return;
+      setDraft(loadKotPrintSettings(branchCode, preset));
+      setDirty(false);
     }
     window.addEventListener(KOT_PRINT_SETTINGS_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(KOT_PRINT_SETTINGS_CHANGED_EVENT, onChanged);
-  }, [branchCode]);
+  }, [branchCode, preset]);
 
   useEffect(() => {
     function onThermal(event: Event): void {
@@ -93,12 +127,21 @@ export function KotCustomizationPanel({
 
   const previewHtml = useMemo(() => {
     void loadThermalPrintSettings(branchCode);
+    const sample =
+      variant === "store" ? sampleStoreInput(branchName, branchCode) : sampleKotInput(branchName, branchCode);
+    if (variant === "store") {
+      return buildPrintPreviewHtml({
+        ...sample,
+        kind: "receipt",
+        billPrintSettings: storeSlipToBillPrintSettings(draft),
+      });
+    }
     return buildPrintPreviewHtml({
-      ...sampleKotInput(branchName, branchCode),
+      ...sample,
       kind: "kot",
       kotSettings: draft,
     });
-  }, [branchName, branchCode, draft, thermalTick]);
+  }, [branchName, branchCode, draft, thermalTick, variant]);
 
   const paperPx = useMemo(() => {
     const thermal = loadThermalPrintSettings(branchCode);
@@ -135,7 +178,10 @@ export function KotCustomizationPanel({
   }
 
   function addLine(): void {
-    const line = newKotCustomLine({ text: "Custom kitchen note", zone: "beforeItems" });
+    const line = newKotCustomLine({
+      text: variant === "store" ? "Store note" : "Custom kitchen note",
+      zone: "beforeItems",
+    });
     patch({
       customLines: [...draft.customLines, line],
       blockOrder: insertCustomInOrder(draft.blockOrder, line.id, line.zone),
@@ -162,13 +208,17 @@ export function KotCustomizationPanel({
   }
 
   function save(): void {
-    saveKotPrintSettings(branchCode, draft);
+    saveKotPrintSettings(branchCode, draft, preset);
     setDirty(false);
-    onNotice?.("Kitchen ticket template saved — live KOTs use this layout.");
+    onNotice?.(
+      variant === "store"
+        ? "Store slip template saved — Order / Pay / Print on POS now use this layout."
+        : "Kitchen ticket template saved — live KOTs use this layout.",
+    );
   }
 
   function resetDefaults(): void {
-    setDraft(DEFAULT_KOT_PRINT_SETTINGS);
+    setDraft(defaultSlipPrintSettings(preset));
     setDirty(true);
   }
 
@@ -214,7 +264,7 @@ export function KotCustomizationPanel({
             Header &amp; footer text
           </div>
           <label className="block text-xs text-slate-500">
-            Kitchen / business name
+            {variant === "store" ? "Store / business name" : "Kitchen / business name"}
             <input
               className={`mt-1 w-full ${fieldInputClass}`}
               value={draft.headerBusinessName}
@@ -228,25 +278,27 @@ export function KotCustomizationPanel({
               className={`mt-1 w-full ${fieldInputClass}`}
               value={draft.headerSubtitle}
               onChange={(e) => patch({ headerSubtitle: e.target.value })}
-              placeholder="e.g. Hot kitchen"
+              placeholder={variant === "store" ? "e.g. Main counter" : "e.g. Hot kitchen"}
             />
           </label>
           <label className="block text-xs text-slate-500">
-            Ticket title
+            {variant === "store" ? "Slip title" : "Ticket title"}
             <input
               className={`mt-1 w-full ${fieldInputClass}`}
               value={draft.documentTitle}
               onChange={(e) => patch({ documentTitle: e.target.value })}
-              placeholder="Kitchen Order"
+              placeholder={variant === "store" ? "Sales Receipt" : "Kitchen Order"}
             />
           </label>
           <label className="block text-xs text-slate-500">
-            Title when order is updated
+            {variant === "store" ? "Title when reprinting" : "Title when order is updated"}
             <input
               className={`mt-1 w-full ${fieldInputClass}`}
               value={draft.documentTitleUpdate}
               onChange={(e) => patch({ documentTitleUpdate: e.target.value })}
-              placeholder="Kitchen Order — UPDATE"
+              placeholder={
+                variant === "store" ? "Sales Receipt — UPDATE" : "Kitchen Order — UPDATE"
+              }
             />
           </label>
           <label className="block text-xs text-slate-500">
@@ -269,7 +321,7 @@ export function KotCustomizationPanel({
 
         <section className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-            Kitchen options
+            {variant === "store" ? "Receipt options" : "Kitchen options"}
           </div>
           <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
             <input
@@ -278,7 +330,9 @@ export function KotCustomizationPanel({
               checked={draft.emphasizeOrderMeta}
               onChange={(e) => patch({ emphasizeOrderMeta: e.target.checked })}
             />
-            Bold / enlarge order type &amp; table
+            {variant === "store"
+              ? "Bold / enlarge sale type & counter"
+              : "Bold / enlarge order type & table"}
           </label>
           <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
             <input
@@ -310,7 +364,7 @@ export function KotCustomizationPanel({
                       checked={draft.fields[key]}
                       onChange={(e) => patchField(key, e.target.checked)}
                     />
-                    {KOT_FIELD_LABELS[key]}
+                      {fieldLabels[key]}
                   </label>
                 ))}
               </div>
@@ -386,7 +440,7 @@ export function KotCustomizationPanel({
 
         <div className="flex flex-wrap gap-2">
           <Button type="button" className="text-xs" onClick={save} disabled={!dirty}>
-            Save kitchen template
+            {variant === "store" ? "Save store slip template" : "Save kitchen template"}
           </Button>
           <Button type="button" variant="ghost" className="text-xs" onClick={resetDefaults}>
             Reset defaults
@@ -399,14 +453,16 @@ export function KotCustomizationPanel({
 
       <aside className="xl:sticky xl:top-4">
         <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-          Kitchen print preview (matches printer)
+          {variant === "store"
+            ? "Store receipt preview (matches printer)"
+            : "Kitchen print preview (matches printer)"}
         </div>
         <div
           className="mx-auto overflow-hidden rounded-lg border border-slate-700 bg-white"
           style={{ width: paperPx }}
         >
           <iframe
-            title="Kitchen KOT preview"
+            title={variant === "store" ? "Store receipt preview" : "Kitchen KOT preview"}
             srcDoc={previewHtml}
             className="block h-[min(70vh,520px)] border-0 bg-white"
             style={{ width: paperPx }}
@@ -414,7 +470,9 @@ export function KotCustomizationPanel({
           />
         </div>
         <p className="mt-2 text-center text-[10px] text-slate-500">
-          Same layout as kitchen Auto print · paper from Thermal / printer profile (58mm is scaled smaller)
+          {variant === "store"
+            ? "Sample General Store products · live POS print uses real cart lines"
+            : "Same layout as kitchen Auto print · paper from Thermal / printer profile (58mm is scaled smaller)"}
         </p>
       </aside>
     </div>

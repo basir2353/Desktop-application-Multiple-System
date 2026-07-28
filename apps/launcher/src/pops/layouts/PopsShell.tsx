@@ -200,7 +200,13 @@ export function PopsShell(): JSX.Element {
           </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
+        <main
+          className={
+            isPosRoute
+              ? "flex-1 overflow-y-auto px-0 py-0 md:px-0 md:py-0"
+              : "flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5"
+          }
+        >
           <SystemRouteGuard />
         </main>
       </div>

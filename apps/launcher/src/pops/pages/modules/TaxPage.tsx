@@ -1,7 +1,7 @@
 import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import {
   connectFbr,
   connectPra,
@@ -22,6 +22,15 @@ import { SimpleTable } from "../../ui/SimpleTable";
 /** Org-level attachment when the business has no store branch selected. */
 const MAIN_SYSTEM_BRANCH_CODE = "MAIN";
 const MAIN_SYSTEM_BRANCH_NAME = "Main System";
+
+type TaxSection = "overview" | "fbr" | "pra" | "invoices";
+
+function taxSectionFromPath(pathname: string): TaxSection {
+  if (pathname.endsWith("/tax/fbr")) return "fbr";
+  if (pathname.endsWith("/tax/pra")) return "pra";
+  if (pathname.endsWith("/tax/invoices")) return "invoices";
+  return "overview";
+}
 
 type CompanyForm = {
   companyName: string;
@@ -95,12 +104,15 @@ export function TaxPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const systemId = useActiveSystemId();
+  const { pathname } = useLocation();
+  const section = useMemo(() => taxSectionFromPath(pathname), [pathname]);
   const qc = useQueryClient();
   const branchCode = branch?.code || MAIN_SYSTEM_BRANCH_CODE;
   const branchLabel = branch?.name || MAIN_SYSTEM_BRANCH_NAME;
-  const onMainSystem = !branch?.code;
+  const isStore = systemId === "general-store";
   const taxFeatures = useTaxAuthorityFeatures();
   const taxEnabled = isTaxAuthorityEnabled(taxFeatures.data);
+  const onMainSystem = !branch?.code;
 
   const [company, setCompany] = useState<CompanyForm>(
     emptyCompany(MAIN_SYSTEM_BRANCH_NAME, MAIN_SYSTEM_BRANCH_CODE),
@@ -285,13 +297,31 @@ export function TaxPage(): JSX.Element {
     },
   });
 
+  useEffect(() => {
+    const id =
+      section === "fbr"
+        ? "tax-section-fbr"
+        : section === "pra"
+          ? "tax-section-pra"
+          : section === "invoices"
+            ? "tax-section-invoices"
+            : "tax-section-overview";
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [section]);
+
   if (taxFeatures.isLoading) {
     return (
-      <PageHeader title="FBR & PRA Integration" subtitle="Checking tax authority access…" />
+      <PageHeader
+        title={isStore ? "General Store — FBR & PRA" : "FBR & PRA Integration"}
+        subtitle="Checking tax authority access…"
+      />
     );
   }
 
-  if (!taxEnabled) {
+  // Restaurant/pharmacy: leave if Super Admin has not enabled FBR/PRA.
+  // General store: keep the page so staff can open Tax & compliance from the sidebar.
+  if (!taxEnabled && !isStore) {
     return <Navigate to={erpEntryPathForRole(systemId, displayRole)} replace />;
   }
 
@@ -300,19 +330,61 @@ export function TaxPage(): JSX.Element {
   const fbrEnabled = statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false;
   const praEnabled = statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled ?? false;
   const invoices = invoicesQuery.data ?? [];
+  const showCompany = section === "overview";
+  const showFbr = section === "overview" || section === "fbr";
+  const showPra = section === "overview" || section === "pra";
+  const showInvoices = section === "overview" || section === "invoices";
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="FBR & PRA Integration"
+        title={isStore ? "General Store — FBR & PRA" : "FBR & PRA Integration"}
         subtitle={
-          onMainSystem
-            ? "No store branch yet — connecting to the main business system. Invoices submit automatically after sales."
-            : `Connect ${branchLabel} (${branchCode}) once — invoices submit automatically after sales.`
+          !taxEnabled
+            ? "Ask platform Super Admin to enable FBR and/or PRA for this business, then connect credentials here."
+            : onMainSystem
+              ? isStore
+                ? "No store branch yet — connect FBR/PRA on the main business. Invoices submit automatically after POS sales."
+                : "No store branch yet — connecting to the main business system. Invoices submit automatically after sales."
+              : isStore
+                ? `Connect General Store branch ${branchLabel} (${branchCode}) once — fiscal invoices submit automatically after checkout.`
+                : `Connect ${branchLabel} (${branchCode}) once — invoices submit automatically after sales.`
         }
       />
 
-      <div className={`grid gap-3 sm:grid-cols-2 ${panelClass} p-4`}>
+      {isStore ? (
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              { to: "/pops/tax", label: "Overview", id: "overview" },
+              { to: "/pops/tax/fbr", label: "FBR", id: "fbr" },
+              { to: "/pops/tax/pra", label: "PRA", id: "pra" },
+              { to: "/pops/tax/invoices", label: "Invoice queue", id: "invoices" },
+            ] as const
+          ).map((tab) => (
+            <Link
+              key={tab.id}
+              to={tab.to}
+              className={[
+                "rounded-lg px-3 py-1.5 text-sm font-semibold transition",
+                section === tab.id
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
+              ].join(" ")}
+            >
+              {tab.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
+      {!taxEnabled ? (
+        <div className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}>
+          FBR / PRA is not enabled yet for this business. After Super Admin turns on FBR and/or PRA, return here to connect credentials. Sales will then submit fiscal invoices automatically.
+        </div>
+      ) : null}
+
+      <div id="tax-section-overview" className={`grid gap-3 sm:grid-cols-2 ${panelClass} p-4`}>
         <div>
           <p className="text-xs uppercase tracking-wide text-slate-500">FBR status</p>
           <div className="mt-1 flex items-center gap-2">
@@ -348,6 +420,7 @@ export function TaxPage(): JSX.Element {
         </p>
       ) : null}
 
+      {showCompany ? (
       <section className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Company Information</h3>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -373,8 +446,10 @@ export function TaxPage(): JSX.Element {
           ))}
         </div>
       </section>
+      ) : null}
 
-      <section className={`${panelClass} space-y-4 p-4`}>
+      {showFbr ? (
+      <section id="tax-section-fbr" className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">FBR Settings</h3>
         {!fbrEnabled ? (
           <p className={`text-sm ${mutedClass}`}>
@@ -446,8 +521,10 @@ export function TaxPage(): JSX.Element {
         </>
         )}
       </section>
+      ) : null}
 
-      <section className={`${panelClass} space-y-4 p-4`}>
+      {showPra ? (
+      <section id="tax-section-pra" className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">PRA Settings</h3>
         {!praEnabled ? (
           <p className={`text-sm ${mutedClass}`}>
@@ -519,8 +596,10 @@ export function TaxPage(): JSX.Element {
         </>
         )}
       </section>
+      ) : null}
 
-      <section className="space-y-3">
+      {showInvoices ? (
+      <section id="tax-section-invoices" className="space-y-3">
         <PageHeader title="Invoice queue" subtitle="Submitted and pending FBR / PRA invoices for this branch." />
         <SimpleTable
           rowKey={(r) => String(r.id)}
@@ -559,6 +638,7 @@ export function TaxPage(): JSX.Element {
           <p className={`text-sm ${mutedClass}`}>No tax invoices yet. Complete a sale after connecting.</p>
         ) : null}
       </section>
+      ) : null}
     </div>
   );
 }

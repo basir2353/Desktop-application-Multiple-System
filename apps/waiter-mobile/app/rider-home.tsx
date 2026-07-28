@@ -180,7 +180,9 @@ export default function RiderHomeScreen() {
                 </View>
                 <Text style={styles.customer}>{order.customerName}</Text>
                 <Text style={styles.address} numberOfLines={2}>
-                  {order.customerAddress}
+                  {order.customerAddress && !/^\+?\d[\d\s()-]{5,}$/.test(order.customerAddress.trim())
+                    ? order.customerAddress
+                    : order.notes?.trim() || order.customerAddress}
                 </Text>
                 <Text style={styles.meta}>
                   {formatTimeAgo(order.createdAt)} · {formatPkr(order.deliveryChargePkr)} delivery

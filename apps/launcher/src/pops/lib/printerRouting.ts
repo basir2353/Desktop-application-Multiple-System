@@ -12,15 +12,56 @@ import { saveThermalPrintSettings } from "./thermalPrintSettings";
 
 export type PrinterPaperSize = "58mm" | "80mm" | "100mm" | "A4" | "custom";
 
-/** Logical role of a printer profile in the restaurant workflow. */
-export type PrinterType = "kitchen" | "bar" | "receipt" | "other";
+/** Logical role of a printer profile (restaurant + general-store). */
+export type PrinterType =
+  | "kitchen"
+  | "bar"
+  | "receipt"
+  | "other"
+  | "counter"
+  | "warehouse"
+  | "label";
 
 export const PRINTER_TYPE_LABELS: Record<PrinterType, string> = {
   kitchen: "Kitchen",
   bar: "Bar",
   receipt: "Receipt",
   other: "Other",
+  counter: "Counter",
+  warehouse: "Warehouse",
+  label: "Label",
 };
+
+export const RESTAURANT_PRINTER_TYPES: PrinterType[] = ["kitchen", "bar", "receipt", "other"];
+export const STORE_PRINTER_TYPES: PrinterType[] = ["receipt", "counter", "warehouse", "label", "other"];
+
+export function printerTypesForSystem(isStore: boolean): PrinterType[] {
+  return isStore ? STORE_PRINTER_TYPES : RESTAURANT_PRINTER_TYPES;
+}
+
+/** Display label — remaps legacy Kitchen/Bar when viewing as General Store. */
+export function printerTypeLabel(type: PrinterType, isStore = false): string {
+  if (isStore) {
+    if (type === "kitchen") return "Back office (legacy)";
+    if (type === "bar") return "Extra till (legacy)";
+  }
+  return PRINTER_TYPE_LABELS[type];
+}
+
+const ALL_PRINTER_TYPES = new Set<string>([
+  "kitchen",
+  "bar",
+  "receipt",
+  "other",
+  "counter",
+  "warehouse",
+  "label",
+]);
+
+export function normalizePrinterType(raw: unknown, fallback: PrinterType = "receipt"): PrinterType {
+  const t = String(raw ?? "");
+  return ALL_PRINTER_TYPES.has(t) ? (t as PrinterType) : fallback;
+}
 
 /** A printer profile — reusable print settings a section, category, item, or user can
  * point at. Optionally linked to a real OS printer (`systemPrinterName`) detected via
@@ -83,7 +124,7 @@ function normalizeProfile(raw: Partial<PrinterProfile> & Pick<PrinterProfile, "i
   return {
     id: raw.id,
     name: raw.name,
-    printerType: raw.printerType ?? "kitchen",
+    printerType: normalizePrinterType(raw.printerType, "receipt"),
     status: raw.status === "offline" ? "offline" : "online",
     notes: raw.notes,
     // Keep every OS link (Epson, PDF, XPS, …) so Auto can print to the chosen device.
@@ -197,7 +238,7 @@ export function addPrinterProfile(
   const profile: PrinterProfile = {
     id: newPrinterId(trimmedName),
     name: trimmedName,
-    printerType: extra?.printerType ?? "kitchen",
+    printerType: extra?.printerType ?? "receipt",
     status: "online",
     notes: extra?.notes,
     systemPrinterName,
@@ -394,7 +435,7 @@ export function resolveDefaultPrinterByType(
   return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(typed);
 }
 
-/** Default receipt printer: user receipt → branch default → OS-linked receipt → any receipt. */
+/** Default receipt printer: user receipt → branch default → OS-linked receipt/counter → any receipt. */
 export function resolveReceiptPrinter(
   branchCode: string | undefined,
   userId?: string | null,
@@ -402,15 +443,18 @@ export function resolveReceiptPrinter(
   if (!branchCode) return null;
   const userReceipt = resolvePrinterForUser(branchCode, userId, "receipt");
   if (userReceipt) return userReceipt;
+  const userCounter = resolvePrinterForUser(branchCode, userId, "counter");
+  if (userCounter?.systemPrinterName?.trim()) return userCounter;
 
   const state = loadPrinterRouting(branchCode);
   if (state.receiptPrinterId) {
     const selected = state.printers.find((p) => p.id === state.receiptPrinterId);
     if (selected) return selected;
   }
-  const receipts = state.printers.filter((p) => p.printerType === "receipt");
-  const withOs = receipts.filter((p) => p.systemPrinterName?.trim());
-  return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(receipts);
+  const posTypes: PrinterType[] = ["receipt", "counter"];
+  const typed = state.printers.filter((p) => posTypes.includes(p.printerType));
+  const withOs = typed.filter((p) => p.systemPrinterName?.trim());
+  return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(typed);
 }
 
 /**

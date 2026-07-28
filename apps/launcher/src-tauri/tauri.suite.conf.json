@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "POPS Universal Management System",
+  "identifier": "com.platform.pops.suite",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "POPS Universal — Restaurant · Store · Pharmacy"
+      }
+    ]
+  },
+  "bundle": {
+    "shortDescription": "Universal POS & ERP suite",
+    "longDescription": "POPS Universal Management System — Restaurant, General Store, and Pharmacy in one installer. Switch systems after login; includes POS, inventory, printing, pay in/out, tax, and reports.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

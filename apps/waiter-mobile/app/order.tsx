@@ -96,6 +96,8 @@ export default function OrderScreen() {
   const [deliveryRiderId, setDeliveryRiderId] = useState("");
   const [deliveryCharge, setDeliveryCharge] = useState("0");
   const appliedEditRef = useRef<string | null>(null);
+  const sendLockRef = useRef(false);
+  const billLockRef = useRef(false);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
@@ -222,7 +224,7 @@ export default function OrderScreen() {
       },
     }));
     setShowMenu(true);
-    setNotice("Editing order — add or remove items, then tap Update order.");
+    setNotice("Editing order — you can add items or increase qty. Printed qty cannot be reduced.");
   }
 
   function applyBillEdit(bill: Bill): void {
@@ -413,7 +415,17 @@ export default function OrderScreen() {
       if (wasEdit) router.replace("/order");
     },
     onError: (err: Error) => setNotice(err.message),
+    onSettled: () => {
+      sendLockRef.current = false;
+    },
   });
+
+  function submitSendOrder(): void {
+    if (sendLockRef.current || sendMutation.isPending) return;
+    if (cart.length === 0 || Boolean(validateOrderTarget())) return;
+    sendLockRef.current = true;
+    sendMutation.mutate();
+  }
 
   const billMutation = useMutation({
     mutationFn: async () => {
@@ -475,27 +487,57 @@ export default function OrderScreen() {
       if (wasEdit) router.replace("/order");
     },
     onError: (err: Error) => setNotice(err.message),
+    onSettled: () => {
+      billLockRef.current = false;
+    },
   });
+
+  function submitBill(): void {
+    if (billLockRef.current || billMutation.isPending) return;
+    if (cart.length === 0 || Boolean(validateOrderTarget())) return;
+    billLockRef.current = true;
+    billMutation.mutate();
+  }
 
   function addToCart(item: MenuItem): void {
     updateDraft((current) => {
       const next = [...current.cart];
       const i = next.findIndex((l) => l.item.id === item.id);
       if (i >= 0) next[i] = { ...next[i], qty: next[i].qty + 1 };
-      else next.push({ item, qty: 1 });
+      else next.push({ item, qty: 1, printedQty: 0 });
       return { cart: next };
     });
     setNotice(null);
   }
 
   function setLineQty(itemId: string, qty: number): void {
+    let blocked = false;
+    let floor = 0;
     updateDraft((current) => {
-      const next =
-        qty <= 0
-          ? current.cart.filter((l) => l.item.id !== itemId)
-          : current.cart.map((l) => (l.item.id === itemId ? { ...l, qty } : l));
-      return { cart: next };
+      const line = current.cart.find((l) => l.item.id === itemId);
+      if (!line) return current;
+      floor = Math.max(0, line.printedQty ?? 0);
+      if (qty < floor) blocked = true;
+      const nextQty = Math.max(floor, qty);
+      if (nextQty <= 0 && floor <= 0) {
+        return { cart: current.cart.filter((l) => l.item.id !== itemId) };
+      }
+      return {
+        cart: current.cart.map((l) => (l.item.id === itemId ? { ...l, qty: nextQty } : l)),
+      };
     });
+    if (blocked) {
+      setNotice(`Cannot reduce below printed qty (${floor}). Increase is allowed.`);
+    }
+  }
+
+  function markCartPrinted(): void {
+    updateDraft((current) => ({
+      cart: current.cart.map((l) => ({
+        ...l,
+        printedQty: Math.max(l.printedQty ?? 0, l.qty),
+      })),
+    }));
   }
 
   function selectMode(mode: MobileOrderMode): void {
@@ -739,6 +781,7 @@ export default function OrderScreen() {
                   </View>
                   <QtyStepper
                     qty={line.qty}
+                    minQty={line.printedQty ?? 0}
                     onDecrement={() => setLineQty(line.item.id, line.qty - 1)}
                     onIncrement={() => setLineQty(line.item.id, line.qty + 1)}
                   />
@@ -777,8 +820,8 @@ export default function OrderScreen() {
                       ? "Update & print"
                       : "Send & print"
                 }
-                onPress={() => sendMutation.mutate()}
-                disabled={cart.length === 0 || Boolean(validateOrderTarget())}
+                onPress={submitSendOrder}
+                disabled={cart.length === 0 || Boolean(validateOrderTarget()) || sendLockRef.current}
                 loading={sendMutation.isPending}
               />
             </View>
@@ -805,7 +848,12 @@ export default function OrderScreen() {
                           lines: cartLines(),
                           total,
                         });
-                        setNotice(ok ? "Print order sent." : "Could not print order.");
+                        if (ok) markCartPrinted();
+                        setNotice(
+                          ok
+                            ? "Print order sent. Printed qty is locked — you can only increase."
+                            : "Could not print order.",
+                        );
                       })();
                     }}
                   />
@@ -863,6 +911,7 @@ export default function OrderScreen() {
               <Text style={styles.searchIcon}>⌕</Text>
               <Input
                 placeholder="Search dishes or categories…"
+                placeholderTextColor={colors.muted}
                 value={search}
                 onChangeText={(text) => {
                   setSearch(text);
@@ -912,7 +961,9 @@ export default function OrderScreen() {
               <View key={section.categoryId} style={styles.menuSection}>
                 <CategoryHeading title={section.name} count={section.items.length} />
                 {section.items.map((item) => {
-                  const inCart = cart.find((l) => l.item.id === item.id)?.qty ?? 0;
+                  const line = cart.find((l) => l.item.id === item.id);
+                  const inCart = line?.qty ?? 0;
+                  const printedFloor = line?.printedQty ?? 0;
                   return (
                     <View key={item.id} style={styles.menuItem}>
                       <Pressable
@@ -932,6 +983,7 @@ export default function OrderScreen() {
                       {inCart > 0 ? (
                         <QtyStepper
                           qty={inCart}
+                          minQty={printedFloor}
                           onDecrement={() => setLineQty(item.id, inCart - 1)}
                           onIncrement={() => setLineQty(item.id, inCart + 1)}
                         />
@@ -1086,8 +1138,8 @@ export default function OrderScreen() {
                       : `Save bill (hold) · ${formatPkr(total)}`
                     : "Create bill"
             }
-            onPress={() => billMutation.mutate()}
-            disabled={cart.length === 0 || Boolean(validateOrderTarget())}
+            onPress={submitBill}
+            disabled={cart.length === 0 || Boolean(validateOrderTarget()) || billLockRef.current}
             loading={billMutation.isPending}
           />
         </Card>
@@ -1323,7 +1375,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingHorizontal: 0,
-    color: "#0f172a",
+    color: colors.text,
   },
   categoryRow: {
     gap: 8,

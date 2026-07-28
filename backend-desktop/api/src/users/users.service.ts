@@ -115,6 +115,7 @@ export class UsersService implements OnApplicationBootstrap {
   async onApplicationBootstrap(): Promise<void> {
     try {
       await this.upgradeOwnerPermissions();
+      await this.upgradeManagerPermissions();
       await this.upgradeRiderPermissions();
       await this.seedStaffIfMissing();
       await this.upgradeStaffPins();
@@ -142,6 +143,29 @@ export class UsersService implements OnApplicationBootstrap {
           permissions: [...perms],
           branchScope: row.branchScope ?? "all",
         })
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, row.organizationId),
+            eq(organizationMemberships.userId, row.userId),
+          ),
+        );
+    }
+  }
+
+  /** Incharge (manager) needs users + PRA controls in Admin APK. */
+  async upgradeManagerPermissions(): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(organizationMemberships)
+      .where(eq(organizationMemberships.role, "manager"));
+
+    for (const row of rows) {
+      const perms = new Set(row.permissions);
+      if (perms.has("pops.users.manage")) continue;
+      perms.add("pops.users.manage");
+      await this.db
+        .update(organizationMemberships)
+        .set({ permissions: [...perms] })
         .where(
           and(
             eq(organizationMemberships.organizationId, row.organizationId),

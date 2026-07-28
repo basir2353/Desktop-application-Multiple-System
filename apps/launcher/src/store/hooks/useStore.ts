@@ -14,8 +14,11 @@ export const storeSelectClass = storeInputClass;
 export function useStoreAccess() {
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
+  const perms = claims?.permissions ?? [];
   const canManage =
-    claims?.permissions.includes("pops.inventory.manage") || claims?.permissions.includes("*");
+    perms.includes("*") ||
+    perms.includes("pops.inventory.manage") ||
+    perms.includes("pops.multi_branch.manage");
   return { branch, canManage };
 }
 

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebView } from "react-native-webview";
 import { colors } from "./ui";
@@ -9,19 +10,37 @@ type Props = {
   height?: number;
 };
 
+/** Build a Maps query that prefers the given delivery address (never device GPS). */
+export function mapsDestinationQuery(address: string): string {
+  let q = address.trim().replace(/\s+/g, " ");
+  if (!q) return "";
+  // Phone-only strings are not destinations — reject for map use.
+  if (/^\+?\d[\d\s()-]{5,}$/.test(q) && !/[a-zA-Z\u0600-\u06FF]{2,}/.test(q)) {
+    return "";
+  }
+  // Help geocoder resolve Pakistani localities (e.g. Toba Tek Singh / chak numbers).
+  if (!/pakistan/i.test(q)) {
+    q = `${q}, Pakistan`;
+  }
+  return q;
+}
+
 function mapsSearchUrl(address: string): string {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address.trim())}`;
+  const q = mapsDestinationQuery(address) || address.trim();
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
 function mapsDirectionsUrl(address: string): string {
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address.trim())}&travelmode=driving`;
+  const q = mapsDestinationQuery(address) || address.trim();
+  // destination= forces navigation to the order address (not current phone location as destination).
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}&travelmode=driving`;
 }
 
-/** In-app Google Maps embed (no API key required for search embed). */
+/** In-app Google Maps embed pinned to the delivery address query. */
 function mapsEmbedHtml(address: string): string {
-  const q = encodeURIComponent(address.trim());
-  // Google Maps embed via search query — works in WebView without a Maps SDK key.
-  const src = `https://maps.google.com/maps?q=${q}&z=15&output=embed`;
+  const q = encodeURIComponent(mapsDestinationQuery(address) || address.trim());
+  // Explicit search embed — does not follow device geolocation as the pin.
+  const src = `https://maps.google.com/maps?q=${q}&hl=en&z=16&output=embed`;
   return `<!DOCTYPE html>
 <html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
@@ -49,22 +68,40 @@ async function openExternal(url: string): Promise<void> {
 
 /**
  * Google Maps panel for delivery addresses (rider + waiter delivery flow).
- * Shows an embedded map and opens Google Maps for navigation.
+ * Always maps the provided delivery address — never the phone GPS as destination.
  */
 export function DeliveryMap({ address, title = "Google Maps", height = 220 }: Props): JSX.Element | null {
   const trimmed = address.trim();
+  const query = mapsDestinationQuery(trimmed);
+  const embedHtml = useMemo(() => (trimmed ? mapsEmbedHtml(trimmed) : ""), [trimmed]);
+
   if (!trimmed || trimmed.toLowerCase() === "n/a" || trimmed === "—") return null;
+
+  if (!query) {
+    return (
+      <View style={styles.wrap}>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.address}>{trimmed}</Text>
+        <Text style={styles.warn}>
+          This looks like a phone number, not a delivery address. Add a street / area address on the order so the map
+          can open the correct location.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>{title}</Text>
       <View style={[styles.mapFrame, { height }]}>
         <WebView
+          key={query}
           originWhitelist={["*"]}
-          source={{ html: mapsEmbedHtml(trimmed) }}
+          source={{ html: embedHtml }}
           style={styles.webview}
           javaScriptEnabled
           domStorageEnabled
+          geolocationEnabled={false}
           setSupportMultipleWindows={false}
           startInLoadingState
         />
@@ -110,6 +147,7 @@ const styles = StyleSheet.create({
   },
   webview: { flex: 1, backgroundColor: "transparent" },
   address: { color: colors.text, fontSize: 14, lineHeight: 20 },
+  warn: { color: colors.warning, fontSize: 12, lineHeight: 18 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   btn: {
     borderRadius: 10,

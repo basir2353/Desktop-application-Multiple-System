@@ -71,6 +71,37 @@ export class TaxAuthorityService {
     };
   }
 
+  /** Org Admin / Incharge: toggle PRA (and optionally FBR) for this business. */
+  async setFeatures(
+    organizationId: string,
+    patch: { praEnabled?: boolean; fbrEnabled?: boolean },
+  ): Promise<{ fbrEnabled: boolean; praEnabled: boolean }> {
+    if (patch.praEnabled === undefined && patch.fbrEnabled === undefined) {
+      throw new BadRequestException("Provide praEnabled and/or fbrEnabled");
+    }
+    const update: Partial<{ praEnabled: boolean; fbrEnabled: boolean }> = {};
+    if (typeof patch.praEnabled === "boolean") update.praEnabled = patch.praEnabled;
+    if (typeof patch.fbrEnabled === "boolean") update.fbrEnabled = patch.fbrEnabled;
+
+    const updated = await this.db
+      .update(organizations)
+      .set(update)
+      .where(eq(organizations.id, organizationId))
+      .returning({
+        fbrEnabled: organizations.fbrEnabled,
+        praEnabled: organizations.praEnabled,
+      });
+    const row = updated[0];
+    if (!row) throw new NotFoundException("Organization not found");
+    this.logger.log(
+      `Tax features updated for org ${organizationId}: FBR=${row.fbrEnabled} PRA=${row.praEnabled}`,
+    );
+    return {
+      fbrEnabled: Boolean(row.fbrEnabled),
+      praEnabled: Boolean(row.praEnabled),
+    };
+  }
+
   async getStatus(organizationId: string, branchCode: string): Promise<TaxAuthorityStatus> {
     const branch = await this.resolveBranch(organizationId, branchCode);
     const profile = await this.getProfile(organizationId, branch.id);

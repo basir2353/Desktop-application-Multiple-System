@@ -510,7 +510,62 @@ export function PopsDashboardPage(): JSX.Element {
         }
       />
 
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Date &amp; time filter</h2>
+            <p className="text-[10px] text-slate-500">
+              Filters live pulse, sales, charts, and items sold (business day · PKT).
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+              onClick={() => {
+                setFromDate(todayKey);
+                setToDate(todayKey);
+                setFromTime("");
+                setToTime("");
+              }}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-slate-600 px-2.5 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+              onClick={() => {
+                const d = new Date(`${todayKey}T12:00:00`);
+                d.setDate(d.getDate() - 1);
+                const y = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                setFromDate(y);
+                setToDate(y);
+                setFromTime("");
+                setToTime("");
+              }}
+            >
+              Yesterday
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-slate-600 px-2.5 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+              onClick={() => {
+                const end = new Date(`${todayKey}T12:00:00`);
+                const start = new Date(end);
+                start.setDate(start.getDate() - 6);
+                const fmt = (d: Date) =>
+                  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                setFromDate(fmt(start));
+                setToDate(fmt(end));
+                setFromTime("");
+                setToTime("");
+              }}
+            >
+              Last 7 days
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
         <label className="text-xs text-slate-400">
           From date
           <input
@@ -538,18 +593,6 @@ export function PopsDashboardPage(): JSX.Element {
           To time
           <TimeAmPmInput value={toTime} onChange={setToTime} />
         </div>
-        <button
-          type="button"
-          className="rounded-md border border-slate-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-          onClick={() => {
-            setFromDate(todayKey);
-            setToDate(todayKey);
-            setFromTime("");
-            setToTime("");
-          }}
-        >
-          Today
-        </button>
         {fromTime || toTime ? (
           <button
             type="button"
@@ -568,6 +611,7 @@ export function PopsDashboardPage(): JSX.Element {
             : formatBusinessDayRange(businessDay)}{" "}
           · {dateFilteredOrders.length} orders in range
         </span>
+        </div>
       </div>
 
       {dashboardQuery.isError && !isSessionExpiredError(dashboardQuery.error) ? (

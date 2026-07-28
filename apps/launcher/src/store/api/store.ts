@@ -109,6 +109,15 @@ export async function createStoreProduct(body: unknown) {
   return storeProductSchema.parse(await res.json());
 }
 
+export async function updateStoreProduct(productId: string, body: unknown) {
+  const res = await authFetch(`/v1/store/products/${productId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await parseError(res, "Failed to update product");
+  return storeProductSchema.parse(await res.json());
+}
+
 export async function deleteStoreProduct(productId: string) {
   const res = await authFetch(`/v1/store/products/${productId}`, { method: "DELETE" });
   if (!res.ok) await parseError(res, "Failed to delete product");
@@ -384,7 +393,23 @@ export async function fetchStoreProfitLoss(branchCode: string, from?: string, to
 export async function lookupStoreProduct(branchCode: string, q: string) {
   const res = await authFetch(`/v1/store/products/lookup?${new URLSearchParams({ branchCode, q })}`);
   if (!res.ok) await parseError(res, "Product not found");
-  return res.json() as Promise<{ id: string; sku: string; name: string; barcode: string | null; sellingPrice: number; isWeighed: boolean; availableStock: number; priceLabel: string }>;
+  return res.json() as Promise<{
+    id: string;
+    sku: string;
+    name: string;
+    barcode: string | null;
+    barcodes?: string[];
+    purchasePrice?: number;
+    sellingPrice: number;
+    salePrice?: number;
+    mrpPrice?: number;
+    wholesalePrice?: number;
+    customPrice?: number;
+    marketSalePrice?: number;
+    isWeighed: boolean;
+    availableStock: number;
+    priceLabel: string;
+  }>;
 }
 
 export async function fetchStoreCustomerDetail(customerId: string) {

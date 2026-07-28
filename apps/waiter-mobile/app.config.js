@@ -18,13 +18,34 @@ const variant =
   process.env.APP_VARIANT ||
   loadEnvValue("EXPO_PUBLIC_APP_VARIANT") ||
   loadEnvValue("APP_VARIANT") ||
-  "waiter";
+  "staff";
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   loadEnvValue("EXPO_PUBLIC_API_BASE_URL") ||
   "https://backend-desktop-production-5505.up.railway.app";
 
 const variants = {
+  /** Combined Waiter + Rider APK — two role tabs, Email | PIN login. */
+  staff: {
+    name: "POPS Staff",
+    slug: "pops-staff",
+    scheme: "pops-staff",
+    androidPackage: "com.platform.pops.staff",
+    iosBundleId: "com.platform.pops.staff",
+    defaultRole: "waiter",
+    appKind: "staff",
+  },
+  /** Separate Admin / Incharge APK. */
+  admin: {
+    name: "POPS Admin",
+    slug: "pops-admin",
+    scheme: "pops-admin",
+    androidPackage: "com.platform.pops.admin",
+    iosBundleId: "com.platform.pops.admin",
+    defaultRole: "admin",
+    appKind: "admin",
+  },
+  /** Legacy dedicated builds (optional). */
   waiter: {
     name: "POPS Waiter",
     slug: "pops-waiter",
@@ -32,6 +53,7 @@ const variants = {
     androidPackage: "com.platform.pops.waiter",
     iosBundleId: "com.platform.pops.waiter",
     defaultRole: "waiter",
+    appKind: "staff-locked",
   },
   rider: {
     name: "POPS Rider",
@@ -40,10 +62,11 @@ const variants = {
     androidPackage: "com.platform.pops.rider",
     iosBundleId: "com.platform.pops.rider",
     defaultRole: "rider",
+    appKind: "staff-locked",
   },
 };
 
-const selected = variants[variant] ?? variants.waiter;
+const selected = variants[variant] ?? variants.staff;
 
 /** @type {import("expo/config").ExpoConfig} */
 module.exports = {
@@ -63,6 +86,7 @@ module.exports = {
     extra: {
       ...(base.expo.extra ?? {}),
       appVariant: variant,
+      appKind: selected.appKind,
       defaultRole: selected.defaultRole,
       apiBaseUrl,
     },

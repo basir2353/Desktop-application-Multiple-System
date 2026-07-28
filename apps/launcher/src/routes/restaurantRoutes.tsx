@@ -130,7 +130,6 @@ const DeliveryPage = lazy(() =>
   import("../pops/pages/modules/DeliveryPage").then((m) => ({ default: m.DeliveryPage })),
 );
 const CrmPage = lazy(() => import("../pops/pages/modules/CrmPage").then((m) => ({ default: m.CrmPage })));
-const SyncPage = lazy(() => import("../pops/pages/modules/SyncPage").then((m) => ({ default: m.SyncPage })));
 const ReportsPage = lazy(() => import("../pops/pages/modules/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const KitchenCancellationsPage = lazy(() =>
   import("../pops/pages/modules/KitchenCancellationsPage").then((m) => ({ default: m.KitchenCancellationsPage })),
@@ -194,7 +193,6 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="hr/salary-slips" element={<SalarySlipsPage />} />
       <Route path="delivery" element={<DeliveryPage />} />
       <Route path="crm" element={<CrmPage />} />
-      <Route path="sync" element={<SyncPage />} />
       <Route path="reports" element={<ReportsPage />} />
       <Route path="reports/kitchen-cancellations" element={<KitchenCancellationsPage />} />
       <Route path="manufacturing" element={<ManufacturingPage />} />

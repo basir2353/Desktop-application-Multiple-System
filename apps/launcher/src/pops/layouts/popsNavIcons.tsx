@@ -89,6 +89,23 @@ const icons: Record<string, (props: IconProps) => JSX.Element> = {
       <path d="M14 3v6h6M9 13h6M9 17h4" />
     </Svg>
   ),
+  "Tax & compliance": (p) => (
+    <Svg {...p}>
+      <path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z" />
+      <path d="M14 3v6h6M9 13h6M9 17h4" />
+    </Svg>
+  ),
+  FBR: (p) => (
+    <Svg {...p}>
+      <path d="M4 4h16v4H4zM4 10h10v10H4zM16 10h4v10h-4z" />
+    </Svg>
+  ),
+  PRA: (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v8M9 12h6" />
+    </Svg>
+  ),
   "Multi-branch": (p) => (
     <Svg {...p}>
       <circle cx="6" cy="6" r="2.5" />
@@ -134,6 +151,44 @@ const icons: Record<string, (props: IconProps) => JSX.Element> = {
     <Svg {...p}>
       <rect x="3" y="11" width="18" height="10" rx="2" />
       <path d="M7 11V7a5 5 0 0110 0v4" />
+    </Svg>
+  ),
+  Printer: (p) => (
+    <Svg {...p}>
+      <path d="M6 9V3h12v6" />
+      <rect x="4" y="9" width="16" height="8" rx="1.5" />
+      <path d="M6 17h12v4H6z" />
+    </Svg>
+  ),
+  Products: (p) => (
+    <Svg {...p}>
+      <path d="M4 7l8-4 8 4-8 4-8-4z" />
+      <path d="M4 12l8 4 8-4M4 17l8 4 8-4" />
+    </Svg>
+  ),
+  Sales: (p) => (
+    <Svg {...p}>
+      <rect x="3" y="4" width="18" height="14" rx="2" />
+      <path d="M7 8h4M7 12h10" />
+    </Svg>
+  ),
+  "Point of Sale": (p) => (
+    <Svg {...p}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M7 8h10M7 12h6M7 16h8" />
+    </Svg>
+  ),
+  Warehouses: (p) => (
+    <Svg {...p}>
+      <path d="M3 10l9-6 9 6v10H3V10z" />
+      <path d="M9 20v-6h6v6" />
+    </Svg>
+  ),
+  "Users & roles": (p) => (
+    <Svg {...p}>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+      <path d="M17 11h4M19 9v4" />
     </Svg>
   ),
 };
