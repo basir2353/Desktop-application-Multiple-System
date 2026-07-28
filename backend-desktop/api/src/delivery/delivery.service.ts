@@ -465,7 +465,7 @@ export class DeliveryService implements OnApplicationBootstrap {
     const lines = await this.enrichLinesFromMenu(row.branchId, ticket.lines ?? []);
     const contact = this.parseDeliveryContact(row.itemsSummary);
     // Prefer structured notes address if summary parsing left a phone / empty address.
-    const notesAddress = this.extractAddressFromNotes(row.notes);
+    const notesAddress = this.extractAddressFromNotes(this.extractTicketNotes(row.itemsSummary));
     const addressLooksLikePhone =
       /^\+?\d[\d\s()-]{5,}$/.test(contact.address.trim()) && !/[a-zA-Z]{2,}/.test(contact.address);
     const resolvedAddress =

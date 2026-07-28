@@ -18,6 +18,16 @@ try {
     localStorage.removeItem("platform-system-v1");
     localStorage.removeItem("platform-session-v1");
   }
+  // Force Live Railway API (local Vite UI → hosted backend).
+  if (params.get("api") === "live" || params.get("api") === "railway") {
+    localStorage.setItem(
+      "platform-data-mode-v2",
+      JSON.stringify({
+        state: { dataMode: "cloud", apiPreset: "live", cloudApiUrl: "", lastSyncedAt: null },
+        version: 0,
+      }),
+    );
+  }
 } catch {
   // ignore storage errors
 }

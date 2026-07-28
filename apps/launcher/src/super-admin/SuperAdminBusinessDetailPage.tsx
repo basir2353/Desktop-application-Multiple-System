@@ -72,11 +72,18 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
     onSuccess: async (saved) => {
       setFbrEnabled(Boolean(saved.fbrEnabled));
       setPraEnabled(Boolean(saved.praEnabled));
-      setMessage(
-        saved.fbrEnabled || saved.praEnabled
-          ? `Saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"}`
-          : "Business saved.",
-      );
+      const applied =
+        Boolean(saved.fbrEnabled) === Boolean(fbrEnabled) &&
+        Boolean(saved.praEnabled) === Boolean(praEnabled);
+      if (!applied) {
+        setMessage(
+          "Tax settings were not applied by the server. Redeploy backend-desktop, then try again.",
+        );
+      } else {
+        setMessage(
+          `Saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"} — business admins can open Tax & compliance after refresh.`,
+        );
+      }
       await qc.invalidateQueries({ queryKey: ["platform"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Save failed"),

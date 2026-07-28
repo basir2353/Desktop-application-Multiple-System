@@ -113,7 +113,6 @@ export function TaxPage(): JSX.Element {
   /** Keep Tax page reachable from sidebar even before Super Admin enables FBR/PRA. */
   const alwaysShowTaxPage = isStore || systemId === "restaurant";
   const taxFeatures = useTaxAuthorityFeatures();
-  // Restaurant / general store: unlock connect UI even if platform flags are off or features API is missing.
   const taxEnabled = alwaysShowTaxPage || isTaxAuthorityEnabled(taxFeatures.data);
   const onMainSystem = !branch?.code;
 
@@ -133,7 +132,7 @@ export function TaxPage(): JSX.Element {
 
   const invoicesQuery = useQuery({
     queryKey: ["tax-authority", "invoices", branchCode],
-    enabled: taxEnabled || alwaysShowTaxPage,
+    enabled: isTaxAuthorityEnabled(taxFeatures.data),
     queryFn: () => fetchTaxInvoices(branchCode),
     refetchInterval: 30_000,
   });
@@ -330,13 +329,10 @@ export function TaxPage(): JSX.Element {
 
   const fbrStatus = statusQuery.data?.fbr.status ?? "disconnected";
   const praStatus = statusQuery.data?.pra.status ?? "disconnected";
-  // Restaurant/store unlock connect forms; pharmacy still respects Super Admin flags.
-  const fbrEnabled = alwaysShowTaxPage
-    ? true
-    : (statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false);
-  const praEnabled = alwaysShowTaxPage
-    ? true
-    : (statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled ?? false);
+  const platformFbr = Boolean(statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled);
+  const platformPra = Boolean(statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled);
+  const fbrEnabled = platformFbr;
+  const praEnabled = platformPra;
   const invoices = invoicesQuery.data ?? [];
   const showCompany = section === "overview";
   const showFbr = section === "overview" || section === "fbr";
@@ -357,6 +353,13 @@ export function TaxPage(): JSX.Element {
               : `Connect ${branchLabel} (${branchCode}) once — invoices submit automatically after sales.`
         }
       />
+
+      {!platformFbr && !platformPra ? (
+        <div className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}>
+          FBR / PRA is not enabled yet for this business. Ask platform Super Admin to turn on FBR and/or PRA for{" "}
+          <strong>this</strong> business, then return here to connect credentials.
+        </div>
+      ) : null}
 
       {alwaysShowTaxPage ? (
         <div className="flex flex-wrap gap-2">
@@ -381,12 +384,6 @@ export function TaxPage(): JSX.Element {
               {tab.label}
             </Link>
           ))}
-        </div>
-      ) : null}
-
-      {!alwaysShowTaxPage && !isTaxAuthorityEnabled(taxFeatures.data) ? (
-        <div className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}>
-          FBR / PRA is not enabled yet for this business. After Super Admin turns on FBR and/or PRA, return here to connect credentials. Sales will then submit fiscal invoices automatically.
         </div>
       ) : null}
 
