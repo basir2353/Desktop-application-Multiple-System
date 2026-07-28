@@ -428,8 +428,20 @@ export default function OrderScreen() {
 
   function submitSendOrder(): void {
     if (sendLockRef.current || sendMutation.isPending) return;
-    if (cart.length === 0 || Boolean(validateOrderTarget())) return;
+    if (cart.length === 0) {
+      setNotice("Add at least one item before sending.");
+      return;
+    }
+    const targetErr = validateOrderTarget();
+    if (targetErr) {
+      setNotice(targetErr);
+      return;
+    }
     sendLockRef.current = true;
+    // Safety unlock if a hung request never settles (seen on flaky mobile networks).
+    setTimeout(() => {
+      sendLockRef.current = false;
+    }, 95_000);
     sendMutation.mutate();
   }
 
@@ -504,8 +516,19 @@ export default function OrderScreen() {
 
   function submitBill(): void {
     if (billLockRef.current || billMutation.isPending) return;
-    if (cart.length === 0 || Boolean(validateOrderTarget())) return;
+    if (cart.length === 0) {
+      setNotice("Add at least one item before saving the bill.");
+      return;
+    }
+    const targetErr = validateOrderTarget();
+    if (targetErr) {
+      setNotice(targetErr);
+      return;
+    }
     billLockRef.current = true;
+    setTimeout(() => {
+      billLockRef.current = false;
+    }, 95_000);
     billMutation.mutate();
   }
 
@@ -831,7 +854,7 @@ export default function OrderScreen() {
                       : "Send & print"
                 }
                 onPress={submitSendOrder}
-                disabled={cart.length === 0 || Boolean(validateOrderTarget()) || sendLockRef.current}
+                disabled={cart.length === 0 || Boolean(validateOrderTarget()) || sendMutation.isPending}
                 loading={sendMutation.isPending}
               />
             </View>
@@ -1149,7 +1172,7 @@ export default function OrderScreen() {
                     : "Create bill"
             }
             onPress={submitBill}
-            disabled={cart.length === 0 || Boolean(validateOrderTarget()) || billLockRef.current}
+            disabled={cart.length === 0 || Boolean(validateOrderTarget()) || billMutation.isPending}
             loading={billMutation.isPending}
           />
         </Card>

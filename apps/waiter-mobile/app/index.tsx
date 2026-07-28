@@ -77,7 +77,8 @@ export default function LoginScreen() {
   const clearBranch = useBranchStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
 
-  const [loginMode, setLoginMode] = useState<LoginMode>("password");
+  // PIN is more reliable on slow mobile data (smaller payload, branch-scoped).
+  const [loginMode, setLoginMode] = useState<LoginMode>(isAdminApp ? "password" : "pin");
   const [roleTab, setRoleTab] = useState<StaffRole>(defaultRole);
   const [branchCode, setBranchCode] = useState("ISB-GT");
   const [pin, setPin] = useState("");
