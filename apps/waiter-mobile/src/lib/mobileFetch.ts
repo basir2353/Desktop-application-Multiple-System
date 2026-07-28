@@ -1,8 +1,8 @@
 import { Platform } from "react-native";
 
-const ANDROID_TIMEOUT_MS = 60_000;
-const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_ATTEMPTS = Platform.OS === "android" ? 4 : 2;
+const ANDROID_TIMEOUT_MS = 90_000;
+const DEFAULT_TIMEOUT_MS = 45_000;
+const MAX_ATTEMPTS = Platform.OS === "android" ? 5 : 2;
 
 function plainHeaders(init?: RequestInit): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -46,9 +46,70 @@ export function wrapMobileNetworkError(baseUrl: string, err: unknown): Error {
   );
 }
 
-/** RN-safe fetch with plain headers, long timeout, and retries (Railway cold starts).
- *  Never retry POST/PATCH/PUT/DELETE — a timed-out response can still have succeeded
- *  on the server (duplicate kitchen tickets / bills). */
+/**
+ * Android RN `fetch` sometimes throws "Network request failed" while XHR still works
+ * (flaky TLS / connection reuse on slow mobile networks).
+ */
+function xhrRequest(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: BodyInit | null | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.timeout = timeoutMs;
+    for (const [key, value] of Object.entries(headers)) {
+      if (value != null) xhr.setRequestHeader(key, String(value));
+    }
+    xhr.onload = () => {
+      const responseHeaders = new Headers();
+      const raw = xhr.getAllResponseHeaders() || "";
+      for (const line of raw.trim().split(/[\r\n]+/)) {
+        const idx = line.indexOf(":");
+        if (idx > 0) {
+          responseHeaders.append(line.slice(0, idx).trim(), line.slice(idx + 1).trim());
+        }
+      }
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          headers: responseHeaders,
+        }),
+      );
+    };
+    xhr.onerror = () => reject(new Error("Network request failed"));
+    xhr.ontimeout = () => reject(new Error("Aborted"));
+    xhr.onabort = () => reject(new Error("Aborted"));
+    xhr.send(typeof body === "string" || body == null ? body ?? null : String(body));
+  });
+}
+
+async function nativeFetchOnce(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: BodyInit | null | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** RN-safe fetch with plain headers, long timeout, retries, and Android XHR fallback. */
 export async function mobileFetch(url: string, init?: RequestInit): Promise<Response> {
   const headers = plainHeaders(init);
   const method = (init?.method ?? "GET").toUpperCase();
@@ -59,22 +120,19 @@ export async function mobileFetch(url: string, init?: RequestInit): Promise<Resp
 
   let lastError: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(url, {
-        method,
-        headers,
-        body,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      return response;
+      return await nativeFetchOnce(url, method, headers, body, timeoutMs);
     } catch (err) {
-      clearTimeout(timer);
       lastError = err;
+      if (Platform.OS === "android" && isRetryableNetworkError(err)) {
+        try {
+          return await xhrRequest(url, method, headers, body, timeoutMs);
+        } catch (xhrErr) {
+          lastError = xhrErr;
+        }
+      }
       if (!isSafeMethod || !isRetryableNetworkError(err) || attempt + 1 >= maxAttempts) break;
-      await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
     }
   }
   throw lastError;

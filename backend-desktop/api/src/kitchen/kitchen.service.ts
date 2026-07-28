@@ -83,6 +83,28 @@ export class KitchenService {
   ) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     await this.closing.assertOrdersNotPaused(branch.id);
+
+    // Idempotent create: flaky mobile networks may retry the same ORD-* after the
+    // first insert already succeeded (client never saw the 201).
+    const orderRef = input.orderRef?.trim() || null;
+    if (orderRef) {
+      const existing = await this.db
+        .select()
+        .from(popsKitchenTickets)
+        .where(
+          and(
+            eq(popsKitchenTickets.branchId, branch.id),
+            eq(popsKitchenTickets.orderRef, orderRef),
+            ne(popsKitchenTickets.status, "done"),
+          ),
+        )
+        .orderBy(desc(popsKitchenTickets.createdAt))
+        .limit(1);
+      if (existing[0]) {
+        return this.mapTicketForResponse(existing[0]);
+      }
+    }
+
     const enrichedLines = await this.enrichLinesFromMenu(
       branch.id,
       input.lines.map((l) => ({
@@ -119,7 +141,7 @@ export class KitchenService {
     }
 
     await assertDineInTableAvailable(this.db, branch.id, input.stationLabel.trim(), {
-      allowOrderRef: input.orderRef,
+      allowOrderRef: orderRef ?? undefined,
       intent: "new-order",
     });
 
@@ -129,7 +151,7 @@ export class KitchenService {
         organizationId,
         branchId: branch.id,
         ticketRef,
-        orderRef: input.orderRef?.trim() || null,
+        orderRef,
         stationLabel: input.stationLabel.trim(),
         itemsSummary,
         linesJson: JSON.stringify(storedLines),

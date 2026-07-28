@@ -98,6 +98,7 @@ export default function OrderScreen() {
   const appliedEditRef = useRef<string | null>(null);
   const sendLockRef = useRef(false);
   const billLockRef = useRef(false);
+  const [orderWriteBusy, setOrderWriteBusy] = useState(false);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
@@ -115,14 +116,15 @@ export default function OrderScreen() {
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 5_000,
+    // Pause polling while sending — slow Wi‑Fi cannot finish POST if GETs keep fighting for bandwidth.
+    refetchInterval: orderWriteBusy ? false : 8_000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: 10_000,
+    refetchInterval: orderWriteBusy ? false : 12_000,
   });
 
   const ridersQuery = useQuery({
@@ -395,6 +397,9 @@ export default function OrderScreen() {
         ...deliveryExtras,
       });
     },
+    onMutate: () => {
+      setOrderWriteBusy(true);
+    },
     onSuccess: async (ticket) => {
       const wasEdit = editingOrder?.kind === "ticket";
       updateDraft({ cart: [], notes: "" });
@@ -417,13 +422,26 @@ export default function OrderScreen() {
     onError: (err: Error) => setNotice(err.message),
     onSettled: () => {
       sendLockRef.current = false;
+      setOrderWriteBusy(false);
     },
   });
 
   function submitSendOrder(): void {
     if (sendLockRef.current || sendMutation.isPending) return;
-    if (cart.length === 0 || Boolean(validateOrderTarget())) return;
+    if (cart.length === 0) {
+      setNotice("Add at least one item before sending.");
+      return;
+    }
+    const targetErr = validateOrderTarget();
+    if (targetErr) {
+      setNotice(targetErr);
+      return;
+    }
     sendLockRef.current = true;
+    // Safety unlock if a hung request never settles (seen on flaky mobile networks).
+    setTimeout(() => {
+      sendLockRef.current = false;
+    }, 95_000);
     sendMutation.mutate();
   }
 
@@ -467,6 +485,9 @@ export default function OrderScreen() {
       // Do not mark kitchen ticket done from waiter app — close only via cashier/POS payment.
       return bill;
     },
+    onMutate: () => {
+      setOrderWriteBusy(true);
+    },
     onSuccess: async (bill) => {
       const wasEdit = editingOrder?.kind === "bill";
       updateDraft({ cart: [], notes: "" });
@@ -489,13 +510,25 @@ export default function OrderScreen() {
     onError: (err: Error) => setNotice(err.message),
     onSettled: () => {
       billLockRef.current = false;
+      setOrderWriteBusy(false);
     },
   });
 
   function submitBill(): void {
     if (billLockRef.current || billMutation.isPending) return;
-    if (cart.length === 0 || Boolean(validateOrderTarget())) return;
+    if (cart.length === 0) {
+      setNotice("Add at least one item before saving the bill.");
+      return;
+    }
+    const targetErr = validateOrderTarget();
+    if (targetErr) {
+      setNotice(targetErr);
+      return;
+    }
     billLockRef.current = true;
+    setTimeout(() => {
+      billLockRef.current = false;
+    }, 95_000);
     billMutation.mutate();
   }
 
@@ -821,7 +854,7 @@ export default function OrderScreen() {
                       : "Send & print"
                 }
                 onPress={submitSendOrder}
-                disabled={cart.length === 0 || Boolean(validateOrderTarget()) || sendLockRef.current}
+                disabled={cart.length === 0 || Boolean(validateOrderTarget()) || sendMutation.isPending}
                 loading={sendMutation.isPending}
               />
             </View>
@@ -1139,7 +1172,7 @@ export default function OrderScreen() {
                     : "Create bill"
             }
             onPress={submitBill}
-            disabled={cart.length === 0 || Boolean(validateOrderTarget()) || billLockRef.current}
+            disabled={cart.length === 0 || Boolean(validateOrderTarget()) || billMutation.isPending}
             loading={billMutation.isPending}
           />
         </Card>
