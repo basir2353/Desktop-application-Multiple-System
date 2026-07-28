@@ -269,4 +269,4 @@ The desktop app must reach your hosted API. Confirm:
 
 - [INSTALLER.md](./INSTALLER.md) — how installers are built (developers)
 - [../../README.md](../../README.md) — project overview and commands
-- [../../backend/RAILWAY.md](../../backend/RAILWAY.md) — hosting the API on Railway
+- [../../backend-desktop/RAILWAY.md](../../backend-desktop/RAILWAY.md) — hosting the API on Railway

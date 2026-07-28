@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
  * Locate the pnpm workspace root that contains packages/database-pg.
  *
  * Standalone Docker:  /app/api/scripts → /app
- * Monorepo Docker:    /app/backend/api/scripts → /app
+ * Monorepo Docker:    /app/api/scripts → /app (backend-desktop image)
  */
 export function resolveWorkspaceRoot(apiRoot) {
   const candidates = [

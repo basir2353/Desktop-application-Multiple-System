@@ -1,6 +1,6 @@
 # Apps
 
-Client applications — all connect to the single backend at `backend/api/`.
+Client applications — all connect to the single backend at `backend-desktop/api/`.
 
 | App | Package | Description |
 | --- | --- | --- |

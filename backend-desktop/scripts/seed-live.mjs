@@ -2,7 +2,9 @@
  * Push schema and seed a hosted Postgres (Railway) database.
  *
  * Usage (from repository root):
- *   DATABASE_URL="postgresql://..." JWT_ACCESS_SECRET="min-32-chars" node backend/scripts/seed-live.mjs
+ *   DATABASE_URL="postgresql://..." JWT_ACCESS_SECRET="min-32-chars" node backend-desktop/scripts/seed-live.mjs
+ * Or from backend-desktop/:
+ *   DATABASE_URL="..." JWT_ACCESS_SECRET="..." node scripts/seed-live.mjs
  *
  * Uses the private/internal Railway DATABASE_URL when possible (no egress fees).
  * Public proxy URLs also work for one-off seeding from your machine.
@@ -13,9 +15,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+const standaloneRoot = join(scriptDir, "..");
 const repoRoot = join(scriptDir, "..", "..");
-const dbPkgRoot = join(repoRoot, "packages", "database-pg");
-const apiRoot = join(repoRoot, "backend", "api");
+const dbPkgRoot = existsSync(join(standaloneRoot, "packages", "database-pg", "package.json"))
+  ? join(standaloneRoot, "packages", "database-pg")
+  : join(repoRoot, "packages", "database-pg");
+const apiRoot = existsSync(join(standaloneRoot, "api", "package.json"))
+  ? join(standaloneRoot, "api")
+  : join(repoRoot, "backend-desktop", "api");
 
 function pnpmCmd() {
   if (process.platform === "win32") {

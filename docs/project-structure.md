@@ -2,7 +2,7 @@
 
 ```
 .
-├── backend/api/           # Single NestJS API (host online)
+├── backend-desktop/api/   # Single NestJS API (host online)
 ├── apps/
 │   ├── launcher/          # React frontend + Tauri desktop
 │   └── waiter-mobile/     # Expo mobile
@@ -20,7 +20,7 @@ flowchart LR
   Web["launcher (web)"]
   Desktop["launcher (desktop)"]
   Mobile["waiter-mobile"]
-  API["backend/api"]
+  API["backend-desktop/api"]
   PG[(PostgreSQL)]
 
   Web -->|online| API

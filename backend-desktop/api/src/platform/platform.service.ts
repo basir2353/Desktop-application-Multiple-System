@@ -20,11 +20,13 @@ import {
   type MonthlyLicenceRow,
   type MonthlyLicenceStatus,
   type PlatformAnalytics,
+  type PlatformPublicInfo,
   type PlatformUser,
   type SendLicenceReminders,
   type SystemType,
   type UpdateBusiness,
   type UpdatePlatformSettings,
+  type UpdatePlatformUser,
 } from "@platform/contracts";
 import {
   licencePayments,
@@ -32,6 +34,7 @@ import {
   organizationMemberships,
   organizations,
   platformSettings,
+  refreshTokens,
   users,
   type PlatformPgDb,
 } from "@platform/database-pg";
@@ -184,6 +187,12 @@ export class PlatformService {
 
     const passwordHash = await bcrypt.hash(input.adminPassword, 12);
     const licenceKey = input.licenceKey ?? `LIC-${randomBytes(8).toString("hex").toUpperCase()}`;
+    const settings = await this.getSettings();
+    const defaultPlan =
+      typeof settings.entries.default_licence_plan === "string" &&
+      settings.entries.default_licence_plan.trim()
+        ? settings.entries.default_licence_plan.trim()
+        : "standard";
 
     const [org] = await this.db
       .insert(organizations)
@@ -192,9 +201,11 @@ export class PlatformService {
         systemType: input.systemType,
         status: "active",
         licenceKey,
-        licencePlan: input.licencePlan ?? "standard",
+        licencePlan: input.licencePlan ?? defaultPlan,
         licenceExpiresAt: input.licenceExpiresAt ? new Date(input.licenceExpiresAt) : null,
         enabledModules: input.enabledModules ?? null,
+        fbrEnabled: input.fbrEnabled ?? false,
+        praEnabled: input.praEnabled ?? false,
         createdBy: actor.sub,
       })
       .returning();
@@ -248,6 +259,8 @@ export class PlatformService {
             }
           : {}),
         ...(input.enabledModules !== undefined ? { enabledModules: input.enabledModules } : {}),
+        ...(input.fbrEnabled !== undefined ? { fbrEnabled: input.fbrEnabled } : {}),
+        ...(input.praEnabled !== undefined ? { praEnabled: input.praEnabled } : {}),
         updatedAt: new Date(),
       })
       .where(eq(organizations.id, businessId))
@@ -711,7 +724,86 @@ export class PlatformService {
     if (!rows[0]) throw new NotFoundException("User not found");
     const passwordHash = await bcrypt.hash(password, 12);
     await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
     return { ok: true };
+  }
+
+  async updateUser(userId: string, input: UpdatePlatformUser): Promise<PlatformUser> {
+    const rows = await this.db
+      .select({
+        id: users.id,
+        platformRole: users.platformRole,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const target = rows[0];
+    if (!target) throw new NotFoundException("User not found");
+    if (target.platformRole === "super_admin" && input.status && input.status !== "active") {
+      throw new BadRequestException("Cannot deactivate the Super Admin account");
+    }
+
+    const [updated] = await this.db
+      .update(users)
+      .set({
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      })
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        platformRole: users.platformRole,
+        status: users.status,
+        createdAt: users.createdAt,
+      });
+
+    if (!updated) throw new NotFoundException("User not found");
+
+    if (input.status === "inactive" || input.status === "suspended") {
+      await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+      await this.db
+        .update(organizationMemberships)
+        .set({ active: false })
+        .where(eq(organizationMemberships.userId, userId));
+    } else if (input.status === "active") {
+      await this.db
+        .update(organizationMemberships)
+        .set({ active: true })
+        .where(eq(organizationMemberships.userId, userId));
+    }
+
+    const listed = await this.listUsers();
+    const match = listed.find((u) => u.id === userId);
+    if (match) return match;
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      role: updated.platformRole === "super_admin" ? "super_admin" : "none",
+      platformRole: updated.platformRole === "super_admin" ? "super_admin" : null,
+      businessId: null,
+      businessName: null,
+      systemType: null,
+      status: updated.status,
+      active: updated.status === "active",
+      createdAt: updated.createdAt.toISOString(),
+    };
+  }
+
+  async getPublicInfo(): Promise<PlatformPublicInfo> {
+    const { entries } = await this.getSettings();
+    const support =
+      typeof entries.support_email === "string" && entries.support_email.trim()
+        ? entries.support_email.trim()
+        : null;
+    const maintenance =
+      typeof entries.maintenance_message === "string" && entries.maintenance_message.trim()
+        ? entries.maintenance_message.trim()
+        : null;
+    return { supportEmail: support, maintenanceMessage: maintenance };
   }
 
   async getSettings(): Promise<{ entries: Record<string, unknown> }> {

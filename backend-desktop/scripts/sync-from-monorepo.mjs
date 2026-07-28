@@ -1,21 +1,18 @@
 /**
- * Copy API + shared packages from the main monorepo into backend-desktop/.
+ * Sync shared packages FROM monorepo root packages/* INTO backend-desktop/packages/*.
+ * backend-desktop/api is the source of truth for the Nest API (do not overwrite from a removed backend/).
  *
- * Run from backend-desktop/ after changing backend/api or packages/* in the full repo.
+ * Run from backend-desktop/:
+ *   node scripts/sync-from-monorepo.mjs
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const standaloneRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const monorepoRoot = join(standaloneRoot, "..");
 
-const SKIP_DIR_NAMES = new Set([
-  "node_modules",
-  "dist",
-  ".turbo",
-  "data",
-]);
+const SKIP_DIR_NAMES = new Set(["node_modules", "dist", ".turbo", "data"]);
 
 function copyTree(src, dest) {
   if (!existsSync(src)) {
@@ -36,8 +33,6 @@ function copyTree(src, dest) {
 }
 
 const copies = [
-  [join(monorepoRoot, "backend", "api", "src"), join(standaloneRoot, "api", "src")],
-  [join(monorepoRoot, "backend", "api", "scripts"), join(standaloneRoot, "api", "scripts")],
   [join(monorepoRoot, "packages", "contracts"), join(standaloneRoot, "packages", "contracts")],
   [join(monorepoRoot, "packages", "database-pg"), join(standaloneRoot, "packages", "database-pg")],
   [join(monorepoRoot, "packages", "config"), join(standaloneRoot, "packages", "config")],
@@ -47,13 +42,12 @@ for (const [src, dest] of copies) {
   copyTree(src, dest);
 }
 
-// Preserve standalone-specific start script if monorepo copy overwrote resolve-workspace
-const startScript = join(standaloneRoot, "api", "scripts", "start-railway.mjs");
-if (existsSync(startScript)) {
-  const text = readFileSync(startScript, "utf8");
-  if (!text.includes("resolve-workspace.mjs")) {
-    console.warn("[sync] Warning: start-railway.mjs may need resolve-workspace import — check api/scripts/");
+const resolveWorkspace = join(standaloneRoot, "api", "scripts", "resolve-workspace.mjs");
+if (existsSync(resolveWorkspace)) {
+  const text = readFileSync(resolveWorkspace, "utf8");
+  if (!text.includes("standalone")) {
+    console.warn("[sync] resolve-workspace.mjs may need standalone paths — check api/scripts/");
   }
 }
 
-console.log("[sync] Standalone backend-desktop is up to date with monorepo.");
+console.log("[sync] Done. API source of truth remains backend-desktop/api.");

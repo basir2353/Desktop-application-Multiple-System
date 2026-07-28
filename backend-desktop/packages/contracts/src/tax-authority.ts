@@ -71,6 +71,8 @@ export type PraConnectInput = z.infer<typeof praConnectSchema>;
 
 export const taxAuthorityStatusSchema = z.object({
   branchCode: z.string(),
+  fbrEnabled: z.boolean().default(false),
+  praEnabled: z.boolean().default(false),
   company: z.object({
     companyName: z.string().default(""),
     ntn: z.string().default(""),

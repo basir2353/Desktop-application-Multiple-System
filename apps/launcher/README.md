@@ -1,6 +1,6 @@
 # Launcher
 
-Unified **frontend** (browser) and **desktop** (Tauri) client. Connects to the single backend at `backend/api/` — works online and offline.
+Unified **frontend** (browser) and **desktop** (Tauri) client. Connects to the single backend at `backend-desktop/api/` — works online and offline.
 
 ## Development
 

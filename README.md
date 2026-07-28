@@ -7,11 +7,11 @@ Single **backend**, one **frontend** (web + desktop), and **mobile apps** — al
 ## Structure
 
 ```
-backend/api/       → NestJS API (host this online)
+backend-desktop/api/  → NestJS API (host this online)
 apps/
-  launcher/        → React frontend + Tauri desktop (.exe installers)
-  waiter-mobile/   → Expo mobile app
-packages/          → Shared contracts, DB, connectivity, sync
+  launcher/           → React frontend + Tauri desktop (.exe installers)
+  waiter-mobile/      → Expo mobile app
+packages/             → Shared contracts, DB, connectivity, sync
 ```
 
 | Client | Online | Offline |
@@ -127,7 +127,8 @@ Details: [apps/launcher/INSTALLER.md](./apps/launcher/INSTALLER.md)
 
 1. Deploy on [railway.com](https://railway.com) from this GitHub repo
 2. Add a **PostgreSQL** plugin
-3. Set env vars (see [backend/RAILWAY.md](./backend/RAILWAY.md))
+3. Set env vars (see [backend-desktop/RAILWAY.md](./backend-desktop/RAILWAY.md))
+
 4. Generate a public domain
 5. Point clients at it:
 
@@ -136,7 +137,8 @@ VITE_API_BASE_URL=https://platformapi-production-39aa.up.railway.app
 EXPO_PUBLIC_API_BASE_URL=https://platformapi-production-39aa.up.railway.app
 ```
 
-Full guide: **[backend/RAILWAY.md](./backend/RAILWAY.md)**
+Full guide: **[backend-desktop/RAILWAY.md](./backend-desktop/RAILWAY.md)**
+
 
 ## Host backend (self-hosted Docker)
 

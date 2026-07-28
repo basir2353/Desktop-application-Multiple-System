@@ -18,8 +18,8 @@ services:
 
   api:
     build:
-      context: ..
-      dockerfile: backend/Dockerfile
+      context: ../backend-desktop
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -43,12 +43,12 @@ services:
     ports:
       - "${API_HOST_PORT:-3000}:3000"
     volumes:
-      - api_uploads:/app/backend/api/data/uploads
+      - api_uploads:/app/api/data/uploads
 
   api-migrate:
     build:
-      context: ..
-      dockerfile: backend/Dockerfile
+      context: ../backend-desktop
+      dockerfile: Dockerfile
     profiles: ["tools"]
     depends_on:
       postgres:
