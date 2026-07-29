@@ -44,6 +44,21 @@ async function refreshAccessToken(): Promise<string> {
   return refreshInFlight;
 }
 
+/**
+ * Soft-refresh the access token so Super Admin org module ceilings apply
+ * without forcing the user through a full sign-out / sign-in.
+ */
+export async function refreshSessionPermissions(): Promise<boolean> {
+  const { refreshToken } = useSessionStore.getState();
+  if (!refreshToken) return false;
+  try {
+    await refreshAccessToken();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isSessionExpiredError(err: unknown): boolean {
   return (
     err instanceof SessionExpiredError ||

@@ -108,13 +108,14 @@ export function LoginPage(): JSX.Element {
 
   async function completeLogin(accessToken: string, refreshToken: string): Promise<void> {
     const claims = decodeAccessToken(accessToken);
+    const loginEmail = email.trim().toLowerCase() || null;
 
     if (isSuperAdminLogin) {
       if (!isSuperAdminClaims(claims)) {
         clearSession();
         throw new Error("This account is not a Super Admin.");
       }
-      setTokens(accessToken, refreshToken, claims);
+      setTokens(accessToken, refreshToken, claims, loginEmail);
       navigate("/super-admin", { replace: true });
       return;
     }
@@ -145,7 +146,7 @@ export function LoginPage(): JSX.Element {
     // returns here instead of the picker or the Super Admin login.
     recordDeviceInstall(claims.systemType ?? lockedId);
     setSystem(lockedId);
-    setTokens(accessToken, refreshToken, claims);
+    setTokens(accessToken, refreshToken, claims, loginEmail);
     const display = normalizeMembershipRole(claims.role) ?? selectedRole!;
     if (isPopsRole(claims.role) || claims.role === "owner") {
       setDisplayRole(display);

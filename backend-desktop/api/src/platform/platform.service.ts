@@ -177,13 +177,16 @@ export class PlatformService {
   }
 
   async createBusiness(actor: AccessJwtPayload, input: CreateBusiness): Promise<Business> {
+    const adminEmail = input.adminEmail.trim().toLowerCase();
     const existingUser = await this.db
-      .select({ id: users.id })
+      .select({ id: users.id, email: users.email })
       .from(users)
-      .where(eq(users.email, input.adminEmail.trim().toLowerCase()))
+      .where(sql`lower(${users.email}) = ${adminEmail}`)
       .limit(1);
     if (existingUser.length > 0) {
-      throw new ConflictException("Admin email is already registered");
+      throw new ConflictException(
+        "This email is already registered. Each business needs its own unique admin email — you cannot create another business with the same email.",
+      );
     }
 
     const passwordHash = await bcrypt.hash(input.adminPassword, 12);
@@ -217,7 +220,7 @@ export class PlatformService {
       .insert(users)
       .values({
         name: input.adminName.trim(),
-        email: input.adminEmail.trim().toLowerCase(),
+        email: adminEmail,
         passwordHash,
         status: "active",
         platformRole: null,
@@ -882,7 +885,9 @@ export class PlatformService {
 
   async listSystemTypes(): Promise<{ id: SystemType; label: string }[]> {
     const { SYSTEM_TYPE_LABELS } = await import("@platform/contracts");
-    return SYSTEM_TYPES.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
+    // Only systems with a shipped ERP shell (exclude grocery/retail placeholders).
+    const shipped: SystemType[] = ["restaurant", "pharmacy", "general_store"];
+    return shipped.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
   }
 
   private toBusiness(

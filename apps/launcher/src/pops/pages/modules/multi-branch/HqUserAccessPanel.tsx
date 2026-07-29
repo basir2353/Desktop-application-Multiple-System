@@ -9,10 +9,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchOrgUsers, updateOrgUser } from "../../../api/users";
+import { useOrgModuleCeiling } from "../../../hooks/useOrgModuleCeiling";
 import { isMonitoringBranch } from "../../../lib/branchScope";
 import { useSessionStore } from "../../../../stores/sessionStore";
 import { usePopsStore } from "../../../../stores/popsStore";
 import { Badge } from "../../../ui/Badge";
+
+function modulesAllowedByOrgCeiling(ceiling: string[] | null) {
+  if (ceiling == null) return POPS_MODULE_ACCESS;
+  const allowed = new Set(ceiling);
+  allowed.add("pops.read");
+  return POPS_MODULE_ACCESS.filter((m) => allowed.has(m.id));
+}
 
 export function HqUserAccessPanel(): JSX.Element | null {
   const queryClient = useQueryClient();
@@ -20,9 +28,19 @@ export function HqUserAccessPanel(): JSX.Element | null {
   const claims = useSessionStore((s) => s.claims);
   const canManage = canManageOrgUsers(claims?.permissions ?? []);
   const onHq = isMonitoringBranch(branch?.code);
+  const orgCeiling = useOrgModuleCeiling();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const allowedModules = useMemo(() => {
+    if (orgCeiling.status === "ok") {
+      return modulesAllowedByOrgCeiling(orgCeiling.enabledModules);
+    }
+    const perms = claims?.permissions ?? [];
+    if (perms.includes("*")) return POPS_MODULE_ACCESS;
+    return POPS_MODULE_ACCESS.filter((m) => perms.includes(m.id) || m.id === "pops.read");
+  }, [orgCeiling, claims?.permissions]);
 
   const usersQuery = useQuery({
     queryKey: ["users", "list"],
@@ -101,6 +119,7 @@ export function HqUserAccessPanel(): JSX.Element | null {
             <UserAccessRow
               key={user.id}
               user={user}
+              allowedModules={allowedModules}
               expanded={expandedId === user.id}
               busy={updateMutation.isPending}
               isSelf={user.id === claims?.sub}
@@ -120,6 +139,7 @@ export function HqUserAccessPanel(): JSX.Element | null {
 
 function UserAccessRow({
   user,
+  allowedModules,
   expanded,
   busy,
   isSelf,
@@ -128,6 +148,7 @@ function UserAccessRow({
   onToggleModule,
 }: {
   user: OrgUser;
+  allowedModules: typeof POPS_MODULE_ACCESS;
   expanded: boolean;
   busy: boolean;
   isSelf: boolean;
@@ -181,7 +202,7 @@ function UserAccessRow({
 
       {expanded ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {POPS_MODULE_ACCESS.map((mod) => {
+          {allowedModules.map((mod) => {
             const on = hasModuleAccess(user.permissions, mod.id);
             const lockAdminManage = isAdminRole && mod.id === "pops.users.manage";
             return (

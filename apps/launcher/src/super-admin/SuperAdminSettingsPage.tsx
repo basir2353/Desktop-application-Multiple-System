@@ -1,5 +1,13 @@
 import { Button } from "@platform/ui";
-import { LICENCE_PLANS } from "@platform/contracts";
+import {
+  LICENCE_PLANS,
+  LICENCE_PLAN_META,
+  LICENCE_PLAN_META_SETTINGS_KEY,
+  resolveLicencePlanMeta,
+  serializeLicencePlanMeta,
+  type LicencePlan,
+  type LicencePlanMeta,
+} from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { fetchPlatformSettings, updatePlatformSettings } from "../lib/platformApi";
@@ -41,8 +49,12 @@ export function SuperAdminSettingsPage(): JSX.Element {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["platform", "settings"], queryFn: fetchPlatformSettings });
   const [entries, setEntries] = useState<Record<string, string>>({});
+  const [planMeta, setPlanMeta] = useState<Record<LicencePlan, LicencePlanMeta>>(() => ({
+    ...LICENCE_PLAN_META,
+  }));
   const [poweredBy, setPoweredBy] = useState(DEFAULT_RECEIPT_POWERED_BY);
   const [message, setMessage] = useState<string | null>(null);
+  const [planMessage, setPlanMessage] = useState<string | null>(null);
   const [brandingMessage, setBrandingMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,6 +69,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
       next[row.key] = typeof value === "string" ? value : value != null ? String(value) : "";
     }
     setEntries(next);
+    setPlanMeta(resolveLicencePlanMeta(settings.data.entries));
   }, [settings.data]);
 
   const saveMut = useMutation({
@@ -69,10 +82,36 @@ export function SuperAdminSettingsPage(): JSX.Element {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Save failed"),
   });
 
+  const savePlansMut = useMutation({
+    mutationFn: () =>
+      updatePlatformSettings({
+        entries: {
+          [LICENCE_PLAN_META_SETTINGS_KEY]: serializeLicencePlanMeta(planMeta),
+        },
+      }),
+    onSuccess: async () => {
+      setPlanMessage("Licence packages saved. New business form will use these labels, days, and prices.");
+      await qc.invalidateQueries({ queryKey: ["platform", "settings"] });
+    },
+    onError: (err) => setPlanMessage(err instanceof Error ? err.message : "Save failed"),
+  });
+
   function savePoweredBy(): void {
     const next = saveReceiptBranding({ poweredBy });
     setPoweredBy(next.poweredBy);
     setBrandingMessage("Receipt powered-by line saved. Prints above Thank you on every bill.");
+  }
+
+  function updatePlan(plan: LicencePlan, patch: Partial<LicencePlanMeta>): void {
+    setPlanMeta((prev) => ({
+      ...prev,
+      [plan]: {
+        ...prev[plan],
+        ...patch,
+        days: plan === "custom" ? null : patch.days !== undefined ? patch.days : prev[plan].days,
+      },
+    }));
+    setPlanMessage(null);
   }
 
   return (
@@ -122,6 +161,126 @@ export function SuperAdminSettingsPage(): JSX.Element {
         </div>
       </section>
 
+      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+        <div>
+          <h3 className={`text-sm font-semibold ${headingClass}`}>Licence packages (editable)</h3>
+          <p className={`mt-1 text-xs ${mutedClass}`}>
+            Edit what Super Admin sees on “New business” plan cards: name, days, suggested PKR, and
+            description. Plan ids stay the same (trial_5, monthly_30, …). Suggested PKR is display-only.
+          </p>
+        </div>
+        {settings.isLoading ? (
+          <p className={mutedClass}>Loading…</p>
+        ) : (
+          <div className="space-y-4">
+            {LICENCE_PLANS.map((plan) => {
+              const row = planMeta[plan];
+              return (
+                <div
+                  key={plan}
+                  className="rounded-lg border border-slate-200 p-3 dark:border-slate-700"
+                >
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    {plan}
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm sm:col-span-2">
+                      <span className="mb-1 block text-slate-600 dark:text-slate-300">Label</span>
+                      <input
+                        className={fieldInputClass}
+                        value={row.label}
+                        onChange={(e) => updatePlan(plan, { label: e.target.value })}
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="mb-1 block text-slate-600 dark:text-slate-300">
+                        Days {plan === "custom" ? "(fixed: pick on create)" : ""}
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={3660}
+                        className={fieldInputClass}
+                        disabled={plan === "custom"}
+                        value={plan === "custom" ? "" : row.days ?? ""}
+                        placeholder={plan === "custom" ? "—" : "30"}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          updatePlan(plan, {
+                            days: Number.isFinite(n) && n > 0 ? Math.floor(n) : null,
+                          });
+                        }}
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="mb-1 block text-slate-600 dark:text-slate-300">
+                        Suggested PKR (empty = “Set yourself”)
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        className={fieldInputClass}
+                        value={row.suggestedPkr ?? ""}
+                        placeholder="e.g. 15000"
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          if (raw === "") {
+                            updatePlan(plan, { suggestedPkr: null });
+                            return;
+                          }
+                          const n = Number(raw);
+                          updatePlan(plan, {
+                            suggestedPkr: Number.isFinite(n) && n >= 0 ? Math.floor(n) : null,
+                          });
+                        }}
+                      />
+                    </label>
+                    <label className="block text-sm sm:col-span-2">
+                      <span className="mb-1 block text-slate-600 dark:text-slate-300">Description</span>
+                      <textarea
+                        className={`${fieldInputClass} min-h-[4rem]`}
+                        value={row.blurb}
+                        onChange={(e) => updatePlan(plan, { blurb: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+            {planMessage ? (
+              <p
+                className={`text-sm ${
+                  /fail|error/i.test(planMessage)
+                    ? "text-red-600 dark:text-red-400"
+                    : "text-emerald-700 dark:text-emerald-400"
+                }`}
+              >
+                {planMessage}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={savePlansMut.isPending}
+                onClick={() => savePlansMut.mutate()}
+              >
+                {savePlansMut.isPending ? "Saving…" : "Save licence packages"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setPlanMeta({ ...LICENCE_PLAN_META });
+                  setPlanMessage("Reset to built-in defaults (click Save to persist).");
+                }}
+              >
+                Reset defaults
+              </Button>
+            </div>
+          </div>
+        )}
+      </section>
+
       {settings.isLoading ? (
         <p className={mutedClass}>Loading…</p>
       ) : (
@@ -144,7 +303,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
                 >
                   {LICENCE_PLANS.map((plan) => (
                     <option key={plan} value={plan}>
-                      {plan}
+                      {planMeta[plan].label} ({plan})
                     </option>
                   ))}
                   {entries[row.key] &&

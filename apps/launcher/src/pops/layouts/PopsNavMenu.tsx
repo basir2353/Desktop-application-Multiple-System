@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { canManageOrgUsers, permissionsForPopsRole } from "@platform/contracts";
+import { applyOrgModuleCeiling, canManageOrgUsers, permissionsForPopsRole } from "@platform/contracts";
 import { getNavItemsForSystem } from "../../lib/businessSystems";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
 import { amberPillActiveClass, pillInactiveClass } from "../lib/themeClasses";
 import { isTaxAuthorityEnabled, useTaxAuthorityFeatures } from "../hooks/useTaxAuthorityFeatures";
+import { useOrgModuleCeiling } from "../hooks/useOrgModuleCeiling";
 import { filterNavItemsByPermissions } from "../lib/roleAccess";
 import { type PopsNavGroup, type PopsNavItem } from "../spec/modules";
 import { PopsNavIcon } from "./popsNavIcons";
@@ -171,19 +172,29 @@ function useSystemNavItems(): PopsNavItem[] {
   const displayRole = usePopsStore((s) => s.displayRole);
   const taxFeatures = useTaxAuthorityFeatures();
   const taxEnabled = isTaxAuthorityEnabled(taxFeatures.data);
+  const orgCeiling = useOrgModuleCeiling();
 
   return useMemo(() => {
     const items = getNavItemsForSystem(systemId);
     // Admins can preview another role's workspace; everyone else is locked to JWT permissions.
     const isAdminPreview = jwtPermissions.includes("*") || canManageOrgUsers(jwtPermissions);
-    const permissions = isAdminPreview ? permissionsForPopsRole(displayRole) : jwtPermissions;
+    const roleOrJwt = isAdminPreview ? permissionsForPopsRole(displayRole) : jwtPermissions;
+    // Prefer live Super Admin ceiling so module hide/show applies without waiting for re-login.
+    // Fallback: clamp with JWT permissions (baked in at login/refresh).
+    const ceiling =
+      orgCeiling.status === "ok"
+        ? orgCeiling.enabledModules
+        : jwtPermissions.includes("*")
+          ? null
+          : jwtPermissions;
+    const permissions = applyOrgModuleCeiling(roleOrJwt, ceiling);
     // Path allowlist only applies to the signed-in membership (not admin role preview).
     const allowlist = isAdminPreview ? null : navAllowlist;
     const filtered = filterNavItemsByPermissions(items, permissions, allowlist);
     // Tax nav only when Super Admin enabled FBR and/or PRA for this business.
     if (taxEnabled) return filtered;
     return stripTaxNavItems(filtered);
-  }, [systemId, jwtPermissions, displayRole, navAllowlist, taxEnabled]);
+  }, [systemId, jwtPermissions, displayRole, navAllowlist, taxEnabled, orgCeiling]);
 }
 
 export function PopsSidebarNav(): JSX.Element {

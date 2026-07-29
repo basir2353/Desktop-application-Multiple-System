@@ -35,6 +35,11 @@ import { SuperAdminBusinessDetailPage } from "./super-admin/SuperAdminBusinessDe
 import { SuperAdminUsersPage } from "./super-admin/SuperAdminUsersPage";
 import { SuperAdminLicencesPage } from "./super-admin/SuperAdminLicencesPage";
 import { SuperAdminSettingsPage } from "./super-admin/SuperAdminSettingsPage";
+import { SuperAdminHealthPage } from "./super-admin/SuperAdminHealthPage";
+import { SuperAdminTaxMapPage } from "./super-admin/SuperAdminTaxMapPage";
+import { SuperAdminPaymentsPage } from "./super-admin/SuperAdminPaymentsPage";
+import { SuperAdminSecurityPage } from "./super-admin/SuperAdminSecurityPage";
+import { SuperAdminBroadcastPage } from "./super-admin/SuperAdminBroadcastPage";
 
 function Protected({ children }: { children: JSX.Element }): JSX.Element {
   const sessionReady = useSessionReady();
@@ -114,6 +119,11 @@ export function App(): JSX.Element {
             <Route path="businesses/:businessId" element={<SuperAdminBusinessDetailPage />} />
             <Route path="users" element={<SuperAdminUsersPage />} />
             <Route path="licences" element={<SuperAdminLicencesPage />} />
+            <Route path="tax" element={<SuperAdminTaxMapPage />} />
+            <Route path="payments" element={<SuperAdminPaymentsPage />} />
+            <Route path="health" element={<SuperAdminHealthPage />} />
+            <Route path="security" element={<SuperAdminSecurityPage />} />
+            <Route path="broadcast" element={<SuperAdminBroadcastPage />} />
             <Route path="settings" element={<SuperAdminSettingsPage />} />
           </Route>
           <Route

@@ -10,12 +10,15 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   deletePlatformBusiness,
   fetchPlatformBusiness,
+  fetchPlatformSettings,
   fetchPlatformUsers,
   resetPlatformUserPassword,
   updatePlatformBusiness,
+  updatePlatformSettings,
   updatePlatformUser,
 } from "../lib/platformApi";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
+import { businessNotesKey } from "./superAdminHelpers";
 
 const STATUS_ACTIONS: { status: BusinessStatus; label: string }[] = [
   { status: "active", label: "Activate" },
@@ -43,6 +46,13 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
   const [resetFor, setResetFor] = useState<string | null>(null);
   const [password, setPassword] = useState("");
+  const [notes, setNotes] = useState("");
+  const [notesMsg, setNotesMsg] = useState<string | null>(null);
+
+  const settings = useQuery({
+    queryKey: ["platform", "settings"],
+    queryFn: fetchPlatformSettings,
+  });
 
   useEffect(() => {
     if (!business.data) return;
@@ -53,6 +63,12 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
     setFbrEnabled(Boolean(business.data.fbrEnabled));
     setPraEnabled(Boolean(business.data.praEnabled));
   }, [business.data]);
+
+  useEffect(() => {
+    if (!settings.data || !businessId) return;
+    const raw = settings.data.entries[businessNotesKey(businessId)];
+    setNotes(typeof raw === "string" ? raw : raw != null ? String(raw) : "");
+  }, [settings.data, businessId]);
 
   const businessUsers = useMemo(
     () => (users.data ?? []).filter((u) => u.businessId === businessId),
@@ -145,6 +161,18 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
       await qc.invalidateQueries({ queryKey: ["platform", "users"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Reset failed"),
+  });
+
+  const notesMut = useMutation({
+    mutationFn: () =>
+      updatePlatformSettings({
+        entries: { [businessNotesKey(businessId)]: notes },
+      }),
+    onSuccess: async () => {
+      setNotesMsg("Support notes saved.");
+      await qc.invalidateQueries({ queryKey: ["platform", "settings"] });
+    },
+    onError: (err) => setNotesMsg(err instanceof Error ? err.message : "Notes save failed"),
   });
 
   if (business.isLoading) return <p className={mutedClass}>Loading business…</p>;
@@ -293,6 +321,38 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         <Button type="button" disabled={saveTaxMut.isPending} onClick={() => saveTaxMut.mutate()}>
           {saveTaxMut.isPending ? "Saving…" : "Save tax settings"}
         </Button>
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+        <h3 className={`text-base font-semibold ${headingClass}`}>Support notes</h3>
+        <p className={`text-sm ${mutedClass}`}>
+          Operator-only notes for this business (stored in platform settings, not visible to the client).
+        </p>
+        <textarea
+          className={`${fieldInputClass} min-h-[120px]`}
+          placeholder="e.g. Called owner about overdue licence; prefers WhatsApp…"
+          value={notes}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            setNotesMsg(null);
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" disabled={notesMut.isPending} onClick={() => notesMut.mutate()}>
+            {notesMut.isPending ? "Saving…" : "Save notes"}
+          </Button>
+          {notesMsg ? (
+            <p
+              className={`text-sm ${
+                /fail|error/i.test(notesMsg)
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-emerald-700 dark:text-emerald-400"
+              }`}
+            >
+              {notesMsg}
+            </p>
+          ) : null}
+        </div>
       </section>
 
       <section className="space-y-3">

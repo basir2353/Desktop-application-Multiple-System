@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { fetchPopsBranches } from "../../api/operations";
+import { useOrgModuleCeiling } from "../../hooks/useOrgModuleCeiling";
 import {
   createOrgUser,
   fetchAccessControl,
@@ -163,6 +164,20 @@ function UserFormModal({
 }): JSX.Element {
   const [form, setForm] = useState<UserFormState>(initial);
   const isAdminAccount = form.role === "admin" || form.permissions.includes("*");
+  const orgPerms = useSessionStore((s) => s.claims?.permissions ?? []);
+  const orgCeiling = useOrgModuleCeiling();
+  const moduleCatalog = useMemo(() => {
+    const ceiling =
+      orgCeiling.status === "ok"
+        ? orgCeiling.enabledModules
+        : orgPerms.includes("*")
+          ? null
+          : orgPerms;
+    if (ceiling == null) return POPS_MODULE_ACCESS;
+    const allowed = new Set(ceiling);
+    allowed.add("pops.read");
+    return POPS_MODULE_ACCESS.filter((m) => allowed.has(m.id));
+  }, [orgPerms, orgCeiling]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60">
@@ -296,7 +311,7 @@ function UserFormModal({
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Modules</div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {POPS_MODULE_ACCESS.map((mod) => {
+                  {moduleCatalog.map((mod) => {
                     const on = hasModuleAccess(form.permissions, mod.id);
                     const lockAdminManage = isAdminAccount && mod.id === "pops.users.manage";
                     return (
