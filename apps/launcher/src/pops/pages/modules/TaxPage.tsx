@@ -110,10 +110,9 @@ export function TaxPage(): JSX.Element {
   const branchCode = branch?.code || MAIN_SYSTEM_BRANCH_CODE;
   const branchLabel = branch?.name || MAIN_SYSTEM_BRANCH_NAME;
   const isStore = systemId === "general-store";
-  /** Keep Tax page reachable from sidebar even before Super Admin enables FBR/PRA. */
-  const alwaysShowTaxPage = isStore || systemId === "restaurant";
   const taxFeatures = useTaxAuthorityFeatures();
-  const taxEnabled = alwaysShowTaxPage || isTaxAuthorityEnabled(taxFeatures.data);
+  /** Tax page is available when Super Admin enabled FBR and/or PRA for this business. */
+  const taxEnabled = isTaxAuthorityEnabled(taxFeatures.data);
   const onMainSystem = !branch?.code;
 
   const [company, setCompany] = useState<CompanyForm>(
@@ -126,13 +125,13 @@ export function TaxPage(): JSX.Element {
 
   const statusQuery = useQuery({
     queryKey: ["tax-authority", "status", branchCode],
-    enabled: taxEnabled || alwaysShowTaxPage,
+    enabled: taxEnabled,
     queryFn: () => fetchTaxAuthorityStatus(branchCode),
   });
 
   const invoicesQuery = useQuery({
     queryKey: ["tax-authority", "invoices", branchCode],
-    enabled: isTaxAuthorityEnabled(taxFeatures.data),
+    enabled: taxEnabled,
     queryFn: () => fetchTaxInvoices(branchCode),
     refetchInterval: 30_000,
   });
@@ -321,23 +320,23 @@ export function TaxPage(): JSX.Element {
     );
   }
 
-  // Pharmacy: leave if Super Admin has not enabled FBR/PRA.
-  // Restaurant + general store: keep the page so staff can open FBR / PRA from the sidebar.
-  if (!taxEnabled && !alwaysShowTaxPage) {
+  // Leave if Super Admin has not enabled FBR and/or PRA for this business.
+  if (!taxEnabled) {
     return <Navigate to={erpEntryPathForRole(systemId, displayRole)} replace />;
   }
 
   const fbrStatus = statusQuery.data?.fbr.status ?? "disconnected";
   const praStatus = statusQuery.data?.pra.status ?? "disconnected";
-  const platformFbr = Boolean(statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled);
-  const platformPra = Boolean(statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled);
-  const fbrEnabled = platformFbr;
-  const praEnabled = platformPra;
+  // Respect Super Admin grants — only the enabled authority can be connected.
+  const fbrEnabled = statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false;
+  const praEnabled = statusQuery.data?.praEnabled ?? taxFeatures.data?.praEnabled ?? false;
   const invoices = invoicesQuery.data ?? [];
   const showCompany = section === "overview";
-  const showFbr = section === "overview" || section === "fbr";
-  const showPra = section === "overview" || section === "pra";
+  const showFbr = (section === "overview" || section === "fbr") && fbrEnabled;
+  const showPra = (section === "overview" || section === "pra") && praEnabled;
   const showInvoices = section === "overview" || section === "invoices";
+  const showFbrDisabledNote = section === "fbr" && !fbrEnabled;
+  const showPraDisabledNote = section === "pra" && !praEnabled;
 
   return (
     <div className="space-y-6">
@@ -354,23 +353,17 @@ export function TaxPage(): JSX.Element {
         }
       />
 
-      {!platformFbr && !platformPra ? (
-        <div className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}>
-          FBR / PRA is not enabled yet for this business. Ask platform Super Admin to turn on FBR and/or PRA for{" "}
-          <strong>this</strong> business, then return here to connect credentials.
-        </div>
-      ) : null}
-
-      {alwaysShowTaxPage ? (
-        <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
           {(
             [
-              { to: "/pops/tax", label: "Overview", id: "overview" },
-              { to: "/pops/tax/fbr", label: "FBR", id: "fbr" },
-              { to: "/pops/tax/pra", label: "PRA", id: "pra" },
-              { to: "/pops/tax/invoices", label: "Invoice queue", id: "invoices" },
+              { to: "/pops/tax", label: "Overview", id: "overview", show: true },
+              { to: "/pops/tax/fbr", label: "FBR", id: "fbr", show: fbrEnabled },
+              { to: "/pops/tax/pra", label: "PRA", id: "pra", show: praEnabled },
+              { to: "/pops/tax/invoices", label: "Invoice queue", id: "invoices", show: true },
             ] as const
-          ).map((tab) => (
+          )
+            .filter((tab) => tab.show)
+            .map((tab) => (
             <Link
               key={tab.id}
               to={tab.to}
@@ -385,31 +378,40 @@ export function TaxPage(): JSX.Element {
             </Link>
           ))}
         </div>
+
+      {!isTaxAuthorityEnabled(taxFeatures.data) ? (
+        <div className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}>
+          FBR / PRA is not enabled yet for this business. After Super Admin turns on FBR and/or PRA, return here to connect credentials. Sales will then submit fiscal invoices automatically.
+        </div>
       ) : null}
 
-      <div id="tax-section-overview" className={`grid gap-3 sm:grid-cols-2 ${panelClass} p-4`}>
+      <div id="tax-section-overview" className={`grid gap-3 ${fbrEnabled && praEnabled ? "sm:grid-cols-2" : ""} ${panelClass} p-4`}>
+        {fbrEnabled ? (
         <div>
           <p className="text-xs uppercase tracking-wide text-slate-500">FBR status</p>
           <div className="mt-1 flex items-center gap-2">
-            <Badge tone={fbrEnabled ? statusTone(fbrStatus) : "neutral"}>
-              {!fbrEnabled ? "Not enabled" : fbrStatus === "connected" ? "Connected" : fbrStatus}
+            <Badge tone={statusTone(fbrStatus)}>
+              {fbrStatus === "connected" ? "Connected" : fbrStatus}
             </Badge>
             <span className={`text-sm ${mutedClass}`}>
               Last: {formatWhen(statusQuery.data?.fbr.connectedAt)}
             </span>
           </div>
         </div>
+        ) : null}
+        {praEnabled ? (
         <div>
           <p className="text-xs uppercase tracking-wide text-slate-500">PRA status</p>
           <div className="mt-1 flex items-center gap-2">
-            <Badge tone={praEnabled ? statusTone(praStatus) : "neutral"}>
-              {!praEnabled ? "Not enabled" : praStatus === "connected" ? "Connected" : praStatus}
+            <Badge tone={statusTone(praStatus)}>
+              {praStatus === "connected" ? "Connected" : praStatus}
             </Badge>
             <span className={`text-sm ${mutedClass}`}>
               Last: {formatWhen(statusQuery.data?.pra.connectedAt)}
             </span>
           </div>
         </div>
+        ) : null}
       </div>
 
       {message ? (
@@ -451,15 +453,18 @@ export function TaxPage(): JSX.Element {
       </section>
       ) : null}
 
+      {showFbrDisabledNote ? (
+        <section id="tax-section-fbr" className={`${panelClass} space-y-2 p-4`}>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">FBR Settings</h3>
+          <p className={`text-sm ${mutedClass}`}>
+            FBR is not enabled for this business. Ask the platform Super Admin to enable FBR.
+          </p>
+        </section>
+      ) : null}
+
       {showFbr ? (
       <section id="tax-section-fbr" className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">FBR Settings</h3>
-        {!fbrEnabled ? (
-          <p className={`text-sm ${mutedClass}`}>
-            FBR is disabled for this business by the platform Super Admin.
-          </p>
-        ) : (
-        <>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600 dark:text-slate-300">Client ID</span>
@@ -521,20 +526,21 @@ export function TaxPage(): JSX.Element {
             {connectFbrMut.isPending || refreshFbrMut.isPending ? "Connecting…" : "Connect FBR"}
           </Button>
         </div>
-        </>
-        )}
       </section>
+      ) : null}
+
+      {showPraDisabledNote ? (
+        <section id="tax-section-pra" className={`${panelClass} space-y-2 p-4`}>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">PRA Settings</h3>
+          <p className={`text-sm ${mutedClass}`}>
+            PRA is not enabled for this business. Ask the platform Super Admin to enable PRA.
+          </p>
+        </section>
       ) : null}
 
       {showPra ? (
       <section id="tax-section-pra" className={`${panelClass} space-y-4 p-4`}>
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">PRA Settings</h3>
-        {!praEnabled ? (
-          <p className={`text-sm ${mutedClass}`}>
-            PRA is disabled for this business by the platform Super Admin.
-          </p>
-        ) : (
-        <>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600 dark:text-slate-300">Registration Number</span>
@@ -596,8 +602,6 @@ export function TaxPage(): JSX.Element {
             {connectPraMut.isPending || refreshPraMut.isPending ? "Connecting…" : "Connect PRA"}
           </Button>
         </div>
-        </>
-        )}
       </section>
       ) : null}
 

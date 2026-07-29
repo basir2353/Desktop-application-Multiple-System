@@ -34,6 +34,7 @@ import {
   organizationMemberships,
   organizations,
   platformSettings,
+  popsBranches,
   refreshTokens,
   users,
   type PlatformPgDb,
@@ -234,6 +235,14 @@ export class PlatformService {
       pinRequired: false,
       active: true,
       lastActivityAt: new Date(),
+    });
+
+    // Every new business gets a MAIN branch so ERP dashboards work on first login.
+    await this.db.insert(popsBranches).values({
+      organizationId: org.id,
+      code: "MAIN",
+      name: "Main System",
+      city: "Head Office",
     });
 
     return this.toBusiness(org, { adminEmail: adminUser.email, userCount: 1 });

@@ -1,22 +1,17 @@
 import { Body, Controller, ForbiddenException, Get, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
-import type { AccessJwtPayload } from "../auth/jwt.types";
+import { isSuperAdmin, type AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
 import { TaxAuthorityService } from "./tax-authority.service";
 
-function assertCanToggleTaxFeatures(user: AccessJwtPayload): void {
-  const role = (user.role ?? "").toLowerCase();
-  const perms = new Set(user.permissions ?? []);
-  const isIncharge =
-    role === "admin" ||
-    role === "owner" ||
-    role === "manager" ||
-    perms.has("*") ||
-    perms.has("pops.users.manage");
-  if (!isIncharge) {
-    throw new ForbiddenException("Only Admin / Incharge can change PRA settings.");
+/** FBR/PRA feature flags are owned by Super Admin (business create/edit), not store staff. */
+function assertSuperAdminTaxFeatures(user: AccessJwtPayload): void {
+  if (!isSuperAdmin(user) && !user.permissions?.includes("platform.businesses.manage")) {
+    throw new ForbiddenException(
+      "Only Super Admin can enable or disable FBR / PRA for a business.",
+    );
   }
 }
 
@@ -97,7 +92,7 @@ export class TaxAuthorityController {
     @CurrentUser() user: AccessJwtPayload,
     @Body() body: { praEnabled?: boolean; fbrEnabled?: boolean },
   ) {
-    assertCanToggleTaxFeatures(user);
+    assertSuperAdminTaxFeatures(user);
     return this.tax.setFeatures(user.organizationId, {
       praEnabled: typeof body?.praEnabled === "boolean" ? body.praEnabled : undefined,
       fbrEnabled: typeof body?.fbrEnabled === "boolean" ? body.fbrEnabled : undefined,

@@ -105,11 +105,70 @@ export class StoreService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     try {
+      await this.ensureStoreSchema();
       await this.seedAllBranches();
     } catch (err) {
       this.logger.warn(
         `Store bootstrap skipped — run pnpm db:push if schema changed: ${err instanceof Error ? err.message : err}`,
       );
+    }
+  }
+
+  /** Idempotent ALTERs so Railway DBs catch up without a full drizzle push. */
+  private async ensureStoreSchema(): Promise<void> {
+    const statements = [
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS order_cost_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS sale_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS mrp_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS wholesale_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS custom_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS market_sale_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS margin_pct integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS markup_pct integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS supplier_id uuid`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS variant_of_id uuid`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS qr_code text`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS image_url text`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS description text`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS subcategory_id uuid`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS reserved_stock integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS damaged_stock integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS expired_stock integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS in_transit_stock integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS track_serial text NOT NULL DEFAULT 'no'`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS is_weighed text NOT NULL DEFAULT 'no'`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS color text`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS size text`,
+      `ALTER TABLE store_suppliers ADD COLUMN IF NOT EXISTS opening_balance_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_customers ADD COLUMN IF NOT EXISTS membership_tier text NOT NULL DEFAULT 'standard'`,
+      `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS lot_number text`,
+      `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS manufacturing_date date`,
+      `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
+      `CREATE TABLE IF NOT EXISTS store_product_barcodes (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+        code text NOT NULL,
+        is_primary text NOT NULL DEFAULT 'no',
+        sort_order integer NOT NULL DEFAULT 1,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE TABLE IF NOT EXISTS store_product_serials (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+        serial_number text NOT NULL,
+        batch_id uuid,
+        status text NOT NULL DEFAULT 'available',
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+    ];
+    for (const statement of statements) {
+      try {
+        await this.db.execute(sql.raw(statement));
+      } catch (err) {
+        this.logger.warn(
+          `Store schema ensure skip: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
   }
 
@@ -121,8 +180,21 @@ export class StoreService implements OnModuleInit {
       .from(popsBranches)
       .where(and(eq(popsBranches.organizationId, organizationId), eq(popsBranches.code, code)))
       .limit(1);
-    if (!branch) throw new NotFoundException(`Branch not found: ${code}`);
-    return branch;
+    if (branch) return branch;
+
+    if (code === "MAIN") {
+      const [created] = await this.db
+        .insert(popsBranches)
+        .values({
+          organizationId,
+          code: "MAIN",
+          name: "Main System",
+          city: "Head Office",
+        })
+        .returning();
+      if (created) return created;
+    }
+    throw new NotFoundException(`Branch not found: ${code}`);
   }
 
   private nextSeq(branchId: string, prefix: string): string {
@@ -297,6 +369,19 @@ export class StoreService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(organizationId: string, branchId: string): Promise<void> {
+    try {
+      await this.seedBranchIfEmptyUnsafe(organizationId, branchId);
+    } catch (err) {
+      this.logger.error(
+        `Store seed failed for branch ${branchId}: ${err instanceof Error ? err.message : err}`,
+      );
+      // Re-run schema ensure once, then retry seed once (common after Railway schema drift).
+      await this.ensureStoreSchema();
+      await this.seedBranchIfEmptyUnsafe(organizationId, branchId);
+    }
+  }
+
+  private async seedBranchIfEmptyUnsafe(organizationId: string, branchId: string): Promise<void> {
     const [existing] = await this.db
       .select({ id: storeProducts.id })
       .from(storeProducts)
@@ -404,7 +489,14 @@ export class StoreService implements OnModuleInit {
 
   async getDashboard(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
-    await this.seedBranchIfEmpty(organizationId, branch.id);
+    try {
+      await this.seedBranchIfEmpty(organizationId, branch.id);
+    } catch (err) {
+      this.logger.error(
+        `Dashboard seed failed (continuing with empty catalog): ${err instanceof Error ? err.message : err}`,
+      );
+      await this.ensureStoreSchema();
+    }
 
     const products = await this.db
       .select()

@@ -22,9 +22,9 @@ async function readError(res: Response): Promise<string> {
 
 export async function fetchTaxAuthorityFeatures(): Promise<TaxAuthorityFeatures> {
   const res = await authFetch("/v1/tax-authority/features");
-  // Older hosted APIs omit this route — unlock FBR/PRA so restaurant/store can connect credentials.
+  // Older hosted APIs omit this route — treat as not enabled (Super Admin must grant).
   if (res.status === 404) {
-    return { fbrEnabled: true, praEnabled: true };
+    return { fbrEnabled: false, praEnabled: false };
   }
   if (!res.ok) throw new Error(await readError(res));
   return taxAuthorityFeaturesSchema.parse(await res.json());
@@ -41,10 +41,7 @@ export async function updateTaxAuthorityFeatures(patch: {
     body: JSON.stringify(patch),
   });
   if (res.status === 404) {
-    return {
-      fbrEnabled: patch.fbrEnabled ?? true,
-      praEnabled: patch.praEnabled ?? true,
-    };
+    throw new Error("Tax feature updates require a Super Admin grant on a current API.");
   }
   if (!res.ok) throw new Error(await readError(res));
   return taxAuthorityFeaturesSchema.parse(await res.json());
