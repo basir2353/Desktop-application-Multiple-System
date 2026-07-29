@@ -1,9 +1,12 @@
+mod printing;
+
 use printers::common::base::job::PrinterJobOptions;
 use printers::common::base::printer::PrinterState;
 use printers::{get_printer_by_name, get_printers};
 use serde::Serialize;
 use std::fs;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Spawn helper processes without a console flash (Windows Terminal / cmd window).
@@ -648,11 +651,48 @@ try {{
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(Arc::new(printing::PrintBridgeState::default()))
         .invoke_handler(tauri::generate_handler![
             list_system_printers,
             print_to_printer,
-            print_image_to_printer
+            print_image_to_printer,
+            printing::start_branch_print_server,
+            printing::stop_branch_print_server,
+            printing::get_branch_print_server_status,
+            printing::enqueue_branch_print_job,
+            printing::list_branch_print_queue,
+            printing::branch_print_queue_action,
+            printing::upsert_branch_printer,
+            printing::list_branch_printers,
+            printing::claim_next_branch_print_job,
+            printing::complete_branch_print_job,
+            printing::discovery::discover_branch_print_servers,
+            printing::discovery::get_local_lan_ip,
+            printing::ip_print::print_raw_tcp
         ])
+        .setup(|app| {
+            // Auto-start branch print server so mobile can discover this PC.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                let config = printing::BranchServerConfig {
+                    server_id: "bps_auto".into(),
+                    branch_code: "MAIN".into(),
+                    branch_name: "Branch".into(),
+                    server_name: "Branch Print Server".into(),
+                    port: 9740,
+                    organization_id: None,
+                };
+                match printing::start_branch_print_server(handle, config) {
+                    Ok(st) => eprintln!(
+                        "[branch-print] auto-started on {}:{}",
+                        st.local_ip, st.port
+                    ),
+                    Err(e) => eprintln!("[branch-print] auto-start skipped: {e}"),
+                }
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");
 }

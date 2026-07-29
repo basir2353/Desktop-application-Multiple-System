@@ -60,27 +60,45 @@ import { printTestPageAsync } from "../../lib/printTicket";
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { fetchAssignableStaff, fetchOrgUsers } from "../../api/users";
 import { PageHeader } from "../../ui/PageHeader";
+import { PrinterBySectionPanel, type AssignablePerson } from "../../components/PrinterBySectionPanel";
+import { EnterprisePrintDashboard } from "../../components/EnterprisePrintDashboard";
+import { PrintCustomizeHub } from "../../components/PrintCustomizeHub";
 import {
-  PrinterBySectionPanel,
-  type AssignablePerson,
-} from "../../components/PrinterBySectionPanel";
-import { ThermalPrintSettingsPanel } from "../../components/ThermalPrintSettingsPanel";
+  IconActivity,
+  IconPalette,
+  IconPrinter,
+  IconReceipt,
+  IconRoute,
+  IconServer,
+  IconUsers,
+  IconLayers,
+} from "../../components/printerUiIcons";
 
 const SECTION_ICON_CHOICES = ["🍳", "🍸", "🧑‍🍳", "🔥", "🍰", "🥤", "🧾", "📦", "🛵", "☕", "🥖", "🖨️"];
 const SECTION_COLOR_CHOICES = [
   "#f59e0b", "#8b5cf6", "#38bdf8", "#ef4444", "#f472b6",
   "#22d3ee", "#a3e635", "#fb923c", "#34d399", "#94a3b8",
 ];
+
+/** Main nav — fewer tabs, clearer jobs. Old fine-grained tabs live under Routing. */
 const TABS = [
-  { id: "printers", label: "All Printers" },
-  { id: "assign", label: "Assign Users" },
-  { id: "by-section", label: "Printer by Section" },
-  { id: "settings", label: "Print Settings" },
-  { id: "categories", label: "Categories" },
-  { id: "items", label: "Items" },
-  { id: "preview", label: "Routing Preview" },
-  { id: "queue", label: "Print Queue" },
+  { id: "overview", label: "Server", Icon: IconServer },
+  { id: "printers", label: "Printers", Icon: IconPrinter },
+  { id: "routing", label: "Routing", Icon: IconRoute },
+  { id: "customize", label: "Customize", Icon: IconPalette },
+  { id: "activity", label: "Activity", Icon: IconActivity },
 ] as const;
+
+type RoutingSub = "staff" | "sections" | "categories" | "items" | "preview";
+
+const ROUTING_SUBS: { id: RoutingSub; label: string; Icon: typeof IconUsers }[] = [
+  { id: "staff", label: "Staff", Icon: IconUsers },
+  { id: "sections", label: "By section", Icon: IconLayers },
+  { id: "categories", label: "Categories", Icon: IconLayers },
+  { id: "items", label: "Items", Icon: IconLayers },
+  { id: "preview", label: "Preview", Icon: IconRoute },
+];
+
 
 /** Options for type dropdowns — includes legacy type if profile still has Kitchen/Bar on store. */
 function typeOptionsForProfile(isStore: boolean, current?: PrinterType): PrinterType[] {
@@ -146,17 +164,44 @@ function usePrinterConfig(branchCode: string, preset: PrinterSectionPreset = "re
   return { sections, routing, historyRevision };
 }
 
-function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: "warn" | "danger" }): JSX.Element {
+function StatCard({
+  label,
+  value,
+  tone,
+  Icon,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "warn" | "danger" | "ok";
+  Icon?: typeof IconPrinter;
+}): JSX.Element {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-      <div
-        className={`text-xl font-semibold ${
-          tone === "danger" ? "text-red-400" : tone === "warn" ? "text-amber-400" : "text-white"
-        }`}
-      >
-        {value}
+    <div className="flex items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-950/50 px-3.5 py-3">
+      {Icon ? (
+        <span
+          className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+            tone === "danger"
+              ? "bg-red-500/15 text-red-300"
+              : tone === "warn"
+                ? "bg-amber-500/15 text-amber-300"
+                : tone === "ok"
+                  ? "bg-emerald-500/15 text-emerald-300"
+                  : "bg-slate-800 text-slate-400"
+          }`}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+      ) : null}
+      <div className="min-w-0">
+        <div
+          className={`text-lg font-semibold tabular-nums leading-none ${
+            tone === "danger" ? "text-red-400" : tone === "warn" ? "text-amber-400" : "text-white"
+          }`}
+        >
+          {value}
+        </div>
+        <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
       </div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
     </div>
   );
 }
@@ -164,7 +209,6 @@ function StatCard({ label, value, tone }: { label: string; value: string | numbe
 function PrinterDashboardStats({
   branchCode,
   sections,
-  routing,
   systemPrinters,
 }: {
   branchCode: string;
@@ -174,19 +218,23 @@ function PrinterDashboardStats({
 }): JSX.Element {
   const onlineCount = systemPrinters.filter((p) => p.state === "ready" || p.state === "printing").length;
   const offlineCount = systemPrinters.length - onlineCount;
-  const linkedCategoryCount = Object.values(routing.byCategory).filter((ids) => ids.length > 0).length;
-  const overrideItemCount = Object.keys(routing.byItem).length;
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-      <StatCard label="Sections" value={sections.length} />
-      <StatCard label="System printers" value={systemPrinters.length} />
-      <StatCard label="Online" value={onlineCount} />
-      <StatCard label="Offline" value={offlineCount} tone={offlineCount > 0 ? "danger" : undefined} />
-      <StatCard label="Categories routed" value={linkedCategoryCount} />
-      <StatCard label="Item overrides" value={overrideItemCount} />
-      <StatCard label="Pending jobs" value={0} />
-      <StatCard label="Prints today" value={todaysPrintCount(branchCode)} />
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <StatCard label="Sections" value={sections.length} Icon={IconLayers} />
+      <StatCard label="Printers" value={systemPrinters.length} Icon={IconPrinter} />
+      <StatCard
+        label="Online"
+        value={onlineCount}
+        tone={onlineCount > 0 ? "ok" : undefined}
+        Icon={IconPrinter}
+      />
+      <StatCard
+        label="Prints today"
+        value={todaysPrintCount(branchCode)}
+        tone={offlineCount > 0 ? "warn" : undefined}
+        Icon={IconReceipt}
+      />
     </div>
   );
 }
@@ -2036,15 +2084,86 @@ function PrinterRoutingPreviewTab({
 
 function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
   const history = loadPrintHistory(branchCode);
+  const [liveQueue, setLiveQueue] = useState<
+    Array<{ id: string; status: string; printerName?: string | null; orderId?: string | null; error?: string | null }>
+  >([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load(): Promise<void> {
+      try {
+        const { listBranchPrintQueue } = await import("../../lib/branchPrintClient");
+        const rows = await listBranchPrintQueue(branchCode);
+        if (!cancelled) {
+          setLiveQueue(
+            rows.map((r) => ({
+              id: r.id,
+              status: r.status,
+              printerName: r.printerName,
+              orderId: r.orderId,
+              error: r.error,
+            })),
+          );
+        }
+      } catch {
+        if (!cancelled) setLiveQueue([]);
+      }
+    }
+    void load();
+    const id = window.setInterval(() => {
+      void load();
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [branchCode]);
 
   return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">Live branch queue</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Jobs held by the Branch Print Server (SQLite). Use the Enterprise tab for retry / pause controls.
+        </p>
+        <div className="mt-3 max-h-56 overflow-y-auto rounded-lg border border-slate-800">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 bg-slate-900/90 text-[10px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-2.5 py-2">Status</th>
+                <th className="px-2.5 py-2">Printer</th>
+                <th className="px-2.5 py-2">Order</th>
+                <th className="px-2.5 py-2">Error</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {liveQueue.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-2.5 py-4 text-center text-slate-500">
+                    No live queue jobs.
+                  </td>
+                </tr>
+              ) : (
+                liveQueue.map((row) => (
+                  <tr key={row.id}>
+                    <td className="px-2.5 py-2 text-slate-300">{row.status}</td>
+                    <td className="px-2.5 py-2 text-slate-300">{row.printerName ?? "—"}</td>
+                    <td className="px-2.5 py-2 text-slate-300">{row.orderId ?? "—"}</td>
+                    <td className="px-2.5 py-2 text-red-300">{row.error ?? "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold text-slate-900 dark:text-white">Print queue &amp; history</div>
+          <div className="text-sm font-semibold text-slate-900 dark:text-white">Print history</div>
           <p className="mt-1 text-xs text-slate-500">
-            Printing is dialog-based today, so there's no async queue to hold — this is a running log of every
-            print attempt for auditing and troubleshooting.
+            Audit log of every print attempt for this branch (queue + direct fallback).
           </p>
         </div>
         <Button
@@ -2099,6 +2218,7 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
         </table>
       </div>
     </div>
+    </div>
   );
 }
 
@@ -2106,7 +2226,9 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
   const systemId = useActiveSystemId();
   const isStore = systemId === "general-store";
   const sectionPreset: PrinterSectionPreset = isStore ? "general-store" : "restaurant";
-  const [activeTab, setActiveTab] = useState<TabId>("printers");
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [routingSub, setRoutingSub] = useState<RoutingSub>("staff");
+  const [customizeSub, setCustomizeSub] = useState<"receipt" | "kot" | "paper">("receipt");
   const [notice, setNotice] = useState<string | null>(null);
   const { sections, routing } = usePrinterConfig(branchCode, sectionPreset);
 
@@ -2302,14 +2424,15 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
       ) : null}
 
       {browserPrinterMode ? (
-        <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
-          <div className="font-semibold text-sky-50">Browser mode — Windows PDF / XPS available</div>
-          <p className="mt-1 text-xs leading-relaxed text-sky-100/85">
-            Link <span className="font-medium text-white">Microsoft Print to PDF</span> or{" "}
-            <span className="font-medium text-white">Microsoft XPS Document Writer</span> under All Printers.
-            When you print, the Windows print dialog opens — pick that PDF/XPS printer (or any other Windows
-            printer). Silent Auto to USB printers needs the desktop <span className="font-medium">.exe</span> app.
-          </p>
+        <div className="flex gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          <IconPrinter className="mt-0.5 h-5 w-5 shrink-0 text-sky-300" />
+          <div>
+            <div className="font-semibold text-sky-50">Browser mode</div>
+            <p className="mt-1 text-xs leading-relaxed text-sky-100/85">
+              PDF / XPS link kar sakte ho. Silent USB print aur Branch Server ke liye desktop{" "}
+              <span className="font-medium text-white">.exe</span> use karo.
+            </p>
+          </div>
         </div>
       ) : null}
 
@@ -2320,21 +2443,52 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
         systemPrinters={systemPrinters}
       />
 
-      <div className="no-scrollbar flex gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/40 p-1">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <nav className="no-scrollbar flex gap-1 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50 p-1">
+          {TABS.map((tab) => {
+            const Icon = tab.Icon;
+            const on = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
+                  on ? "bg-amber-500 text-slate-950 shadow-sm" : "text-slate-400 hover:bg-slate-900 hover:text-white"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
+        {activeTab !== "customize" ? (
+          <Button
             type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition ${
-              activeTab === tab.id ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
-            }`}
+            variant="ghost"
+            className="inline-flex items-center gap-1.5 text-xs text-amber-300"
+            onClick={() => {
+              setCustomizeSub("receipt");
+              setActiveTab("customize");
+            }}
           >
-            {tab.label}
-          </button>
-        ))}
+            <IconReceipt className="h-3.5 w-3.5" />
+            Customize receipt
+          </Button>
+        ) : null}
       </div>
 
+      {activeTab === "overview" ? (
+        <EnterprisePrintDashboard
+          branchCode={branchCode}
+          branchName={branchCode}
+          onCustomizeReceipt={() => {
+            setCustomizeSub("receipt");
+            setActiveTab("customize");
+          }}
+        />
+      ) : null}
       {activeTab === "printers" ? (
         <div className="space-y-6">
           <PrinterSectionsTab
@@ -2361,55 +2515,90 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
           />
         </div>
       ) : null}
-      {activeTab === "assign" ? (
-        <PrinterAssignmentTab
+      {activeTab === "routing" ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-1 rounded-xl border border-slate-800 bg-slate-950/40 p-1">
+            {ROUTING_SUBS.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setRoutingSub(id)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  routingSub === id
+                    ? "bg-slate-700 text-white"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+          {routingSub === "staff" ? (
+            <PrinterAssignmentTab
+              branchCode={branchCode}
+              routing={routing}
+              users={users.map((u) => ({
+                id: u.id,
+                email: u.email,
+                role: u.role,
+              }))}
+              notify={notify}
+              isStore={isStore}
+            />
+          ) : null}
+          {routingSub === "sections" ? (
+            <PrinterBySectionPanel
+              branchCode={branchCode}
+              sections={sections}
+              routing={routing}
+              people={assignablePeople}
+              peopleLoading={assignableQuery.isLoading}
+              peopleError={
+                assignableQuery.isError
+                  ? assignableQuery.error instanceof Error
+                    ? assignableQuery.error.message
+                    : "Could not load staff."
+                  : null
+              }
+              notify={notify}
+            />
+          ) : null}
+          {routingSub === "categories" ? (
+            <PrinterCategoriesTab
+              branchCode={branchCode}
+              sections={sections}
+              routing={routing}
+              categories={categories}
+            />
+          ) : null}
+          {routingSub === "items" ? (
+            <PrinterItemsTab
+              branchCode={branchCode}
+              sections={sections}
+              routing={routing}
+              categories={categories}
+              items={items}
+            />
+          ) : null}
+          {routingSub === "preview" ? (
+            <PrinterRoutingPreviewTab
+              sections={sections}
+              routing={routing}
+              categories={categories}
+              items={items}
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {activeTab === "customize" ? (
+        <PrintCustomizeHub
           branchCode={branchCode}
-          routing={routing}
-          users={users.map((u) => ({
-            id: u.id,
-            email: u.email,
-            role: u.role,
-          }))}
           notify={notify}
-          isStore={isStore}
+          initialSub={customizeSub}
         />
       ) : null}
-      {activeTab === "by-section" ? (
-        <PrinterBySectionPanel
-          branchCode={branchCode}
-          sections={sections}
-          routing={routing}
-          people={assignablePeople}
-          peopleLoading={assignableQuery.isLoading}
-          peopleError={
-            assignableQuery.isError
-              ? assignableQuery.error instanceof Error
-                ? assignableQuery.error.message
-                : "Could not load staff."
-              : null
-          }
-          notify={notify}
-        />
-      ) : null}
-      {activeTab === "settings" ? (
-        <ThermalPrintSettingsPanel branchCode={branchCode} notify={notify} />
-      ) : null}
-      {activeTab === "categories" ? (
-        <PrinterCategoriesTab branchCode={branchCode} sections={sections} routing={routing} categories={categories} />
-      ) : null}
-      {activeTab === "items" ? (
-        <PrinterItemsTab
-          branchCode={branchCode}
-          sections={sections}
-          routing={routing}
-          categories={categories}
-          items={items}
-        />
-      ) : null}
-      {activeTab === "preview" ? (
-        <PrinterRoutingPreviewTab sections={sections} routing={routing} categories={categories} items={items} />
-      ) : null}
-      {activeTab === "queue" ? <PrintQueueTab branchCode={branchCode} /> : null}
+      {activeTab === "activity" ? <PrintQueueTab branchCode={branchCode} /> : null}
     </div>
   );
 }

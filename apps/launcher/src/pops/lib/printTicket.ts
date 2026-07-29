@@ -2243,6 +2243,47 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
   const styledHtml = buildTicketHtml(input);
   const paperMm = paperWidthMm(paper, thermal.customPaperWidthMm);
 
+  // Enterprise branch queue (optional): enqueue rendered PNG, fall back to direct print.
+  try {
+    const { loadBranchPrintSettings, submitEnterprisePrintJob, ensureBranchPrintWorker } = await import(
+      "./branchPrintClient"
+    );
+    const settings = loadBranchPrintSettings(input.branchCode || "MAIN");
+    if (settings.enabled && settings.useQueue && systemPrinterName && !isVirtualSystemPrinter(systemPrinterName)) {
+      ensureBranchPrintWorker();
+      const png = await renderTicketHtmlToPngBytes(styledHtml, paper, thermal.customPaperWidthMm);
+      if (png?.length) {
+        let imageBase64 = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < png.length; i += chunk) {
+          imageBase64 += String.fromCharCode(...png.subarray(i, i + chunk));
+        }
+        imageBase64 = btoa(imageBase64);
+        const queued = await submitEnterprisePrintJob({
+          branchCode: input.branchCode || settings.branchCode,
+          branchName: input.branchName,
+          printerName: input.printerName,
+          systemPrinterName,
+          orderId: input.orderRef ?? null,
+          payload: {
+            kind: input.kind === "kot" ? "kot" : "receipt",
+            html: styledHtml,
+            imageBase64,
+            systemPrinterName,
+            copies,
+            paperSize: paper,
+            orderRef: input.orderRef ?? null,
+          },
+        });
+        if (queued.queued || queued.printedDirect) {
+          return { ok: true, usedNamedPrinter: true };
+        }
+      }
+    }
+  } catch {
+    // Fall through to direct print path
+  }
+
   if (systemPrinterName) {
     // PDF/XPS/Fax — open the Windows print dialog (user picks save location / paper size).
     if (isVirtualSystemPrinter(systemPrinterName)) {

@@ -26,6 +26,7 @@ import { UsersModule } from "./users/users.module";
 import { PlatformModule } from "./platform/platform.module";
 import { OrgAlertsModule } from "./org-alerts/org-alerts.module";
 import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
+import { PrintingModule } from "./printing/printing.module";
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
     PharmacyModule,
     StoreModule,
     TaxAuthorityModule,
+    PrintingModule,
   ],
 })
 export class AppModule {}

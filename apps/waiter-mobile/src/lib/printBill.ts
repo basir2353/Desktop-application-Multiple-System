@@ -8,6 +8,7 @@ import {
 } from "./mobilePrinterSettings";
 import { formatPkr, orderRefFromTicket } from "./orderDisplay";
 import { kitchenTicketTotal } from "./orderHistory";
+import { trySilentBranchPrint } from "./branchPrintClient";
 
 function escapeHtml(value: string): string {
   return value
@@ -196,7 +197,32 @@ function buildReceiptHtml(branchName: string, branchCode: string, bill: Bill): s
 </html>`;
 }
 
-async function printHtml(html: string, hint?: string): Promise<boolean> {
+async function printHtml(
+  html: string,
+  hint?: string,
+  opts?: {
+    branchCode?: string;
+    kind?: "receipt" | "kot";
+    printerName?: string | null;
+    orderId?: string | null;
+  },
+): Promise<boolean> {
+  if (opts?.branchCode) {
+    const silent = await trySilentBranchPrint({
+      branchCode: opts.branchCode,
+      printerName: opts.printerName ?? hint ?? null,
+      orderId: opts.orderId ?? null,
+      payload: {
+        kind: opts.kind ?? "receipt",
+        html,
+        systemPrinterName: opts.printerName ?? null,
+        copies: 1,
+        orderRef: opts.orderId ?? null,
+      },
+    });
+    if (silent) return true;
+  }
+
   try {
     if (hint?.trim()) {
       await new Promise<void>((resolve) => {
@@ -215,7 +241,10 @@ async function printHtml(html: string, hint?: string): Promise<boolean> {
   }
 }
 
-async function printKitchenHtml(html: string): Promise<boolean> {
+async function printKitchenHtml(
+  html: string,
+  opts?: { branchCode?: string; orderId?: string | null },
+): Promise<boolean> {
   const settings = await loadMobilePrinterSettings();
   const kitchens = activeKitchenPrinters(settings);
   // One print job only — listing assigned kitchens helps the waiter pick the right device.
@@ -226,13 +255,26 @@ async function printKitchenHtml(html: string): Promise<boolean> {
       : kitchens.length === 1
         ? `Kitchen printer: ${kitchens[0]}`
         : `Kitchen printers (pick one):\n${kitchens.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
-  return printHtml(html, hint);
+  return printHtml(html, hint, {
+    branchCode: opts?.branchCode,
+    kind: "kot",
+    printerName: kitchens[0] ?? null,
+    orderId: opts?.orderId ?? null,
+  });
 }
 
-async function printBillHtml(html: string): Promise<boolean> {
+async function printBillHtml(
+  html: string,
+  opts?: { branchCode?: string; orderId?: string | null },
+): Promise<boolean> {
   const settings = await loadMobilePrinterSettings();
   const bill = settings.billPrinter.trim() || "Cashier / Billing printer";
-  return printHtml(html, bill);
+  return printHtml(html, bill, {
+    branchCode: opts?.branchCode,
+    kind: "receipt",
+    printerName: bill,
+    orderId: opts?.orderId ?? null,
+  });
 }
 
 export async function printBillReceipt(
@@ -240,7 +282,10 @@ export async function printBillReceipt(
   branchCode: string,
   bill: Bill,
 ): Promise<boolean> {
-  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill));
+  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill), {
+    branchCode,
+    orderId: bill.billRef,
+  });
 }
 
 /** Print a customer bill from cart / ticket lines (before or without a saved bill). */
@@ -306,7 +351,10 @@ export async function printCartBill(input: {
   <p style="text-align:center;margin-top:16px;font-weight:600">*** BILL ***</p>
 </body>
 </html>`;
-  return printBillHtml(html);
+  return printBillHtml(html, {
+    branchCode: input.branchCode,
+    orderId: input.orderRef,
+  });
 }
 
 /** Print kitchen / dine-in / delivery order ticket (KOT). */
@@ -330,7 +378,10 @@ export async function printKitchenOrder(
     lines,
     total: kitchenTicketTotal(ticket, menuItems),
   });
-  return printKitchenHtml(html);
+  return printKitchenHtml(html, {
+    branchCode,
+    orderId: orderRefFromTicket(ticket),
+  });
 }
 
 /** Print current cart as an order ticket before/without a saved ticket id. */
@@ -355,5 +406,8 @@ export async function printCartOrder(input: {
     lines: input.lines,
     total: input.total,
   });
-  return printKitchenHtml(html);
+  return printKitchenHtml(html, {
+    branchCode: input.branchCode,
+    orderId: input.orderRef,
+  });
 }

@@ -34,6 +34,8 @@ import {
 type Props = {
   branchCode: string;
   notify?: (message: string) => void;
+  /** `paper` hides bill/KOT editors (used by Customize hub). */
+  variant?: "full" | "paper";
 };
 
 function StepBadge({ n }: { n: number }): JSX.Element {
@@ -74,7 +76,11 @@ function SectionCard({
   );
 }
 
-export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.Element {
+export function ThermalPrintSettingsPanel({
+  branchCode,
+  notify,
+  variant = "full",
+}: Props): JSX.Element {
   const branchName = usePopsStore((s) => s.branch?.name) ?? "BuchaSoft";
   const [draft, setDraft] = useState<ThermalPrintSettings>(() =>
     loadThermalPrintSettings(branchCode),
@@ -537,46 +543,55 @@ export function ThermalPrintSettingsPanel({ branchCode, notify }: Props): JSX.El
         </aside>
       </div>
 
-      <SectionCard
-        step={3}
-        title="Edit the bill / invoice slip"
-        subtitle="Change business name, title, footer, colors, and which sections appear. Drag lines to reorder."
-      >
-        <div className="mb-4 flex flex-wrap gap-2 text-[11px] text-slate-400">
-          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
-            Click a line to edit text
-          </span>
-          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
-            Color · Bold · Size on each line
-          </span>
-          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
-            Drag ⋮⋮ to reorder
-          </span>
-          <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
-            Save when finished
-          </span>
-        </div>
-        <BillCustomizationPanel
-          branchName={branchName}
-          branchCode={branchCode}
-          settings={billSettings}
-          onChange={setBillSettings}
-          onSave={() => persistBillSettings(billSettings)}
-          onNotice={notify}
-        />
-      </SectionCard>
+      {variant === "full" ? (
+        <>
+          <SectionCard
+            step={3}
+            title="Edit the bill / invoice slip"
+            subtitle="Change business name, title, footer, colors, and which sections appear. Drag lines to reorder."
+          >
+            <div className="mb-4 flex flex-wrap gap-2 text-[11px] text-slate-400">
+              <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+                Click a line to edit text
+              </span>
+              <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+                Color · Bold · Size on each line
+              </span>
+              <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+                Drag ⋮⋮ to reorder
+              </span>
+              <span className="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-1">
+                Save when finished
+              </span>
+            </div>
+            <BillCustomizationPanel
+              branchName={branchName}
+              branchCode={branchCode}
+              settings={billSettings}
+              onChange={setBillSettings}
+              onSave={() => persistBillSettings(billSettings)}
+              onNotice={notify}
+            />
+          </SectionCard>
 
-      <SectionCard
-        step={4}
-        title="Edit the kitchen ticket (KOT)"
-        subtitle="Same idea as the bill slip — title, footer, which fields show, custom lines. Preview matches Auto print."
-      >
-        <KotCustomizationPanel
-          branchName={branchName}
-          branchCode={branchCode}
-          onNotice={notify}
-        />
-      </SectionCard>
+          <SectionCard
+            step={4}
+            title="Edit the kitchen ticket (KOT)"
+            subtitle="Same idea as the bill slip — title, footer, which fields show, custom lines. Preview matches Auto print."
+          >
+            <KotCustomizationPanel
+              branchName={branchName}
+              branchCode={branchCode}
+              onNotice={notify}
+            />
+          </SectionCard>
+        </>
+      ) : (
+        <p className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
+          Receipt aur KOT layout ke liye upar se <span className="text-amber-300">Receipt / Bill</span> ya{" "}
+          <span className="text-amber-300">Kitchen (KOT)</span> choose karo.
+        </p>
+      )}
     </div>
   );
 }
