@@ -156,7 +156,9 @@ export default function RootLayout() {
           <Stack.Screen name="manage-pin" options={{ title: "Manage PIN" }} />
           <Stack.Screen name="printers" options={{ title: "Printers" }} />
           <Stack.Screen name="admin-home" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-sales" options={{ title: "Sales & reports" }} />
+          <Stack.Screen name="admin-sales" options={{ title: "Sales" }} />
+          <Stack.Screen name="admin-reports" options={{ title: "Reports" }} />
+          <Stack.Screen name="admin-payout" options={{ title: "Payout" }} />
           <Stack.Screen name="admin-users" options={{ title: "User management" }} />
           <Stack.Screen name="admin-activity" options={{ title: "Activity & reports" }} />
           <Stack.Screen name="admin-pra" options={{ title: "PRA on / off" }} />

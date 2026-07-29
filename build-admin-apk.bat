@@ -4,9 +4,9 @@ REM Build POPS Admin APK (dashboard, sales, users, activity, PRA) with live Rail
 
 REM Prefer short path for Windows CMake MAX_PATH. Fall back if E: is missing.
 set POPS_BUILD_ROOT=C:\pops
-if exist E:\ (
-  set POPS_BUILD_ROOT=E:\pos-build
-)
+if exist E:\pos-build set POPS_BUILD_ROOT=E:\pos-build
+set POPS_FAST_BUILD=1
+set POPS_GRADLE_DAEMON=1
 set NODE_ENV=production
 set ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk
 set ANDROID_SDK_ROOT=%ANDROID_HOME%
@@ -17,6 +17,7 @@ robocopy "%~dp0apps\waiter-mobile" "%POPS_BUILD_ROOT%\apps\waiter-mobile" /MIR /
 
 REM Link monorepo node_modules into short path so Gradle/pnpm resolve packages.
 if not exist "%POPS_BUILD_ROOT%\node_modules" mklink /J "%POPS_BUILD_ROOT%\node_modules" "%~dp0node_modules"
+if not exist "%POPS_BUILD_ROOT%\apps\waiter-mobile\node_modules" mklink /J "%POPS_BUILD_ROOT%\apps\waiter-mobile\node_modules" "%~dp0apps\waiter-mobile\node_modules"
 if not exist "%POPS_BUILD_ROOT%\package.json" copy /Y "%~dp0package.json" "%POPS_BUILD_ROOT%\package.json" >nul
 if not exist "%POPS_BUILD_ROOT%\pnpm-workspace.yaml" copy /Y "%~dp0pnpm-workspace.yaml" "%POPS_BUILD_ROOT%\pnpm-workspace.yaml" >nul
 

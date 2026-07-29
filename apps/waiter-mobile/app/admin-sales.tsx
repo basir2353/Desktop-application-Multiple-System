@@ -1,17 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { Redirect } from "expo-router";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { fetchOrders } from "../src/api/billing";
+import { DateRangeFilter, defaultDateRange, type DateRangeValue } from "../src/components/DateRangeFilter";
 import { Card, Notice, Screen, StatCard, Subtitle, colors } from "../src/components/ui";
 import {
   channelSalesFromOrders,
-  currentBusinessDateKey,
-  filterOrdersByDate,
+  filterOrdersByDateRange,
   formatPkr,
   karachiDateKey,
   karachiTime,
-  payableCompletedOrders,
   salesMetricsFromOrders,
   topProductsFromOrders,
   billChannelLabel,
@@ -20,15 +19,12 @@ import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-type Range = "today" | "all";
-
 export default function AdminSalesScreen() {
   const claims = useSessionStore((s) => s.claims);
   const branch = useBranchStore((s) => s.branch);
   const allowed = isAdminOrIncharge(claims);
-  const [range, setRange] = useState<Range>("today");
+  const [range, setRange] = useState<DateRangeValue>(defaultDateRange);
   const branchCode = branch?.code;
-  const todayKey = currentBusinessDateKey();
 
   const ordersQuery = useQuery({
     queryKey: ["admin", "orders", branchCode],
@@ -37,13 +33,9 @@ export default function AdminSalesScreen() {
     refetchInterval: 30_000,
   });
 
-  const allCompleted = useMemo(
-    () => payableCompletedOrders(ordersQuery.data ?? []),
-    [ordersQuery.data],
-  );
   const filtered = useMemo(
-    () => (range === "today" ? filterOrdersByDate(ordersQuery.data ?? [], todayKey) : allCompleted),
-    [range, ordersQuery.data, todayKey, allCompleted],
+    () => filterOrdersByDateRange(ordersQuery.data ?? [], range.from, range.to),
+    [ordersQuery.data, range.from, range.to],
   );
   const metrics = useMemo(() => salesMetricsFromOrders(filtered), [filtered]);
   const channels = useMemo(() => channelSalesFromOrders(filtered), [filtered]);
@@ -77,45 +69,13 @@ export default function AdminSalesScreen() {
           Business day · Asia/Karachi
         </Subtitle>
 
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          {(
-            [
-              { id: "today" as const, label: "Today" },
-              { id: "all" as const, label: "All sales" },
-            ] as const
-          ).map((tab) => {
-            const active = range === tab.id;
-            return (
-              <Pressable
-                key={tab.id}
-                onPress={() => setRange(tab.id)}
-                style={{
-                  flex: 1,
-                  paddingVertical: 10,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: active ? colors.accent : colors.border,
-                  backgroundColor: active ? colors.accent : colors.card,
-                  alignItems: "center",
-                }}
-              >
-                <Text
-                  style={{
-                    color: active ? colors.accentText : colors.text,
-                    fontWeight: "800",
-                    fontSize: 13,
-                  }}
-                >
-                  {tab.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Card>
+          <DateRangeFilter value={range} onChange={setRange} />
+        </Card>
 
         <View style={{ flexDirection: "row", gap: 10 }}>
           <StatCard
-            label={range === "today" ? "Sales today" : "Total sales"}
+            label="Sales in range"
             value={ordersQuery.isLoading ? "…" : formatPkr(metrics.allCompletedAmountPkr)}
             hint={`${metrics.orderCount} orders`}
             accent={colors.success}
@@ -123,22 +83,19 @@ export default function AdminSalesScreen() {
           <StatCard
             label="Avg ticket"
             value={
-              ordersQuery.isLoading
-                ? "…"
-                : metrics.orderCount > 0
-                  ? formatPkr(metrics.allCompletedAmountPkr / metrics.orderCount)
-                  : formatPkr(0)
+              metrics.orderCount
+                ? formatPkr(Math.round(metrics.allCompletedAmountPkr / metrics.orderCount))
+                : "—"
             }
-            hint={range === "today" ? todayKey : "All completed"}
           />
         </View>
 
         {channels.length > 0 ? (
           <Card>
             <Subtitle>By channel</Subtitle>
-            {channels.map((ch) => (
+            {channels.map((c) => (
               <View
-                key={ch.label}
+                key={c.label}
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
@@ -147,11 +104,10 @@ export default function AdminSalesScreen() {
                   borderBottomColor: colors.border,
                 }}
               >
-                <View>
-                  <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>{ch.label}</Text>
-                  <Text style={{ color: colors.muted, fontSize: 11 }}>{ch.count} orders</Text>
-                </View>
-                <Text style={{ color: colors.success, fontWeight: "800" }}>{formatPkr(ch.amount)}</Text>
+                <Text style={{ color: colors.text }}>
+                  {c.label} · {c.count}
+                </Text>
+                <Text style={{ color: colors.success, fontWeight: "700" }}>{formatPkr(c.amount)}</Text>
               </View>
             ))}
           </Card>
@@ -159,8 +115,8 @@ export default function AdminSalesScreen() {
 
         {topItems.length > 0 ? (
           <Card>
-            <Subtitle>Top items sold</Subtitle>
-            {topItems.map((item, idx) => (
+            <Subtitle>Top items</Subtitle>
+            {topItems.map((item) => (
               <View
                 key={item.label}
                 style={{
@@ -169,65 +125,50 @@ export default function AdminSalesScreen() {
                   paddingVertical: 8,
                   borderBottomWidth: 1,
                   borderBottomColor: colors.border,
-                  gap: 8,
                 }}
               >
-                <Text style={{ color: colors.muted, fontWeight: "700", width: 22 }}>{idx + 1}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }} numberOfLines={1}>
-                    {item.label}
-                  </Text>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={{ color: colors.text, fontWeight: "600" }}>{item.label}</Text>
                   <Text style={{ color: colors.muted, fontSize: 11 }}>Qty {item.qty}</Text>
                 </View>
-                <Text style={{ color: colors.success, fontWeight: "800" }}>{formatPkr(item.revenue)}</Text>
+                <Text style={{ color: colors.text, fontWeight: "700" }}>{formatPkr(item.revenue)}</Text>
               </View>
             ))}
           </Card>
         ) : null}
 
         <Card>
-          <Subtitle>Sales list ({sortedSales.length})</Subtitle>
-          {ordersQuery.isLoading ? (
-            <Text style={{ color: colors.muted }}>Loading sales…</Text>
-          ) : sortedSales.length === 0 ? (
-            <Text style={{ color: colors.muted }}>No completed sales in this range.</Text>
+          <Subtitle>Sales list</Subtitle>
+          {sortedSales.length === 0 ? (
+            <Text style={{ color: colors.muted }}>No sales in this date range.</Text>
           ) : (
-            sortedSales.map((order) => (
+            sortedSales.slice(0, 80).map((order) => (
               <View
                 key={order.id}
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
-                  paddingVertical: 10,
+                  paddingVertical: 8,
                   borderBottomWidth: 1,
                   borderBottomColor: colors.border,
-                  gap: 8,
                 }}
               >
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>
                     {order.orderRef ?? order.billRef}
                   </Text>
                   <Text style={{ color: colors.muted, fontSize: 11 }}>
                     {karachiDateKey(order.createdAt)} {karachiTime(order.createdAt)} ·{" "}
                     {billChannelLabel(order.tableLabel)}
-                    {order.tableLabel ? ` · ${order.tableLabel}` : ""}
                   </Text>
-                  {order.waiterName ? (
-                    <Text style={{ color: colors.muted, fontSize: 11 }}>Waiter: {order.waiterName}</Text>
-                  ) : null}
                 </View>
-                <Text style={{ color: colors.success, fontWeight: "800", fontSize: 13 }}>
-                  {formatPkr(order.total)}
-                </Text>
+                <Text style={{ color: colors.success, fontWeight: "800" }}>{formatPkr(order.total)}</Text>
               </View>
             ))
           )}
         </Card>
 
-        {ordersQuery.isError ? (
-          <Notice>{(ordersQuery.error as Error).message || "Could not load sales"}</Notice>
-        ) : null}
+        {ordersQuery.isError ? <Notice>{(ordersQuery.error as Error).message}</Notice> : null}
       </ScrollView>
     </Screen>
   );

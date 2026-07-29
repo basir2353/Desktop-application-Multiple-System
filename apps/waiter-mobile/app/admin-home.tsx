@@ -118,7 +118,7 @@ export default function AdminHomeScreen() {
             <Subtitle>
               {waiterEmail ?? claims?.sub ?? "Incharge"} · {roleName}
               {"\n"}
-              Sales · live ops · users · activity · PRA
+              Sales · reports · payout · users · PRA
             </Subtitle>
           </View>
           <Pressable
@@ -297,9 +297,23 @@ export default function AdminHomeScreen() {
 
         <ActionTile
           icon="💰"
-          title="Sales & reports"
-          subtitle="All sales, channels, top items sold"
+          title="Sales"
+          subtitle="Date filter · channels · top items"
           onPress={() => router.push("/admin-sales")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="📊"
+          title="Reports"
+          subtitle="Charges · discount · party · salary · expense"
+          onPress={() => router.push("/admin-reports")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="💸"
+          title="Payout"
+          subtitle="RPF-style: salary, vendor & party pay out"
+          onPress={() => router.push("/admin-payout")}
           variant="primary"
         />
         <ActionTile

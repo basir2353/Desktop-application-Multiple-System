@@ -105,7 +105,14 @@ function resolveBuildPaths() {
     process.env.POPS_SKIP_SHORT_PATH === "1"
       ? []
       : isWin
-        ? [process.env.POPS_BUILD_ROOT, "E:\\pos-build", "C:\\pops"].filter(Boolean)
+        ? [
+            process.env.POPS_BUILD_ROOT,
+            // Prefer same drive as this script (cross-drive junctions break Metro/Gradle).
+            `${appRoot.slice(0, 2)}\\pops`,
+            "D:\\pops",
+            "E:\\pos-build",
+            "C:\\pops",
+          ].filter(Boolean)
         : [];
   for (const root of shortRoots) {
     const layouts = [
@@ -245,8 +252,26 @@ function forceArm64Only(propsPath) {
 function ensureAndroidProject(apiUrl, buildPaths) {
   const buildGradle = join(buildPaths.androidDir, "app", "build.gradle");
   const currentPackage = readAndroidPackageId(buildGradle);
-  const needsPrebuild = !existsSync(buildPaths.androidDir) || currentPackage !== variant.packageId;
+  const androidExists = existsSync(buildPaths.androidDir) && existsSync(buildGradle);
+  const packageMismatch = androidExists && currentPackage !== variant.packageId;
+  // Default ON: reuse android/ + caches. Set POPS_FAST_BUILD=0 for old wipe-on-variant-switch.
+  const fastBuild = process.env.POPS_FAST_BUILD !== "0";
+  const forcePrebuild = process.env.POPS_FORCE_PREBUILD === "1";
 
+  // Fast path: reuse existing android/ (Gradle + native caches). Only patch applicationId.
+  if (androidExists && !forcePrebuild && (fastBuild || !packageMismatch)) {
+    if (packageMismatch) {
+      console.log(
+        `[build-apk] Fast: reusing android/ — patching ${currentPackage} → ${variant.packageId}`,
+      );
+      forceApplicationId(buildGradle, variant.packageId);
+    } else {
+      console.log("[build-apk] Fast: reusing existing android/ (skip prebuild)");
+    }
+    return;
+  }
+
+  const needsPrebuild = !androidExists || packageMismatch;
   if (!needsPrebuild) return;
 
   // Prefer rename over expo --clean rmdir (Windows often locks android/ mid-build).
@@ -511,7 +536,16 @@ mkdirSync(
 );
 
 const gradlew = join(paths.androidDir, isWin ? "gradlew.bat" : "gradlew");
-const gradleArgs = ["assembleRelease", "--no-daemon", "--stacktrace"];
+// Fast builds keep the Gradle daemon warm (~minutes saved on repeat builds).
+const useDaemon =
+  process.env.POPS_GRADLE_DAEMON === "1" ||
+  (process.env.POPS_FAST_BUILD !== "0" && process.env.POPS_GRADLE_DAEMON !== "0");
+const gradleArgs = useDaemon
+  ? ["assembleRelease", "--stacktrace"]
+  : ["assembleRelease", "--no-daemon", "--stacktrace"];
+if (useDaemon) {
+  console.log("[build-apk] Gradle daemon enabled (fast)");
+}
 if (isWin) {
   run("cmd.exe", ["/c", gradlew, ...gradleArgs], {
     cwd: paths.androidDir,

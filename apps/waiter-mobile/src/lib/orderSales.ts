@@ -155,3 +155,69 @@ export function filterOrdersByDate(orders: Bill[], dateKey: string | null): Bill
   if (!dateKey) return payableCompletedOrders(orders);
   return payableCompletedOrders(orders).filter((o) => karachiDateKey(o.createdAt) === dateKey);
 }
+
+/** Inclusive date-to-date filter (YYYY-MM-DD, Asia/Karachi calendar days). */
+export function filterOrdersByDateRange(
+  orders: Bill[],
+  fromKey: string,
+  toKey: string,
+): Bill[] {
+  const from = fromKey <= toKey ? fromKey : toKey;
+  const to = fromKey <= toKey ? toKey : fromKey;
+  return payableCompletedOrders(orders).filter((o) => {
+    const key = karachiDateKey(o.createdAt);
+    return key >= from && key <= to;
+  });
+}
+
+export type ChargesReport = {
+  salesTotal: number;
+  serviceCharges: number;
+  deliveryCharges: number;
+  tax: number;
+  discount: number;
+  orderCount: number;
+  netAfterDiscount: number;
+};
+
+export function chargesReportFromOrders(orders: Bill[]): ChargesReport {
+  const completed = payableCompletedOrders(orders);
+  const salesTotal = completed.reduce((s, o) => s + o.total, 0);
+  const serviceCharges = completed.reduce((s, o) => s + (o.service ?? 0), 0);
+  const deliveryCharges = completed.reduce((s, o) => s + (o.deliveryChargePkr ?? 0), 0);
+  const tax = completed.reduce((s, o) => s + (o.tax ?? 0), 0);
+  const discount = completed.reduce((s, o) => s + (o.discount ?? 0), 0);
+  return {
+    salesTotal,
+    serviceCharges,
+    deliveryCharges,
+    tax,
+    discount,
+    orderCount: completed.length,
+    netAfterDiscount: completed.reduce((s, o) => s + Math.max(0, o.subtotal - (o.discount ?? 0)), 0),
+  };
+}
+
+export type DiscountRow = {
+  ref: string;
+  time: string;
+  channel: string;
+  subtotal: number;
+  discount: number;
+};
+
+export function discountRowsFromOrders(orders: Bill[]): { total: number; rows: DiscountRow[] } {
+  const withDisc = payableCompletedOrders(orders)
+    .filter((o) => (o.discount ?? 0) > 0)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return {
+    total: withDisc.reduce((s, o) => s + o.discount, 0),
+    rows: withDisc.map((o) => ({
+      ref: o.orderRef ?? o.billRef,
+      time: `${karachiDateKey(o.createdAt)} ${karachiTime(o.createdAt)}`,
+      channel: billChannelLabel(o.tableLabel),
+      subtotal: o.subtotal,
+      discount: o.discount,
+    })),
+  };
+}
