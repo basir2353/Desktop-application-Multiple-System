@@ -210,6 +210,27 @@ tasks.configureEach { task ->
     text = text.replace(/(\n\s+autolinkLibrariesWithApp\(\)\n\})/, `$1${autolinkPatch}`);
   }
 
+  // Drop Metro-emitted ultra-long pnpm asset names that break AAPT on Windows (keep vendor_* shorts).
+  if (!text.includes("___desktop_")) {
+    const aaptPatch = `
+tasks.configureEach { task ->
+    if (task.name.contains("merge") && task.name.contains("Resources")) {
+        task.doFirst {
+            def gen = file("\${projectDir}/build/generated/res")
+            if (gen.exists()) {
+                gen.eachFileRecurse { f ->
+                    if (f.file && f.name.startsWith("___desktop_")) {
+                        f.delete()
+                    }
+                }
+            }
+        }
+    }
+}
+`;
+    text = `${text.trimEnd()}\n${aaptPatch}\n`;
+  }
+
   if (buildAppRoot.includes(" ") && !text.includes("resolveHermesCommand")) {
     const hermesBlock = `
 // RN Gradle runs Hermes via \`cmd /c <path>\` without quoting; paths with spaces fail on Windows.
