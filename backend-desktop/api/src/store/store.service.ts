@@ -26,9 +26,10 @@ import type {
   CreateStoreWarehouse,
   OpenStoreShift,
   StockMovement,
+  UpdateStoreProduct,
   UpsertStorePosShortcut,
 } from "@platform/contracts";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
   popsBranches,
   storeBrands,
@@ -38,7 +39,9 @@ import {
   storeGrn,
   storeGrnItems,
   storeInventoryTransactions,
+  storeProductBarcodes,
   storeProductBatches,
+  storeProductSerials,
   storeProducts,
   storePurchaseOrderItems,
   storePurchaseOrders,
@@ -68,6 +71,7 @@ import {
   priceSaleLine,
   resolveSaleLineQty,
   type PricedSaleLine,
+  type PromotionConfig,
 } from "./store-pos";
 import { StoreGroceryService } from "./store-grocery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
@@ -113,29 +117,41 @@ export class StoreService implements OnModuleInit {
   /** Idempotent ALTERs so Railway DBs catch up without a full drizzle push. */
   private async ensureStoreSchema(): Promise<void> {
     const statements = [
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS description text`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS subcategory_id uuid`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS order_cost_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS sale_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS mrp_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS wholesale_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS custom_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS market_sale_price_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS margin_pct integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS markup_pct integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS supplier_id uuid`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS variant_of_id uuid`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS barcode text`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS qr_code text`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS image_url text`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS purchase_price_pkr integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS selling_price_pkr integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS tax_pct integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS reorder_level integer NOT NULL DEFAULT 10`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS available_stock integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS description text`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS subcategory_id uuid`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS reserved_stock integer NOT NULL DEFAULT 0`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS damaged_stock integer NOT NULL DEFAULT 0`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS expired_stock integer NOT NULL DEFAULT 0`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS in_transit_stock integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS track_batch text NOT NULL DEFAULT 'no'`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS track_serial text NOT NULL DEFAULT 'no'`,
       `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS is_weighed text NOT NULL DEFAULT 'no'`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS color text`,
+      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS size text`,
       `ALTER TABLE store_suppliers ADD COLUMN IF NOT EXISTS opening_balance_pkr integer NOT NULL DEFAULT 0`,
       `ALTER TABLE store_customers ADD COLUMN IF NOT EXISTS membership_tier text NOT NULL DEFAULT 'standard'`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS lot_number text`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS manufacturing_date date`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
+      `CREATE TABLE IF NOT EXISTS store_product_barcodes (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+        code text NOT NULL,
+        is_primary text NOT NULL DEFAULT 'no',
+        sort_order integer NOT NULL DEFAULT 1,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
       `CREATE TABLE IF NOT EXISTS store_product_serials (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
@@ -166,7 +182,6 @@ export class StoreService implements OnModuleInit {
       .limit(1);
     if (branch) return branch;
 
-    // Auto-provision MAIN so new businesses / demo orgs don't 404 on first login.
     if (code === "MAIN") {
       const [created] = await this.db
         .insert(popsBranches)
@@ -192,9 +207,24 @@ export class StoreService implements OnModuleInit {
 
   private mapProduct(
     p: typeof storeProducts.$inferSelect,
-    extras?: { categoryName?: string | null; subcategoryName?: string | null; brandName?: string | null; unitName?: string | null; nearestExpiry?: string | null },
+    extras?: {
+      categoryName?: string | null;
+      subcategoryName?: string | null;
+      brandName?: string | null;
+      unitName?: string | null;
+      nearestExpiry?: string | null;
+      supplierName?: string | null;
+      barcodes?: string[];
+      serialNumbers?: string[];
+    },
   ) {
     const totalStock = p.availableStock + p.reservedStock + p.damagedStock + p.expiredStock + p.inTransitStock;
+    const barcodes =
+      extras?.barcodes && extras.barcodes.length > 0
+        ? extras.barcodes
+        : p.barcode
+          ? [p.barcode]
+          : [];
     return {
       id: p.id,
       sku: p.sku,
@@ -210,10 +240,21 @@ export class StoreService implements OnModuleInit {
       unitName: extras?.unitName ?? null,
       variantOfId: p.variantOfId,
       barcode: p.barcode,
+      barcodes,
       qrCode: p.qrCode ?? p.barcode,
       imageUrl: p.imageUrl,
+      supplierId: p.supplierId ?? null,
+      supplierName: extras?.supplierName ?? null,
       purchasePrice: p.purchasePricePkr,
+      orderCost: p.orderCostPkr ?? 0,
       sellingPrice: p.sellingPricePkr,
+      salePrice: p.salePricePkr ?? 0,
+      mrpPrice: p.mrpPricePkr ?? 0,
+      wholesalePrice: p.wholesalePricePkr ?? 0,
+      customPrice: p.customPricePkr ?? 0,
+      marketSalePrice: p.marketSalePricePkr ?? 0,
+      marginPct: p.marginPct ?? 0,
+      markupPct: p.markupPct ?? 0,
       taxPct: p.taxPct,
       reorderLevel: p.reorderLevel,
       availableStock: p.availableStock,
@@ -226,8 +267,98 @@ export class StoreService implements OnModuleInit {
       trackBatch: p.trackBatch === "yes",
       trackSerial: p.trackSerial === "yes",
       isWeighed: p.isWeighed === "yes",
+      color: p.color ?? null,
+      size: p.size ?? null,
+      serialNumbers: extras?.serialNumbers ?? [],
       nearestExpiry: extras?.nearestExpiry ?? null,
     };
+  }
+
+  private normalizeBarcodes(input: { barcode?: string; barcodes?: string[] }): string[] {
+    const raw = [
+      ...(input.barcodes ?? []),
+      ...(input.barcode ? [input.barcode] : []),
+    ]
+      .map((c) => c.trim())
+      .filter(Boolean);
+    const unique: string[] = [];
+    for (const code of raw) {
+      if (!unique.includes(code)) unique.push(code);
+    }
+    if (unique.length > 12) {
+      throw new BadRequestException("A product can have at most 12 barcodes");
+    }
+    return unique;
+  }
+
+  private async replaceProductBarcodes(productId: string, codes: string[]): Promise<void> {
+    await this.db.delete(storeProductBarcodes).where(eq(storeProductBarcodes.productId, productId));
+    if (codes.length === 0) return;
+    await this.db.insert(storeProductBarcodes).values(
+      codes.map((code, index) => ({
+        productId,
+        code,
+        isPrimary: index === 0 ? "yes" : "no",
+        sortOrder: index + 1,
+      })),
+    );
+  }
+
+  private async nextItemNumber(organizationId: string, branchId: string): Promise<string> {
+    const rows = await this.db
+      .select({ sku: storeProducts.sku })
+      .from(storeProducts)
+      .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branchId)));
+    let max = 0;
+    for (const row of rows) {
+      const m = /^ST-(\d+)$/i.exec(row.sku.trim());
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    return `ST-${String(max + 1).padStart(6, "0")}`;
+  }
+
+  private async barcodesByProductIds(productIds: string[]): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (productIds.length === 0) return map;
+    const rows = await this.db
+      .select()
+      .from(storeProductBarcodes)
+      .where(inArray(storeProductBarcodes.productId, productIds))
+      .orderBy(asc(storeProductBarcodes.sortOrder));
+    for (const row of rows) {
+      const list = map.get(row.productId) ?? [];
+      list.push(row.code);
+      map.set(row.productId, list);
+    }
+    return map;
+  }
+
+  private async serialsByProductIds(productIds: string[]): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (productIds.length === 0) return map;
+    const rows = await this.db
+      .select()
+      .from(storeProductSerials)
+      .where(inArray(storeProductSerials.productId, productIds));
+    for (const row of rows) {
+      const list = map.get(row.productId) ?? [];
+      list.push(row.serialNumber);
+      map.set(row.productId, list);
+    }
+    return map;
+  }
+
+  private async replaceProductSerials(productId: string, serials: string[]): Promise<void> {
+    await this.db.delete(storeProductSerials).where(eq(storeProductSerials.productId, productId));
+    const unique = [...new Set(serials.map((s) => s.trim()).filter(Boolean))];
+    if (unique.length === 0) return;
+    await this.db.insert(storeProductSerials).values(
+      unique.map((serialNumber) => ({
+        productId,
+        serialNumber,
+        status: "available",
+      })),
+    );
   }
 
   private async seedAllBranches(): Promise<void> {
@@ -244,6 +375,7 @@ export class StoreService implements OnModuleInit {
       this.logger.error(
         `Store seed failed for branch ${branchId}: ${err instanceof Error ? err.message : err}`,
       );
+      // Re-run schema ensure once, then retry seed once (common after Railway schema drift).
       await this.ensureStoreSchema();
       await this.seedBranchIfEmptyUnsafe(organizationId, branchId);
     }
@@ -313,6 +445,7 @@ export class StoreService implements OnModuleInit {
     ]);
 
     await this.db.insert(storeCustomers).values([
+      { organizationId, branchId, name: "Cash Customer", phone: null, loyaltyPoints: 0 },
       { organizationId, branchId, name: "Ali Hassan", phone: "+92 300 1234567", loyaltyPoints: 150 },
       { organizationId, branchId, name: "Fatima Khan", phone: "+92 321 9876543", loyaltyPoints: 80, creditLimitPkr: 50000, outstandingPkr: 12000 },
     ]);
@@ -665,32 +798,17 @@ export class StoreService implements OnModuleInit {
 
   async listCategories(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
-    try {
-      await this.seedBranchIfEmpty(organizationId, branch.id);
-    } catch (err) {
-      this.logger.error(
-        `Category seed failed (continuing empty): ${err instanceof Error ? err.message : err}`,
-      );
-      await this.ensureStoreSchema();
-    }
+    await this.seedBranchIfEmpty(organizationId, branch.id);
     const rows = await this.db
       .select()
       .from(storeCategories)
       .where(and(eq(storeCategories.organizationId, organizationId), eq(storeCategories.branchId, branch.id)))
       .orderBy(asc(storeCategories.name));
 
-    let products: { categoryId: string | null; subcategoryId: string | null }[] = [];
-    try {
-      products = await this.db
-        .select({ categoryId: storeProducts.categoryId, subcategoryId: storeProducts.subcategoryId })
-        .from(storeProducts)
-        .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branch.id)));
-    } catch (err) {
-      this.logger.error(
-        `Category product count query failed: ${err instanceof Error ? err.message : err}`,
-      );
-      await this.ensureStoreSchema();
-    }
+    const products = await this.db
+      .select({ categoryId: storeProducts.categoryId, subcategoryId: storeProducts.subcategoryId })
+      .from(storeProducts)
+      .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branch.id)));
 
     return rows.map((c) => {
       const parent = c.parentId ? rows.find((r) => r.id === c.parentId) : null;
@@ -710,27 +828,15 @@ export class StoreService implements OnModuleInit {
 
   async listBrands(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
-    try {
-      await this.seedBranchIfEmpty(organizationId, branch.id);
-    } catch (err) {
-      this.logger.error(
-        `Brands seed failed (continuing empty): ${err instanceof Error ? err.message : err}`,
-      );
-      await this.ensureStoreSchema();
-    }
+    await this.seedBranchIfEmpty(organizationId, branch.id);
     const rows = await this.db
       .select()
       .from(storeBrands)
       .where(and(eq(storeBrands.organizationId, organizationId), eq(storeBrands.branchId, branch.id)));
-    let products: { brandId: string | null }[] = [];
-    try {
-      products = await this.db
-        .select({ brandId: storeProducts.brandId })
-        .from(storeProducts)
-        .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branch.id)));
-    } catch {
-      await this.ensureStoreSchema();
-    }
+    const products = await this.db
+      .select({ brandId: storeProducts.brandId })
+      .from(storeProducts)
+      .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branch.id)));
     return rows.map((b) => ({
       id: b.id,
       name: b.name,
@@ -746,14 +852,7 @@ export class StoreService implements OnModuleInit {
 
   async listUnits(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
-    try {
-      await this.seedBranchIfEmpty(organizationId, branch.id);
-    } catch (err) {
-      this.logger.error(
-        `Units seed failed (continuing empty): ${err instanceof Error ? err.message : err}`,
-      );
-      await this.ensureStoreSchema();
-    }
+    await this.seedBranchIfEmpty(organizationId, branch.id);
     const rows = await this.db
       .select()
       .from(storeUnits)
@@ -772,15 +871,7 @@ export class StoreService implements OnModuleInit {
 
   async listProducts(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
-    try {
-      await this.seedBranchIfEmpty(organizationId, branch.id);
-    } catch (err) {
-      this.logger.error(
-        `Products seed failed (continuing empty): ${err instanceof Error ? err.message : err}`,
-      );
-      await this.ensureStoreSchema();
-    }
-    await this.ensureStoreSchema();
+    await this.seedBranchIfEmpty(organizationId, branch.id);
     const products = await this.db
       .select()
       .from(storeProducts)
@@ -790,6 +881,10 @@ export class StoreService implements OnModuleInit {
     const categories = await this.db.select().from(storeCategories).where(eq(storeCategories.branchId, branch.id));
     const brands = await this.db.select().from(storeBrands).where(eq(storeBrands.branchId, branch.id));
     const units = await this.db.select().from(storeUnits).where(eq(storeUnits.branchId, branch.id));
+    const suppliers = await this.db.select().from(storeSuppliers).where(eq(storeSuppliers.branchId, branch.id));
+    const productIds = products.map((p) => p.id);
+    const barcodeMap = await this.barcodesByProductIds(productIds);
+    const serialMap = await this.serialsByProductIds(productIds);
     const batches = await this.db
       .select({
         productId: storeProductBatches.productId,
@@ -804,47 +899,97 @@ export class StoreService implements OnModuleInit {
       const sub = categories.find((c) => c.id === p.subcategoryId);
       const brand = brands.find((b) => b.id === p.brandId);
       const unit = units.find((u) => u.id === p.unitId);
+      const supplier = suppliers.find((s) => s.id === p.supplierId);
       const prodBatches = batches.filter((b) => b.productId === p.id);
       const nearestExpiry = prodBatches
         .map((b) => b.expiryDate)
         .filter(Boolean)
         .sort()[0];
+      const barcodes = barcodeMap.get(p.id) ?? (p.barcode ? [p.barcode] : []);
       return this.mapProduct(p, {
         categoryName: cat?.name ?? null,
         subcategoryName: sub?.name ?? null,
         brandName: brand?.name ?? null,
         unitName: unit?.name ?? null,
+        supplierName: supplier?.name ?? null,
         nearestExpiry: nearestExpiry ? String(nearestExpiry) : null,
+        barcodes,
+        serialNumbers: serialMap.get(p.id) ?? [],
       });
     });
   }
 
   async createProduct(organizationId: string, input: CreateStoreProduct) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const codes = this.normalizeBarcodes(input);
+    const primaryBarcode = codes[0] ?? null;
+    const sku = (input.sku?.trim() || (await this.nextItemNumber(organizationId, branch.id))).trim();
+
+    const existingSku = await this.db
+      .select({ id: storeProducts.id })
+      .from(storeProducts)
+      .where(
+        and(
+          eq(storeProducts.organizationId, organizationId),
+          eq(storeProducts.branchId, branch.id),
+          eq(storeProducts.sku, sku),
+        ),
+      )
+      .limit(1);
+    if (existingSku[0]) throw new BadRequestException(`Item number ${sku} already exists`);
+
     const [product] = await this.db
       .insert(storeProducts)
       .values({
         organizationId,
         branchId: branch.id,
-        sku: input.sku,
+        sku,
         name: input.name,
         description: input.description ?? null,
         categoryId: input.categoryId ?? null,
         subcategoryId: input.subcategoryId ?? null,
         brandId: input.brandId ?? null,
         unitId: input.unitId ?? null,
-        barcode: input.barcode ?? null,
-        qrCode: input.barcode ?? null,
+        supplierId: input.supplierId ?? null,
+        barcode: primaryBarcode,
+        qrCode: primaryBarcode,
         purchasePricePkr: input.purchasePrice,
+        orderCostPkr: input.orderCost,
         sellingPricePkr: input.sellingPrice,
+        salePricePkr: input.salePrice,
+        mrpPricePkr: input.mrpPrice,
+        wholesalePricePkr: input.wholesalePrice,
+        customPricePkr: input.customPrice,
+        marketSalePricePkr: input.marketSalePrice,
+        marginPct: Math.round(input.marginPct),
+        markupPct: Math.round(input.markupPct),
         taxPct: input.taxPct,
         reorderLevel: input.reorderLevel,
         availableStock: input.availableStock,
         trackBatch: input.trackBatch ? "yes" : "no",
-        trackSerial: input.trackSerial ? "yes" : "no",
+        trackSerial: input.trackSerial || (input.serialNumbers?.length ?? 0) > 0 ? "yes" : "no",
         isWeighed: input.isWeighed ? "yes" : "no",
+        color: input.color?.trim() || null,
+        size: input.size?.trim() || null,
       })
       .returning();
+
+    if (product) {
+      await this.replaceProductBarcodes(product.id, codes);
+    }
+
+    if (product && input.serialNumbers && input.serialNumbers.length > 0) {
+      const serials = [...new Set(input.serialNumbers.map((s) => s.trim()).filter(Boolean))];
+      if (serials.length > 0) {
+        await this.db.insert(storeProductSerials).values(
+          serials.map((serialNumber) => ({
+            productId: product.id,
+            serialNumber,
+            status: "available",
+          })),
+        );
+      }
+    }
 
     if (product && input.batchNumber) {
       await this.db.insert(storeProductBatches).values({
@@ -866,7 +1011,120 @@ export class StoreService implements OnModuleInit {
       });
     }
 
-    return this.mapProduct(product!);
+    let supplierName: string | null = null;
+    if (product?.supplierId) {
+      const [supplier] = await this.db
+        .select()
+        .from(storeSuppliers)
+        .where(eq(storeSuppliers.id, product.supplierId))
+        .limit(1);
+      supplierName = supplier?.name ?? null;
+    }
+
+    return this.mapProduct(product!, {
+      barcodes: codes,
+      supplierName,
+      serialNumbers: input.serialNumbers ?? [],
+    });
+  }
+
+  async updateProduct(organizationId: string, productId: string, input: UpdateStoreProduct) {
+    const [existing] = await this.db
+      .select()
+      .from(storeProducts)
+      .where(and(eq(storeProducts.id, productId), eq(storeProducts.organizationId, organizationId)))
+      .limit(1);
+    if (!existing) throw new NotFoundException("Product not found");
+
+    const codes =
+      input.barcodes !== undefined || input.barcode !== undefined
+        ? this.normalizeBarcodes({
+            barcode: input.barcode ?? existing.barcode ?? undefined,
+            barcodes: input.barcodes,
+          })
+        : undefined;
+    const primaryBarcode = codes ? (codes[0] ?? null) : undefined;
+
+    if (input.sku && input.sku.trim() !== existing.sku) {
+      const clash = await this.db
+        .select({ id: storeProducts.id })
+        .from(storeProducts)
+        .where(
+          and(
+            eq(storeProducts.organizationId, organizationId),
+            eq(storeProducts.branchId, existing.branchId),
+            eq(storeProducts.sku, input.sku.trim()),
+          ),
+        )
+        .limit(1);
+      if (clash[0] && clash[0].id !== productId) {
+        throw new BadRequestException(`Item number ${input.sku.trim()} already exists`);
+      }
+    }
+
+    const [product] = await this.db
+      .update(storeProducts)
+      .set({
+        ...(input.sku !== undefined ? { sku: input.sku.trim() } : {}),
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description ?? null } : {}),
+        ...(input.categoryId !== undefined ? { categoryId: input.categoryId ?? null } : {}),
+        ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId ?? null } : {}),
+        ...(input.brandId !== undefined ? { brandId: input.brandId ?? null } : {}),
+        ...(input.unitId !== undefined ? { unitId: input.unitId ?? null } : {}),
+        ...(input.supplierId !== undefined ? { supplierId: input.supplierId ?? null } : {}),
+        ...(primaryBarcode !== undefined
+          ? { barcode: primaryBarcode, qrCode: primaryBarcode }
+          : {}),
+        ...(input.purchasePrice !== undefined ? { purchasePricePkr: input.purchasePrice } : {}),
+        ...(input.orderCost !== undefined ? { orderCostPkr: input.orderCost } : {}),
+        ...(input.sellingPrice !== undefined ? { sellingPricePkr: input.sellingPrice } : {}),
+        ...(input.salePrice !== undefined ? { salePricePkr: input.salePrice } : {}),
+        ...(input.mrpPrice !== undefined ? { mrpPricePkr: input.mrpPrice } : {}),
+        ...(input.wholesalePrice !== undefined ? { wholesalePricePkr: input.wholesalePrice } : {}),
+        ...(input.customPrice !== undefined ? { customPricePkr: input.customPrice } : {}),
+        ...(input.marketSalePrice !== undefined ? { marketSalePricePkr: input.marketSalePrice } : {}),
+        ...(input.marginPct !== undefined ? { marginPct: Math.round(input.marginPct) } : {}),
+        ...(input.markupPct !== undefined ? { markupPct: Math.round(input.markupPct) } : {}),
+        ...(input.taxPct !== undefined ? { taxPct: input.taxPct } : {}),
+        ...(input.reorderLevel !== undefined ? { reorderLevel: input.reorderLevel } : {}),
+        ...(input.trackBatch !== undefined ? { trackBatch: input.trackBatch ? "yes" : "no" } : {}),
+        ...(input.trackSerial !== undefined
+          ? { trackSerial: input.trackSerial ? "yes" : "no" }
+          : input.serialNumbers !== undefined
+            ? { trackSerial: input.serialNumbers.length > 0 ? "yes" : "no" }
+            : {}),
+        ...(input.isWeighed !== undefined ? { isWeighed: input.isWeighed ? "yes" : "no" } : {}),
+        ...(input.color !== undefined ? { color: input.color?.trim() || null } : {}),
+        ...(input.size !== undefined ? { size: input.size?.trim() || null } : {}),
+      })
+      .where(eq(storeProducts.id, productId))
+      .returning();
+
+    if (codes) {
+      await this.replaceProductBarcodes(productId, codes);
+    }
+    if (input.serialNumbers !== undefined) {
+      await this.replaceProductSerials(productId, input.serialNumbers);
+    }
+
+    const barcodeMap = await this.barcodesByProductIds([productId]);
+    const serialMap = await this.serialsByProductIds([productId]);
+    let supplierName: string | null = null;
+    if (product?.supplierId) {
+      const [supplier] = await this.db
+        .select()
+        .from(storeSuppliers)
+        .where(eq(storeSuppliers.id, product.supplierId))
+        .limit(1);
+      supplierName = supplier?.name ?? null;
+    }
+
+    return this.mapProduct(product!, {
+      barcodes: barcodeMap.get(productId) ?? (product?.barcode ? [product.barcode] : []),
+      serialNumbers: serialMap.get(productId) ?? [],
+      supplierName,
+    });
   }
 
   async deleteProduct(organizationId: string, productId: string) {
@@ -979,9 +1237,67 @@ export class StoreService implements OnModuleInit {
     });
   }
 
+  private async ensurePurchaseDefaults(organizationId: string, branchId: string): Promise<void> {
+    const [existingSupplier] = await this.db
+      .select({ id: storeSuppliers.id })
+      .from(storeSuppliers)
+      .where(and(eq(storeSuppliers.organizationId, organizationId), eq(storeSuppliers.branchId, branchId)))
+      .limit(1);
+    if (!existingSupplier) {
+      await this.db.insert(storeSuppliers).values([
+        {
+          organizationId,
+          branchId,
+          name: "Walk-in Vendor",
+          contactPerson: "Counter",
+          phone: null,
+          paymentTerms: "Cash",
+          qualityScore: 80,
+          avgDeliveryDays: 1,
+        },
+        {
+          organizationId,
+          branchId,
+          name: "Metro Cash & Carry",
+          contactPerson: "Ahmed Raza",
+          phone: "+92 51 1112233",
+          paymentTerms: "Net 30",
+          qualityScore: 92,
+          avgDeliveryDays: 3,
+        },
+        {
+          organizationId,
+          branchId,
+          name: "Al-Fatah Wholesale",
+          contactPerson: "Sara Malik",
+          phone: "+92 42 3344556",
+          paymentTerms: "Net 15",
+          qualityScore: 85,
+          avgDeliveryDays: 5,
+        },
+      ]);
+    }
+
+    const [existingWarehouse] = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branchId)))
+      .limit(1);
+    if (!existingWarehouse) {
+      await this.db.insert(storeWarehouses).values({
+        organizationId,
+        branchId,
+        code: "WH-01",
+        name: "Main Warehouse",
+        isDefault: "yes",
+      });
+    }
+  }
+
   async listSuppliers(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(organizationId, branch.id);
+    await this.ensurePurchaseDefaults(organizationId, branch.id);
     const suppliers = await this.db
       .select()
       .from(storeSuppliers)
@@ -1046,9 +1362,29 @@ export class StoreService implements OnModuleInit {
     };
   }
 
+  private async ensurePosCustomerDefaults(organizationId: string, branchId: string): Promise<void> {
+    const existing = await this.db
+      .select({ id: storeCustomers.id, name: storeCustomers.name })
+      .from(storeCustomers)
+      .where(and(eq(storeCustomers.organizationId, organizationId), eq(storeCustomers.branchId, branchId)));
+    const hasCash = existing.some((c) => /^cash customer$/i.test(c.name.trim()));
+    if (!hasCash) {
+      await this.db.insert(storeCustomers).values({
+        organizationId,
+        branchId,
+        name: "Cash Customer",
+        phone: null,
+        loyaltyPoints: 0,
+        creditLimitPkr: 0,
+        outstandingPkr: 0,
+      });
+    }
+  }
+
   async listCustomers(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(organizationId, branch.id);
+    await this.ensurePosCustomerDefaults(organizationId, branch.id);
     const customers = await this.db
       .select()
       .from(storeCustomers)
@@ -1103,6 +1439,7 @@ export class StoreService implements OnModuleInit {
   async listWarehouses(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(organizationId, branch.id);
+    await this.ensurePurchaseDefaults(organizationId, branch.id);
     const warehouses = await this.db
       .select()
       .from(storeWarehouses)
@@ -1354,8 +1691,19 @@ export class StoreService implements OnModuleInit {
 
   async createGrn(organizationId: string, input: CreateStoreGrn) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    await this.ensurePurchaseDefaults(organizationId, branch.id);
     const grnNumber = this.nextSeq(branch.id, "GRN");
     const totalPkr = input.items.reduce((sum, i) => sum + i.qty * i.unitPrice, 0);
+
+    let warehouseId = input.warehouseId ?? null;
+    if (!warehouseId) {
+      const [wh] = await this.db
+        .select()
+        .from(storeWarehouses)
+        .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branch.id)))
+        .limit(1);
+      warehouseId = wh?.id ?? null;
+    }
 
     const [grn] = await this.db
       .insert(storeGrn)
@@ -1365,7 +1713,7 @@ export class StoreService implements OnModuleInit {
         grnNumber,
         purchaseOrderId: input.purchaseOrderId ?? null,
         supplierId: input.supplierId ?? null,
-        warehouseId: input.warehouseId ?? null,
+        warehouseId,
         totalPkr,
         invoiceNumber: input.invoiceNumber ?? null,
         status: "Received",
@@ -1386,7 +1734,13 @@ export class StoreService implements OnModuleInit {
       if (product) {
         await this.db
           .update(storeProducts)
-          .set({ availableStock: product.availableStock + item.qty, purchasePricePkr: item.unitPrice })
+          .set({
+            availableStock: product.availableStock + item.qty,
+            purchasePricePkr: item.unitPrice,
+            ...(item.sellingPrice !== undefined && item.sellingPrice >= 0
+              ? { sellingPricePkr: item.sellingPrice, salePricePkr: item.sellingPrice }
+              : {}),
+          })
           .where(eq(storeProducts.id, item.productId));
 
         if (item.batchNumber) {
@@ -1395,7 +1749,7 @@ export class StoreService implements OnModuleInit {
             batchNumber: item.batchNumber,
             expiryDate: item.expiryDate ?? null,
             quantity: item.qty,
-            warehouseId: input.warehouseId ?? null,
+            warehouseId,
           });
         }
 
@@ -1406,7 +1760,7 @@ export class StoreService implements OnModuleInit {
           type: "grn_received",
           qty: item.qty,
           reference: grnNumber,
-          warehouseId: input.warehouseId ?? null,
+          warehouseId,
         });
       }
 
@@ -1753,7 +2107,7 @@ export class StoreService implements OnModuleInit {
         return {
           id: l.id,
           productId: l.productId,
-          productName: prod?.name ?? "Unknown",
+          productName: l.displayName || prod?.name || "Unknown",
           sku: prod?.sku ?? "—",
           qty: l.qty,
           unitPrice: l.unitPricePkr,
@@ -1823,6 +2177,13 @@ export class StoreService implements OnModuleInit {
             isWeighed: product.isWeighed === "yes",
           },
           resolved,
+          line.unitPrice,
+          line.productName,
+          {
+            priceLevel: line.priceLevel,
+            categoryId: product.categoryId ?? null,
+            supplierId: product.supplierId ?? null,
+          },
         ),
       );
     }
@@ -1832,9 +2193,9 @@ export class StoreService implements OnModuleInit {
     const promotionDiscount = applyStorePromotions(
       pricedLines,
       promotions.map((p) => ({
-        type: p.type as "percent_off" | "buy_x_get_y" | "fixed_bundle" | "mix_match" | "cross_sell" | "category_off",
+        type: p.type,
         productIds: p.productIds,
-        config: p.config,
+        config: p.config as PromotionConfig,
         isActive: p.isActive,
       })),
     );
@@ -1919,6 +2280,7 @@ export class StoreService implements OnModuleInit {
         isWeighed: ld.isWeighed ? "yes" : "no",
         unitPricePkr: ld.unitPrice,
         lineTotalPkr: ld.lineTotal,
+        displayName: ld.productName || null,
       });
     }
 
