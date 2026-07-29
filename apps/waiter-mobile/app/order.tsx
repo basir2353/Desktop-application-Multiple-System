@@ -411,10 +411,10 @@ export default function OrderScreen() {
       setNotice(
         wasEdit
           ? printed
-            ? "Order updated and printed."
+            ? "Order updated — print request sent (EXE will print)."
             : "Order updated successfully."
           : printed
-            ? "Order sent to kitchen and printed."
+            ? "Order sent — print request to desktop (Live/IP/Server)."
             : "Order sent to kitchen successfully.",
       );
       if (wasEdit) router.replace("/order");

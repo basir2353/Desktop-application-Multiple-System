@@ -2,6 +2,11 @@
 
 /** Business module baked into this build. Injected by Vite `define`. */
 declare const __PLATFORM_EDITION__: string;
+declare const __POPS_MOBILE_VARIANT__: string;
+
+interface Window {
+  __POPS_MOBILE_VARIANT__?: string;
+}
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;

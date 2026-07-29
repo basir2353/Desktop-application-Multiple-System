@@ -7,6 +7,7 @@ import {
   branchPrintQueueAction,
   discoverBranchPrintServers,
   ensureBranchPrintWorker,
+  ensureCloudPrintPoller,
   getBranchPrintServerStatus,
   listBranchPrintQueue,
   loadBranchPrintSettings,
@@ -78,6 +79,7 @@ export function EnterprisePrintDashboard({
 
   useEffect(() => {
     if (!desktop || !settings.cloudHeartbeat) return;
+    ensureCloudPrintPoller(settings.branchCode || branchCode);
     const beat = async () => {
       const st = await getBranchPrintServerStatus();
       if (!st?.running) return;

@@ -24,7 +24,8 @@ config.resolver.nodeModulesPaths = [
 ].filter((p, i, arr) => fs.existsSync(p) && arr.indexOf(p) === i);
 
 config.resolver.unstable_enableSymlinks = true;
-config.resolver.unstable_enablePackageExports = true;
+// Package exports can resolve React to react.shared-subset (no hooks) → "useRef of null" in release APKs.
+config.resolver.unstable_enablePackageExports = false;
 
 // Keep short junction paths (do NOT realpath) — realpaths make AAPT drawable names too long on Windows.
 const extra = {};
@@ -32,6 +33,14 @@ for (const name of ["expo-router", "expo", "react", "react-native"]) {
   const candidate = path.join(appNodeModules, name);
   if (fs.existsSync(candidate)) extra[name] = candidate;
 }
+// Prefer monorepo React if app-local is a broken junction
+const reactRoot = [
+  path.join(appNodeModules, "react"),
+  path.resolve(monorepoRoot, "node_modules/react"),
+  path.resolve(REAL_REPO, "node_modules/react"),
+].find((p) => fs.existsSync(path.join(p, "index.js")));
+if (reactRoot) extra.react = reactRoot;
+
 const shortElements = path.join(projectRoot, "vendor", "rne");
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
@@ -50,6 +59,19 @@ const emcRoot = emcCandidates.find((p) => fs.existsSync(path.join(p, "package.js
 
 const defaultResolve = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Single React instance — avoid monorepo duplicates / shared-subset.
+  if (reactRoot) {
+    if (moduleName === "react") {
+      return { type: "sourceFile", filePath: path.join(reactRoot, "index.js") };
+    }
+    if (moduleName === "react/jsx-runtime") {
+      return { type: "sourceFile", filePath: path.join(reactRoot, "jsx-runtime.js") };
+    }
+    if (moduleName === "react/jsx-dev-runtime") {
+      return { type: "sourceFile", filePath: path.join(reactRoot, "jsx-dev-runtime.js") };
+    }
+  }
+
   // Force short-path entry so Metro does not walk broken hierarchical lookup under D:\pops.
   if (moduleName === "expo-router/entry" || moduleName === "expo-router/entry.js") {
     const hits = [

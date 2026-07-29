@@ -1,4 +1,9 @@
-import type { BranchPrintServer, PrintDiscoveryResult } from "@platform/contracts";
+import type {
+  BranchPrintServer,
+  CreatePrintJob,
+  PrintDiscoveryResult,
+  PrintJobPayload,
+} from "@platform/contracts";
 import { authFetch } from "../lib/authFetch";
 
 /** Cloud-registered branch print servers (from desktop heartbeats). */
@@ -29,6 +34,38 @@ export async function fetchBranchPrintServers(options?: {
     servers,
     scannedAt: typeof raw.scannedAt === "string" ? raw.scannedAt : new Date().toISOString(),
   };
+}
+
+/** Live link: queue a print job on the API for the desktop EXE to claim & silent-print. */
+export async function createCloudPrintJob(input: {
+  branchCode: string;
+  printerName?: string | null;
+  orderId?: string | null;
+  payload: PrintJobPayload;
+  deviceLabel?: string;
+}): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+  const body: CreatePrintJob = {
+    branchCode: input.branchCode,
+    printerName: input.printerName ?? null,
+    orderId: input.orderId ?? null,
+    deviceLabel: input.deviceLabel ?? "waiter-mobile",
+    payload: input.payload,
+  };
+  try {
+    const res = await authFetch(`/v1/printing/print-job`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => null)) as { message?: string } | null;
+      return { ok: false, error: err?.message ?? `HTTP ${res.status}` };
+    }
+    const json = (await res.json().catch(() => null)) as { id?: string } | null;
+    return { ok: true, jobId: json?.id };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "cloud print failed" };
+  }
 }
 
 function normalizeServer(row: unknown): BranchPrintServer | null {

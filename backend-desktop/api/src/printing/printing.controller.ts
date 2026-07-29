@@ -2,13 +2,17 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
+  Res,
   Sse,
   UseGuards,
   MessageEvent,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
@@ -38,6 +42,40 @@ export class PrintingController implements OnModuleDestroy {
   @RequirePermissions("pops.read")
   createJob(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.printing.createPrintJob(user, body);
+  }
+
+  /** Branch EXE claims next pending live/cloud print job for the branch. */
+  @Post("jobs/claim")
+  @RequirePermissions("pops.read")
+  async claimJob(
+    @CurrentUser() user: AccessJwtPayload,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const job = await this.printing.claimNextJob(
+      user,
+      (body ?? {}) as { branchCode?: string; serverId?: string },
+    );
+    if (!job) {
+      res.status(HttpStatus.NO_CONTENT);
+      return;
+    }
+    return job;
+  }
+
+  @Post("jobs/:jobId/complete")
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions("pops.read")
+  completeJob(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("jobId") jobId: string,
+    @Body() body: unknown,
+  ) {
+    return this.printing.completeJob(
+      user,
+      jobId,
+      (body ?? {}) as { ok?: boolean; error?: string | null; localJobId?: string | null },
+    );
   }
 
   @Get("printers")

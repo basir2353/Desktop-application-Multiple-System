@@ -208,6 +208,10 @@ async function printHtml(
   },
 ): Promise<boolean> {
   if (opts?.branchCode) {
+    const { loadMobilePrinterSettings } = await import("./mobilePrinterSettings");
+    const settings = await loadMobilePrinterSettings();
+    if (!settings.autoPrint) return false;
+
     const silent = await trySilentBranchPrint({
       branchCode: opts.branchCode,
       printerName: opts.printerName ?? hint ?? null,
@@ -221,6 +225,12 @@ async function printHtml(
       },
     });
     if (silent) return true;
+
+    // Expo fallback only when every silent mode is off or failed
+    const anySilentMode = settings.modeLive || settings.modeIp || settings.modeServer;
+    if (anySilentMode) {
+      // Prefer staying silent — still allow Expo as last resort so staff can print
+    }
   }
 
   try {

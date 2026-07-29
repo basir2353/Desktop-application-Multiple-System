@@ -21,7 +21,7 @@ import {
   printPrinterNodes,
   type PlatformPgDb,
 } from "@platform/database-pg";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { requireTenantOrganizationId } from "../auth/jwt.types";
@@ -48,12 +48,13 @@ export class PrintingService {
     const input: CreatePrintJob = parsed.data;
     const organizationId = this.orgId(user);
     const cloudEnabled = await this.isCloudQueueEnabled(organizationId);
+    const branchCode = input.branchCode.trim();
 
     const [row] = await this.db
       .insert(printJobsCloud)
       .values({
         organizationId,
-        branchCode: input.branchCode,
+        branchCode,
         userId: input.userId ?? user.sub,
         deviceId: input.deviceId ?? null,
         deviceLabel: input.deviceLabel ?? null,
@@ -62,30 +63,154 @@ export class PrintingService {
         priority: input.priority ?? 100,
         status: "pending",
         payloadJson: input.payload,
-        cloudQueued: cloudEnabled,
+        // Always claimable by desktop EXE live poller (Redis optional).
+        cloudQueued: true,
       })
       .returning();
 
     this.events.emit("job-created", {
       organizationId,
-      branchCode: input.branchCode,
+      branchCode,
       jobId: row.id,
       status: row.status,
     });
     this.events.emit("queue-updated", {
       organizationId,
-      branchCode: input.branchCode,
+      branchCode,
     });
 
     if (cloudEnabled && this.cloudQueue) {
       await this.cloudQueue.enqueue({
         organizationId,
         jobId: row.id,
-        branchCode: input.branchCode,
+        branchCode,
       });
     }
 
     return row;
+  }
+
+  /**
+   * Branch EXE claims the next pending cloud print job for this branch.
+   * Returns null when the queue is empty (controller maps to 204).
+   */
+  async claimNextJob(
+    user: AccessJwtPayload,
+    body: { branchCode?: string; serverId?: string },
+  ) {
+    const organizationId = this.orgId(user);
+    const branchCode = String(body.branchCode ?? "").trim();
+    if (!branchCode) {
+      throw new BadRequestException("branchCode is required");
+    }
+
+    // Case-insensitive match — mobile/desktop branch codes may differ in casing.
+    const pendingRows = await this.db
+      .select()
+      .from(printJobsCloud)
+      .where(
+        and(
+          eq(printJobsCloud.organizationId, organizationId),
+          eq(printJobsCloud.status, "pending"),
+        ),
+      )
+      .orderBy(asc(printJobsCloud.priority), asc(printJobsCloud.createdAt))
+      .limit(50);
+
+    const pending =
+      pendingRows.find(
+        (j) => j.branchCode.trim().toUpperCase() === branchCode.toUpperCase(),
+      ) ?? null;
+
+    if (!pending) return null;
+
+    const [updated] = await this.db
+      .update(printJobsCloud)
+      .set({
+        status: "printing",
+        updatedAt: new Date(),
+        localJobId: body.serverId?.trim() || pending.localJobId,
+      })
+      .where(
+        and(eq(printJobsCloud.id, pending.id), eq(printJobsCloud.status, "pending")),
+      )
+      .returning();
+
+    // Lost the race — another claim won
+    if (!updated) return null;
+
+    this.events.emit("job-started", {
+      organizationId,
+      branchCode,
+      jobId: updated.id,
+      status: updated.status,
+      serverId: body.serverId ?? null,
+    });
+    this.events.emit("queue-updated", {
+      organizationId,
+      branchCode,
+    });
+
+    const payload =
+      updated.payloadJson && typeof updated.payloadJson === "object"
+        ? updated.payloadJson
+        : {};
+
+    return {
+      id: updated.id,
+      branchCode: updated.branchCode,
+      printerName: updated.printerName,
+      orderId: updated.orderId,
+      priority: updated.priority,
+      status: updated.status,
+      payload,
+      payloadJson: payload,
+      deviceLabel: updated.deviceLabel,
+      createdAt: updated.createdAt?.toISOString?.() ?? new Date().toISOString(),
+      updatedAt: updated.updatedAt?.toISOString?.() ?? new Date().toISOString(),
+    };
+  }
+
+  async completeJob(
+    user: AccessJwtPayload,
+    jobId: string,
+    body: { ok?: boolean; error?: string | null; localJobId?: string | null },
+  ) {
+    const organizationId = this.orgId(user);
+    const [job] = await this.db
+      .select()
+      .from(printJobsCloud)
+      .where(
+        and(eq(printJobsCloud.id, jobId), eq(printJobsCloud.organizationId, organizationId)),
+      )
+      .limit(1);
+    if (!job) throw new NotFoundException("Job not found");
+
+    const ok = body.ok !== false && !body.error;
+    const [updated] = await this.db
+      .update(printJobsCloud)
+      .set({
+        status: ok ? "completed" : "failed",
+        error: ok ? null : String(body.error ?? "Print failed"),
+        printedAt: ok ? new Date() : job.printedAt,
+        localJobId: body.localJobId?.trim() || job.localJobId,
+        updatedAt: new Date(),
+      })
+      .where(eq(printJobsCloud.id, jobId))
+      .returning();
+
+    this.events.emit(ok ? "job-completed" : "job-failed", {
+      organizationId,
+      branchCode: job.branchCode,
+      jobId,
+      status: updated.status,
+      error: updated.error,
+    });
+    this.events.emit("queue-updated", {
+      organizationId,
+      branchCode: job.branchCode,
+    });
+    return updated;
   }
 
   async listPrinters(user: AccessJwtPayload, branchCode?: string) {

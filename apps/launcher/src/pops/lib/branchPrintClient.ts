@@ -6,7 +6,7 @@ import {
   BRANCH_PRINT_SERVER_DEFAULT_PORT,
   PRINTING_ENTERPRISE_ENABLED_KEY,
 } from "@platform/contracts";
-import { printImageToSystemPrinter, isDesktopAppRuntime } from "./systemPrinters";
+import { printImageToSystemPrinter, isDesktopAppRuntime, listSystemPrinters } from "./systemPrinters";
 import { logPrintEvent } from "./printHistory";
 
 const SETTINGS_KEY = "pops-branch-print-server-v1";
@@ -176,7 +176,12 @@ export async function startBranchPrintServer(
         organizationId: settings.organizationId ?? null,
       },
     });
-    return snakeStatus(raw);
+    const status = snakeStatus(raw);
+    ensureBranchPrintWorker();
+    if (settings.cloudHeartbeat) {
+      ensureCloudPrintPoller(settings.branchCode);
+    }
+    return status;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn("[branch-print] start failed", err);
@@ -481,8 +486,156 @@ export async function submitEnterprisePrintJob(input: {
 }
 
 let workerStarted = false;
+let cloudPollerStarted = false;
+let cloudPollerBranch = "";
 
-/** Drain local SQLite queue via existing image print bridge. */
+type BranchPrinterRow = {
+  id: string;
+  branchCode: string;
+  name: string;
+  windowsPrinterName?: string | null;
+};
+
+async function listLocalBranchPrinters(branchCode: string): Promise<BranchPrinterRow[]> {
+  if (!isDesktopAppRuntime()) return [];
+  try {
+    const raw = await invoke<Array<Record<string, unknown>>>("list_branch_printers", {
+      branchCode,
+    });
+    return (raw ?? []).map((r) => ({
+      id: String(r.id ?? ""),
+      branchCode: String(r.branch_code ?? r.branchCode ?? branchCode),
+      name: String(r.name ?? ""),
+      windowsPrinterName: (r.windows_printer_name ?? r.windowsPrinterName ?? null) as string | null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function namesRoughlyMatch(a: string, b: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const left = norm(a);
+  const right = norm(b);
+  if (!left || !right) return false;
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+/** Resolve a real Windows spooler name for a queued silent job (never open a dialog). */
+export async function resolveSilentSystemPrinterName(input: {
+  branchCode: string;
+  kind?: string | null;
+  printerName?: string | null;
+  systemPrinterName?: string | null;
+}): Promise<string | null> {
+  const hint = input.systemPrinterName?.trim() || input.printerName?.trim() || "";
+  const branchCode = input.branchCode || "MAIN";
+
+  const os = await listSystemPrinters().catch(() => [] as Awaited<ReturnType<typeof listSystemPrinters>>);
+  const osNames = os.map((p) => p.name).filter(Boolean);
+
+  if (hint) {
+    const exactOs = osNames.find((n) => n.toLowerCase() === hint.toLowerCase());
+    if (exactOs) return exactOs;
+    const fuzzyOs = osNames.find((n) => namesRoughlyMatch(n, hint));
+    if (fuzzyOs) return fuzzyOs;
+  }
+
+  const branchPrinters = await listLocalBranchPrinters(branchCode);
+  if (hint) {
+    const byName = branchPrinters.find(
+      (p) => namesRoughlyMatch(p.name, hint) || namesRoughlyMatch(p.windowsPrinterName ?? "", hint),
+    );
+    if (byName?.windowsPrinterName?.trim()) return byName.windowsPrinterName.trim();
+  }
+
+  try {
+    const { resolveReceiptPrinter, resolveDefaultPrinterByType, loadPrinterRouting } = await import(
+      "./printerRouting"
+    );
+    const kind = String(input.kind ?? "receipt").toLowerCase();
+    if (kind === "kot") {
+      const kitchen = resolveDefaultPrinterByType(branchCode, "kitchen");
+      if (kitchen?.systemPrinterName?.trim()) return kitchen.systemPrinterName.trim();
+      const bar = resolveDefaultPrinterByType(branchCode, "bar");
+      if (bar?.systemPrinterName?.trim()) return bar.systemPrinterName.trim();
+      const routing = loadPrinterRouting(branchCode);
+      const anyKot = routing.printers.find(
+        (p) =>
+          (p.printerType === "kitchen" || p.printerType === "bar") && p.systemPrinterName?.trim(),
+      );
+      if (anyKot?.systemPrinterName?.trim()) return anyKot.systemPrinterName.trim();
+    }
+    const receipt = resolveReceiptPrinter(branchCode);
+    if (receipt?.systemPrinterName?.trim()) return receipt.systemPrinterName.trim();
+    const any = loadPrinterRouting(branchCode).printers.find((p) => p.systemPrinterName?.trim());
+    if (any?.systemPrinterName?.trim()) return any.systemPrinterName.trim();
+  } catch {
+    // ignore routing errors
+  }
+
+  const firstBranch = branchPrinters.find((p) => p.windowsPrinterName?.trim());
+  if (firstBranch?.windowsPrinterName?.trim()) return firstBranch.windowsPrinterName.trim();
+
+  return osNames[0] ?? null;
+}
+
+async function pngBytesFromPayload(
+  payload: PrintJobPayload,
+): Promise<{ bytes: Uint8Array; paperMm: number } | null> {
+  const paper =
+    payload.paperSize === "58mm" || payload.paperSize === "80mm" || payload.paperSize === "100mm"
+      ? payload.paperSize
+      : "80mm";
+  const paperMm = paper === "58mm" ? 58 : paper === "100mm" ? 100 : 80;
+
+  if (payload.imageBase64?.trim()) {
+    try {
+      const bin = Uint8Array.from(atob(payload.imageBase64), (c) => c.charCodeAt(0));
+      if (bin.length > 0) return { bytes: bin, paperMm };
+    } catch {
+      // fall through to HTML
+    }
+  }
+
+  const html = payload.html?.trim();
+  if (!html) return null;
+
+  const { renderTicketHtmlToPngBytes } = await import("./printTicket");
+  const png = await renderTicketHtmlToPngBytes(html, paper as "58mm" | "80mm" | "100mm" | "A4" | "custom");
+  if (!png?.length) return null;
+  return { bytes: png, paperMm };
+}
+
+async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolean; error?: string; printer?: string }> {
+  const payload = JSON.parse(job.payloadJson) as PrintJobPayload;
+  const printer = await resolveSilentSystemPrinterName({
+    branchCode: job.branchCode,
+    kind: payload.kind,
+    printerName: job.printerName ?? payload.systemPrinterName,
+    systemPrinterName: payload.systemPrinterName,
+  });
+  if (!printer) {
+    return { ok: false, error: "No Windows printer linked for this branch" };
+  }
+
+  const rendered = await pngBytesFromPayload(payload);
+  if (!rendered) {
+    return { ok: false, error: "Missing image/HTML payload for silent print" };
+  }
+
+  const result = await printImageToSystemPrinter({
+    printerName: printer,
+    pngBytes: rendered.bytes,
+    jobName: `${payload.kind} · ${job.orderId ?? job.id}`,
+    copies: payload.copies ?? 1,
+    paperWidthMm: rendered.paperMm,
+  });
+  if (result.ok) return { ok: true, printer };
+  return { ok: false, error: result.error, printer };
+}
+
+/** Drain local SQLite queue via HTML→PNG + named Windows printer (no dialog). */
 export function ensureBranchPrintWorker(): void {
   if (workerStarted || !isDesktopAppRuntime()) return;
   workerStarted = true;
@@ -493,34 +646,19 @@ export function ensureBranchPrintWorker(): void {
       const job = mapJob(raw);
       let ok = false;
       let error: string | undefined;
+      let printerName: string | undefined;
       try {
-        const payload = JSON.parse(job.payloadJson) as PrintJobPayload;
-        const printer = payload.systemPrinterName?.trim() || job.printerName?.trim();
-        if (payload.imageBase64 && printer) {
-          const bin = Uint8Array.from(atob(payload.imageBase64), (c) => c.charCodeAt(0));
-          const result = await printImageToSystemPrinter({
-            printerName: printer,
-            pngBytes: bin,
-            jobName: `${payload.kind} · ${job.orderId ?? job.id}`,
-            copies: payload.copies ?? 1,
-            paperWidthMm: payload.paperSize === "58mm" ? 58 : 80,
-          });
-          ok = result.ok;
-          error = result.error;
-        } else if (payload.plainText && printer) {
-          // Text path via raw TCP only when IP stored on printer; else mark failed for dialog fallback
-          ok = false;
-          error = "No image payload — use direct print fallback";
-        } else {
-          error = "Missing printer or image payload";
-        }
+        const result = await executeSilentQueuedJob(job);
+        ok = result.ok;
+        error = result.error;
+        printerName = result.printer;
       } catch (err) {
         error = err instanceof Error ? err.message : "worker error";
       }
       await invoke("complete_branch_print_job", { jobId: job.id, ok, error: error ?? null });
       logPrintEvent(job.branchCode, {
         kind: "receipt",
-        printerName: job.printerName ?? undefined,
+        printerName: printerName ?? job.printerName ?? undefined,
         orderRef: job.orderId ?? undefined,
         ok,
       });
@@ -532,6 +670,182 @@ export function ensureBranchPrintWorker(): void {
   window.setInterval(() => {
     void tick();
   }, 1500);
+}
+
+/**
+ * Poll live API for pending print jobs and execute them on this PC's printers.
+ * Works when phone and PC are not on the same Wi‑Fi (as long as both reach the API).
+ */
+export function ensureCloudPrintPoller(branchCode: string): void {
+  if (!isDesktopAppRuntime()) return;
+  const code = (branchCode || "MAIN").trim();
+  if (cloudPollerStarted && cloudPollerBranch === code) return;
+  cloudPollerStarted = true;
+  cloudPollerBranch = code;
+  ensureBranchPrintWorker();
+
+  const tick = async () => {
+    try {
+      const settings = loadBranchPrintSettings(code);
+      // Live claim always runs while this EXE is open for the branch (cloudHeartbeat can disable).
+      if (settings.cloudHeartbeat === false) return;
+
+      const { authFetch } = await import("../../lib/authFetch");
+      const res = await authFetch(`/v1/printing/jobs/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branchCode: settings.branchCode || code,
+          serverId: settings.serverId,
+        }),
+      });
+      if (res.status === 204 || res.status === 404) return;
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 501) {
+          console.warn("[branch-print] Live claim endpoint missing on API — deploy backend");
+        }
+        return;
+      }
+      const row = (await res.json()) as {
+        id?: string;
+        branchCode?: string;
+        printerName?: string | null;
+        orderId?: string | null;
+        payloadJson?: PrintJobPayload | Record<string, unknown>;
+        payload?: PrintJobPayload;
+      };
+      if (!row?.id) return;
+
+      const payload = (row.payload ?? row.payloadJson ?? {}) as PrintJobPayload;
+      const localJob: BranchQueueJob = {
+        id: row.id,
+        branchCode: String(row.branchCode ?? code),
+        printerName: row.printerName ?? null,
+        orderId: row.orderId ?? null,
+        priority: 100,
+        status: "printing",
+        retryCount: 0,
+        error: null,
+        payloadJson: JSON.stringify(payload),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        printedAt: null,
+      };
+
+      const result = await executeSilentQueuedJob(localJob);
+      await authFetch(`/v1/printing/jobs/${encodeURIComponent(row.id)}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ok: result.ok,
+          error: result.error ?? null,
+          localJobId: row.id,
+        }),
+      }).catch(() => null);
+
+      logPrintEvent(localJob.branchCode, {
+        kind: payload.kind === "kot" ? "kot" : "receipt",
+        printerName: result.printer ?? localJob.printerName ?? undefined,
+        orderRef: localJob.orderId ?? undefined,
+        ok: result.ok,
+      });
+      window.dispatchEvent(new CustomEvent(BRANCH_PRINT_QUEUE_CHANGED_EVENT));
+    } catch {
+      // ignore network / auth blips
+    }
+  };
+
+  window.setInterval(() => {
+    void tick();
+  }, 2000);
+  void tick();
+}
+
+/**
+ * Auto-start local queue worker + Live claim poller + cloud heartbeat.
+ * Also starts Branch Print Server for IP/LAN modes when possible.
+ */
+export async function ensureBranchPrintRuntime(
+  branchCode: string,
+  branchName?: string,
+): Promise<BranchServerStatus | null> {
+  if (!isDesktopAppRuntime()) return null;
+  const code = (branchCode || "MAIN").trim();
+  if (!code) return null;
+
+  const settings = loadBranchPrintSettings(code);
+  const next: BranchPrintServerSettings = {
+    ...settings,
+    branchCode: code,
+    branchName: branchName || settings.branchName || code,
+    enabled: true,
+    useQueue: true,
+    cloudHeartbeat: true,
+  };
+  saveBranchPrintSettings(next);
+
+  // Live path does NOT need LAN server — always claim cloud jobs + heartbeat.
+  ensureBranchPrintWorker();
+  ensureCloudPrintPoller(code);
+  ensureCloudHeartbeat(code);
+
+  const status = await getBranchPrintServerStatus();
+  if (!status?.running) {
+    const started = await startBranchPrintServer(next);
+    if (started && !("error" in started)) {
+      try {
+        await importLegacyPrinterRouting(code);
+      } catch {
+        // ignore
+      }
+      return started;
+    }
+    console.warn("[branch-print] local server start failed — Live claim poller still running");
+  }
+  return getBranchPrintServerStatus();
+}
+
+let heartbeatStarted = false;
+let heartbeatBranch = "";
+
+/** Register this EXE as an online print server on the live API (for mobile Online systems). */
+export function ensureCloudHeartbeat(branchCode: string): void {
+  if (!isDesktopAppRuntime()) return;
+  const code = (branchCode || "MAIN").trim();
+  if (!code) return;
+  if (heartbeatStarted && heartbeatBranch === code) return;
+  heartbeatStarted = true;
+  heartbeatBranch = code;
+
+  const beat = async () => {
+    try {
+      const settings = loadBranchPrintSettings(code);
+      if (!settings.cloudHeartbeat) return;
+      const st = await getBranchPrintServerStatus();
+      const { authFetch } = await import("../../lib/authFetch");
+      await authFetch(`/v1/printing/branch-servers/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serverId: settings.serverId,
+          branchCode: settings.branchCode || code,
+          localIp: st?.localIp || "127.0.0.1",
+          port: st?.port || settings.port || BRANCH_PRINT_SERVER_DEFAULT_PORT,
+          printerCount: st?.printerCount ?? 0,
+          queuePending: st?.queuePending ?? 0,
+          queueFailed: st?.queueFailed ?? 0,
+          at: new Date().toISOString(),
+        }),
+      });
+    } catch (err) {
+      console.warn("[branch-print] heartbeat failed", err);
+    }
+  };
+
+  void beat();
+  window.setInterval(() => {
+    void beat();
+  }, 25_000);
 }
 
 export async function upsertBranchPrinterNode(input: {

@@ -6,50 +6,57 @@ This document explains **how printer settings and all print jobs work** across t
 
 ## 1. Big picture
 
-Printing is **client-local**. The API stores orders, kitchen tickets, and bills; it does **not** queue or push print jobs to a printer.
+Printing runs on the **desktop EXE** (Windows spooler) for silent Auto jobs. Mobile can relay jobs to that PC without opening an Android print popup.
 
 ```mermaid
 flowchart TB
   subgraph desktop [Desktop Launcher - Tauri]
     UI[Printer settings UI]
-    LS[localStorage per branch]
     Engine[printTicket.ts]
-    Tauri[Tauri Rust commands]
-    Win[Windows print spooler]
-    UI --> LS
-    LS --> Engine
+    Server[Branch Print Server :9740]
+    Worker[Queue worker HTML to PNG]
+    Tauri[Tauri Rust]
+    Win[Windows spooler]
+    Poller[Cloud job poller]
+    UI --> Engine
     Engine --> Tauri
+    Server --> Worker
+    Worker --> Tauri
+    Poller --> Worker
     Tauri --> Win
   end
 
   subgraph mobile [Waiter / Admin APK]
-    MUI[printers.tsx settings]
-    Secure[Secure storage name hints]
-    Expo[expo-print dialog]
-    MUI --> Secure
-    Secure --> Expo
+    MUI[printers.tsx three modes]
+    Dispatch[trySilentBranchPrint]
+    Expo[Expo dialog fallback]
+    MUI --> Dispatch
+    Dispatch -->|Live| API
+    Dispatch -->|IP / Server| Server
+    Dispatch -->|fallback| Expo
   end
 
   subgraph api [Backend API]
-    Orders[Orders / Kitchen / Bills]
-    Notif[printer_offline alert template]
+    Jobs[(print_jobs_cloud)]
+    Heartbeat[branch-servers heartbeat]
   end
 
-  POS[POS / Kitchen / Waiter screens] --> Engine
-  POS --> Orders
-  MobileApp[Mobile order screens] --> Orders
-  MobileApp --> Expo
-  Notif -.->|optional SMS/app alert prefs| Ops[Operators]
+  POS[POS Pay / Order] --> Engine
+  Dispatch -->|POST /v1/printing/print-job| Jobs
+  Poller -->|POST /v1/printing/jobs/claim| Jobs
+  Server --> Heartbeat
 ```
 
 | Path | What it does |
 |------|----------------|
 | **Desktop Auto print** | Named Windows printer via Tauri (USB / network / BT-as-spooler) |
-| **Desktop dialog** | Browser / iframe `window.print` when no OS printer is linked |
-| **Mobile** | Android print dialog via Expo; names are **hints only** |
-| **Backend** | Order data + optional `printer_offline` notification preference — **not** print execution |
+| **Desktop dialog** | `window.print` only when no OS printer is linked |
+| **Mobile Live** | Phone → API job → EXE claims → silent print on assigned PC printer |
+| **Mobile IP attach** | Phone → PC LAN IP `:9740` → SQLite queue → silent print |
+| **Mobile Computer as server** | Same LAN HTTP server via discover / preferred |
+| **Mobile Expo fallback** | Android print dialog only if all silent modes fail or are off |
 
-**Important:** There is **no mobile → desktop printer relay**. A waiter phone cannot push a KOT onto the kitchen USB printer through the API. Mobile prints on the phone; desktop prints on that PC.
+**Silent relay:** With Auto print ON and at least one mode ON, mobile Order/Pay/Print should **not** show a phone popup; the slip comes out of the PC’s assigned printer.
 
 ---
 
@@ -208,58 +215,64 @@ Legacy text path still exists: `print_to_printer` with ESC/POS bytes / GDI monos
 
 ## 6. Mobile printing workflow
 
-### 6.1 Settings
+### 6.1 Settings (three modes + auto print)
 
 - Screen: `apps/waiter-mobile/app/printers.tsx`
-- Storage: `waiter-mobile-printers-v1` via `mobilePrinterSettings.ts` (secure storage)
+- Storage: `waiter-mobile-printers-v1` via `mobilePrinterSettings.ts`
 - Fields:
-  - Up to **4 kitchen printer display names** (hints)
-  - **1 bill / cashier printer** display name
+  - **`autoPrint`** (default **ON**) — Order/Pay print attempts
+  - **`modeLive`** (default ON) — live API → EXE claim
+  - **`modeIp`** (default ON) — manual PC IP (`:9740`)
+  - **`modeServer`** (default ON) — LAN discover / preferred server
+  - Kitchen / bill **name hints** — Expo fallback only
 
-These strings must match (or approximate) what the **Android system print dialog** shows. The app does **not** enumerate Bluetooth/USB printers via a native SDK.
+Priority when multiple modes are ON: **Live → LAN (IP/preferred/discover) → Expo**.
 
 ### 6.2 Print execution
 
-- Library: `apps/waiter-mobile/src/lib/printBill.ts`
+- Library: `apps/waiter-mobile/src/lib/printBill.ts` → `trySilentBranchPrint`
 - Builds HTML for KOT / bill
-- Shows an Alert with the configured printer **hint**
-- Calls `Print.printAsync` from **expo-print**
-- User picks the real printer in the Android dialog
+- Live: `POST /v1/printing/print-job` with HTML payload
+- LAN: `POST http://{pcIp}:9740/v1/print-job`
+- Desktop worker renders HTML → PNG and prints to the resolved Windows printer (**no dialog**)
+- Expo `Print.printAsync` only if every silent path fails
 
 ### 6.3 Relation to desktop / API
 
 ```mermaid
 flowchart LR
-  Phone[Waiter phone] -->|create order API| API[Backend]
-  API -->|kitchen ticket sync| DesktopKitchen[Desktop Kitchen screen]
-  Phone -->|expo-print on phone| PhonePrinter[Phone-linked printer]
-  DesktopKitchen -->|local Tauri print| KitchenUSB[Kitchen USB printer]
+  Phone[Waiter phone] -->|Live job| API[Backend print_jobs_cloud]
+  Phone -->|LAN job| BPS[Branch Print Server]
+  API -->|claim every 2s| EXE[Desktop EXE]
+  BPS --> Worker[Local queue worker]
+  EXE --> Worker
+  Worker --> USB[Assigned Windows printer]
 ```
 
-- Creating an order on mobile **syncs kitchen tickets** to the backend so the desktop Kitchen screen can see them.
-- That sync is **not** a print notification.
-- If kitchen staff need a physical KOT on the USB printer, they print from the **desktop Kitchen** page (or a PC that has the printer configured), unless the phone itself is paired to that printer in Android.
+- EXE auto-starts Branch Print Server + worker + cloud poller when a branch is selected (`BranchPrintBootstrap`).
+- Cloud “Online systems” list comes from desktop heartbeats — Live print does **not** require LAN Connect.
 
-### 6.4 “Notifications” — what exists vs what does not
+### 6.4 Notifications
 
 | Feature | Status |
 |---------|--------|
-| Mobile push “print this on counter” | **Does not exist** |
-| WebSocket / polling print job queue | **Does not exist** |
+| Mobile → desktop silent print (Live / IP / Server) | **Yes** |
+| Desktop cloud claim poller | **Yes** (`ensureCloudPrintPoller`) |
 | Desktop toast after local print | Yes — `printNotify.ts` |
-| Backend `printer_offline` template | Yes — notification preference / template (`printerAlertsEnabled`); **not** live spooler health monitoring |
-| Order / kitchen sync notifications | Separate from printing |
+| Backend `printer_offline` template | Preference / template only |
 
 ---
 
-## 7. Backend role (what is and is not printing)
+## 7. Backend role (printing)
 
 | Backend concern | Related to printing? |
 |-----------------|----------------------|
-| Kitchen tickets, bills, orders | Data source for screens that then print locally |
-| Offline order outbox | Queues **orders** for sync; print still happens locally if user prints |
-| `printerAlertsEnabled` + `printer_offline` | Alert **preference / template**, not print jobs |
-| Print job REST API | **None** |
+| `POST /v1/printing/print-job` | Queues live jobs in `print_jobs_cloud` |
+| `POST /v1/printing/jobs/claim` | Desktop EXE takes next `pending` job |
+| `POST /v1/printing/jobs/:id/complete` | Marks completed / failed |
+| `POST /v1/printing/branch-servers/heartbeat` | Online systems for mobile UI |
+| Kitchen tickets, bills, orders | Data source for screens |
+| `printerAlertsEnabled` + `printer_offline` | Alert preference / template |
 
 ---
 
@@ -287,12 +300,13 @@ flowchart LR
    - Receipt goes to cashier’s receipt printer (or dialog).
 5. Attempt logged in local print history.
 
-### Example B — Waiter places order on mobile
+### Example B — Waiter places order on mobile (silent)
 
-1. Waiter saves kitchen/bill **name hints** in APK Printers screen.
-2. Waiter sends order → API creates kitchen ticket(s).
-3. Optionally waiter taps Print → Expo dialog on the phone.
-4. Desktop Kitchen sees the ticket after sync; kitchen can **Print KOT** on the USB printer from desktop.
+1. Desktop EXE open on branch PC (Branch Print Server auto-started, printers linked).
+2. Waiter keeps **Auto print** + **Live / IP / Server** ON in APK Printers.
+3. Waiter sends order / taps Print → HTML job goes Live (or LAN).
+4. EXE claims / drains queue → silent print on kitchen/receipt Windows printer.
+5. Expo dialog appears only if all silent paths fail.
 
 ### Example C — Reprint from Kitchen screen
 
@@ -303,9 +317,9 @@ flowchart LR
 
 ## 10. Limitations (honest)
 
-1. No cloud-shared printer configuration across PCs.
-2. No mobile → desktop print relay.
-3. “Print Queue” is a local history log, not a retrying job server.
+1. No cloud-shared printer **profile** config across PCs (routing still localStorage per PC).
+2. Live relay needs desktop EXE online to the API; LAN modes need same Wi‑Fi + server running.
+3. “Print Queue” UI mixes local history + branch SQLite queue (not a full cloud spooler UI).
 4. Bluetooth only via Windows spooler; no in-app pairing.
 5. Browser-only launcher mode cannot Auto-print to named thermals.
 6. Pharmacy invoices bypass the POPS routing/thermal pipeline.
@@ -319,14 +333,14 @@ flowchart LR
 | Function | File | Role |
 |----------|------|------|
 | `printTicketDetailed` | `printTicket.ts` | Main desktop executor |
-| `buildTicketHtml` | `printTicket.ts` | Receipt/KOT HTML |
+| `ensureBranchPrintWorker` | `branchPrintClient.ts` | Drain local queue (HTML→PNG→Windows) |
+| `ensureCloudPrintPoller` | `branchPrintClient.ts` | Claim live API jobs |
+| `ensureBranchPrintRuntime` | `branchPrintClient.ts` | Auto-start server/worker/poller |
 | `resolveReceiptPrinter` / `resolveKotPrinter` | `printerRouting.ts` | Pick profile |
-| `groupCartLinesBySection` | routing helpers | Split KOT by station |
-| `listSystemPrintersDetailed` | `systemPrinters.ts` | Enumerate OS printers |
-| `printImageToSystemPrinter` | `systemPrinters.ts` | Tauri PNG print |
-| `logPrintEvent` | `printHistory.ts` | Local history |
-| `printBillReceipt` / `printKitchenOrder` | mobile `printBill.ts` | Expo Print |
-| `list_system_printers` / `print_image_to_printer` / `print_to_printer` | `src-tauri/src/lib.rs` | Rust spooler bridge |
+| `trySilentBranchPrint` | mobile `branchPrintClient.ts` | Live → LAN silent dispatch |
+| `createCloudPrintJob` | mobile `api/printing.ts` | `POST /v1/printing/print-job` |
+| `printBillReceipt` / `printKitchenOrder` | mobile `printBill.ts` | Mobile print entry |
+| `list_system_printers` / `print_image_to_printer` | `src-tauri` | Rust spooler bridge |
 
 ---
 
@@ -338,4 +352,4 @@ flowchart LR
 
 ---
 
-*Last updated from codebase review of launcher Tauri printing, waiter-mobile Expo print, and backend notification templates. If a mobile→desktop print queue is added later, this document should be updated under sections 1, 6, and 7.*
+*Last updated for three silent modes (IP / Server / Live), desktop HTML queue worker, and cloud claim/complete relay.*

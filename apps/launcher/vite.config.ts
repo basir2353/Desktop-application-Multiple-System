@@ -24,8 +24,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     clearScreen: false,
+    // Capacitor loads from file/https localhost — relative asset URLs required.
+    base: process.env.CAP_MOBILE === "1" ? "./" : "/",
     define: {
       __PLATFORM_EDITION__: JSON.stringify(edition),
+      __POPS_MOBILE_VARIANT__: JSON.stringify(process.env.POPS_MOBILE_VARIANT ?? ""),
     },
     server: {
       host: "127.0.0.1",
