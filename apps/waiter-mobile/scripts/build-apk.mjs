@@ -434,6 +434,59 @@ function applyAndroidPatches(buildPaths) {
   forceApplicationId(buildGradle, variant.packageId);
   patchExpoModulesCoreReactNativeDir(buildPaths);
   writeLocalProperties(buildPaths.androidDir);
+  patchAndroidCleartextTraffic(buildPaths.androidDir);
+}
+
+/**
+ * Android 9+ blocks cleartext HTTP by default — branch print server is http://IP:9740.
+ * app.json usesCleartextTraffic is ignored when android/ is reused without prebuild.
+ */
+function patchAndroidCleartextTraffic(androidDirPath) {
+  const manifestPath = join(androidDirPath, "app", "src", "main", "AndroidManifest.xml");
+  if (!existsSync(manifestPath)) return;
+  let manifest = readFileSync(manifestPath, "utf8");
+  if (!manifest.includes("android.permission.ACCESS_WIFI_STATE")) {
+    manifest = manifest.replace(
+      '<uses-permission android:name="android.permission.INTERNET"/>',
+      '<uses-permission android:name="android.permission.INTERNET"/>\n  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>',
+    );
+  }
+
+  const xmlDir = join(androidDirPath, "app", "src", "main", "res", "xml");
+  mkdirSync(xmlDir, { recursive: true });
+  const nscPath = join(xmlDir, "network_security_config.xml");
+  writeFileSync(
+    nscPath,
+    `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="true">localhost</domain>
+    <domain includeSubdomains="true">10.0.2.2</domain>
+  </domain-config>
+</network-security-config>
+`,
+    "utf8",
+  );
+
+  if (!manifest.includes("usesCleartextTraffic")) {
+    manifest = manifest.replace(
+      /<application\b([^>]*)>/,
+      '<application$1 android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config">',
+    );
+  } else if (!manifest.includes("networkSecurityConfig")) {
+    manifest = manifest.replace(
+      'android:usesCleartextTraffic="true"',
+      'android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config"',
+    );
+  }
+  // Collapse duplicate attributes if any prior partial patch
+  manifest = manifest.replace(
+    /android:usesCleartextTraffic="true"(\s+android:usesCleartextTraffic="true")+/g,
+    'android:usesCleartextTraffic="true"',
+  );
+  writeFileSync(manifestPath, manifest);
+  console.log("[build-apk] Enabled cleartext HTTP (LAN print server :9740)");
 }
 
 function clearAutolinkingCache(androidDirPath) {

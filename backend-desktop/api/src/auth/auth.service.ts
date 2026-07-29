@@ -414,7 +414,23 @@ export class AuthService implements OnModuleInit {
     if (!row0) throw new UnauthorizedException("No organization membership");
 
     const m = row0.membership;
-    const org = row0.org;
+    let org = row0.org;
+
+    if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
+      // Demo / seed tenants: auto-restore so local + mobile testing is not stuck after soft-delete.
+      const isDemo =
+        normalizedEmail.endsWith("@pops.demo") ||
+        normalizedEmail ===
+          (this.config.get<string>("SEED_USER_EMAIL") ?? "admin.restaurant@pops.demo").toLowerCase();
+      if (isDemo) {
+        const [restored] = await this.db
+          .update(organizations)
+          .set({ status: "active", updatedAt: new Date() })
+          .where(eq(organizations.id, org.id))
+          .returning();
+        if (restored) org = restored;
+      }
+    }
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
       throw new UnauthorizedException(

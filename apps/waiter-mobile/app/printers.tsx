@@ -47,15 +47,21 @@ export default function PrintersScreen() {
     if (!branch?.code) return;
     setLoadingCloud(true);
     try {
-      const result = await fetchBranchPrintServers({
+      // Prefer this branch; if empty, show any online server for the org (branch codes can differ).
+      let result = await fetchBranchPrintServers({
         branchCode: branch.code,
         onlineOnly: true,
       });
+      if (result.servers.length === 0) {
+        result = await fetchBranchPrintServers({ onlineOnly: true });
+      }
       setCloudServers(result.servers);
       if (result.servers.length === 0) {
         setNotice(
           "Koi online print server cloud pe nahi — desktop launcher Start karo (Cloud heartbeat on) aur Refresh dabao.",
         );
+      } else {
+        setNotice(null);
       }
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Cloud servers load nahi hue.");
