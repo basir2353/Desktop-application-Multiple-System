@@ -1,6 +1,8 @@
 import { Redirect, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import type { BranchPrintServer } from "@platform/contracts";
+import { fetchBranchPrintServers } from "../src/api/printing";
 import { Button, Card, Input, Muted, Notice, Screen, SectionHeader, colors } from "../src/components/ui";
 import {
   discoverBranchPrintServers,
@@ -13,7 +15,6 @@ import {
 } from "../src/lib/branchPrintClient";
 import {
   DEFAULT_MOBILE_PRINTER_SETTINGS,
-  MAX_KITCHEN_PRINTERS,
   loadMobilePrinterSettings,
   saveMobilePrinterSettings,
   type MobilePrinterSettings,
@@ -36,14 +37,45 @@ export default function PrintersScreen() {
   const [useBranch, setUseBranch] = useState(true);
   const [preferred, setPreferred] = useState<MobileDiscoveredServer | null>(null);
   const [discovered, setDiscovered] = useState<MobileDiscoveredServer[]>([]);
+  const [cloudServers, setCloudServers] = useState<BranchPrintServer[]>([]);
   const [manualIp, setManualIp] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [loadingCloud, setLoadingCloud] = useState(false);
+  const [connectingId, setConnectingId] = useState<string | null>(null);
+
+  const refreshCloudServers = useCallback(async () => {
+    if (!branch?.code) return;
+    setLoadingCloud(true);
+    try {
+      const result = await fetchBranchPrintServers({
+        branchCode: branch.code,
+        onlineOnly: true,
+      });
+      setCloudServers(result.servers);
+      if (result.servers.length === 0) {
+        setNotice(
+          "Koi online print server cloud pe nahi — desktop launcher Start karo (Cloud heartbeat on) aur Refresh dabao.",
+        );
+      }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Cloud servers load nahi hue.");
+      setCloudServers([]);
+    } finally {
+      setLoadingCloud(false);
+    }
+  }, [branch?.code]);
 
   useEffect(() => {
     void loadMobilePrinterSettings().then(setSettings);
     void loadUseBranchPrintServer().then(setUseBranch);
     void loadPreferredBranchServer().then(setPreferred);
   }, []);
+
+  useEffect(() => {
+    if (accessToken && branch?.code) {
+      void refreshCloudServers();
+    }
+  }, [accessToken, branch?.code, refreshCloudServers]);
 
   if (!accessToken) return <Redirect href="/" />;
   if (resolveStaffRole(claims) === "rider") return <Redirect href="/rider-home" />;
@@ -74,15 +106,46 @@ export default function PrintersScreen() {
     }
   }
 
+  async function connectToHost(host: string, label?: string): Promise<boolean> {
+    const server = await enrollBranchServerByIp(host);
+    if (!server) {
+      setNotice(
+        `Connect fail: ${label ?? host}. Same Wi‑Fi? Desktop ONLINE? Port 9740 (not 9741)?`,
+      );
+      return false;
+    }
+    setPreferred(server);
+    setDiscovered((prev) => [server, ...prev.filter((s) => s.id !== server.id)]);
+    setManualIp(`${server.localIp}:${server.port}`);
+    setNotice(`Connected · ${server.serverName} · ${server.localIp}:${server.port}`);
+    return true;
+  }
+
+  async function onConnectCloud(server: BranchPrintServer): Promise<void> {
+    setConnectingId(server.id);
+    try {
+      await connectToHost(`${server.localIp}:${server.port}`, server.serverName);
+    } finally {
+      setConnectingId(null);
+    }
+  }
+
   async function onScan(): Promise<void> {
     setScanning(true);
     try {
       const found = await discoverBranchPrintServers({
         branchCode: branch.code,
-        extraHosts: manualIp.trim() ? [manualIp.trim()] : undefined,
+        extraHosts: [
+          ...cloudServers.map((s) => `${s.localIp}:${s.port}`),
+          ...(manualIp.trim() ? [manualIp.trim()] : []),
+        ],
       });
       setDiscovered(found);
-      setNotice(found.length ? `Found ${found.length} branch print server(s).` : "No servers found — enter the PC IP manually.");
+      setNotice(
+        found.length
+          ? `LAN pe ${found.length} server milay.`
+          : "LAN pe nahi mila — upar cloud suggestion se Connect try karo.",
+      );
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Discovery failed.");
     } finally {
@@ -92,28 +155,70 @@ export default function PrintersScreen() {
 
   async function onEnrollIp(): Promise<void> {
     if (!manualIp.trim()) {
-      setNotice("Enter the desktop PC local IP (e.g. 192.168.1.50).");
+      setNotice("Desktop PC IP likho (e.g. 192.168.100.6 ya …:9740).");
       return;
     }
-    const server = await enrollBranchServerByIp(manualIp.trim());
-    if (!server) {
-      setNotice("Could not reach branch print server at that IP (is the launcher online?).");
-      return;
+    setConnectingId("manual");
+    try {
+      await connectToHost(manualIp.trim());
+    } finally {
+      setConnectingId(null);
     }
-    setPreferred(server);
-    setDiscovered((prev) => [server, ...prev.filter((s) => s.id !== server.id)]);
-    setNotice(`Connected to ${server.serverName} · ${server.localIp}:${server.port}`);
   }
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <SectionHeader title="Printer assignments" />
+        <SectionHeader title="Printers" />
         <Muted>
-          Prefer silent printing via the Branch Print Server on the desktop launcher. If no server is online,
-          Android’s print dialog is used as fallback.
+          Online systems cloud API se aate hain (desktop heartbeat). Connect dabao — phone us PC ke LAN IP se
+          link ho jayega.
         </Muted>
         {notice ? <Notice>{notice}</Notice> : null}
+
+        <Card style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.cardTitle}>Online systems</Text>
+            <Button
+              label={loadingCloud ? "…" : "Refresh"}
+              variant="ghost"
+              onPress={() => void refreshCloudServers()}
+              loading={loadingCloud}
+            />
+          </View>
+          <Muted>Backend pe jo branch print servers online hain — yahan suggestion.</Muted>
+          {loadingCloud && cloudServers.length === 0 ? (
+            <ActivityIndicator color={colors.accent} style={{ marginVertical: 12 }} />
+          ) : null}
+          {!loadingCloud && cloudServers.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>No online print server for this branch yet.</Text>
+              <Muted>Desktop EXE → Printers → Start / Restart (Cloud heartbeat on).</Muted>
+            </View>
+          ) : null}
+          {cloudServers.map((s) => {
+            const isPreferred =
+              preferred?.localIp === s.localIp && preferred?.port === s.port;
+            const busy = connectingId === s.id;
+            return (
+              <View key={s.id} style={[styles.serverCard, isPreferred && styles.serverCardActive]}>
+                <View style={styles.serverMain}>
+                  <Text style={styles.serverTitle}>{s.serverName}</Text>
+                  <Muted>
+                    {s.branchName || s.branchCode} · {s.localIp}:{s.port} · {s.printerCount} printers ·{" "}
+                    <Text style={styles.online}>{s.status.toUpperCase()}</Text>
+                  </Muted>
+                </View>
+                <Button
+                  label={busy ? "Connecting…" : isPreferred ? "Connected" : "Connect"}
+                  onPress={() => void onConnectCloud(s)}
+                  loading={busy}
+                  variant={isPreferred ? "ghost" : undefined}
+                />
+              </View>
+            );
+          })}
+        </Card>
 
         <Card style={styles.card}>
           <Text style={styles.cardTitle}>Branch Print Server</Text>
@@ -122,7 +227,7 @@ export default function PrintersScreen() {
             <Switch value={useBranch} onValueChange={setUseBranch} />
           </View>
           {preferred ? (
-            <View style={styles.serverCard}>
+            <View style={[styles.serverCard, styles.serverCardActive]}>
               <Text style={styles.serverTitle}>{preferred.serverName}</Text>
               <Muted>
                 {preferred.branchName || preferred.branchCode} · {preferred.localIp}:{preferred.port}
@@ -137,12 +242,12 @@ export default function PrintersScreen() {
               />
             </View>
           ) : (
-            <Muted>No preferred server yet.</Muted>
+            <Muted>Abhi koi preferred server nahi — upar Connect use karo.</Muted>
           )}
           <View style={styles.field}>
-            <Text style={styles.label}>Desktop PC IP</Text>
+            <Text style={styles.label}>Manual Desktop PC IP</Text>
             <Input
-              placeholder="e.g. 192.168.1.50"
+              placeholder="e.g. 192.168.100.6 or …:9740"
               value={manualIp}
               onChangeText={setManualIp}
               autoCapitalize="none"
@@ -150,8 +255,13 @@ export default function PrintersScreen() {
             />
           </View>
           <View style={styles.rowBtns}>
-            <Button label={scanning ? "Scanning…" : "Discover"} onPress={() => void onScan()} loading={scanning} />
-            <Button label="Connect IP" variant="ghost" onPress={() => void onEnrollIp()} />
+            <Button label={scanning ? "Scanning…" : "LAN Discover"} onPress={() => void onScan()} loading={scanning} />
+            <Button
+              label={connectingId === "manual" ? "Connecting…" : "Connect IP"}
+              variant="ghost"
+              onPress={() => void onEnrollIp()}
+              loading={connectingId === "manual"}
+            />
           </View>
           {discovered.map((s) => (
             <Pressable
@@ -175,9 +285,7 @@ export default function PrintersScreen() {
 
         <Card style={styles.card}>
           <Text style={styles.cardTitle}>Kitchen printers (order tickets)</Text>
-          <Muted>
-            Logical names mapped when the branch server is offline (Expo dialog hint). Leave blank to skip.
-          </Muted>
+          <Muted>Fallback names jab branch server offline ho.</Muted>
           {settings.kitchenPrinters.map((name, index) => (
             <View key={`kitchen-${index}`} style={styles.field}>
               <Text style={styles.label}>Kitchen {index + 1}</Text>
@@ -192,7 +300,7 @@ export default function PrintersScreen() {
 
         <Card style={styles.card}>
           <Text style={styles.cardTitle}>Cashier / billing printer</Text>
-          <Muted>Used for customer bill / receipt printing only (fallback dialog).</Muted>
+          <Muted>Bill / receipt fallback dialog.</Muted>
           <View style={styles.field}>
             <Text style={styles.label}>Bill printer</Text>
             <Input
@@ -250,11 +358,30 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
     padding: 10,
+    gap: 8,
+  },
+  serverCardActive: {
+    borderColor: colors.accent,
+  },
+  serverMain: {
     gap: 4,
   },
   serverTitle: {
     color: colors.text,
     fontWeight: "700",
+    fontSize: 13,
+  },
+  online: {
+    color: "#4ade80",
+    fontWeight: "700",
+  },
+  emptyBox: {
+    gap: 6,
+    paddingVertical: 8,
+  },
+  emptyText: {
+    color: colors.text,
+    fontWeight: "600",
     fontSize: 13,
   },
 });

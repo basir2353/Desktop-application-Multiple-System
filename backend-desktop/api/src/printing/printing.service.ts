@@ -245,13 +245,56 @@ export class PrintingService {
     return updated;
   }
 
-  async discover(user: AccessJwtPayload) {
+  async discover(
+    user: AccessJwtPayload,
+    opts?: { branchCode?: string; onlineOnly?: boolean },
+  ) {
     const organizationId = this.orgId(user);
-    const servers = await this.db
+    const rows = await this.db
       .select()
       .from(printBranchServers)
       .where(eq(printBranchServers.organizationId, organizationId))
       .orderBy(desc(printBranchServers.lastHeartbeatAt));
+
+    const staleMs = 90_000;
+    const now = Date.now();
+    let servers = rows.map((row) => {
+      const lastHb = row.lastHeartbeatAt ? new Date(row.lastHeartbeatAt).getTime() : 0;
+      const fresh = lastHb > 0 && now - lastHb <= staleMs;
+      const status =
+        row.status === "online" && fresh
+          ? "online"
+          : row.status === "degraded"
+            ? "degraded"
+            : "offline";
+      return {
+        id: row.id,
+        organizationId: row.organizationId,
+        branchId: row.branchId,
+        branchCode: row.branchCode,
+        branchName: row.branchName,
+        serverName: row.serverName,
+        hostname: row.hostname,
+        localIp: row.localIp,
+        port: row.port || 9740,
+        status: status as "online" | "offline" | "degraded",
+        printerCount: row.printerCount,
+        lastHeartbeatAt: row.lastHeartbeatAt
+          ? new Date(row.lastHeartbeatAt).toISOString()
+          : null,
+        version: row.version,
+        cloudSyncEnabled: row.cloudSyncEnabled,
+      };
+    });
+
+    if (opts?.branchCode) {
+      const code = opts.branchCode.trim().toUpperCase();
+      servers = servers.filter((s) => s.branchCode.trim().toUpperCase() === code);
+    }
+    if (opts?.onlineOnly !== false) {
+      servers = servers.filter((s) => s.status === "online");
+    }
+
     return {
       servers,
       scannedAt: new Date().toISOString(),

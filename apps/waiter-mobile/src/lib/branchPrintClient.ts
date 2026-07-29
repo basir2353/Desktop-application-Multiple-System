@@ -72,6 +72,48 @@ function baseUrl(server: Pick<MobileDiscoveredServer, "localIp" | "port">): stri
   return `http://${server.localIp}:${server.port || BRANCH_PRINT_SERVER_DEFAULT_PORT}`;
 }
 
+/** Accept `192.168.1.50` or `192.168.1.50:9740` (UI often pastes host:port). */
+export function parseHostPort(
+  input: string,
+  defaultPort = BRANCH_PRINT_SERVER_DEFAULT_PORT,
+): { localIp: string; port: number } | null {
+  const trimmed = input.trim().replace(/^https?:\/\//i, "");
+  if (!trimmed) return null;
+  const withoutPath = trimmed.split("/")[0] ?? trimmed;
+  const hostPart = withoutPath.includes("@") ? (withoutPath.split("@").pop() ?? withoutPath) : withoutPath;
+
+  let localIp: string;
+  let port: number;
+
+  // [ipv6]:port
+  if (hostPart.startsWith("[")) {
+    const close = hostPart.indexOf("]");
+    if (close > 1) {
+      localIp = hostPart.slice(1, close);
+      const rest = hostPart.slice(close + 1);
+      port = rest.startsWith(":") ? Number(rest.slice(1)) : defaultPort;
+      if (!localIp || !Number.isFinite(port) || port <= 0) return null;
+    } else {
+      return null;
+    }
+  } else {
+    const lastColon = hostPart.lastIndexOf(":");
+    if (lastColon > 0 && hostPart.indexOf(":") === lastColon) {
+      localIp = hostPart.slice(0, lastColon).trim();
+      port = Number(hostPart.slice(lastColon + 1));
+      if (!localIp || !Number.isFinite(port) || port <= 0) return null;
+    } else {
+      localIp = hostPart;
+      port = defaultPort;
+    }
+  }
+
+  // Users often paste UDP discovery port (9741); HTTP API listens on 9740.
+  if (port === 9741) port = BRANCH_PRINT_SERVER_DEFAULT_PORT;
+
+  return { localIp, port };
+}
+
 export async function probeBranchServer(
   server: Pick<MobileDiscoveredServer, "localIp" | "port">,
 ): Promise<{ ok: boolean; pingMs?: number; info?: Record<string, unknown> }> {
@@ -108,13 +150,22 @@ export async function discoverBranchPrintServers(options?: {
     }
   }
   for (const host of options?.extraHosts ?? []) {
-    const trimmed = host.trim();
-    if (!trimmed) continue;
-    candidates.push({ localIp: trimmed, port: BRANCH_PRINT_SERVER_DEFAULT_PORT });
+    const parsed = parseHostPort(host);
+    if (!parsed) continue;
+    if (!candidates.some((c) => c.localIp === parsed.localIp && c.port === parsed.port)) {
+      candidates.push(parsed);
+    }
   }
 
   // Common private LAN guesses when nothing cached (best-effort)
-  const guesses = ["192.168.1.1", "192.168.0.1", "192.168.1.100", "10.0.0.1"];
+  const guesses = [
+    "192.168.1.1",
+    "192.168.0.1",
+    "192.168.1.100",
+    "192.168.100.1",
+    "192.168.100.6",
+    "10.0.0.1",
+  ];
   for (const g of guesses) {
     if (!candidates.some((c) => c.localIp === g)) {
       candidates.push({ localIp: g, port: BRANCH_PRINT_SERVER_DEFAULT_PORT });
@@ -223,16 +274,18 @@ export async function enrollBranchServerByIp(
   localIp: string,
   port = BRANCH_PRINT_SERVER_DEFAULT_PORT,
 ): Promise<MobileDiscoveredServer | null> {
-  const probe = await probeBranchServer({ localIp: localIp.trim(), port });
+  const parsed = parseHostPort(localIp, port);
+  if (!parsed) return null;
+  const probe = await probeBranchServer(parsed);
   if (!probe.ok || !probe.info) return null;
   const info = probe.info;
   const server: MobileDiscoveredServer = {
-    id: String(info.serverId ?? `${localIp}:${port}`),
+    id: String(info.serverId ?? `${parsed.localIp}:${parsed.port}`),
     branchCode: String(info.branchCode ?? ""),
     branchName: String(info.branchName ?? ""),
     serverName: String(info.serverName ?? "Branch Print Server"),
-    localIp: String(info.localIp ?? localIp.trim()),
-    port: Number(info.port ?? port),
+    localIp: String(info.localIp ?? parsed.localIp),
+    port: Number(info.port ?? parsed.port),
     status: "online",
     pingMs: probe.pingMs ?? null,
   };

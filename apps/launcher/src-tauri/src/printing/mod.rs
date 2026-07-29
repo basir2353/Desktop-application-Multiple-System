@@ -98,6 +98,8 @@ pub fn start_branch_print_server(
     let mut slot = server_slot().lock().map_err(|e| e.to_string())?;
     if let Some(existing) = slot.as_ref() {
         if existing.port == config.port {
+            // Already listening — still ensure LAN firewall so phones can connect.
+            server::ensure_firewall_for_port(config.port);
             return Ok(status_from_handle(existing, &conn)?);
         }
         existing.stop();

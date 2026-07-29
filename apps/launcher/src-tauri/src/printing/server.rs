@@ -24,6 +24,71 @@ impl BranchServerHandle {
     }
 }
 
+/// Open LAN ports so phones can reach the branch print server (all firewall profiles).
+pub fn ensure_firewall_for_port(http_port: u16) {
+    ensure_lan_firewall_rules(http_port);
+}
+
+fn ensure_lan_firewall_rules(http_port: u16) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let rules = [
+            (
+                "POPS Branch Print HTTP",
+                "TCP",
+                http_port.to_string(),
+            ),
+            (
+                "POPS Branch Print Discover",
+                "UDP",
+                "9741".to_string(),
+            ),
+        ];
+        for (name, proto, port) in rules {
+            let _ = std::process::Command::new("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={name}"),
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let add = std::process::Command::new("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    &format!("name={name}"),
+                    "dir=in",
+                    "action=allow",
+                    &format!("protocol={proto}"),
+                    &format!("localport={port}"),
+                    "profile=any",
+                    "enable=yes",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            if let Ok(out) = add {
+                if !out.status.success() {
+                    eprintln!(
+                        "[branch-print] firewall rule {name} failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = http_port;
+    }
+}
+
 pub fn start(
     _app: AppHandle,
     config: BranchServerConfig,
@@ -105,6 +170,8 @@ pub fn start(
         let _ = http.join();
         return Err(format!("Branch print server failed to bind port {port}"));
     }
+
+    ensure_lan_firewall_rules(port);
 
     let udp = thread::spawn(move || {
         let sock = match UdpSocket::bind("0.0.0.0:9741") {

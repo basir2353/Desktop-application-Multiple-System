@@ -114,8 +114,29 @@ export class PrintingController implements OnModuleDestroy {
 
   @Post("discover")
   @RequirePermissions("pops.read")
-  discover(@CurrentUser() user: AccessJwtPayload) {
-    return this.printing.discover(user);
+  discover(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode?: string,
+    @Query("onlineOnly") onlineOnly?: string,
+  ) {
+    return this.printing.discover(user, {
+      branchCode,
+      onlineOnly: onlineOnly !== "false" && onlineOnly !== "0",
+    });
+  }
+
+  /** Online branch print servers (cloud registry from desktop heartbeats) — for mobile suggestions. */
+  @Get("branch-servers")
+  @RequirePermissions("pops.read")
+  listBranchServers(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode?: string,
+    @Query("onlineOnly") onlineOnly?: string,
+  ) {
+    return this.printing.discover(user, {
+      branchCode,
+      onlineOnly: onlineOnly !== "false" && onlineOnly !== "0",
+    });
   }
 
   @Get("status")
