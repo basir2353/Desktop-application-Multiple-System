@@ -1,8 +1,4 @@
-import {
-  printDiscoveryResultSchema,
-  type BranchPrintServer,
-  type PrintDiscoveryResult,
-} from "@platform/contracts";
+import type { BranchPrintServer, PrintDiscoveryResult } from "@platform/contracts";
 import { authFetch } from "../lib/authFetch";
 
 /** Cloud-registered branch print servers (from desktop heartbeats). */
@@ -21,15 +17,13 @@ export async function fetchBranchPrintServers(options?: {
     throw new Error(err?.message ?? `Print servers failed: ${res.status}`);
   }
   const json: unknown = await res.json();
-  const parsed = printDiscoveryResultSchema.safeParse(json);
-  if (parsed.success) return parsed.data;
-
-  // Defensive fallback if backend shape drifts slightly
-  const raw = json as { servers?: unknown[]; scannedAt?: string };
+  // Avoid zod schema import — Metro/APK may resolve an older contracts build without printDiscoveryResultSchema.
+  const raw = (json && typeof json === "object" ? json : {}) as {
+    servers?: unknown[];
+    scannedAt?: string;
+  };
   const servers: BranchPrintServer[] = Array.isArray(raw.servers)
-    ? raw.servers
-        .map((row) => normalizeServer(row))
-        .filter((s): s is BranchPrintServer => s != null)
+    ? raw.servers.map((row) => normalizeServer(row)).filter((s): s is BranchPrintServer => s != null)
     : [];
   return {
     servers,
