@@ -24,7 +24,7 @@ import {
 import { toPng } from "html-to-image";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
 import { loadReceiptPoweredBy } from "./receiptBranding";
-import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter } from "./systemPrinters";
+import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
 import { buildPraReceiptFooterHtml, PRA_RECEIPT_FOOTER_CSS, type PraReceiptFooter } from "./praReceiptFooter";
 import { asPrinterName } from "./asPrinterName";
 import {
@@ -2103,6 +2103,29 @@ export async function renderTicketHtmlToPngBytes(
     } catch {
       /* ignore */
     }
+    // Wait for remote/local images (PRA QR) so silent PNG matches the intended slip.
+    try {
+      const imgs = Array.from(idoc.images ?? []);
+      await Promise.race([
+        Promise.all(
+          imgs.map(
+            (img) =>
+              new Promise<void>((resolve) => {
+                if (img.complete && img.naturalWidth > 0) {
+                  resolve();
+                  return;
+                }
+                const finish = () => resolve();
+                img.addEventListener("load", finish, { once: true });
+                img.addEventListener("error", finish, { once: true });
+              }),
+          ),
+        ),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 2500)),
+      ]);
+    } catch {
+      /* ignore */
+    }
     await new Promise((r) => setTimeout(r, 80));
     const body = idoc.body;
     if (!body) return null;
@@ -2316,8 +2339,24 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
   }
 
   if (systemPrinterName) {
-    // PDF/XPS/Fax — open the Windows print dialog (user picks save location / paper size).
-    if (isVirtualSystemPrinter(systemPrinterName)) {
+    // Never open XPS/OpenXPS Save As — remap to Microsoft Print to PDF.
+    const targetPrinter = preferPdfOverXpsPrinter(systemPrinterName) ?? systemPrinterName;
+
+    // PDF (or other virtual file target) — print image to PDF writer (Save As *.pdf).
+    if (isVirtualSystemPrinter(targetPrinter)) {
+      if (isXpsSystemPrinter(systemPrinterName) || /print\s*to\s*pdf/i.test(targetPrinter)) {
+        const png = await renderTicketHtmlToPngBytes(styledHtml, paper, thermal.customPaperWidthMm);
+        if (png?.length) {
+          const imgResult = await printImageToSystemPrinter({
+            printerName: "Microsoft Print to PDF",
+            pngBytes: png,
+            jobName: docTitle,
+            copies,
+            paperWidthMm: paperMm,
+          });
+          if (imgResult.ok) return { ok: true, usedNamedPrinter: true };
+        }
+      }
       const opened = await printHtmlDocumentAndWait(styledHtml, docTitle);
       if (!opened) {
         return { ok: false, usedNamedPrinter: false, error: "Could not open the print dialog." };
@@ -2334,7 +2373,7 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
       };
     }
     const imgResult = await printImageToSystemPrinter({
-      printerName: systemPrinterName,
+      printerName: targetPrinter,
       pngBytes: png,
       jobName: docTitle,
       copies,
@@ -2345,7 +2384,7 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
       announcePrintJobDone({
         ok: imgResult.ok,
         orderId: input.orderRef ?? null,
-        printerName: systemPrinterName,
+        printerName: targetPrinter,
         error: imgResult.error ?? null,
         source: "direct",
         kind: input.kind,

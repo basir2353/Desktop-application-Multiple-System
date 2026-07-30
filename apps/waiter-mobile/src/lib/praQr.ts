@@ -6,6 +6,15 @@ import type { PraInvoiceMode } from "@platform/contracts";
  */
 const PRA_PHONE_BLOCK_PREFIX = "https://pra-inv.invalid/v1/";
 
+// Vendored qrcode core + dijkstrajs (Metro resolves via vendor/).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const QRCode = require("../../vendor/qrcode/lib/core/qrcode.js") as {
+  create: (
+    text: string,
+    opts?: { errorCorrectionLevel?: string },
+  ) => { modules: { size: number; get: (row: number, col: number) => boolean } };
+};
+
 /** Strip Fake/Demo markers so QR / payload never advertise demo mode. */
 export function sanitizePraQrPayload(payload: string): string {
   let cleaned = payload
@@ -37,13 +46,27 @@ export function sanitizePraQrPayload(payload: string): string {
   return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(cleaned)}`;
 }
 
-/**
- * Remote PNG QR for thermal HTML (phone + desktop print server both have network).
- * Avoids bundling qrcode/dijkstrajs into the APK Metro graph.
- */
-export function buildPraQrImageUrl(payload: string, size = 130): string {
+/** Inline SVG QR — works in silent HTML→PNG without network (no remote img). */
+export function buildPraQrSvg(payload: string, size = 130): string {
   const text = sanitizePraQrPayload(payload.trim() || "PRA");
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&ecc=M&margin=1&data=${encodeURIComponent(text)}`;
+  const qr = QRCode.create(text, { errorCorrectionLevel: "M" });
+  const n = qr.modules.size;
+  const cell = size / n;
+  const parts: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">`,
+    `<rect width="100%" height="100%" fill="#ffffff"/>`,
+  ];
+  for (let y = 0; y < n; y += 1) {
+    for (let x = 0; x < n; x += 1) {
+      if (qr.modules.get(y, x)) {
+        parts.push(
+          `<rect x="${(x * cell).toFixed(3)}" y="${(y * cell).toFixed(3)}" width="${cell.toFixed(3)}" height="${cell.toFixed(3)}" fill="#000000"/>`,
+        );
+      }
+    }
+  }
+  parts.push("</svg>");
+  return parts.join("");
 }
 
 export type PraReceiptFooter = {
@@ -51,7 +74,7 @@ export type PraReceiptFooter = {
   invoiceNumber: string;
   orderRef: string;
   qrPayload: string;
-  qrImageUrl: string;
+  qrSvg: string;
 };
 
 export function preparePraReceiptFooter(input: {
@@ -63,28 +86,35 @@ export function preparePraReceiptFooter(input: {
   const qrPayload = sanitizePraQrPayload(input.qrPayload);
   return {
     mode: input.mode,
-    invoiceNumber: input.invoiceNumber,
+    invoiceNumber: input.invoiceNumber.trim(),
     orderRef: input.orderRef,
     qrPayload,
-    qrImageUrl: buildPraQrImageUrl(qrPayload, 130),
+    qrSvg: buildPraQrSvg(qrPayload, 130),
   };
 }
 
 export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
-  const qr = `<img class="pra-qr" src="${pra.qrImageUrl}" alt="PRA QR" width="130" height="130" style="display:block;margin:0 auto;width:130px;height:130px;" />`;
-
   return `
   <div class="pra-fbr-block">
     <div class="pra-rule"></div>
+    <div class="pra-invoice-line"><strong>PRA Invoice #</strong> ${escapeHtml(pra.invoiceNumber)}</div>
     <table class="pra-qr-table" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;border-collapse:collapse;">
       <tr>
         <td align="center" valign="middle" style="text-align:center;width:100%;">
-          ${qr}
+          <div class="pra-qr-wrap">${pra.qrSvg}</div>
         </td>
       </tr>
     </table>
     <div class="pra-qr-caption">This invoice generated on the PRA</div>
   </div>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export const PRA_RECEIPT_FOOTER_CSS = `
@@ -100,6 +130,13 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       margin: 0 0 10px;
       width: 100%;
     }
+    .pra-invoice-line {
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      word-break: break-all;
+    }
     .pra-qr-table {
       width: 100% !important;
       margin: 0 auto !important;
@@ -110,14 +147,16 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       vertical-align: middle !important;
       width: 100%;
     }
-    .pra-qr {
-      display: block !important;
-      width: 130px !important;
-      height: 130px !important;
-      margin: 0 auto !important;
-      padding: 0 !important;
-      border: 0 !important;
-      image-rendering: pixelated;
+    .pra-qr-wrap {
+      display: inline-block;
+      width: 130px;
+      height: 130px;
+      margin: 0 auto;
+    }
+    .pra-qr-wrap svg {
+      display: block;
+      width: 130px;
+      height: 130px;
     }
     .pra-qr-caption {
       display: block;

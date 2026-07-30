@@ -53,6 +53,7 @@ const VIRTUAL_PRINTER_PATTERNS = [
   /^fax$/i,
   /microsoft\s*print\s*to\s*pdf/i,
   /microsoft\s*xps/i,
+  /oxps/i,
   /onenote/i,
   /send\s*to\s*onenote/i,
   /adobe\s*pdf/i,
@@ -122,6 +123,21 @@ export function isVirtualSystemPrinter(
   if (driver && VIRTUAL_PRINTER_PATTERNS.some((re) => re.test(driver))) return true;
   if (port && VIRTUAL_PORT_PATTERNS.some((re) => re.test(port))) return true;
   return false;
+}
+
+/** Microsoft XPS / OpenXPS writer — opens .oxps Save As (never wanted for POS slips). */
+export function isXpsSystemPrinter(name: string | undefined | null): boolean {
+  const label = (name ?? "").trim();
+  if (!label) return false;
+  return /microsoft\s*xps|oxps|xps\s*document\s*writer/i.test(label);
+}
+
+/** Prefer PDF Save As over OXPS when a file-target printer is unavoidable. */
+export function preferPdfOverXpsPrinter(name: string | undefined | null): string | null {
+  const label = (name ?? "").trim();
+  if (!label) return null;
+  if (isXpsSystemPrinter(label)) return "Microsoft Print to PDF";
+  return label;
 }
 
 function toSystemPrinterInfo(p: RawSystemPrinter): SystemPrinterInfo {

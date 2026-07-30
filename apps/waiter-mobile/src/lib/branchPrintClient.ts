@@ -235,7 +235,7 @@ export async function submitSilentPrintJob(
 }
 
 /**
- * Try silent print paths — each mode is independent:
+ * Try silent print paths — each mode is independent; first success wins (no multi-path leak).
  * - Live: API only (EXE claims) — never uses LAN
  * - IP: preferred PC IP only (no discover)
  * - Server: LAN discover / preferred from discover
@@ -251,15 +251,24 @@ export async function trySilentBranchPrint(input: {
   const settings = await loadMobilePrinterSettings();
   if (!settings.autoPrint) return false;
 
+  // Strip any accidental OS/virtual printer names from mobile payload.
+  const payload: PrintJobPayload = {
+    ...input.payload,
+    systemPrinterName: null,
+  };
+
+  // Soft profile hint only (Kitchen 1 / Cashier) — desktop maps via POS routing.
+  const printerName = input.printerName?.trim() || null;
+
   // 1) Live link — completely separate from IP / LAN
   if (settings.modeLive) {
     try {
       const { createCloudPrintJob } = await import("../api/printing");
       const cloud = await createCloudPrintJob({
         branchCode: input.branchCode,
-        printerName: input.printerName ?? null,
+        printerName,
         orderId: input.orderId ?? null,
-        payload: input.payload,
+        payload,
         deviceLabel: "waiter-mobile",
       });
       if (cloud.ok) return true;
@@ -276,10 +285,10 @@ export async function trySilentBranchPrint(input: {
       if (probe.ok) {
         const result = await submitSilentPrintJob(preferred, {
           branchCode: input.branchCode,
-          printerName: input.printerName ?? null,
+          printerName,
           orderId: input.orderId ?? null,
           deviceLabel: "waiter-mobile-ip",
-          payload: input.payload,
+          payload,
         });
         if (result.ok) return true;
       }
@@ -293,10 +302,10 @@ export async function trySilentBranchPrint(input: {
     if (server) {
       const result = await submitSilentPrintJob(server, {
         branchCode: input.branchCode,
-        printerName: input.printerName ?? null,
+        printerName,
         orderId: input.orderId ?? null,
         deviceLabel: "waiter-mobile-lan",
-        payload: input.payload,
+        payload,
       });
       if (result.ok) return true;
     }

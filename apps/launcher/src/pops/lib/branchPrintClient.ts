@@ -6,7 +6,7 @@ import {
   BRANCH_PRINT_SERVER_DEFAULT_PORT,
   PRINTING_ENTERPRISE_ENABLED_KEY,
 } from "@platform/contracts";
-import { printImageToSystemPrinter, isDesktopAppRuntime, listSystemPrinters } from "./systemPrinters";
+import { printImageToSystemPrinter, isDesktopAppRuntime, listSystemPrinters, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
 import { logPrintEvent } from "./printHistory";
 
 const SETTINGS_KEY = "pops-branch-print-server-v1";
@@ -540,7 +540,9 @@ function namesRoughlyMatch(a: string, b: string): boolean {
   return left === right || left.includes(right) || right.includes(left);
 }
 
-/** Resolve a real Windows spooler name for a queued silent job (never open a dialog). */
+/** Resolve a real Windows spooler name for a queued silent job (never open a dialog).
+ * Never returns PDF / XPS / Fax / OneNote — those create file prompts, not thermal slips.
+ */
 export async function resolveSilentSystemPrinterName(input: {
   branchCode: string;
   kind?: string | null;
@@ -551,9 +553,22 @@ export async function resolveSilentSystemPrinterName(input: {
   const branchCode = input.branchCode || "MAIN";
 
   const os = await listSystemPrinters().catch(() => [] as Awaited<ReturnType<typeof listSystemPrinters>>);
-  const osNames = os.map((p) => p.name).filter(Boolean);
+  const physicalOs = os.filter((p) => !p.isVirtual && !isVirtualSystemPrinter(p.name));
+  const osNames = physicalOs.map((p) => p.name).filter(Boolean);
 
-  if (hint) {
+  const accept = (name: string | null | undefined): string | null => {
+    const n = name?.trim() || "";
+    if (!n) return null;
+    if (isVirtualSystemPrinter(n)) return null;
+    return n;
+  };
+
+  // Ignore mobile display labels that are clearly not OS printers.
+  const hintLooksLikeOs =
+    Boolean(hint) &&
+    !/billing printer|kitchen printer|cashier\s*\/|pick one|any assigned|expo/i.test(hint);
+
+  if (hintLooksLikeOs) {
     const exactOs = osNames.find((n) => n.toLowerCase() === hint.toLowerCase());
     if (exactOs) return exactOs;
     const fuzzyOs = osNames.find((n) => namesRoughlyMatch(n, hint));
@@ -565,7 +580,8 @@ export async function resolveSilentSystemPrinterName(input: {
     const byName = branchPrinters.find(
       (p) => namesRoughlyMatch(p.name, hint) || namesRoughlyMatch(p.windowsPrinterName ?? "", hint),
     );
-    if (byName?.windowsPrinterName?.trim()) return byName.windowsPrinterName.trim();
+    const linked = accept(byName?.windowsPrinterName);
+    if (linked) return linked;
   }
 
   try {
@@ -575,27 +591,37 @@ export async function resolveSilentSystemPrinterName(input: {
     const kind = String(input.kind ?? "receipt").toLowerCase();
     if (kind === "kot") {
       const kitchen = resolveDefaultPrinterByType(branchCode, "kitchen");
-      if (kitchen?.systemPrinterName?.trim()) return kitchen.systemPrinterName.trim();
+      const kitchenName = accept(kitchen?.systemPrinterName);
+      if (kitchenName) return kitchenName;
       const bar = resolveDefaultPrinterByType(branchCode, "bar");
-      if (bar?.systemPrinterName?.trim()) return bar.systemPrinterName.trim();
+      const barName = accept(bar?.systemPrinterName);
+      if (barName) return barName;
       const routing = loadPrinterRouting(branchCode);
       const anyKot = routing.printers.find(
         (p) =>
-          (p.printerType === "kitchen" || p.printerType === "bar") && p.systemPrinterName?.trim(),
+          (p.printerType === "kitchen" || p.printerType === "bar") &&
+          accept(p.systemPrinterName),
       );
-      if (anyKot?.systemPrinterName?.trim()) return anyKot.systemPrinterName.trim();
+      const anyKotName = accept(anyKot?.systemPrinterName);
+      if (anyKotName) return anyKotName;
     }
     const receipt = resolveReceiptPrinter(branchCode);
-    if (receipt?.systemPrinterName?.trim()) return receipt.systemPrinterName.trim();
-    const any = loadPrinterRouting(branchCode).printers.find((p) => p.systemPrinterName?.trim());
-    if (any?.systemPrinterName?.trim()) return any.systemPrinterName.trim();
+    const receiptName = accept(receipt?.systemPrinterName);
+    if (receiptName) return receiptName;
+    const any = loadPrinterRouting(branchCode).printers.find((p) => accept(p.systemPrinterName));
+    const anyName = accept(any?.systemPrinterName);
+    if (anyName) return anyName;
   } catch {
     // ignore routing errors
   }
 
-  const firstBranch = branchPrinters.find((p) => p.windowsPrinterName?.trim());
-  if (firstBranch?.windowsPrinterName?.trim()) return firstBranch.windowsPrinterName.trim();
+  const firstBranch = branchPrinters.find((p) => accept(p.windowsPrinterName));
+  const firstBranchName = accept(firstBranch?.windowsPrinterName);
+  if (firstBranchName) return firstBranchName;
 
+  // Prefer default physical printer; never fall back to XPS/PDF.
+  const defaultPhysical = physicalOs.find((p) => p.isDefault)?.name;
+  if (defaultPhysical) return defaultPhysical;
   return osNames[0] ?? null;
 }
 
@@ -628,14 +654,32 @@ async function pngBytesFromPayload(
 
 async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolean; error?: string; printer?: string }> {
   const payload = JSON.parse(job.payloadJson) as PrintJobPayload;
-  const printer = await resolveSilentSystemPrinterName({
+  let printer = await resolveSilentSystemPrinterName({
     branchCode: job.branchCode,
     kind: payload.kind,
     printerName: job.printerName ?? payload.systemPrinterName,
     systemPrinterName: payload.systemPrinterName,
   });
+
+  // XPS / OpenXPS → force PDF (never open .oxps Save As from mobile jobs).
+  if (printer && isXpsSystemPrinter(printer)) {
+    printer = preferPdfOverXpsPrinter(printer);
+  }
+
   if (!printer) {
-    return { ok: false, error: "No Windows printer linked for this branch" };
+    return {
+      ok: false,
+      error:
+        "No physical Windows printer linked for this branch. Link a thermal/USB printer in POS (not PDF/XPS).",
+    };
+  }
+
+  // Still refuse Fax/OneNote etc. PDF is allowed only as last-resort file target.
+  if (isVirtualSystemPrinter(printer) && !/print\s*to\s*pdf/i.test(printer)) {
+    return {
+      ok: false,
+      error: `Refusing virtual printer "${printer}". Link a real kitchen/bill printer (or PDF).`,
+    };
   }
 
   const rendered = await pngBytesFromPayload(payload);

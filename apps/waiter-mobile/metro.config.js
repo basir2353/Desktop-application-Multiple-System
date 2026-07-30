@@ -48,6 +48,9 @@ config.resolver.extraNodeModules = {
   ...(fs.existsSync(path.join(shortElements, "package.json"))
     ? { "@react-navigation/elements": shortElements }
     : {}),
+  ...(fs.existsSync(path.join(projectRoot, "vendor", "dijkstrajs", "package.json"))
+    ? { dijkstrajs: path.join(projectRoot, "vendor", "dijkstrajs") }
+    : {}),
 };
 
 const emcCandidates = [
@@ -84,6 +87,25 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
 
   const shortElements = path.join(projectRoot, "vendor", "rne");
+  if (moduleName === "dijkstrajs") {
+    const dj = path.join(projectRoot, "vendor", "dijkstrajs");
+    const hits = [
+      path.join(dj, "dijkstra.js"),
+      path.join(dj, "index.js"),
+      path.join(dj, "package.json"),
+    ];
+    if (fs.existsSync(path.join(dj, "package.json"))) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(dj, "package.json"), "utf8"));
+        const main = path.join(dj, pkg.main || "dijkstra.js");
+        if (fs.existsSync(main)) return { type: "sourceFile", filePath: main };
+      } catch {
+        /* fall through */
+      }
+    }
+    const hit = hits.find((p) => fs.existsSync(p) && !p.endsWith("package.json"));
+    if (hit) return { type: "sourceFile", filePath: hit };
+  }
   if (
     fs.existsSync(path.join(shortElements, "package.json")) &&
     (moduleName === "@react-navigation/elements" ||

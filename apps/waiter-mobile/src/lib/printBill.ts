@@ -485,6 +485,7 @@ async function printHtml(
   opts?: {
     branchCode?: string;
     kind?: "receipt" | "kot";
+    /** Soft profile/label hint for desktop routing — never treated as Windows spooler name. */
     printerName?: string | null;
     orderId?: string | null;
   },
@@ -494,27 +495,30 @@ async function printHtml(
     const settings = await loadMobilePrinterSettings();
     if (!settings.autoPrint) return false;
 
+    const anySilentMode = settings.modeLive || settings.modeIp || settings.modeServer;
+
+    // Never send mobile display labels as systemPrinterName — that caused XPS/PDF picks on Windows.
     const silent = await trySilentBranchPrint({
       branchCode: opts.branchCode,
-      printerName: opts.printerName ?? hint ?? null,
+      printerName: opts.printerName ?? null,
       orderId: opts.orderId ?? null,
       payload: {
         kind: opts.kind ?? "receipt",
         html,
-        systemPrinterName: opts.printerName ?? null,
+        systemPrinterName: null,
         copies: 1,
         orderRef: opts.orderId ?? null,
       },
     });
     if (silent) return true;
 
-    // Expo fallback only when every silent mode is off or failed
-    const anySilentMode = settings.modeLive || settings.modeIp || settings.modeServer;
+    // Silent modes are configured — do not fall back to Expo dialog (wrong format / PDF / loops).
     if (anySilentMode) {
-      // Prefer staying silent — still allow Expo as last resort so staff can print
+      return false;
     }
   }
 
+  // Expo dialog only when every silent mode is OFF (manual / debug).
   try {
     if (hint?.trim()) {
       await new Promise<void>((resolve) => {
@@ -539,18 +543,12 @@ async function printKitchenHtml(
 ): Promise<boolean> {
   const settings = await loadMobilePrinterSettings();
   const kitchens = activeKitchenPrinters(settings);
-  // One print job only — listing assigned kitchens helps the waiter pick the right device.
-  // (Looping printAsync caused duplicate kitchen tickets / double publish.)
-  const hint =
-    kitchens.length === 0
-      ? "Kitchen printer (any assigned kitchen device)"
-      : kitchens.length === 1
-        ? `Kitchen printer: ${kitchens[0]}`
-        : `Kitchen printers (pick one):\n${kitchens.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
-  return printHtml(html, hint, {
+  // Profile label only (e.g. "Kitchen 1") — desktop routes to linked OS printer by kind/name.
+  const printerName = kitchens[0] ?? null;
+  return printHtml(html, undefined, {
     branchCode: opts?.branchCode,
     kind: "kot",
-    printerName: kitchens[0] ?? null,
+    printerName,
     orderId: opts?.orderId ?? null,
   });
 }
@@ -560,8 +558,8 @@ async function printBillHtml(
   opts?: { branchCode?: string; orderId?: string | null },
 ): Promise<boolean> {
   const settings = await loadMobilePrinterSettings();
-  const bill = settings.billPrinter.trim() || "Cashier / Billing printer";
-  return printHtml(html, bill, {
+  const bill = settings.billPrinter.trim() || null;
+  return printHtml(html, undefined, {
     branchCode: opts?.branchCode,
     kind: "receipt",
     printerName: bill,
