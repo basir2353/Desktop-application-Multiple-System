@@ -209,6 +209,8 @@ export const businessSchema = z.object({
   enabledModules: z.array(z.string()).nullable().optional(),
   fbrEnabled: z.boolean().default(false),
   praEnabled: z.boolean().default(false),
+  praFakeEnabled: z.boolean().default(false),
+  praRealEnabled: z.boolean().default(false),
   createdBy: z.string().uuid().nullable(),
   createdAt: z.string(),
   adminEmail: z.string().nullable().optional(),
@@ -230,6 +232,8 @@ export const createBusinessSchema = z.object({
   enabledModules: z.array(z.string()).nullable().optional(),
   fbrEnabled: z.boolean().optional(),
   praEnabled: z.boolean().optional(),
+  praFakeEnabled: z.boolean().optional(),
+  praRealEnabled: z.boolean().optional(),
 });
 
 export const updateBusinessSchema = z.object({
@@ -241,6 +245,8 @@ export const updateBusinessSchema = z.object({
   enabledModules: z.array(z.string()).nullable().optional(),
   fbrEnabled: z.boolean().optional(),
   praEnabled: z.boolean().optional(),
+  praFakeEnabled: z.boolean().optional(),
+  praRealEnabled: z.boolean().optional(),
 });
 
 export const grantLicenceDaysSchema = z.object({

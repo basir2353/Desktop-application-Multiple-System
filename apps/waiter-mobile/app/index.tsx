@@ -15,7 +15,6 @@ import {
   Title,
   colors,
 } from "../src/components/ui";
-import { getApiBaseUrl } from "../src/lib/apiBase";
 import { decodeAccessToken } from "../src/lib/jwt";
 import { warmApiConnection } from "../src/lib/warmApi";
 import {
@@ -77,8 +76,8 @@ export default function LoginScreen() {
   const clearBranch = useBranchStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
 
-  // PIN is more reliable on slow mobile data (smaller payload, branch-scoped).
-  const [loginMode, setLoginMode] = useState<LoginMode>(isAdminApp ? "password" : "pin");
+  // Staff opens on Email first; PIN remains available as a second option.
+  const [loginMode, setLoginMode] = useState<LoginMode>("password");
   const [roleTab, setRoleTab] = useState<StaffRole>(defaultRole);
   const [branchCode, setBranchCode] = useState("ISB-GT");
   const [pin, setPin] = useState("");
@@ -348,16 +347,6 @@ export default function LoginScreen() {
             )}
 
             {error ? <Notice>{error}</Notice> : null}
-          </Card>
-
-          <Card>
-            <Subtitle>
-              API: {getApiBaseUrl()}
-              {"\n"}
-              {isAdminApp
-                ? "Admin APK — users, activity, PRA on/off (Admin/Incharge only)."
-                : `Staff APK — Waiter PIN 1111 · Rider PIN 6666 · Branch ISB-GT`}
-            </Subtitle>
           </Card>
         </ScrollView>
       </KeyboardAvoidingView>

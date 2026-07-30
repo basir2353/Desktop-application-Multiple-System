@@ -24,16 +24,24 @@ export async function fetchTaxAuthorityFeatures(): Promise<TaxAuthorityFeatures>
   const res = await authFetch("/v1/tax-authority/features");
   // Older hosted APIs omit this route — treat as not enabled (Super Admin must grant).
   if (res.status === 404) {
-    return { fbrEnabled: false, praEnabled: false };
+    return { fbrEnabled: false, praEnabled: false, praFakeEnabled: false, praRealEnabled: false };
   }
   if (!res.ok) throw new Error(await readError(res));
-  return taxAuthorityFeaturesSchema.parse(await res.json());
+  const raw = await res.json();
+  return taxAuthorityFeaturesSchema.parse({
+    fbrEnabled: Boolean(raw?.fbrEnabled),
+    praEnabled: Boolean(raw?.praEnabled),
+    praFakeEnabled: Boolean(raw?.praFakeEnabled),
+    praRealEnabled: Boolean(raw?.praRealEnabled),
+  });
 }
 
 /** Org Admin / Incharge: enable or disable FBR and/or PRA for this business. */
 export async function updateTaxAuthorityFeatures(patch: {
   fbrEnabled?: boolean;
   praEnabled?: boolean;
+  praFakeEnabled?: boolean;
+  praRealEnabled?: boolean;
 }): Promise<TaxAuthorityFeatures> {
   const res = await authFetch("/v1/tax-authority/features", {
     method: "PATCH",
@@ -44,7 +52,13 @@ export async function updateTaxAuthorityFeatures(patch: {
     throw new Error("Tax feature updates require a Super Admin grant on a current API.");
   }
   if (!res.ok) throw new Error(await readError(res));
-  return taxAuthorityFeaturesSchema.parse(await res.json());
+  const raw = await res.json();
+  return taxAuthorityFeaturesSchema.parse({
+    fbrEnabled: Boolean(raw?.fbrEnabled),
+    praEnabled: Boolean(raw?.praEnabled),
+    praFakeEnabled: Boolean(raw?.praFakeEnabled),
+    praRealEnabled: Boolean(raw?.praRealEnabled),
+  });
 }
 
 export async function fetchTaxAuthorityStatus(branchCode: string): Promise<TaxAuthorityStatus> {

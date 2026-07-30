@@ -23,7 +23,14 @@ import { estimatePromotionDiscount } from "../lib/storePromotions";
 import { StoreCheckoutModal } from "../components/StoreCheckoutModal";
 import { StoreWeightModal } from "../components/StoreWeightModal";
 import { StorePayInOutModal } from "../components/StorePayInOutModal";
-import { printStoreInvoice, printStoreCartReceipt, buildStoreCartReceiptHtml, buildStoreSaleInvoiceHtml } from "../lib/printStoreInvoice";
+import {
+  printStoreInvoice,
+  printStoreInvoiceAsync,
+  printStoreCartReceipt,
+  buildStoreCartReceiptHtml,
+  buildStoreSaleInvoiceHtml,
+} from "../lib/printStoreInvoice";
+import { resolvePraFooterForSource } from "../../pops/lib/praPaidPrint";
 import {
   findDefaultStoreCustomer,
   loadStoreCashSetup,
@@ -250,6 +257,7 @@ export function StorePosPage(): JSX.Element {
   const [printAfterSale, setPrintAfterSale] = useState(true);
   const [heldPanelOpen, setHeldPanelOpen] = useState(false);
   const [cashModalType, setCashModalType] = useState<"paid_in" | "paid_out" | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const customerInputRef = useRef<HTMLInputElement>(null);
   const heldPanelRef = useRef<HTMLDivElement>(null);
@@ -718,21 +726,20 @@ export function StorePosPage(): JSX.Element {
       }
       return createStoreSale(body);
     },
-    onSuccess: (sale) => {
+    onSuccess: async (sale) => {
       invalidate();
       setCart([]);
       setSearch("");
       setDiscountValue(0);
       setCheckoutOpen(false);
+      setCheckoutError(null);
       setResumingSaleId(null);
       setSelectedLineId(null);
       applySaleDefaults();
+      setError(null);
       if (sale) {
         setLastSale(sale);
-        setNotice(`Invoice ${sale.invoiceNumber} — ${formatPkr(sale.total)}`);
-        if (printAfterSale) {
-          printStoreInvoice(branch?.name ?? "Store", branch?.code ?? "—", sale);
-        }
+        await finalizePaidStoreSale(sale, printAfterSale, false);
       } else {
         setNotice(
           isLocalDataMode()
@@ -740,10 +747,12 @@ export function StorePosPage(): JSX.Element {
             : "Sale saved offline — will sync when connection returns",
         );
       }
-      setError(null);
       setPrintAfterSale(true);
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => {
+      setCheckoutError(e.message);
+      setError(e.message);
+    },
   });
 
   const completeHeldMutation = useMutation({
@@ -755,22 +764,92 @@ export function StorePosPage(): JSX.Element {
         loyaltyPointsRedeem: payload.loyaltyPointsRedeem,
         isCredit: payload.isCredit,
       }),
-    onSuccess: (sale) => {
+    onSuccess: async (sale) => {
       invalidate();
       setCart([]);
       setCheckoutOpen(false);
+      setCheckoutError(null);
       setResumingSaleId(null);
       setSelectedLineId(null);
       applySaleDefaults();
       setLastSale(sale);
-      setNotice(`Resumed & completed ${sale.invoiceNumber}`);
-      if (printAfterSale) {
-        printStoreInvoice(branch?.name ?? "Store", branch?.code ?? "—", sale);
-      }
+      await finalizePaidStoreSale(sale, printAfterSale, true);
       setPrintAfterSale(true);
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => {
+      setCheckoutError(e.message);
+      setError(e.message);
+    },
   });
+
+  /** Same post-pay path as restaurant: Real/Fake PRA → optional receipt with Invoice # + QR. */
+  async function finalizePaidStoreSale(
+    sale: StoreSale,
+    shouldPrint: boolean,
+    resumed: boolean,
+  ): Promise<void> {
+    const branchName = branch?.name ?? "Store";
+    const branchCode = branch?.code ?? "—";
+    const baseMsg = resumed
+      ? `Resumed & completed ${sale.invoiceNumber}`
+      : `Invoice ${sale.invoiceNumber} — ${formatPkr(sale.total)}`;
+
+    if (sale.status !== "Completed" || !branch?.code) {
+      setNotice(baseMsg);
+      return;
+    }
+
+    if (shouldPrint) {
+      const result = await printStoreInvoiceAsync(branchName, branchCode, sale);
+      const praExtra = result.praNotice ? ` ${result.praNotice}` : "";
+
+      if (result.ok && !result.praFailed) {
+        setNotice(`${baseMsg} — receipt printed.${praExtra}`);
+        setError(null);
+      } else if (!result.ok) {
+        setNotice(`${baseMsg} saved, but print failed.${praExtra}`);
+        setError(result.praNotice ?? "Receipt print failed. Check Printer Profiles.");
+      } else {
+        setNotice(`${baseMsg}.${praExtra}`);
+        if (result.praNotice) setError(result.praNotice);
+      }
+      return;
+    }
+
+    // Save Only — still issue Real/Fake PRA (no receipt), matching restaurant tax flow.
+    try {
+      const resolved = await resolvePraFooterForSource({
+        branchCode,
+        sourceType: "store_sale",
+        sourceId: sale.id,
+        orderRef: sale.invoiceNumber,
+        issueIfMissing: true,
+      });
+      if (resolved.blockedReal && resolved.notice) {
+        window.alert(resolved.notice);
+        setNotice(`${baseMsg}. ${resolved.notice}`);
+        setError(resolved.notice);
+        return;
+      }
+      if (resolved.fiscal) {
+        setNotice(
+          `${baseMsg} — PRA invoice issued (${resolved.fiscal.invoiceNumber}).`,
+        );
+        setError(null);
+        return;
+      }
+      if (resolved.notice) {
+        setNotice(`${baseMsg}. ${resolved.notice}`);
+        setError(resolved.notice);
+        return;
+      }
+      setNotice(baseMsg);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "PRA issue failed.";
+      setNotice(`${baseMsg}. PRA failed: ${msg}`);
+      setError(msg);
+    }
+  }
 
   function updateQty(productId: string, delta: number): void {
     setCart((prev) =>
@@ -1132,6 +1211,7 @@ export function StorePosPage(): JSX.Element {
       }
       onHold={() => {
         if (!ensureShiftForSale()) return;
+        setCheckoutError(null);
         setCheckoutMode("hold");
         setCheckoutOpen(true);
       }}
@@ -1149,6 +1229,7 @@ export function StorePosPage(): JSX.Element {
           return;
         }
         setPrintAfterSale(false);
+        setCheckoutError(null);
         setCheckoutMode("complete");
         setCheckoutOpen(true);
       }}
@@ -1165,6 +1246,7 @@ export function StorePosPage(): JSX.Element {
           return;
         }
         setPrintAfterSale(true);
+        setCheckoutError(null);
         setCheckoutMode("complete");
         setCheckoutOpen(true);
       }}
@@ -1373,14 +1455,25 @@ export function StorePosPage(): JSX.Element {
           promotionDiscount={promotionDiscount}
           loyaltyRedeem={0}
           customerLoyaltyPoints={selectedCustomer?.loyaltyPoints ?? 0}
+          hasCustomer={Boolean(customerId)}
           isSubmitting={saleMutation.isPending || completeHeldMutation.isPending}
+          submitError={checkoutError}
           mode={checkoutMode}
           initialPaymentMethod={paymentMethod}
           initialIsCredit={isCreditSale}
-          onClose={() => setCheckoutOpen(false)}
+          onClose={() => {
+            setCheckoutOpen(false);
+            setCheckoutError(null);
+          }}
           onConfirm={(payload) => {
+            setCheckoutError(null);
+            setError(null);
             const method = payload.paymentMethod || paymentMethod;
             const credit = payload.isCredit || isCreditSale;
+            if (credit && !customerId) {
+              setCheckoutError("Select a customer before credit sale (udhaar).");
+              return;
+            }
             if (resumingSaleId && checkoutMode === "complete") {
               completeHeldMutation.mutate({
                 saleId: resumingSaleId,

@@ -65,6 +65,8 @@ export const taxAuthorityInvoices = pgTable(
       .notNull()
       .references(() => popsBranches.id, { onDelete: "cascade" }),
     authority: text("authority").notNull(),
+    /** fake | real — distinguishes Fake PRA slips from live e-IMS submits. */
+    invoiceMode: text("invoice_mode").notNull().default("real"),
     sourceType: text("source_type").notNull(),
     sourceId: uuid("source_id").notNull(),
     sourceRef: text("source_ref").notNull(),
@@ -85,6 +87,7 @@ export const taxAuthorityInvoices = pgTable(
     uniqueIndex("tax_authority_invoices_source_uidx").on(
       t.organizationId,
       t.authority,
+      t.invoiceMode,
       t.sourceType,
       t.sourceId,
     ),

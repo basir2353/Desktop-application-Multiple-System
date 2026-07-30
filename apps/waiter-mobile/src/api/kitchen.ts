@@ -69,7 +69,7 @@ export async function createKitchenTicket(input: CreateKitchenTicket): Promise<K
     // POST may have succeeded on Railway while the phone lost the response.
     const recovered = await findActiveTicketByOrderRef(body.branchCode, body.orderRef);
     if (recovered) return recovered;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     await wakeApi();
     const res = await authFetch("/v1/kitchen/tickets", {
       method: "POST",
@@ -106,7 +106,7 @@ export async function updateKitchenTicket(
     return kitchenTicketSchema.parse(await res.json());
   } catch (err) {
     if (!isLikelyNetworkFailure(err)) throw err;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     await wakeApi();
     const res = await authFetch(`/v1/kitchen/tickets/${ticketId}`, {
       method: "PATCH",

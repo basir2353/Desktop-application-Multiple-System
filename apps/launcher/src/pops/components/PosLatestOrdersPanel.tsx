@@ -17,14 +17,18 @@ import { updateKitchenTicket } from "../api/kitchen";
 import { removeOfflineKot } from "../lib/popsOfflineOrders";
 import {
   posRecentOrderToReceiptPrint,
+  billToPrintInput,
   printReceiptAsync,
   resolveSessionPrintName,
   type PrintTicketInput,
 } from "../lib/printTicket";
+import { asPrinterName } from "../lib/asPrinterName";
+import { resolvePraFooterForPaidBill } from "../lib/praPaidPrint";
 import { resolveReceiptPrinter, resolvePrintUserId } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { loadBillPrintSettings } from "../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
+import { fetchCompletedOrders } from "../api/billing";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
@@ -168,24 +172,90 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
     },
   });
 
-  /** Latest orders: always customer/order receipt — never kitchen KOT. */
-  function openPrintPreview(order: PosRecentOrder): void {
-    if (!branch) return;
+  /** Latest orders: always customer/order receipt — never kitchen KOT.
+   * Paid / PRA orders reprint the same Invoice # + QR as on Pay (All + Paid tabs). */
+  async function buildPaidReceiptInput(order: PosRecentOrder): Promise<{
+    input: Omit<PrintTicketInput, "kind">;
+    printerName?: string;
+    systemPrinterName?: string;
+    notice?: string;
+  } | null> {
+    if (!branch) return null;
     const sessionUserId = useSessionStore.getState().claims?.sub;
     const printedBy = resolveSessionPrintName(sessionUserId);
     const printUserId = resolvePrintUserId(sessionUserId, order.bill?.waiterId);
     const profile = resolveReceiptPrinter(branch.code, printUserId);
     const assigned = printUserId ? getWaiterPrinter(branch.code, printUserId) : null;
-    const base = posRecentOrderToReceiptPrint(branch.name, branch.code, order);
-    setPrintPreview({
+
+    // Always prefer the paid bill for this ORD-# so All-tab reprints match Pay (PRA).
+    let bill = order.bill ?? null;
+    try {
+      const bills = await fetchCompletedOrders(branch.code);
+      const orderRef = (order.ref || order.bill?.orderRef || order.bill?.billRef || "")
+        .trim()
+        .toLowerCase();
+      const fresh =
+        (bill ? bills.find((b) => b.id === bill!.id) : undefined) ??
+        (orderRef
+          ? bills.find(
+              (b) =>
+                (b.orderRef ?? "").trim().toLowerCase() === orderRef ||
+                (b.billRef ?? "").trim().toLowerCase() === orderRef,
+            )
+          : undefined);
+      if (fresh) bill = fresh;
+    } catch {
+      /* use cached bill */
+    }
+
+    const base = bill
+      ? billToPrintInput(branch.name, branch.code, bill)
+      : posRecentOrderToReceiptPrint(branch.name, branch.code, order);
+
+    let praFiscal = base.praFiscal ?? null;
+    let notice: string | undefined;
+
+    if (bill) {
+      const resolved = await resolvePraFooterForPaidBill({
+        branchCode: branch.code,
+        bill,
+        issueIfMissing: true,
+      });
+      praFiscal = resolved.footer;
+      notice = resolved.notice;
+      if (resolved.blockedReal && resolved.notice) {
+        window.alert(resolved.notice);
+      } else if (!praFiscal && resolved.notice) {
+        window.alert(resolved.notice);
+      }
+    }
+
+    return {
       input: {
         ...base,
-        // Show the person who printed (name), never a user id.
         waiterName: printedBy || base.waiterName,
+        praFiscal,
+        billPrintSettings:
+          resolveBillPrintSettingsForReceipt(branch.code) ?? loadBillPrintSettings(branch.code),
       },
       printerName: profile?.name ?? assigned?.printerName,
-      systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
-    });
+      systemPrinterName: asPrinterName(
+        profile?.systemPrinterName ?? assigned?.systemPrinterName,
+      ),
+      notice,
+    };
+  }
+
+  function openPrintPreview(order: PosRecentOrder): void {
+    void (async () => {
+      const built = await buildPaidReceiptInput(order);
+      if (!built) return;
+      setPrintPreview({
+        input: built.input,
+        printerName: built.printerName,
+        systemPrinterName: built.systemPrinterName,
+      });
+    })();
   }
 
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
@@ -195,22 +265,15 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   /** Close: same receipt print as Print, but skip preview popup. */
   function printOrderDirect(order: PosRecentOrder): void {
-    if (!branch) return;
-    const sessionUserId = useSessionStore.getState().claims?.sub;
-    const printedBy = resolveSessionPrintName(sessionUserId);
-    const printUserId = resolvePrintUserId(sessionUserId, order.bill?.waiterId);
-    const profile = resolveReceiptPrinter(branch.code, printUserId);
-    const assigned = printUserId ? getWaiterPrinter(branch.code, printUserId) : null;
-    const base = posRecentOrderToReceiptPrint(branch.name, branch.code, order);
-    const systemPrinterName = profile?.systemPrinterName ?? assigned?.systemPrinterName;
-    void printReceiptAsync({
-      ...base,
-      waiterName: printedBy || base.waiterName,
-      printerName: profile?.name ?? assigned?.printerName ?? systemPrinterName,
-      systemPrinterName,
-      billPrintSettings:
-        resolveBillPrintSettingsForReceipt(branch.code) ?? loadBillPrintSettings(branch.code),
-    });
+    void (async () => {
+      const built = await buildPaidReceiptInput(order);
+      if (!built) return;
+      void printReceiptAsync({
+        ...built.input,
+        printerName: built.printerName ?? built.systemPrinterName,
+        systemPrinterName: built.systemPrinterName,
+      });
+    })();
   }
 
   function toggleSelected(order: PosRecentOrder): void {
@@ -512,6 +575,7 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
           branchCode={branch.code}
           printerName={printPreview.printerName}
           systemPrinterName={printPreview.systemPrinterName}
+          billPrintSettings={printPreview.input.billPrintSettings}
           onClose={handlePrintPreviewClose}
         />
       ) : null}

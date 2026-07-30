@@ -10,7 +10,7 @@ import {
   updatePlatformBusiness,
 } from "../lib/platformApi";
 import { headingClass, mutedClass } from "../pops/lib/themeClasses";
-import { exportBusinessesCsv } from "./superAdminHelpers";
+import { exportBusinessesCsv, resolvePraFlags } from "./superAdminHelpers";
 
 export function SuperAdminOverviewPage(): JSX.Element {
   const navigate = useNavigate();
@@ -34,11 +34,13 @@ export function SuperAdminOverviewPage(): JSX.Element {
 
   const taxCounts = useMemo(() => {
     const list = businesses.data ?? [];
+    const flags = list.map((b) => ({ fbr: Boolean(b.fbrEnabled), ...resolvePraFlags(b) }));
     return {
-      fbr: list.filter((b) => b.fbrEnabled).length,
-      pra: list.filter((b) => b.praEnabled).length,
-      both: list.filter((b) => b.fbrEnabled && b.praEnabled).length,
-      neither: list.filter((b) => !b.fbrEnabled && !b.praEnabled).length,
+      fbr: flags.filter((b) => b.fbr).length,
+      praFake: flags.filter((b) => b.praFakeEnabled).length,
+      praReal: flags.filter((b) => b.praRealEnabled).length,
+      praBoth: flags.filter((b) => b.praFakeEnabled && b.praRealEnabled).length,
+      neither: flags.filter((b) => !b.fbr && !b.praEnabled).length,
     };
   }, [businesses.data]);
 
@@ -126,11 +128,12 @@ export function SuperAdminOverviewPage(): JSX.Element {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
         <h2 className={`text-base font-semibold ${headingClass}`}>Tax summary</h2>
-        <p className={`mt-1 text-sm ${mutedClass}`}>FBR / PRA flags across all businesses.</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <p className={`mt-1 text-sm ${mutedClass}`}>FBR / Fake PRA / Real PRA across all businesses.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Stat label="FBR on" value={taxCounts.fbr} />
-          <Stat label="PRA on" value={taxCounts.pra} />
-          <Stat label="Both on" value={taxCounts.both} />
+          <Stat label="Fake PRA on" value={taxCounts.praFake} />
+          <Stat label="Real PRA on" value={taxCounts.praReal} />
+          <Stat label="Both PRA" value={taxCounts.praBoth} />
           <Stat label="Neither" value={taxCounts.neither} />
         </div>
         <Link

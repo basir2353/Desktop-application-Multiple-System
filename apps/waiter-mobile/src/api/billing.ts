@@ -69,7 +69,7 @@ export async function createBill(input: CreateBill): Promise<Bill> {
     if (!isLikelyNetworkFailure(err)) throw err;
     const recovered = await findHeldBillByOrderRef(body.branchCode, body.orderRef);
     if (recovered) return recovered;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     await wakeApi();
     const res = await authFetch("/v1/billing/bills", {
       method: "POST",
@@ -102,7 +102,7 @@ export async function updateBill(billId: string, input: UpdateBill): Promise<Bil
     return billSchema.parse(await res.json());
   } catch (err) {
     if (!isLikelyNetworkFailure(err)) throw err;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     await wakeApi();
     const res = await authFetch(`/v1/billing/bills/${billId}`, {
       method: "PATCH",

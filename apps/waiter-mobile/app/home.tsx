@@ -61,20 +61,21 @@ export default function HomeScreen() {
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 8_000,
+    refetchInterval: 4_000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: 12_000,
+    refetchInterval: 6_000,
   });
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
+    refetchInterval: 4_000,
   });
 
   const menuQuery = useQuery({

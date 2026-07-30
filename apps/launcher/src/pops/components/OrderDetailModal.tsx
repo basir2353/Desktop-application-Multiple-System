@@ -21,6 +21,8 @@ type Props = {
   canChangeTable?: boolean;
   onClose: () => void;
   onReprint?: (bill: Bill) => void;
+  onViewPra?: (bill: Bill) => void;
+  onRealPra?: (bill: Bill) => void;
   onCompletePayment?: () => void;
   onChangeTable?: (order: UnifiedOrder) => void;
   onDeleteBill?: () => void;
@@ -32,6 +34,8 @@ export function OrderDetailModal({
   canChangeTable = false,
   onClose,
   onReprint,
+  onViewPra,
+  onRealPra,
   onCompletePayment,
   onChangeTable,
   onDeleteBill,
@@ -117,6 +121,13 @@ export function OrderDetailModal({
               <>
                 <Meta label="Bill ref" value={order.bill.billRef} />
                 {order.bill.orderRef ? <Meta label="Order ref" value={order.bill.orderRef} /> : null}
+                {order.bill.praInvoiceNumber ? (
+                  <Meta
+                    label="PRA invoice #"
+                    value={`${order.bill.praInvoiceNumber}${order.bill.praMode ? ` (${order.bill.praMode})` : ""}`}
+                    className="col-span-2"
+                  />
+                ) : null}
                 {order.bill.notes ? (
                   <Meta label="Notes" value={order.bill.notes} className="col-span-2" />
                 ) : null}
@@ -194,6 +205,22 @@ export function OrderDetailModal({
           <div className="border-t border-slate-800 px-4 py-3">
             <Button type="button" className="h-8 w-full text-xs" onClick={() => onReprint(order.bill)}>
               Reprint invoice
+            </Button>
+          </div>
+        ) : null}
+
+        {order.source === "bill" && onViewPra ? (
+          <div className="border-t border-slate-800 px-4 py-3">
+            <Button type="button" variant="ghost" className="h-8 w-full text-xs" onClick={() => onViewPra(order.bill)}>
+              View PRA
+            </Button>
+          </div>
+        ) : null}
+
+        {order.source === "bill" && onRealPra ? (
+          <div className="border-t border-slate-800 px-4 py-3">
+            <Button type="button" className="h-8 w-full text-xs" onClick={() => onRealPra(order.bill)}>
+              RPRA
             </Button>
           </div>
         ) : null}

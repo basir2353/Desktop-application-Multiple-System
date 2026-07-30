@@ -76,6 +76,27 @@ export function businessNotesKey(businessId: string): string {
   return `business_notes_${businessId}`;
 }
 
+/** Resolve Fake/Real PRA flags; legacy praEnabled alone → Real PRA. Mutual exclusive (prefer Real). */
+export function resolvePraFlags(b: {
+  praEnabled?: boolean | null;
+  praFakeEnabled?: boolean | null;
+  praRealEnabled?: boolean | null;
+}): { praFakeEnabled: boolean; praRealEnabled: boolean; praEnabled: boolean } {
+  let praFakeEnabled = Boolean(b.praFakeEnabled);
+  let praRealEnabled = Boolean(b.praRealEnabled);
+  if (Boolean(b.praEnabled) && !praFakeEnabled && !praRealEnabled) {
+    praRealEnabled = true;
+  }
+  if (praFakeEnabled && praRealEnabled) {
+    praFakeEnabled = false;
+  }
+  return {
+    praFakeEnabled,
+    praRealEnabled,
+    praEnabled: praFakeEnabled || praRealEnabled,
+  };
+}
+
 export function exportBusinessesCsv(businesses: Business[]): void {
   const header = [
     "name",
@@ -85,22 +106,29 @@ export function exportBusinessesCsv(businesses: Business[]): void {
     "licenceExpiresAt",
     "fbrEnabled",
     "praEnabled",
+    "praFakeEnabled",
+    "praRealEnabled",
     "modules",
     "adminEmail",
     "id",
   ];
-  const rows = businesses.map((b) => [
-    csvEscape(b.name),
-    b.systemType,
-    b.status,
-    b.licencePlan ?? "",
-    b.licenceExpiresAt ?? "",
-    String(Boolean(b.fbrEnabled)),
-    String(Boolean(b.praEnabled)),
-    b.enabledModules == null ? "ALL" : String(b.enabledModules.length),
-    b.adminEmail ?? "",
-    b.id,
-  ]);
+  const rows = businesses.map((b) => {
+    const pra = resolvePraFlags(b);
+    return [
+      csvEscape(b.name),
+      b.systemType,
+      b.status,
+      b.licencePlan ?? "",
+      b.licenceExpiresAt ?? "",
+      String(Boolean(b.fbrEnabled)),
+      String(pra.praEnabled),
+      String(pra.praFakeEnabled),
+      String(pra.praRealEnabled),
+      b.enabledModules == null ? "ALL" : String(b.enabledModules.length),
+      b.adminEmail ?? "",
+      b.id,
+    ];
+  });
   const body = [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
   const blob = new Blob([body], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -121,7 +149,7 @@ export const SUPER_ADMIN_PAGE_TITLES: Record<string, string> = {
   "/super-admin/businesses": "Businesses",
   "/super-admin/users": "Users",
   "/super-admin/licences": "Licences & modules",
-  "/super-admin/tax": "Tax map (FBR / PRA)",
+  "/super-admin/tax": "FBR / Fake PRA / Real PRA",
   "/super-admin/payments": "Payments",
   "/super-admin/health": "Health & API",
   "/super-admin/security": "Security",

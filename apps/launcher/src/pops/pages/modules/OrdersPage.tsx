@@ -1,8 +1,9 @@
 import { Button } from "@platform/ui";
-import type { Bill } from "@platform/contracts";
+import type { Bill, PraFiscalInvoice, PraInvoiceMode } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { fetchPraFiscalForSource } from "../../../lib/praApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { sessionCanManageFloor, sessionCanManageUsers } from "../../lib/roleAccess";
@@ -30,8 +31,25 @@ import { CompleteHeldBillModal } from "../../components/CompleteHeldBillModal";
 import { OrderDateFiltersBar } from "../../components/OrderDateFiltersBar";
 import { ChangeOrderTableModal } from "../../components/ChangeOrderTableModal";
 import { OrderDetailModal } from "../../components/OrderDetailModal";
+import { PraFiscalInvoiceModal } from "../../components/PraFiscalInvoiceModal";
+import { PraModeConfirmDialog } from "../../components/PraModeConfirmDialog";
 import { ReceiptPrintPreviewModal } from "../../components/ReceiptPrintPreviewModal";
+import {
+  isPraFakeEnabled,
+  isPraRealEnabled,
+  useTaxAuthorityFeatures,
+} from "../../hooks/useTaxAuthorityFeatures";
+import {
+  canEmbedPraOnSlip,
+  checkRealPraConnected,
+  issuePraForBill,
+  praIssuedNotice,
+  printIssuedPraSlip,
+  REAL_PRA_NOT_CONNECTED_MSG,
+  resolveAutoPraMode,
+} from "../../lib/praIssueFlow";
 import { billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
+import { resolvePraFooterForPaidBill } from "../../lib/praPaidPrint";
 import { resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRouting";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
@@ -104,6 +122,7 @@ export function OrdersPage(): JSX.Element {
     [branch?.code],
   );
   const [search, setSearch] = useState("");
+  const [praFilter, setPraFilter] = useState<"all" | "fake" | "real" | "none">("all");
   const [filterYear, setFilterYear] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterTimeFrom, setFilterTimeFrom] = useState("");
@@ -121,6 +140,17 @@ export function OrdersPage(): JSX.Element {
   const [bulkDeleteFrom, setBulkDeleteFrom] = useState("");
   const [bulkDeleteTo, setBulkDeleteTo] = useState("");
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [praFiscal, setPraFiscal] = useState<PraFiscalInvoice | null>(null);
+  const [praModalOpen, setPraModalOpen] = useState(false);
+  const [praPrinting, setPraPrinting] = useState(false);
+  const [praBusy, setPraBusy] = useState(false);
+  const [praModePromptBill, setPraModePromptBill] = useState<Bill | null>(null);
+  const taxFeatures = useTaxAuthorityFeatures();
+  const praFakeEnabled = isPraFakeEnabled(taxFeatures.data);
+  const praRealEnabled = isPraRealEnabled(taxFeatures.data);
+  const praFeatureActive = praFakeEnabled || praRealEnabled;
+  const REAL_PRA_NOT_CONNECTED_MSG =
+    "Real PRA is not connected. Please connect your PRA account before uploading invoices.";
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code],
@@ -198,6 +228,15 @@ export function OrdersPage(): JSX.Element {
 
   const filtered = useMemo(() => {
     let list = filterUnifiedOrdersByDateTime(allOrders, dateFilters, businessDay);
+    if (praFilter !== "all") {
+      list = list.filter((o) => {
+        if (o.source !== "bill") return praFilter === "none";
+        const mode = o.bill.praMode;
+        if (praFilter === "fake") return mode === "fake";
+        if (praFilter === "real") return mode === "real";
+        return !mode;
+      });
+    }
     const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter((o) => {
@@ -206,11 +245,19 @@ export function OrdersPage(): JSX.Element {
       const waiter = unifiedOrderWaiter(o).toLowerCase();
       const extra =
         o.source === "bill"
-          ? o.bill.billRef.toLowerCase()
+          ? (
+              o.bill.billRef +
+              " " +
+              (o.bill.praInvoiceNumber ?? "") +
+              " " +
+              (o.bill.praInvoiceId ?? "") +
+              " " +
+              (o.bill.praMode ?? "")
+            ).toLowerCase()
           : o.ticket.ticketRef.toLowerCase() + o.ticket.itemsSummary.toLowerCase();
       return ref.includes(q) || table.includes(q) || waiter.includes(q) || extra.includes(q);
     });
-  }, [allOrders, search, dateFilters, businessDay]);
+  }, [allOrders, search, praFilter, dateFilters, businessDay]);
 
   const salesSummary = useMemo(
     () => summarizeOrderSales(filtered, posSettings),
@@ -218,21 +265,127 @@ export function OrdersPage(): JSX.Element {
   );
 
   function reprint(bill: Bill): void {
-    const branchCode = branch?.code ?? "—";
-    const branchName = branch?.name ?? "POPS";
-    const printUserId = resolvePrintUserId(claims?.sub, bill.waiterId);
-    const profile = resolveReceiptPrinter(branch?.code, printUserId);
-    const assigned = getWaiterPrinter(branch?.code, printUserId);
-    setPrintPreview({
-      input: {
-        ...billToPrintInput(branchName, branchCode, bill),
-        paperSize: profile?.paperSize,
-        copies: profile?.copies,
-      },
-      printerName: profile?.name ?? assigned?.printerName,
-      systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
-      billRef: bill.billRef,
+    void (async () => {
+      const branchCode = branch?.code ?? "—";
+      const branchName = branch?.name ?? "POPS";
+      const printUserId = resolvePrintUserId(claims?.sub, bill.waiterId);
+      const profile = resolveReceiptPrinter(branch?.code, printUserId);
+      const assigned = getWaiterPrinter(branch?.code, printUserId);
+      const resolved = branch?.code
+        ? await resolvePraFooterForPaidBill({
+            branchCode: branch.code,
+            bill,
+            issueIfMissing: true,
+          })
+        : { footer: null, fiscal: null, notice: undefined, blockedReal: false };
+      if (resolved.blockedReal && resolved.notice) {
+        window.alert(resolved.notice);
+      } else if (resolved.notice && !resolved.footer) {
+        setNotice(resolved.notice);
+      }
+      setPrintPreview({
+        input: {
+          ...billToPrintInput(branchName, branchCode, bill),
+          paperSize: profile?.paperSize,
+          copies: profile?.copies,
+          praFiscal: resolved.footer,
+        },
+        printerName: profile?.name ?? assigned?.printerName,
+        systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
+        billRef: bill.billRef,
+      });
+    })();
+  }
+
+  async function issuePraForOrder(bill: Bill, mode: PraInvoiceMode): Promise<void> {
+    if (!branch?.code) {
+      setNotice("Select a branch before issuing PRA.");
+      return;
+    }
+    setPraBusy(true);
+    try {
+      const issued = await issuePraForBill({
+        branchCode: branch.code,
+        billId: bill.id,
+        mode,
+      });
+      if (!canEmbedPraOnSlip(issued.fiscal)) {
+        setNotice("PRA did not return invoice number/QR.");
+        return;
+      }
+      setPraFiscal(issued.fiscal);
+      setNotice(praIssuedNotice(mode, issued.fiscal.invoiceNumber));
+      await ordersQuery.refetch();
+      reprint({
+        ...bill,
+        praMode: mode,
+        praInvoiceNumber: issued.fiscal.invoiceNumber,
+        praQrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
+        praInvoiceId: issued.fiscal.invoiceId,
+      });
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "PRA issue failed.");
+    } finally {
+      setPraBusy(false);
+      setPraModePromptBill(null);
+    }
+  }
+
+  async function requestRpra(bill: Bill): Promise<void> {
+    const mode = resolveAutoPraMode({
+      praFakeEnabled,
+      praRealEnabled,
     });
+    if (mode === "fake") {
+      await issuePraForOrder(bill, "fake");
+      return;
+    }
+    if (mode === "real") {
+      if (!branch?.code) {
+        setNotice("Select a branch before uploading to PRA.");
+        return;
+      }
+      try {
+        const gate = await checkRealPraConnected(branch.code);
+        if (!gate.connected) {
+          window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+          setNotice(REAL_PRA_NOT_CONNECTED_MSG);
+          return;
+        }
+      } catch {
+        window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+        setNotice(REAL_PRA_NOT_CONNECTED_MSG);
+        return;
+      }
+      await issuePraForOrder(bill, "real");
+      return;
+    }
+    setNotice("PRA is not enabled. Ask Super Admin to enable Fake PRA or Real PRA.");
+  }
+
+  async function viewPraForBill(bill: Bill): Promise<void> {
+    if (!branch?.code) {
+      setNotice("Select a branch before viewing PRA.");
+      return;
+    }
+    setPraBusy(true);
+    try {
+      const fiscal = await fetchPraFiscalForSource({
+        branchCode: branch.code,
+        sourceType: "bill",
+        sourceId: bill.id,
+      });
+      if (!fiscal) {
+        setNotice(`No PRA fiscal found for ${bill.billRef}.`);
+        return;
+      }
+      setPraFiscal(fiscal);
+      
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not load PRA fiscal.");
+    } finally {
+      setPraBusy(false);
+    }
   }
 
   function openOrder(order: UnifiedOrder): void {
@@ -438,16 +591,23 @@ export function OrdersPage(): JSX.Element {
               key: "ref",
               header: "Order",
               render: (r) => (
-                <button
-                  type="button"
-                  className={tableOrderRefClass}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openOrder(r);
-                  }}
-                >
-                  {unifiedOrderRef(r)}
-                </button>
+                <div className="min-w-0">
+                  <button
+                    type="button"
+                    className={tableOrderRefClass}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openOrder(r);
+                    }}
+                  >
+                    {unifiedOrderRef(r)}
+                  </button>
+                  {r.source === "bill" && r.bill.praInvoiceNumber ? (
+                    <div className="mt-0.5 truncate text-[10px] text-slate-500">
+                      PRA Invoice # {r.bill.praInvoiceNumber}
+                    </div>
+                  ) : null}
+                </div>
               ),
             },
             {
@@ -553,6 +713,28 @@ export function OrdersPage(): JSX.Element {
                       Reprint
                     </button>
                   ) : null}
+                  {r.source === "bill" &&
+                  r.bill.status === "completed" &&
+                  r.bill.praInvoiceNumber ? (
+                    <button
+                      type="button"
+                      className={`text-xs ${linkActionClass}`}
+                      disabled={praBusy}
+                      onClick={() => void viewPraForBill(r.bill)}
+                    >
+                      View PRA
+                    </button>
+                  ) : null}
+                  {r.source === "bill" && r.bill.status === "completed" && praFeatureActive ? (
+                    <button
+                      type="button"
+                      className={`text-xs ${linkSuccessClass}`}
+                      disabled={praBusy}
+                      onClick={() => void requestRpra(r.bill)}
+                    >
+                      RPRA
+                    </button>
+                  ) : null}
                   {canManageTables && canChangeOrderTable(r) ? (
                     <button
                       type="button"
@@ -601,6 +783,18 @@ export function OrdersPage(): JSX.Element {
           canChangeTable={canManageTables}
           onClose={() => setSelectedOrder(null)}
           onReprint={(bill) => reprint(bill)}
+          onViewPra={
+            selectedOrder.source === "bill" && selectedOrder.bill.praInvoiceNumber
+              ? (bill) => void viewPraForBill(bill)
+              : undefined
+          }
+          onRealPra={
+            selectedOrder.source === "bill" &&
+            selectedOrder.bill.status === "completed" &&
+            praFeatureActive
+              ? (bill) => void requestRpra(bill)
+              : undefined
+          }
           onCompletePayment={
             selectedOrder.source === "bill" && selectedOrder.bill.status === "held"
               ? () => {
@@ -667,6 +861,45 @@ export function OrdersPage(): JSX.Element {
           }}
         />
       ) : null}
+
+      <PraModeConfirmDialog
+        open={Boolean(praModePromptBill)}
+        busy={praBusy}
+        onFake={() => {
+          if (!praModePromptBill) return;
+          void issuePraForOrder(praModePromptBill, "fake");
+        }}
+        onReal={() => {
+          if (!praModePromptBill) return;
+          void issuePraForOrder(praModePromptBill, "real");
+        }}
+        onCancel={() => setPraModePromptBill(null)}
+      />
+
+      <PraFiscalInvoiceModal
+        fiscal={praFiscal}
+        open={praModalOpen}
+        printing={praPrinting}
+        branchName={branch?.name}
+        branchCode={branch?.code}
+        onClose={() => {
+          setPraModalOpen(false);
+          setPraFiscal(null);
+        }}
+        onPrint={() => {
+          if (!praFiscal) return;
+          setPraPrinting(true);
+          void printIssuedPraSlip(praFiscal, {
+            branchName: branch?.name,
+            branchCode: branch?.code,
+            systemPrinterName: null,
+          })
+            .then((res) => {
+              if (!res.ok) setNotice(res.error ?? "Invoice print failed.");
+            })
+            .finally(() => setPraPrinting(false));
+        }}
+      />
     </div>
   );
 }

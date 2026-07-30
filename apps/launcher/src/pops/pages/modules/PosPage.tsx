@@ -6,14 +6,36 @@ import {
   type KitchenTicket,
   type MenuItem as ApiMenuItem,
   type MenuItemVariant,
+  type PraFiscalInvoice,
+  type PraInvoiceMode,
 } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { fetchTaxAuthorityStatus } from "../../../lib/taxAuthorityApi";
+import { fetchTaxFeaturesNormalized } from "../../../lib/praApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { useThemeStore } from "../../../stores/themeStore";
 import { fetchCompletedOrders, createBill, completeBill, updateBill } from "../../api/billing";
+import { PraFiscalInvoiceModal } from "../../components/PraFiscalInvoiceModal";
+import { PraModeConfirmDialog } from "../../components/PraModeConfirmDialog";
+import {
+  isPraFakeEnabled,
+  isPraRealEnabled,
+  useTaxAuthorityFeatures,
+} from "../../hooks/useTaxAuthorityFeatures";
+import {
+  canEmbedPraOnSlip,
+  checkRealPraConnected,
+  isRealPraConnectedStatus,
+  issuePraForBill,
+  praIssuedNotice,
+  printIssuedPraSlip,
+  REAL_PRA_NOT_CONNECTED_MSG,
+  resolveAutoPraMode,
+} from "../../lib/praIssueFlow";
+import { preparePraReceiptFooter } from "../../lib/praReceiptFooter";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
 import { fetchClosingStatus } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
@@ -63,8 +85,13 @@ import {
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../lib/printTicket";
+import { asPrinterName } from "../../lib/asPrinterName";
 import { loadThermalPrintSettings } from "../../lib/thermalPrintSettings";
 import { fetchOrgUsers } from "../../api/users";
+import {
+  BRANCH_PRINT_JOB_DONE_EVENT,
+  type BranchPrintJobDoneDetail,
+} from "../../lib/branchPrintClient";
 import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
@@ -255,6 +282,40 @@ export function PosPage(): JSX.Element {
   );
   const [orderRef, setOrderRef] = useState(() => peekNextOrderRef(undefined));
   const [printNotice, setPrintNotice] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const [praFiscal, setPraFiscal] = useState<PraFiscalInvoice | null>(null);
+  const [praModalOpen, setPraModalOpen] = useState(false);
+  const [praPrinting, setPraPrinting] = useState(false);
+  const [praModeBusy, setPraModeBusy] = useState(false);
+  const [praModePromptOpen, setPraModePromptOpen] = useState(false);
+  const pendingPraPayRef = useRef<{
+    run: (mode: PraInvoiceMode) => Promise<void>;
+    skipPra: () => Promise<void>;
+  } | null>(null);
+  const taxFeatures = useTaxAuthorityFeatures();
+  const praFeatureActive =
+    isPraFakeEnabled(taxFeatures.data) || isPraRealEnabled(taxFeatures.data);
+  const taxStatusQuery = useQuery({
+    queryKey: ["tax-authority", "status", branch?.code],
+    enabled: Boolean(branch?.code && praFeatureActive),
+    queryFn: () => fetchTaxAuthorityStatus(branch!.code),
+    staleTime: 30_000,
+  });
+  useEffect(() => {
+    const onDone = (ev: Event) => {
+      const detail = (ev as CustomEvent<BranchPrintJobDoneDetail>).detail;
+      if (!detail) return;
+      const order = detail.orderId ? ` ${detail.orderId}` : "";
+      setPrintNotice({
+        message: detail.ok
+          ? `Print ho gaya${order}`
+          : `Print failed${order}${detail.error ? ` — ${detail.error}` : ""}`,
+        tone: detail.ok ? "success" : "error",
+      });
+    };
+    window.addEventListener(BRANCH_PRINT_JOB_DONE_EVENT, onDone);
+    return () => window.removeEventListener(BRANCH_PRINT_JOB_DONE_EVENT, onDone);
+  }, []);
+
   const [checkoutModal, setCheckoutModal] = useState<CheckoutModalMode | null>(null);
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [ticketServicePct, setTicketServicePct] = useState(10);
@@ -1629,53 +1690,174 @@ export function PosPage(): JSX.Element {
         thermal.defaultPaperSize === "custom"
           ? "custom"
           : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
-      const result = await printReceiptDetailed({
-        ...payload,
-        paperSize,
-        thermal,
-        billPrintSettings: resolveBillPrintSettingsForReceipt(
-          branch?.code,
-          receiptProfile?.id,
-          posAction,
-        ),
-        copies: payload.systemPrinterName?.trim() ? Math.max(1, payload.copies ?? 1) : 1,
-      });
-      const target = payload.systemPrinterName ?? payload.printerName ?? "Receipt";
-      logPrintEvent(branch?.code, {
-        kind: "receipt",
-        printerName: target,
-        orderRef: payload.orderRef,
-        ok: result.ok,
-      });
-      resetAfterBill();
-
+      const systemPrinterName = payload.systemPrinterName ?? null;
+      const target = systemPrinterName ?? payload.printerName ?? "Receipt";
       const kotHint = kotSent
         ? kotPrintErrors.length > 0
           ? ` KOT saved but print failed (${kotPrintErrors.join("; ")}).`
           : " Kitchen ticket sent."
         : "";
 
-      if (result.ok) {
-        setPrintNotice(
-          noticeFromPrintResult(
-            true,
-            intent === "invoice"
-              ? `Invoice printed to ${target} — ${bill.billRef}.${kotHint}`
-              : `${modeLabel} paid — printed to ${target} (${bill.billRef}).${kotHint}`,
+      const finishReceipts = async (fiscalForReceipt: PraFiscalInvoice | null = null) => {
+        const embed = canEmbedPraOnSlip(fiscalForReceipt) ? fiscalForReceipt : null;
+        const praFiscal = embed
+          ? await preparePraReceiptFooter({
+              mode: embed.mode,
+              invoiceNumber: embed.invoiceNumber,
+              orderRef: embed.sourceRef ?? bill.orderRef ?? payload.orderRef ?? bill.billRef,
+              qrPayload: embed.qrPayload?.trim() || embed.invoiceNumber,
+            })
+          : null;
+        const result = await printReceiptDetailed({
+          ...payload,
+          paperSize,
+          thermal,
+          billPrintSettings: resolveBillPrintSettingsForReceipt(
+            branch?.code,
+            receiptProfile?.id,
+            posAction,
           ),
-        );
-      } else {
-        setPrintNotice({
-          tone: "error",
-          message: `Bill ${bill.billRef} saved, but print to ${target} failed${
-            result.error ? `: ${result.error}` : ""
-          }.${kotHint} Link an OS printer on Printer Profiles.`,
+          copies: asPrinterName(systemPrinterName) ? Math.max(1, payload.copies ?? 1) : 1,
+          praFiscal,
         });
+        logPrintEvent(branch?.code, {
+          kind: "receipt",
+          printerName: target,
+          orderRef: payload.orderRef,
+          ok: result.ok,
+        });
+        return {
+          printOk: result.ok,
+          printError: result.error,
+          target,
+          kotHint,
+          intent: intent as "pay" | "invoice",
+        };
+      };
+
+      const features =
+        taxFeatures.data ??
+        (await fetchTaxFeaturesNormalized().catch(() => ({
+          fbrEnabled: false,
+          praEnabled: false,
+          praFakeEnabled: false,
+          praRealEnabled: false,
+        })));
+      const praMode = resolveAutoPraMode(features);
+
+      const applyPayNotices = (
+        receipt: Awaited<ReturnType<typeof finishReceipts>>,
+        praExtra: string,
+        praFailed: boolean,
+      ) => {
+        if (receipt.printOk && !praFailed) {
+          setPrintNotice(
+            noticeFromPrintResult(
+              true,
+              intent === "invoice"
+                ? `Invoice printed to ${receipt.target} — ${bill.billRef}.${receipt.kotHint}${praExtra}`
+                : `${modeLabel} paid — printed to ${receipt.target} (${bill.billRef}).${receipt.kotHint}${praExtra}`,
+            ),
+          );
+        } else if (!receipt.printOk) {
+          setPrintNotice({
+            tone: "error",
+            message: `Bill ${bill.billRef} saved, but print to ${receipt.target} failed${
+              receipt.printError ? `: ${receipt.printError}` : ""
+            }.${receipt.kotHint}${praExtra} Link an OS printer on Printer Profiles.`,
+          });
+        } else {
+          setPrintNotice({
+            tone: "error",
+            message: `Bill ${bill.billRef} saved.${receipt.kotHint}${praExtra}`,
+          });
+        }
+        const phone = phoneFromBillNotes(bill.notes);
+        if (phone || mode === "delivery") {
+          shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
+        }
+      };
+
+      const runPraThenReceipt = async (modeChoice: PraInvoiceMode) => {
+        let praExtra = "";
+        let praFailed = false;
+        let fiscal: PraFiscalInvoice | null = null;
+
+        // Real PRA: Invoice # + QR only when account is properly connected / integrated.
+        if (modeChoice === "real") {
+          if (!branch?.code) {
+            praFailed = true;
+            praExtra = ` ${REAL_PRA_NOT_CONNECTED_MSG}`;
+            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+            const receipt = await finishReceipts(null);
+            applyPayNotices(receipt, praExtra, praFailed);
+            return;
+          }
+          try {
+            const cachedOk =
+              taxStatusQuery.data &&
+              isRealPraConnectedStatus(taxStatusQuery.data.pra.status);
+            const gate = cachedOk
+              ? { connected: true as const }
+              : await checkRealPraConnected(branch.code);
+            if (!gate.connected) {
+              praFailed = true;
+              praExtra = ` ${REAL_PRA_NOT_CONNECTED_MSG}`;
+              window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+              const receipt = await finishReceipts(null);
+              applyPayNotices(receipt, praExtra, praFailed);
+              return;
+            }
+          } catch {
+            praFailed = true;
+            praExtra = ` ${REAL_PRA_NOT_CONNECTED_MSG}`;
+            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+            const receipt = await finishReceipts(null);
+            applyPayNotices(receipt, praExtra, praFailed);
+            return;
+          }
+        }
+
+        try {
+          if (!branch?.code) throw new Error("Branch required for PRA.");
+          const issued = await issuePraForBill({
+            branchCode: branch.code,
+            billId: bill.id,
+            mode: modeChoice,
+          });
+          fiscal = canEmbedPraOnSlip(issued.fiscal) ? issued.fiscal : null;
+          if (fiscal) {
+            praExtra = ` ${praIssuedNotice(modeChoice, fiscal.invoiceNumber)}`;
+          } else {
+            praFailed = true;
+            praExtra =
+              modeChoice === "real"
+                ? " Real PRA did not return invoice number/QR yet."
+                : " PRA issued but invoice number/QR missing.";
+          }
+        } catch (err) {
+          praFailed = true;
+          praExtra = ` PRA failed: ${err instanceof Error ? err.message : "Could not issue PRA."}`;
+        }
+        // Same POS slip — Invoice # + QR only after successful issue.
+        const receipt = await finishReceipts(fiscal);
+        if (fiscal) {
+          setPraFiscal(fiscal);
+          // Refresh Latest orders so Print uses bill.pra* (same slip as Pay).
+          invalidateOrderFeeds();
+        }
+        applyPayNotices(receipt, praExtra, praFailed);
+      };
+
+      resetAfterBill();
+
+      if (praMode === "fake" || praMode === "real") {
+        await runPraThenReceipt(praMode);
+        return;
       }
-      const phone = phoneFromBillNotes(bill.notes);
-      if (phone || mode === "delivery") {
-        shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
-      }
+
+      const receipt = await finishReceipts();
+      applyPayNotices(receipt, "", false);
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
@@ -1745,56 +1927,164 @@ export function PosPage(): JSX.Element {
         resolveSessionPrintName(sessionUserId) ||
         sessionUserLabel;
       const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
-      let printOk = true;
-      for (const bill of bills) {
-        const payload = withPrinterProfile(
-          {
-            ...buildPrintPayload(),
-            billRef: bill.billRef,
-            orderRef: bill.orderRef ?? bill.billRef,
-            waiterName:
-              printedBy ||
-              resolveSessionPrintName(bill.waiterName) ||
-              sessionUserLabel,
-            lines: bill.lines.map((line) => ({
-              label: line.label,
-              qty: line.qty,
-              unitPrice: line.unitPrice,
-            })),
-            subtotal: bill.subtotal,
-            discount: bill.discount,
-            service: bill.service,
-            tax: bill.tax,
-            total: bill.total,
-            servicePct: bill.servicePct,
-            taxPct: bill.taxPct,
-          },
-          receiptProfile,
-        );
-        const thermal = loadThermalPrintSettings(branch?.code);
-        const paperSize =
-          thermal.defaultPaperSize === "custom"
-            ? "custom"
-            : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
-        const result = await printReceiptDetailed({
-          ...payload,
-          paperSize,
-          thermal,
-          billPrintSettings: resolveBillPrintSettingsForReceipt(
-            branch?.code,
-            receiptProfile?.id,
-            "pay",
+
+      const features =
+        taxFeatures.data ??
+        (await fetchTaxFeaturesNormalized().catch(() => ({
+          fbrEnabled: false,
+          praEnabled: false,
+          praFakeEnabled: false,
+          praRealEnabled: false,
+        })));
+      const praMode = resolveAutoPraMode(features);
+
+      const printAllReceipts = async (fiscalByBillId: Record<string, PraFiscalInvoice> = {}) => {
+        let printOk = true;
+        let systemPrinterName: string | null | undefined;
+        for (const bill of bills) {
+          const payload = withPrinterProfile(
+            {
+              ...buildPrintPayload(),
+              billRef: bill.billRef,
+              orderRef: bill.orderRef ?? bill.billRef,
+              waiterName:
+                printedBy ||
+                resolveSessionPrintName(bill.waiterName) ||
+                sessionUserLabel,
+              lines: bill.lines.map((line) => ({
+                label: line.label,
+                qty: line.qty,
+                unitPrice: line.unitPrice,
+              })),
+              subtotal: bill.subtotal,
+              discount: bill.discount,
+              service: bill.service,
+              tax: bill.tax,
+              total: bill.total,
+              servicePct: bill.servicePct,
+              taxPct: bill.taxPct,
+            },
+            receiptProfile,
+          );
+          systemPrinterName = payload.systemPrinterName ?? systemPrinterName;
+          const thermal = loadThermalPrintSettings(branch?.code);
+          const paperSize =
+            thermal.defaultPaperSize === "custom"
+              ? "custom"
+              : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
+          const fiscal = fiscalByBillId[bill.id];
+          const embed = canEmbedPraOnSlip(fiscal) ? fiscal : null;
+          const praFiscal = embed
+            ? await preparePraReceiptFooter({
+                mode: embed.mode,
+                invoiceNumber: embed.invoiceNumber,
+                orderRef: embed.sourceRef ?? bill.orderRef ?? bill.billRef,
+                qrPayload: embed.qrPayload?.trim() || embed.invoiceNumber,
+              })
+            : null;
+          const result = await printReceiptDetailed({
+            ...payload,
+            paperSize,
+            thermal,
+            billPrintSettings: resolveBillPrintSettingsForReceipt(
+              branch?.code,
+              receiptProfile?.id,
+              "pay",
+            ),
+            praFiscal,
+          });
+          logPrintEvent(branch?.code, {
+            kind: "receipt",
+            printerName: payload.systemPrinterName ?? payload.printerName ?? "Receipt",
+            orderRef: payload.orderRef,
+            ok: result.ok,
+          });
+          if (!result.ok) printOk = false;
+        }
+        return { printOk, systemPrinterName };
+      };
+
+      const runPraThenReceipts = async (modeChoice: PraInvoiceMode) => {
+        const praNotices: string[] = [];
+        const fiscals: PraFiscalInvoice[] = [];
+        const fiscalByBillId: Record<string, PraFiscalInvoice> = {};
+
+        if (modeChoice === "real") {
+          if (!branch?.code) {
+            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+            const { printOk } = await printAllReceipts();
+            setPrintNotice({
+              tone: "error",
+              message: `${bills.length} split bills created — ${REAL_PRA_NOT_CONNECTED_MSG}`,
+            });
+            void printOk;
+            return;
+          }
+          try {
+            const gate = await checkRealPraConnected(branch.code);
+            if (!gate.connected) {
+              window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+              const { printOk } = await printAllReceipts();
+              setPrintNotice({
+                tone: "error",
+                message: `${bills.length} split bills created — ${REAL_PRA_NOT_CONNECTED_MSG}`,
+              });
+              void printOk;
+              return;
+            }
+          } catch {
+            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+            await printAllReceipts();
+            setPrintNotice({
+              tone: "error",
+              message: `${bills.length} split bills created — ${REAL_PRA_NOT_CONNECTED_MSG}`,
+            });
+            return;
+          }
+        }
+
+        for (const bill of bills) {
+          try {
+            if (!branch?.code) throw new Error("Branch required for PRA.");
+            const issued = await issuePraForBill({
+              branchCode: branch.code,
+              billId: bill.id,
+              mode: modeChoice,
+            });
+            if (canEmbedPraOnSlip(issued.fiscal)) {
+              fiscals.push(issued.fiscal);
+              fiscalByBillId[bill.id] = issued.fiscal;
+              praNotices.push(praIssuedNotice(modeChoice, issued.fiscal.invoiceNumber));
+            } else {
+              praNotices.push(`PRA missing invoice/QR for ${bill.billRef}`);
+            }
+          } catch (err) {
+            praNotices.push(
+              `PRA failed for ${bill.billRef}: ${err instanceof Error ? err.message : "error"}`,
+            );
+          }
+        }
+        const { printOk } = await printAllReceipts(fiscalByBillId);
+        if (fiscals.length > 0) {
+          setPraFiscal(fiscals[fiscals.length - 1] ?? null);
+        }
+        const praExtra = praNotices.length > 0 ? ` ${praNotices.join(" · ")}` : "";
+        setPrintNotice(
+          noticeFromPrintResult(
+            printOk,
+            `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}${praExtra}`,
           ),
-        });
-        logPrintEvent(branch?.code, {
-          kind: "receipt",
-          printerName: payload.systemPrinterName ?? payload.printerName ?? "Receipt",
-          orderRef: payload.orderRef,
-          ok: result.ok,
-        });
-        if (!result.ok) printOk = false;
-      }
+        );
+      };
+
       resetAfterBill();
+
+      if (praMode === "fake" || praMode === "real") {
+        await runPraThenReceipts(praMode);
+        return;
+      }
+
+      const { printOk } = await printAllReceipts();
       setPrintNotice(
         noticeFromPrintResult(
           printOk,
@@ -1833,8 +2123,8 @@ export function PosPage(): JSX.Element {
     const errors: string[] = [];
     const sessionUserId = useSessionStore.getState().claims?.sub;
     const routed = buildRoutedKotPrintPayloads(orderRefOverride);
-    const named = routed.filter((p) => Boolean(p.systemPrinterName?.trim()));
-    const dialogParts = routed.filter((p) => !p.systemPrinterName?.trim());
+    const named = routed.filter((p) => Boolean(asPrinterName(p.systemPrinterName)));
+    const dialogParts = routed.filter((p) => !asPrinterName(p.systemPrinterName));
 
     for (const payload of named) {
       const result = await printKotDetailed({
@@ -1951,6 +2241,55 @@ export function PosPage(): JSX.Element {
 
   function runPrintInvoice(): void {
     setCheckoutModal("invoice");
+  }
+
+  async function runRpra(): Promise<void> {
+    setPrintNotice(null);
+    if (cart.length === 0 || checkoutMutation.isPending) return;
+
+    const features =
+      taxFeatures.data ??
+      (await fetchTaxFeaturesNormalized().catch(() => ({
+        fbrEnabled: false,
+        praEnabled: false,
+        praFakeEnabled: false,
+        praRealEnabled: false,
+      })));
+    const mode = resolveAutoPraMode(features);
+
+    if (mode === "fake") {
+      setCheckoutModal("pay");
+      return;
+    }
+
+    if (mode === "real") {
+      if (!branch?.code) {
+        setPrintNotice({ message: "Select a branch before uploading to PRA.", tone: "error" });
+        return;
+      }
+      try {
+        const gate =
+          taxStatusQuery.data && isRealPraConnectedStatus(taxStatusQuery.data.pra.status)
+            ? { connected: true }
+            : await checkRealPraConnected(branch.code);
+        if (!gate.connected) {
+          window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+          setPrintNotice({ message: REAL_PRA_NOT_CONNECTED_MSG, tone: "error" });
+          return;
+        }
+      } catch {
+        window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+        setPrintNotice({ message: REAL_PRA_NOT_CONNECTED_MSG, tone: "error" });
+        return;
+      }
+      setCheckoutModal("pay");
+      return;
+    }
+
+    setPrintNotice({
+      message: "PRA is not enabled. Ask Super Admin to enable Fake PRA or Real PRA.",
+      tone: "error",
+    });
   }
 
   function openHoldBill(): void {
@@ -3067,7 +3406,7 @@ export function PosPage(): JSX.Element {
                 {checkoutMutation.isPending ? "…" : "Pay"}
               </button>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className={`mt-2 grid gap-2 ${praFeatureActive ? "grid-cols-3" : "grid-cols-2"}`}>
               <button
                 type="button"
                 className={POS_SECONDARY_BTN}
@@ -3085,6 +3424,17 @@ export function PosPage(): JSX.Element {
               >
                 Print invoice
               </button>
+              {praFeatureActive ? (
+                <button
+                  type="button"
+                  className={`${POS_ACTION_BTN} h-9 border border-emerald-600/40 bg-emerald-600/10 font-semibold text-emerald-800 hover:bg-emerald-600/20 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20`}
+                  title="Upload invoice to active PRA (Fake or Real)"
+                  disabled={cart.length === 0 || checkoutMutation.isPending || !branch?.code}
+                  onClick={() => void runRpra()}
+                >
+                  RPRA
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -3204,6 +3554,83 @@ export function PosPage(): JSX.Element {
           }}
         />
       ) : null}
+
+      <PraModeConfirmDialog
+        open={praModePromptOpen}
+        busy={praModeBusy}
+        onFake={() => {
+          const pending = pendingPraPayRef.current;
+          if (!pending) {
+            setPraModePromptOpen(false);
+            return;
+          }
+          setPraModeBusy(true);
+          void pending
+            .run("fake")
+            .catch((err: Error) => setPrintNotice({ message: err.message, tone: "error" }))
+            .finally(() => {
+              setPraModeBusy(false);
+              setPraModePromptOpen(false);
+              pendingPraPayRef.current = null;
+            });
+        }}
+        onReal={() => {
+          const pending = pendingPraPayRef.current;
+          if (!pending) {
+            setPraModePromptOpen(false);
+            return;
+          }
+          setPraModeBusy(true);
+          void pending
+            .run("real")
+            .catch((err: Error) => setPrintNotice({ message: err.message, tone: "error" }))
+            .finally(() => {
+              setPraModeBusy(false);
+              setPraModePromptOpen(false);
+              pendingPraPayRef.current = null;
+            });
+        }}
+        onCancel={() => {
+          const pending = pendingPraPayRef.current;
+          setPraModeBusy(true);
+          void (pending?.skipPra() ?? Promise.resolve())
+            .catch((err: Error) => setPrintNotice({ message: err.message, tone: "error" }))
+            .finally(() => {
+              setPraModeBusy(false);
+              setPraModePromptOpen(false);
+              pendingPraPayRef.current = null;
+            });
+        }}
+      />
+
+      <PraFiscalInvoiceModal
+        fiscal={praFiscal}
+        open={praModalOpen}
+        printing={praPrinting}
+        branchName={branch?.name}
+        branchCode={branch?.code}
+        onClose={() => {
+          setPraModalOpen(false);
+          setPraFiscal(null);
+        }}
+        onPrint={() => {
+          if (!praFiscal) return;
+          setPraPrinting(true);
+          void printIssuedPraSlip(praFiscal, {
+            branchName: branch?.name,
+            branchCode: branch?.code,
+          })
+            .then((res) => {
+              if (!res.ok) {
+                setPrintNotice({
+                  message: res.error ?? "Invoice print failed.",
+                  tone: "error",
+                });
+              }
+            })
+            .finally(() => setPraPrinting(false));
+        }}
+      />
     </div>
   );
 }

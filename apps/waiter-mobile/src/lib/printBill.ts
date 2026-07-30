@@ -7,8 +7,13 @@ import {
   loadMobilePrinterSettings,
 } from "./mobilePrinterSettings";
 import { formatPkr, orderRefFromTicket } from "./orderDisplay";
-import { kitchenTicketTotal } from "./orderHistory";
 import { trySilentBranchPrint } from "./branchPrintClient";
+import { resolvePraFooterForBillPrint } from "./praReceipt";
+import {
+  buildPraReceiptFooterHtml,
+  PRA_RECEIPT_FOOTER_CSS,
+  type PraReceiptFooter,
+} from "./praQr";
 
 function escapeHtml(value: string): string {
   return value
@@ -56,19 +61,38 @@ function buildKotHtml(input: {
   priority?: string;
   lines: PrintLine[];
   total?: number | null;
+  isOrderUpdate?: boolean;
 }): string {
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
   });
   const totalQty = input.lines.reduce((sum, line) => sum + line.qty, 0);
+  const totalItems = input.lines.length;
+  const mode = input.stationLabel.trim();
+  const tableMatch = mode.match(/table\s+(.+)$/i);
+  const tableLabel = tableMatch?.[1]?.trim() ?? "";
+  const showTable = Boolean(tableLabel) && tableLabel.toLowerCase() !== mode.toLowerCase();
+  const isUpdate = Boolean(input.isOrderUpdate);
+
   const lineRows = input.lines
     .map(
-      (line) => `<tr>
-        <td class="item">${escapeHtml(line.label)}</td>
+      (line) => `<tr class="kot-item-sep">
         <td class="qty">${line.qty}</td>
+        <td class="item-name">${escapeHtml(line.label)}</td>
       </tr>`,
     )
+    .join("");
+
+  const metaChips = [
+    `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>`,
+    `<span class="meta-chip meta-primary">${escapeHtml(mode)}</span>`,
+    showTable ? `<span class="meta-chip meta-primary">${escapeHtml(tableLabel)}</span>` : null,
+    input.waiterName ? `<span class="meta-chip">By: ${escapeHtml(input.waiterName)}</span>` : null,
+    isUpdate ? `<span class="meta-chip meta-update">UPDATE</span>` : null,
+    input.priority === "priority" ? `<span class="meta-chip meta-update">PRIORITY</span>` : null,
+  ]
+    .filter(Boolean)
     .join("");
 
   return `<!DOCTYPE html>
@@ -78,75 +102,212 @@ function buildKotHtml(input: {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 13px;
-      color: #111;
-      margin: 0 auto;
-      padding: 16px 14px 20px;
-      max-width: 80mm;
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #000;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
-    .header { text-align: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
-    h1 { font-size: 16px; margin: 0 0 4px; }
-    .doc { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #444; }
-    .meta { text-align: center; margin: 10px 0 14px; font-size: 12px; line-height: 1.45; }
-    .meta strong { font-size: 15px; }
-    .badge {
-      display: inline-block;
-      margin-top: 6px;
-      padding: 2px 8px;
-      border: 1px solid #111;
-      border-radius: 999px;
-      font-size: 10px;
+    body.ticket-kot {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      line-height: 1.25;
+      width: 72mm;
+      max-width: 72mm;
+      margin: 0 auto;
+      padding: 6px 3px 10px;
+      overflow-x: hidden;
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 8px;
+      border-bottom: 1.5px solid #000;
+      margin-bottom: 10px;
+    }
+    .branch-name {
+      font-size: 18px;
       font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      color: #000;
+    }
+    .doc-type {
+      margin-top: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #000;
+    }
+    .meta {
+      margin: 8px 0 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+    }
+    .meta-chip {
+      display: inline-block;
+      max-width: 100%;
+      font-size: 13px;
+      font-weight: 500;
+      color: #000;
+      border-radius: 4px;
+      padding: 3px 7px;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+    .meta-chip.meta-primary {
+      font-size: 15px;
+      font-weight: 800;
+      background: #facc15 !important;
+      border: 1.5px solid #000 !important;
+      border-radius: 2px;
+      padding: 4px 8px;
+      white-space: nowrap;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .meta-chip.meta-update {
+      font-weight: 800;
+      border: 1.5px solid #000;
+    }
+    .kot-update-banner {
+      text-align: center;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      border: 2px solid #000;
+      padding: 6px 4px;
+      margin: 0 0 8px;
+    }
+    .notes {
+      margin: -2px 0 8px;
+      text-align: center;
+      font-size: 13px;
+      font-style: italic;
+      color: #000;
+    }
+    .timestamp {
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: #000;
+      margin-bottom: 0;
+      letter-spacing: 0.02em;
+    }
+    .kot-mid-space {
+      height: 8px;
+      margin: 0 0 4px;
+      border-bottom: 1.5px solid #000;
+    }
+    table.items {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0;
+      table-layout: fixed;
+    }
+    thead th {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #000;
+      padding: 6px 0 5px;
+      border-top: 1.5px solid #000;
+      border-bottom: 1.5px solid #000;
+      text-align: left;
+    }
+    thead th.qty, td.qty {
+      width: 16%;
+      text-align: left;
+      padding-right: 12px;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+    thead th.item, td.item-name {
+      text-align: right;
+      width: auto;
+      padding-left: 0;
+      font-weight: 800;
+    }
+    tbody td {
+      padding: 8px 0;
+      border-bottom: 1px solid #000;
+      line-height: 1.25;
+      vertical-align: middle;
+      color: #000;
+    }
+    tbody tr:last-child td { border-bottom: 1.5px solid #000; }
+    td.item-name {
+      font-size: 16px;
+      overflow-wrap: break-word;
+    }
+    td.qty {
+      font-size: 17px;
+      font-variant-numeric: tabular-nums;
+    }
+    .kot-totals {
+      margin: 10px 0 4px;
+      padding-top: 8px;
+      border-top: 1px dashed #000;
+    }
+    .kot-totals .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .footer { margin-top: 12px; }
+    .kot-banner {
+      margin-top: 8px;
+      padding: 10px 8px;
+      border: 2.5px solid #000;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-align: center;
       text-transform: uppercase;
     }
-    table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; }
-    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #666; border-bottom: 1px solid #111; padding: 4px 2px; }
-    th.qty, td.qty { text-align: center; width: 40px; }
-    td { padding: 8px 2px; border-bottom: 1px solid #ddd; vertical-align: top; }
-    td.item { font-weight: 600; font-size: 14px; }
-    td.qty { font-weight: 700; font-size: 16px; }
-    .notes {
-      border: 1px dashed #111;
-      padding: 8px;
-      margin: 10px 0;
-      font-size: 12px;
-    }
-    .footer { text-align: center; margin-top: 14px; font-size: 11px; color: #555; }
-    .total { text-align: right; font-weight: 700; font-size: 14px; margin-top: 8px; }
   </style>
 </head>
-<body>
-  <div class="header">
-    <h1>${escapeHtml(input.branchName)}</h1>
-    <div class="doc">Kitchen Order</div>
-    <div style="font-size:11px;color:#666;margin-top:4px">${escapeHtml(input.branchCode)}</div>
-  </div>
-  <div class="meta">
-    <div><strong>${escapeHtml(input.orderRef)}</strong></div>
-    <div>${escapeHtml(input.stationLabel)}</div>
-    <div>${escapeHtml(input.ticketRef)}${input.waiterName ? ` · ${escapeHtml(input.waiterName)}` : ""}</div>
-    <div>${escapeHtml(printedAt)}</div>
-    ${input.priority === "priority" ? '<div class="badge">Priority</div>' : ""}
-  </div>
-  <table>
-    <thead><tr><th>Item</th><th class="qty">Qty</th></tr></thead>
-    <tbody>${lineRows || `<tr><td colspan="2">No items</td></tr>`}</tbody>
+<body class="ticket-kot">
+  <header class="header">
+    <div class="branch-name">${escapeHtml(input.branchName)}</div>
+    <div class="doc-type">Kitchen Order</div>
+  </header>
+  <div class="meta">${metaChips}</div>
+  ${isUpdate ? `<div class="kot-update-banner">*** UPDATE — REVISED ORDER ***</div>` : ""}
+  ${input.notes?.trim() ? `<p class="notes">${escapeHtml(input.notes.trim())}</p>` : ""}
+  <div class="timestamp">${escapeHtml(printedAt)}</div>
+  <div class="kot-mid-space" aria-hidden="true"></div>
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="qty">QTY</th>
+        <th class="item">ITEM</th>
+      </tr>
+    </thead>
+    <tbody>${lineRows || `<tr><td class="qty">—</td><td class="item-name">No items</td></tr>`}</tbody>
   </table>
-  <div style="font-size:12px;color:#444">${input.lines.length} item${input.lines.length === 1 ? "" : "s"} · Qty ${totalQty}</div>
-  ${
-    input.notes?.trim()
-      ? `<div class="notes"><strong>Notes</strong><br/>${escapeHtml(input.notes.trim())}</div>`
-      : ""
-  }
-  ${input.total != null && input.total > 0 ? `<div class="total">Est. total ${formatPkr(input.total)}</div>` : ""}
-  <div class="footer">*** ORDER TICKET ***</div>
+  <div class="kot-totals">
+    <div class="row"><span class="label">Total items</span><span class="value">${totalItems}</span></div>
+    <div class="row"><span class="label">Total quantity</span><span class="value">${totalQty}</span></div>
+  </div>
+  <div class="footer">
+    <div class="kot-banner">${isUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"}</div>
+  </div>
 </body>
 </html>`;
 }
 
-function buildReceiptHtml(branchName: string, branchCode: string, bill: Bill): string {
+function buildReceiptHtml(
+  branchName: string,
+  branchCode: string,
+  bill: Bill,
+  pra?: PraReceiptFooter | null,
+): string {
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -155,44 +316,165 @@ function buildReceiptHtml(branchName: string, branchCode: string, bill: Bill): s
   const lineRows = bill.lines
     .map(
       (line) => `<tr>
-        <td>${escapeHtml(line.label)}</td>
-        <td style="text-align:center">${line.qty}</td>
-        <td style="text-align:right">${formatPkr(line.unitPrice * line.qty)}</td>
+        <td class="qty">${line.qty}</td>
+        <td class="item-name">${escapeHtml(line.label)}</td>
+        <td class="amt">${formatPkr(line.unitPrice * line.qty)}</td>
       </tr>`,
     )
     .join("");
+
+  const metaRows = [
+    `<div class="meta-row meta-row-strong"><span class="meta-label">Order</span><span class="meta-value">${escapeHtml(bill.orderRef ?? bill.billRef)}</span></div>`,
+    pra?.invoiceNumber
+      ? `<div class="meta-row meta-row-strong meta-pra-invoice"><span class="meta-label">PRA Invoice #</span><span class="meta-value">${escapeHtml(pra.invoiceNumber)}</span></div>`
+      : "",
+    `<div class="meta-row meta-row-strong"><span class="meta-label">Type</span><span class="meta-value">${escapeHtml(bill.tableLabel)}</span></div>`,
+    `<div class="meta-row"><span class="meta-label">Bill</span><span class="meta-value">${escapeHtml(bill.billRef)}</span></div>`,
+    bill.waiterName
+      ? `<div class="meta-row"><span class="meta-label">Cashier</span><span class="meta-value">${escapeHtml(bill.waiterName)}</span></div>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("");
+
+  const praFooter = pra ? buildPraReceiptFooterHtml(pra) : "";
 
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, sans-serif; font-size: 12px; color: #111; margin: 0; padding: 16px; }
-    h1 { font-size: 16px; margin: 0 0 4px; text-align: center; }
-    .meta { text-align: center; color: #555; margin-bottom: 12px; font-size: 11px; }
-    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-    th, td { padding: 4px 2px; border-bottom: 1px solid #ddd; }
-    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #666; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    body.ticket-receipt {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      line-height: 1.25;
+      width: 72mm;
+      max-width: 72mm;
+      margin: 0 auto;
+      padding: 6px 3px 10px;
+      border-top: 2px solid #000;
+      border-bottom: 2px solid #000;
+    }
+    .branch-name {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      text-align: center;
+      color: #000;
+      padding: 2px 0 4px;
+      border-bottom: 1.5px solid #000;
+    }
+    .doc-type {
+      margin-top: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-align: center;
+      color: #000;
+    }
+    .meta-block { margin: 10px 0 12px; }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 2px 0;
+      font-size: 12px;
+    }
+    .meta-row-strong { font-weight: 800; }
+    .meta-label { color: #000; font-weight: 600; }
+    .meta-value { text-align: right; font-weight: 700; }
+    table.items {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 10px;
+      table-layout: fixed;
+    }
+    thead th {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: #000;
+      padding: 0 0 6px;
+      border-bottom: 1px solid #d1d5db;
+      text-align: left;
+    }
+    thead th.qty { width: 12%; }
+    thead th.amt { width: 28%; text-align: right; }
+    tbody td {
+      padding: 5px 0;
+      vertical-align: top;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    td.qty { font-weight: 700; font-variant-numeric: tabular-nums; }
+    td.item-name { font-weight: 700; font-size: 12px; overflow-wrap: break-word; }
+    td.amt { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
     .totals { margin-top: 8px; }
-    .totals div { display: flex; justify-content: space-between; padding: 2px 0; }
-    .total { font-weight: 700; font-size: 14px; border-top: 2px solid #111; margin-top: 6px; padding-top: 6px; }
+    .totals .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      font-size: 12px;
+    }
+    .totals .row.grand {
+      font-weight: 800;
+      font-size: 14px;
+      border-top: 2px solid #000;
+      margin-top: 6px;
+      padding-top: 6px;
+    }
+    .timestamp {
+      text-align: center;
+      font-size: 11px;
+      font-weight: 500;
+      margin: 10px 0 6px;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 10px;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .held {
+      text-align: center;
+      margin-top: 12px;
+      font-weight: 800;
+      border: 2px solid #000;
+      padding: 8px;
+    }
+    ${PRA_RECEIPT_FOOTER_CSS}
   </style>
 </head>
-<body>
-  <h1>${escapeHtml(branchName)}</h1>
-  <div class="meta">${escapeHtml(branchCode)} · ${escapeHtml(bill.billRef)}<br/>${escapeHtml(bill.tableLabel)} · ${escapeHtml(bill.waiterName)}<br/>${printedAt}</div>
-  <table>
-    <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
+<body class="ticket-receipt">
+  <div class="branch-name">${escapeHtml(branchName)}</div>
+  <div class="doc-type">Customer Receipt</div>
+  <div class="meta-block">${metaRows}</div>
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="qty">QTY</th>
+        <th class="item">ITEM</th>
+        <th class="amt">AMOUNT</th>
+      </tr>
+    </thead>
     <tbody>${lineRows}</tbody>
   </table>
   <div class="totals">
-    <div><span>Subtotal</span><span>${formatPkr(bill.subtotal)}</span></div>
-    <div><span>Service (${bill.servicePct}%)</span><span>${formatPkr(bill.service)}</span></div>
-    <div><span>Tax (${bill.taxPct}%)</span><span>${formatPkr(bill.tax)}</span></div>
-    ${bill.deliveryChargePkr > 0 ? `<div><span>Delivery</span><span>${formatPkr(bill.deliveryChargePkr)}</span></div>` : ""}
-    <div class="total"><span>Total</span><span>${formatPkr(bill.total)}</span></div>
+    <div class="row"><span>Subtotal</span><span>${formatPkr(bill.subtotal)}</span></div>
+    <div class="row"><span>Service (${bill.servicePct}%)</span><span>${formatPkr(bill.service)}</span></div>
+    <div class="row"><span>Tax (${bill.taxPct}%)</span><span>${formatPkr(bill.tax)}</span></div>
+    ${bill.deliveryChargePkr > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(bill.deliveryChargePkr)}</span></div>` : ""}
+    <div class="row grand"><span>Total</span><span>${formatPkr(bill.total)}</span></div>
   </div>
-  ${bill.status === "held" ? '<p style="text-align:center;margin-top:16px;font-weight:600">*** ON HOLD — NOT PAID ***</p>' : ""}
+  <div class="timestamp">${escapeHtml(printedAt)} · ${escapeHtml(branchCode)}</div>
+  ${bill.status === "held" ? '<div class="held">*** ON HOLD — NOT PAID ***</div>' : '<div class="footer">Thank you — visit again</div>'}
+  ${praFooter}
 </body>
 </html>`;
 }
@@ -292,7 +574,12 @@ export async function printBillReceipt(
   branchCode: string,
   bill: Bill,
 ): Promise<boolean> {
-  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill), {
+  const pra = await resolvePraFooterForBillPrint({
+    branchCode,
+    bill,
+    issueIfMissing: true,
+  }).catch(() => null);
+  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill, pra), {
     branchCode,
     orderId: bill.billRef,
   });
@@ -321,9 +608,9 @@ export async function printCartBill(input: {
   const lineRows = input.lines
     .map(
       (line) => `<tr>
-        <td>${escapeHtml(line.label)}</td>
-        <td style="text-align:center">${line.qty}</td>
-        <td style="text-align:right">${formatPkr(line.unitPrice * line.qty)}</td>
+        <td class="qty">${line.qty}</td>
+        <td class="item-name">${escapeHtml(line.label)}</td>
+        <td class="amt">${formatPkr(line.unitPrice * line.qty)}</td>
       </tr>`,
     )
     .join("");
@@ -333,32 +620,75 @@ export async function printCartBill(input: {
 <head>
   <meta charset="utf-8" />
   <style>
-    body { font-family: system-ui, sans-serif; font-size: 12px; color: #111; margin: 0; padding: 16px; }
-    h1 { font-size: 16px; margin: 0 0 4px; text-align: center; }
-    .meta { text-align: center; color: #555; margin-bottom: 12px; font-size: 11px; }
-    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-    th, td { padding: 4px 2px; border-bottom: 1px solid #ddd; }
-    th { text-align: left; font-size: 10px; text-transform: uppercase; color: #666; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    body.ticket-receipt {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      line-height: 1.25;
+      width: 72mm;
+      max-width: 72mm;
+      margin: 0 auto;
+      padding: 6px 3px 10px;
+      border-top: 2px solid #000;
+      border-bottom: 2px solid #000;
+    }
+    .branch-name {
+      font-size: 16px; font-weight: 700; text-align: center;
+      padding: 2px 0 4px; border-bottom: 1.5px solid #000;
+    }
+    .doc-type {
+      margin-top: 6px; font-size: 11px; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; text-align: center;
+    }
+    .meta-block { margin: 10px 0 12px; }
+    .meta-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+    .meta-row-strong { font-weight: 800; }
+    .meta-label { font-weight: 600; }
+    .meta-value { text-align: right; font-weight: 700; }
+    table.items { width: 100%; border-collapse: collapse; margin: 8px 0 10px; table-layout: fixed; }
+    thead th {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      padding: 0 0 6px; border-bottom: 1px solid #d1d5db; text-align: left;
+    }
+    thead th.qty { width: 12%; }
+    thead th.amt { width: 28%; text-align: right; }
+    tbody td { padding: 5px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+    tbody tr:last-child td { border-bottom: none; }
+    td.qty { font-weight: 700; }
+    td.item-name { font-weight: 700; overflow-wrap: break-word; }
+    td.amt { text-align: right; font-weight: 700; }
     .totals { margin-top: 8px; }
-    .totals div { display: flex; justify-content: space-between; padding: 2px 0; }
-    .total { font-weight: 700; font-size: 14px; border-top: 2px solid #111; margin-top: 6px; padding-top: 6px; }
+    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .totals .row.grand {
+      font-weight: 800; font-size: 14px; border-top: 2px solid #000;
+      margin-top: 6px; padding-top: 6px;
+    }
+    .timestamp { text-align: center; font-size: 11px; margin: 10px 0 6px; }
+    .footer { text-align: center; margin-top: 10px; font-weight: 700; }
   </style>
 </head>
-<body>
-  <h1>${escapeHtml(input.branchName)}</h1>
-  <div class="meta">${escapeHtml(input.branchCode)} · ${escapeHtml(input.orderRef)}<br/>${escapeHtml(input.tableLabel)}${input.waiterName ? ` · ${escapeHtml(input.waiterName)}` : ""}<br/>${printedAt}</div>
-  <table>
-    <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
-    <tbody>${lineRows || `<tr><td colspan="3">No items</td></tr>`}</tbody>
+<body class="ticket-receipt">
+  <div class="branch-name">${escapeHtml(input.branchName)}</div>
+  <div class="doc-type">Customer Receipt</div>
+  <div class="meta-block">
+    <div class="meta-row meta-row-strong"><span class="meta-label">Order</span><span class="meta-value">${escapeHtml(input.orderRef)}</span></div>
+    <div class="meta-row meta-row-strong"><span class="meta-label">Type</span><span class="meta-value">${escapeHtml(input.tableLabel)}</span></div>
+    ${input.waiterName ? `<div class="meta-row"><span class="meta-label">Cashier</span><span class="meta-value">${escapeHtml(input.waiterName)}</span></div>` : ""}
+  </div>
+  <table class="items">
+    <thead><tr><th class="qty">QTY</th><th class="item">ITEM</th><th class="amt">AMOUNT</th></tr></thead>
+    <tbody>${lineRows || `<tr><td class="qty">—</td><td class="item-name">No items</td><td class="amt">—</td></tr>`}</tbody>
   </table>
   <div class="totals">
-    <div><span>Subtotal</span><span>${formatPkr(input.subtotal)}</span></div>
-    <div><span>Service (${input.servicePct}%)</span><span>${formatPkr(input.service)}</span></div>
-    <div><span>Tax (${input.taxPct}%)</span><span>${formatPkr(input.tax)}</span></div>
-    ${delivery > 0 ? `<div><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
-    <div class="total"><span>Total</span><span>${formatPkr(input.total)}</span></div>
+    <div class="row"><span>Subtotal</span><span>${formatPkr(input.subtotal)}</span></div>
+    <div class="row"><span>Service (${input.servicePct}%)</span><span>${formatPkr(input.service)}</span></div>
+    <div class="row"><span>Tax (${input.taxPct}%)</span><span>${formatPkr(input.tax)}</span></div>
+    ${delivery > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
+    <div class="row grand"><span>Total</span><span>${formatPkr(input.total)}</span></div>
   </div>
-  <p style="text-align:center;margin-top:16px;font-weight:600">*** BILL ***</p>
+  <div class="timestamp">${escapeHtml(printedAt)} · ${escapeHtml(input.branchCode)}</div>
+  <div class="footer">Thank you — visit again</div>
 </body>
 </html>`;
   return printBillHtml(html, {
@@ -372,7 +702,7 @@ export async function printKitchenOrder(
   branchName: string,
   branchCode: string,
   ticket: KitchenTicket,
-  menuItems?: MenuItem[],
+  _menuItems?: MenuItem[],
 ): Promise<boolean> {
   const lines = linesFromTicket(ticket);
   const notes = ticket.notes?.trim() || extractKitchenNotes(ticket) || null;
@@ -386,7 +716,6 @@ export async function printKitchenOrder(
     notes,
     priority: ticket.priority,
     lines,
-    total: kitchenTicketTotal(ticket, menuItems),
   });
   return printKitchenHtml(html, {
     branchCode,

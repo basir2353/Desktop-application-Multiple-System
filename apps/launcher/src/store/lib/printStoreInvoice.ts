@@ -5,6 +5,9 @@ import {
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../pops/lib/printTicket";
+import { asPrinterName } from "../../pops/lib/asPrinterName";
+import { resolvePraFooterForSource } from "../../pops/lib/praPaidPrint";
+import { praIssuedNotice } from "../../pops/lib/praIssueFlow";
 import {
   loadKotPrintSettings,
   loadStoreBillPrintSettings,
@@ -48,7 +51,7 @@ export async function ensureStorePosPrinter(
   userId?: string | null,
 ): Promise<PrinterProfile | null> {
   const existing = resolveReceiptPrinter(branchCode, userId);
-  if (existing?.systemPrinterName?.trim()) return existing;
+  if (asPrinterName(existing?.systemPrinterName)) return existing;
 
   try {
     const listed = await listSystemPrintersDetailed();
@@ -230,8 +233,64 @@ export const STORE_RECEIPT_PREVIEW_CSS = `
 .store-receipt-preview iframe{width:100%;min-height:420px;border:0;background:#fff}
 `;
 
+export type StoreInvoicePrintResult = {
+  ok: boolean;
+  praNotice?: string;
+  praFailed?: boolean;
+  blockedReal?: boolean;
+};
+
+/**
+ * Restaurant-style finalize: issue Fake/Real PRA (when enabled), embed Invoice # + QR, then print.
+ */
+export async function printStoreInvoiceAsync(
+  branchName: string,
+  branchCode: string,
+  sale: StoreSale,
+): Promise<StoreInvoicePrintResult> {
+  const base = saleToTicketInput(branchName, branchCode, sale);
+  if (sale.status !== "Completed") {
+    const ok = await printStoreTicket(base, "invoice");
+    return { ok };
+  }
+
+  const resolved = await resolvePraFooterForSource({
+    branchCode,
+    sourceType: "store_sale",
+    sourceId: sale.id,
+    orderRef: sale.invoiceNumber,
+    issueIfMissing: true,
+  });
+
+  if (resolved.blockedReal && resolved.notice) {
+    window.alert(resolved.notice);
+  }
+
+  const ok = await printStoreTicket(
+    {
+      ...base,
+      praFiscal: resolved.footer,
+    },
+    "invoice",
+  );
+
+  const praFailed = Boolean(
+    resolved.blockedReal || (resolved.notice && !resolved.footer),
+  );
+  let praNotice = resolved.notice;
+  if (!praFailed && resolved.fiscal) {
+    praNotice = praIssuedNotice(resolved.fiscal.mode, resolved.fiscal.invoiceNumber);
+  }
+  return {
+    ok,
+    praNotice,
+    praFailed,
+    blockedReal: resolved.blockedReal,
+  };
+}
+
 export function printStoreInvoice(branchName: string, branchCode: string, sale: StoreSale): boolean {
-  void printStoreTicket(saleToTicketInput(branchName, branchCode, sale), "invoice");
+  void printStoreInvoiceAsync(branchName, branchCode, sale);
   return true;
 }
 

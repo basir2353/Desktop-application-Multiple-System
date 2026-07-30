@@ -1,8 +1,8 @@
 import { Platform } from "react-native";
 
-const ANDROID_TIMEOUT_MS = 90_000;
-const DEFAULT_TIMEOUT_MS = 45_000;
-const MAX_ATTEMPTS = Platform.OS === "android" ? 5 : 2;
+const ANDROID_TIMEOUT_MS = 45_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_ATTEMPTS = Platform.OS === "android" ? 3 : 2;
 
 function plainHeaders(init?: RequestInit): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -132,7 +132,7 @@ export async function mobileFetch(url: string, init?: RequestInit): Promise<Resp
         }
       }
       if (!isSafeMethod || !isRetryableNetworkError(err) || attempt + 1 >= maxAttempts) break;
-      await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
     }
   }
   throw lastError;

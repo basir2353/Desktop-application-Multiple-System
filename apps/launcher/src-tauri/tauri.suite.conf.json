@@ -6,18 +6,19 @@
     "windows": [
       {
         "label": "main",
-        "title": "POPS Universal — Restaurant · Store · Pharmacy"
+        "title": "POPS Universal \u2014 Restaurant \u00b7 Store \u00b7 Pharmacy"
       }
     ]
   },
   "bundle": {
     "shortDescription": "Universal POS & ERP suite",
-    "longDescription": "POPS Universal Management System — Restaurant, General Store, and Pharmacy in one installer. Switch systems after login; includes POS, inventory, printing, pay in/out, tax, and reports.",
+    "longDescription": "POPS Universal Management System \u2014 Restaurant, General Store, and Pharmacy in one installer. Switch systems after login; includes POS, inventory, printing, pay in/out, tax, and reports.",
     "windows": {
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
     }
-  }
+  },
+  "version": "0.2.3"
 }

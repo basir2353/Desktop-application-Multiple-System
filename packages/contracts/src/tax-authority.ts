@@ -72,15 +72,25 @@ export type PraConnectInput = z.infer<typeof praConnectSchema>;
 /** Super Admin–granted FBR / PRA flags for the signed-in business (no branch required). */
 export const taxAuthorityFeaturesSchema = z.object({
   fbrEnabled: z.boolean(),
+  /** True when Fake PRA and/or Real PRA is granted (legacy-compatible). */
   praEnabled: z.boolean(),
+  /** Local Fake PRA fiscal slip + QR (not submitted to PRA e-IMS). */
+  praFakeEnabled: z.boolean().default(false),
+  /** Live / Real PRA e-IMS submission. */
+  praRealEnabled: z.boolean().default(false),
 });
 export type TaxAuthorityFeatures = z.infer<typeof taxAuthorityFeaturesSchema>;
+
+export const praInvoiceModeSchema = z.enum(["fake", "real"]);
+export type PraInvoiceMode = z.infer<typeof praInvoiceModeSchema>;
 
 export const taxAuthorityStatusSchema = z.object({
   branchCode: z.string(),
   /** Super Admin–granted feature flags for this business. */
   fbrEnabled: z.boolean().default(false),
   praEnabled: z.boolean().default(false),
+  praFakeEnabled: z.boolean().default(false),
+  praRealEnabled: z.boolean().default(false),
   company: z.object({
     companyName: z.string().default(""),
     ntn: z.string().default(""),
@@ -127,7 +137,9 @@ export type TaxConnectResult = z.infer<typeof taxConnectResultSchema>;
 export const taxInvoiceSchema = z.object({
   id: z.string().uuid(),
   authority: taxAuthoritySchema,
+  invoiceMode: praInvoiceModeSchema.default("real"),
   sourceType: taxInvoiceSourceTypeSchema,
+  sourceId: z.string().uuid().optional(),
   sourceRef: z.string(),
   status: taxInvoiceStatusSchema,
   taxableAmountPkr: z.number().int(),
@@ -140,6 +152,50 @@ export const taxInvoiceSchema = z.object({
   updatedAt: z.string(),
 });
 export type TaxInvoice = z.infer<typeof taxInvoiceSchema>;
+
+/** Fake or Real PRA fiscal details attached to a sale / bill. */
+export const praFiscalInvoiceSchema = z.object({
+  mode: praInvoiceModeSchema,
+  invoiceNumber: z.string(),
+  invoiceId: z.string(),
+  qrPayload: z.string(),
+  usin: z.string(),
+  issuedAt: z.string(),
+  sellerName: z.string().default(""),
+  ntn: z.string().default(""),
+  strn: z.string().default(""),
+  branchCode: z.string().default(""),
+  sourceRef: z.string().default(""),
+  taxableAmountPkr: z.number().int().default(0),
+  taxAmountPkr: z.number().int().default(0),
+  totalAmountPkr: z.number().int().default(0),
+  lines: z
+    .array(
+      z.object({
+        label: z.string(),
+        qty: z.number().int(),
+        unitPrice: z.number().int(),
+      }),
+    )
+    .default([]),
+});
+export type PraFiscalInvoice = z.infer<typeof praFiscalInvoiceSchema>;
+
+export const issuePraInvoiceSchema = z.object({
+  branchCode: z.string().trim().min(1),
+  sourceType: taxInvoiceSourceTypeSchema,
+  sourceId: z.string().uuid(),
+  mode: praInvoiceModeSchema,
+  force: z.boolean().optional().default(false),
+});
+export type IssuePraInvoiceInput = z.infer<typeof issuePraInvoiceSchema>;
+
+export const issuePraInvoiceResultSchema = z.object({
+  invoice: taxInvoiceSchema,
+  fiscal: praFiscalInvoiceSchema,
+  message: z.string(),
+});
+export type IssuePraInvoiceResult = z.infer<typeof issuePraInvoiceResultSchema>;
 
 export const sendTaxInvoiceSchema = z.object({
   branchCode: z.string().trim().min(1),

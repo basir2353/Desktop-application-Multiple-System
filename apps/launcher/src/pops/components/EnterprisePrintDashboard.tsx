@@ -3,6 +3,7 @@
 import { Button } from "@platform/ui";
 import { useCallback, useEffect, useState } from "react";
 import {
+  BRANCH_PRINT_JOB_DONE_EVENT,
   BRANCH_PRINT_QUEUE_CHANGED_EVENT,
   branchPrintQueueAction,
   discoverBranchPrintServers,
@@ -16,6 +17,7 @@ import {
   savePreferredBranchServer,
   startBranchPrintServer,
   stopBranchPrintServer,
+  type BranchPrintJobDoneDetail,
   type BranchQueueJob,
   type BranchPrintServerSettings,
   type BranchServerStatus,
@@ -69,10 +71,23 @@ export function EnterprisePrintDashboard({
     ensureBranchPrintWorker();
     void refresh();
     const onQueue = () => void refresh();
+    const onDone = (ev: Event) => {
+      const detail = (ev as CustomEvent<BranchPrintJobDoneDetail>).detail;
+      if (!detail) return;
+      const order = detail.orderId ? ` — ${detail.orderId}` : "";
+      if (detail.ok) {
+        setNotice(`Print ho gaya${order}`);
+      } else {
+        setNotice(`Print failed${order}${detail.error ? `: ${detail.error}` : ""}`);
+      }
+      void refresh();
+    };
     window.addEventListener(BRANCH_PRINT_QUEUE_CHANGED_EVENT, onQueue);
+    window.addEventListener(BRANCH_PRINT_JOB_DONE_EVENT, onDone);
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => {
       window.removeEventListener(BRANCH_PRINT_QUEUE_CHANGED_EVENT, onQueue);
+      window.removeEventListener(BRANCH_PRINT_JOB_DONE_EVENT, onDone);
       window.clearInterval(timer);
     };
   }, [branchCode, refresh]);

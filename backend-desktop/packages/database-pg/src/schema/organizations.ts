@@ -22,8 +22,15 @@ export const organizations = pgTable("organizations", {
   enabledModules: jsonb("enabled_modules").$type<string[] | null>(),
   /** Super Admin grants FBR tax-authority integration for this business. */
   fbrEnabled: boolean("fbr_enabled").notNull().default(false),
-  /** Super Admin grants PRA tax-authority integration for this business. */
+  /**
+   * Legacy “any PRA” flag. Kept in sync as (praFakeEnabled || praRealEnabled).
+   * Prefer praFakeEnabled / praRealEnabled for new code.
+   */
   praEnabled: boolean("pra_enabled").notNull().default(false),
+  /** Super Admin grants Fake PRA (local fiscal slip + QR, not sent to PRA). */
+  praFakeEnabled: boolean("pra_fake_enabled").notNull().default(false),
+  /** Super Admin grants Real PRA (e-IMS / live submit). */
+  praRealEnabled: boolean("pra_real_enabled").notNull().default(false),
   createdBy: uuid("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

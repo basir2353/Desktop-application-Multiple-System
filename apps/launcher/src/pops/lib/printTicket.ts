@@ -25,6 +25,8 @@ import { toPng } from "html-to-image";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
 import { loadReceiptPoweredBy } from "./receiptBranding";
 import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter } from "./systemPrinters";
+import { buildPraReceiptFooterHtml, PRA_RECEIPT_FOOTER_CSS, type PraReceiptFooter } from "./praReceiptFooter";
+import { asPrinterName } from "./asPrinterName";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
   isNarrowPaperWidth,
@@ -81,6 +83,8 @@ export type PrintTicketInput = {
    * so kitchen staff can tell it apart from a new order.
    */
   isOrderUpdate?: boolean;
+  /** Fake/Real PRA footer (invoice # + QR) printed under the order receipt. */
+  praFiscal?: PraReceiptFooter | null;
 };
 
 /** Apply a resolved printer profile onto a ticket payload. */
@@ -89,8 +93,8 @@ export function withPrinterProfile<T extends Omit<PrintTicketInput, "kind">>(
   profile: PrinterProfile | null | undefined,
 ): T {
   if (!profile) return input;
-  const linked = profile.systemPrinterName?.trim() || undefined;
-  const fromInput = input.systemPrinterName?.trim() || undefined;
+  const linked = asPrinterName(profile.systemPrinterName);
+  const fromInput = asPrinterName(input.systemPrinterName);
   return {
     ...input,
     printerName: profile.name,
@@ -846,14 +850,17 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalsBlock =
     isReceipt && totalsRows.length > 0 ? `<div class="totals">${totalsRows.join("")}</div>` : "";
 
-  const metaRow = (label: string, value: string, emphasize = false) =>
-    `<div class="meta-row${emphasize ? " meta-row-strong" : ""}"><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${escapeHtml(value)}</span></div>`;
+  const metaRow = (label: string, value: string, emphasize = false, extraClass = "") =>
+    `<div class="meta-row${emphasize ? " meta-row-strong" : ""}${extraClass ? ` ${extraClass}` : ""}"><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${escapeHtml(value)}</span></div>`;
 
   const receiptCashier = isReceipt ? staffNameForReceipt(input) : "";
   const metaRows = isReceipt && fields
     ? [
         // Keep ORD-# on its own line — combining with type wraps under the label.
         fields.orderRef ? metaRow("Order", input.orderRef, true) : null,
+        input.praFiscal?.invoiceNumber
+          ? metaRow("PRA Invoice #", input.praFiscal.invoiceNumber, true, "meta-pra-invoice")
+          : null,
         fields.orderType && input.modeLabel.trim()
           ? metaRow("Type", input.modeLabel.trim(), true)
           : null,
@@ -1087,6 +1094,17 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-weight: 800;
       font-size: ${receiptFonts.metaChipBillRef}px;
       white-space: nowrap;
+    }
+    body.ticket-receipt .meta-pra-invoice {
+      align-items: flex-start;
+    }
+    body.ticket-receipt .meta-pra-invoice .meta-value {
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      line-height: 1.3;
     }
     body.ticket-receipt .notes {
       text-align: center;
@@ -1685,6 +1703,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       }
     }
     ${receiptCss}
+    ${isReceipt ? PRA_RECEIPT_FOOTER_CSS : ""}
   </style>
 </head>
 <body class="${isReceipt ? "ticket-receipt" : "ticket-kot"}">
@@ -1722,6 +1741,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     isOrderUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"
   }</div></div>`
   }
+  ${isReceipt && input.praFiscal ? buildPraReceiptFooterHtml(input.praFiscal) : ""}
 </body>
 </html>`;
 }
@@ -1903,7 +1923,7 @@ export async function printHtmlDocumentDetailed(
 ): Promise<PrintJobResult> {
   const copies = Math.max(1, options?.copies ?? 1);
   const jobTitle = options?.jobTitle;
-  const systemPrinterName = options?.systemPrinterName?.trim();
+  const systemPrinterName = asPrinterName(options?.systemPrinterName);
   // Prefer silent Auto print; always allow dialog fallback so PDF/XPS/driver failures still print.
   const requireNamed = options?.requireNamedPrinter ?? false;
 
@@ -2235,7 +2255,7 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
     : input.kind === "receipt"
       ? "Receipt"
       : "KOT";
-  const systemPrinterName = input.systemPrinterName?.trim();
+  const systemPrinterName = asPrinterName(input.systemPrinterName);
   const copies = Math.max(1, input.copies ?? 1);
   const thermal = resolveThermalSettings(input);
   const paper = resolvePaperSize(input, thermal);
@@ -2276,6 +2296,17 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
           },
         });
         if (queued.queued || queued.printedDirect) {
+          if (queued.printedDirect) {
+            const { announcePrintJobDone } = await import("./branchPrintClient");
+            announcePrintJobDone({
+              ok: true,
+              orderId: input.orderRef ?? null,
+              printerName: systemPrinterName,
+              source: "direct",
+              kind: input.kind,
+            });
+          }
+          // Queued jobs announce when the worker finishes (print done + backend complete).
           return { ok: true, usedNamedPrinter: true };
         }
       }
@@ -2309,6 +2340,19 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
       copies,
       paperWidthMm: paperMm,
     });
+    try {
+      const { announcePrintJobDone } = await import("./branchPrintClient");
+      announcePrintJobDone({
+        ok: imgResult.ok,
+        orderId: input.orderRef ?? null,
+        printerName: systemPrinterName,
+        error: imgResult.error ?? null,
+        source: "direct",
+        kind: input.kind,
+      });
+    } catch {
+      // ignore
+    }
     if (imgResult.ok) return { ok: true, usedNamedPrinter: true };
     return {
       ok: false,
@@ -2444,7 +2488,7 @@ export async function printBillAsync(
   },
 ): Promise<boolean> {
   // Never treat display/profile names as OS spooler names.
-  const systemPrinterName = options?.systemPrinterName?.trim() || undefined;
+  const systemPrinterName = asPrinterName(options?.systemPrinterName);
   return printReceiptAsync({
     ...billToPrintInput(branchName, branchCode, bill),
     printerName: options?.printerName ?? systemPrinterName,
@@ -2566,7 +2610,7 @@ export async function printPosRecentOrderAsync(
   order: PosRecentOrder,
   options?: { printerName?: string; systemPrinterName?: string },
 ): Promise<boolean> {
-  const systemPrinterName = options?.systemPrinterName?.trim() || undefined;
+  const systemPrinterName = asPrinterName(options?.systemPrinterName);
   return printReceiptAsync({
     ...posRecentOrderToReceiptPrint(branchName, branchCode, order),
     printerName: options?.printerName ?? systemPrinterName,

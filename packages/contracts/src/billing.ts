@@ -70,6 +70,11 @@ export const billSchema = z.object({
   riderName: z.string().nullable(),
   deliveryChargePkr: z.number(),
   status: billStatusSchema,
+  praMode: z.enum(["fake", "real"]).nullable().optional(),
+  praInvoiceNumber: z.string().nullable().optional(),
+  praInvoiceId: z.string().nullable().optional(),
+  praQrPayload: z.string().nullable().optional(),
+  praIssuedAt: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 

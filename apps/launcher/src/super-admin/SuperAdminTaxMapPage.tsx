@@ -1,10 +1,11 @@
 import { Button } from "@platform/ui";
 import { SYSTEM_TYPE_LABELS } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchPlatformBusinesses, updatePlatformBusiness } from "../lib/platformApi";
 import { headingClass, mutedClass } from "../pops/lib/themeClasses";
+import { resolvePraFlags } from "./superAdminHelpers";
 
 export function SuperAdminTaxMapPage(): JSX.Element {
   const qc = useQueryClient();
@@ -26,36 +27,47 @@ export function SuperAdminTaxMapPage(): JSX.Element {
   }, [businesses.data, filter]);
 
   const saveMut = useMutation({
-    mutationFn: (args: { id: string; fbrEnabled: boolean; praEnabled: boolean }) =>
+    mutationFn: (args: {
+      id: string;
+      fbrEnabled: boolean;
+      praFakeEnabled: boolean;
+      praRealEnabled: boolean;
+    }) =>
       updatePlatformBusiness(args.id, {
         fbrEnabled: args.fbrEnabled,
-        praEnabled: args.praEnabled,
+        praFakeEnabled: args.praFakeEnabled,
+        praRealEnabled: args.praRealEnabled,
       }),
     onSuccess: async (saved) => {
+      const pra = resolvePraFlags(saved);
       setMessage(
-        `${saved.name}: FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"}`,
+        `${saved.name}: FBR ${saved.fbrEnabled ? "ON" : "OFF"} · Fake PRA ${pra.praFakeEnabled ? "ON" : "OFF"} · Real PRA ${pra.praRealEnabled ? "ON" : "OFF"}`,
       );
       await qc.invalidateQueries({ queryKey: ["platform", "businesses"] });
     },
     onError: (err: Error) => setMessage(err.message),
   });
 
-  const fbrOn = (businesses.data ?? []).filter((b) => b.fbrEnabled).length;
-  const praOn = (businesses.data ?? []).filter((b) => b.praEnabled).length;
+  const list = businesses.data ?? [];
+  const fbrOn = list.filter((b) => b.fbrEnabled).length;
+  const praFakeOn = list.filter((b) => resolvePraFlags(b).praFakeEnabled).length;
+  const praRealOn = list.filter((b) => resolvePraFlags(b).praRealEnabled).length;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className={`text-lg font-semibold ${headingClass}`}>Tax map</h2>
+        <h2 className={`text-lg font-semibold ${headingClass}`}>FBR / Fake PRA / Real PRA</h2>
         <p className={`mt-1 text-sm ${mutedClass}`}>
-          Enable FBR / PRA per business. Admins see Tax &amp; compliance after refresh / re-login.
+          Enable FBR / Fake PRA / Real PRA per business. Admins see Tax &amp; compliance after
+          refresh / re-login. Fake PRA = demo fiscal slip; Real PRA = live e-IMS.
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Stat label="Businesses" value={businesses.data?.length ?? 0} />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Businesses" value={list.length} />
         <Stat label="FBR on" value={fbrOn} />
-        <Stat label="PRA on" value={praOn} />
+        <Stat label="Fake PRA on" value={praFakeOn} />
+        <Stat label="Real PRA on" value={praRealOn} />
       </div>
 
       <input
@@ -77,28 +89,33 @@ export function SuperAdminTaxMapPage(): JSX.Element {
             <tr>
               <th className="px-4 py-3 font-medium">Business</th>
               <th className="px-4 py-3 font-medium">FBR</th>
-              <th className="px-4 py-3 font-medium">PRA</th>
+              <th className="px-4 py-3 font-medium">Fake PRA</th>
+              <th className="px-4 py-3 font-medium">Real PRA</th>
               <th className="px-4 py-3 font-medium">Save</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {rows.map((b) => (
-              <TaxRow
-                key={b.id}
-                id={b.id}
-                name={b.name}
-                systemType={b.systemType}
-                fbr={Boolean(b.fbrEnabled)}
-                pra={Boolean(b.praEnabled)}
-                busy={saveMut.isPending}
-                onSave={(fbrEnabled, praEnabled) =>
-                  saveMut.mutate({ id: b.id, fbrEnabled, praEnabled })
-                }
-              />
-            ))}
+            {rows.map((b) => {
+              const pra = resolvePraFlags(b);
+              return (
+                <TaxRow
+                  key={b.id}
+                  id={b.id}
+                  name={b.name}
+                  systemType={b.systemType}
+                  fbr={Boolean(b.fbrEnabled)}
+                  praFake={pra.praFakeEnabled}
+                  praReal={pra.praRealEnabled}
+                  busy={saveMut.isPending}
+                  onSave={(fbrEnabled, praFakeEnabled, praRealEnabled) =>
+                    saveMut.mutate({ id: b.id, fbrEnabled, praFakeEnabled, praRealEnabled })
+                  }
+                />
+              );
+            })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={4} className={`px-4 py-8 text-sm ${mutedClass}`}>
+                <td colSpan={5} className={`px-4 py-8 text-sm ${mutedClass}`}>
                   No businesses match.
                 </td>
               </tr>
@@ -115,7 +132,8 @@ function TaxRow({
   name,
   systemType,
   fbr,
-  pra,
+  praFake,
+  praReal,
   busy,
   onSave,
 }: {
@@ -123,13 +141,23 @@ function TaxRow({
   name: string;
   systemType: keyof typeof SYSTEM_TYPE_LABELS;
   fbr: boolean;
-  pra: boolean;
+  praFake: boolean;
+  praReal: boolean;
   busy: boolean;
-  onSave: (fbr: boolean, pra: boolean) => void;
+  onSave: (fbr: boolean, praFake: boolean, praReal: boolean) => void;
 }): JSX.Element {
   const [fbrEnabled, setFbr] = useState(fbr);
-  const [praEnabled, setPra] = useState(pra);
-  const dirty = fbrEnabled !== fbr || praEnabled !== pra;
+  const [praFakeEnabled, setPraFake] = useState(praFake);
+  const [praRealEnabled, setPraReal] = useState(praReal);
+
+  useEffect(() => {
+    setFbr(fbr);
+    setPraFake(praFake);
+    setPraReal(praReal);
+  }, [fbr, praFake, praReal]);
+
+  const dirty =
+    fbrEnabled !== fbr || praFakeEnabled !== praFake || praRealEnabled !== praReal;
 
   return (
     <tr>
@@ -152,15 +180,30 @@ function TaxRow({
       <td className="px-4 py-3">
         <input
           type="checkbox"
-          checked={praEnabled}
-          onChange={(e) => setPra(e.target.checked)}
+          checked={praFakeEnabled}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setPraFake(checked);
+            if (checked) setPraReal(false);
+          }}
+        />
+      </td>
+      <td className="px-4 py-3">
+        <input
+          type="checkbox"
+          checked={praRealEnabled}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setPraReal(checked);
+            if (checked) setPraFake(false);
+          }}
         />
       </td>
       <td className="px-4 py-3">
         <Button
           type="button"
           disabled={!dirty || busy}
-          onClick={() => onSave(fbrEnabled, praEnabled)}
+          onClick={() => onSave(fbrEnabled, praFakeEnabled, praRealEnabled)}
         >
           Save
         </Button>

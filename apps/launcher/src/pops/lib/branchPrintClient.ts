@@ -12,6 +12,23 @@ import { logPrintEvent } from "./printHistory";
 const SETTINGS_KEY = "pops-branch-print-server-v1";
 const PREFERRED_SERVER_KEY = "pops-preferred-branch-print-server-v1";
 export const BRANCH_PRINT_QUEUE_CHANGED_EVENT = "pops-branch-print-queue-changed";
+/** Fired when a queued/live print finishes (ok or failed) — UI toast + history refresh. */
+export const BRANCH_PRINT_JOB_DONE_EVENT = "pops-print-job-done";
+
+export type BranchPrintJobDoneDetail = {
+  ok: boolean;
+  orderId?: string | null;
+  printerName?: string | null;
+  error?: string | null;
+  source: "local" | "cloud" | "direct";
+  kind?: string | null;
+};
+
+export function announcePrintJobDone(detail: BranchPrintJobDoneDetail): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(BRANCH_PRINT_JOB_DONE_EVENT, { detail }));
+  window.dispatchEvent(new CustomEvent(BRANCH_PRINT_QUEUE_CHANGED_EVENT));
+}
 
 export type BranchPrintServerSettings = {
   enabled: boolean;
@@ -486,8 +503,10 @@ export async function submitEnterprisePrintJob(input: {
 }
 
 let workerStarted = false;
+let localWorkerBusy = false;
 let cloudPollerStarted = false;
 let cloudPollerBranch = "";
+let cloudWorkerBusy = false;
 
 type BranchPrinterRow = {
   id: string;
@@ -640,6 +659,8 @@ export function ensureBranchPrintWorker(): void {
   if (workerStarted || !isDesktopAppRuntime()) return;
   workerStarted = true;
   const tick = async () => {
+    if (localWorkerBusy) return;
+    localWorkerBusy = true;
     try {
       const raw = await invoke<Record<string, unknown> | null>("claim_next_branch_print_job");
       if (!raw) return;
@@ -662,9 +683,17 @@ export function ensureBranchPrintWorker(): void {
         orderRef: job.orderId ?? undefined,
         ok,
       });
-      window.dispatchEvent(new CustomEvent(BRANCH_PRINT_QUEUE_CHANGED_EVENT));
+      announcePrintJobDone({
+        ok,
+        orderId: job.orderId,
+        printerName: printerName ?? job.printerName,
+        error: error ?? null,
+        source: "local",
+      });
     } catch {
       // ignore
+    } finally {
+      localWorkerBusy = false;
     }
   };
   window.setInterval(() => {
@@ -685,6 +714,8 @@ export function ensureCloudPrintPoller(branchCode: string): void {
   ensureBranchPrintWorker();
 
   const tick = async () => {
+    if (cloudWorkerBusy) return;
+    cloudWorkerBusy = true;
     try {
       const settings = loadBranchPrintSettings(code);
       // Live claim always runs while this EXE is open for the branch (cloudHeartbeat can disable).
@@ -749,9 +780,18 @@ export function ensureCloudPrintPoller(branchCode: string): void {
         orderRef: localJob.orderId ?? undefined,
         ok: result.ok,
       });
-      window.dispatchEvent(new CustomEvent(BRANCH_PRINT_QUEUE_CHANGED_EVENT));
+      announcePrintJobDone({
+        ok: result.ok,
+        orderId: localJob.orderId,
+        printerName: result.printer ?? localJob.printerName,
+        error: result.error ?? null,
+        source: "cloud",
+        kind: payload.kind === "kot" ? "kot" : "receipt",
+      });
     } catch {
       // ignore network / auth blips
+    } finally {
+      cloudWorkerBusy = false;
     }
   };
 

@@ -219,8 +219,21 @@ export function buildPosRecentOrders(
   options?: { limit?: number; settings?: PosSettings },
 ): PosRecentOrder[] {
   const settings = options?.settings ?? DEFAULT_POS_SETTINGS;
-  const pending = tickets.filter((t) => t.status !== "done").map((t) => mapTicket(t, settings));
-  const paid = bills.filter((b) => !b.billRef.endsWith("-SEED")).map(mapBill);
+  const paidBills = bills.filter((b) => !b.billRef.endsWith("-SEED"));
+  const paid = paidBills.map(mapBill);
+  // Once paid, hide open kitchen tickets for the same ORD-# so All/Print use the PRA bill slip.
+  const paidOrderRefs = new Set(
+    paidBills
+      .map((b) => (b.orderRef ?? b.billRef).trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const pending = tickets
+    .filter((t) => t.status !== "done")
+    .filter((t) => {
+      const ref = (t.orderRef ?? t.ticketRef).trim().toLowerCase();
+      return !ref || !paidOrderRefs.has(ref);
+    })
+    .map((t) => mapTicket(t, settings));
 
   const sorted = [...pending, ...paid].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
@@ -242,9 +255,11 @@ export function filterPosRecentOrdersByMode(
   if (mode === "Paid") {
     return orders.filter(isPaidPosRecentOrder);
   }
-  const openOrders = orders.filter((order) => !isPaidPosRecentOrder(order));
-  if (mode === "all") return openOrders;
-  return openOrders.filter((order) => order.orderMode === mode);
+  // "All" must include paid bills (PRA reprints) — not only open tickets.
+  if (mode === "all") {
+    return orders;
+  }
+  return orders.filter((order) => order.orderMode === mode);
 }
 
 export function filterPosRecentOrders(

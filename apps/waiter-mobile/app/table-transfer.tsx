@@ -58,13 +58,14 @@ export default function TableTransferScreen() {
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 8_000,
+    refetchInterval: 4_000,
   });
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
+    refetchInterval: 4_000,
   });
 
   const transferable = useMemo(() => {

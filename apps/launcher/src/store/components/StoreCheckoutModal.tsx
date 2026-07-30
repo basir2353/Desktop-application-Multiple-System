@@ -11,7 +11,11 @@ type Props = {
   promotionDiscount: number;
   loyaltyRedeem: number;
   customerLoyaltyPoints: number;
+  /** Required when Credit sale is checked. */
+  hasCustomer?: boolean;
   isSubmitting?: boolean;
+  /** API / parent error shown inside the modal (Pay stays open). */
+  submitError?: string | null;
   mode?: "complete" | "hold";
   /** Prefill from Sales screen (default Cash). */
   initialPaymentMethod?: StorePaymentMethod;
@@ -37,7 +41,9 @@ export function StoreCheckoutModal({
   promotionDiscount,
   loyaltyRedeem: initialLoyalty,
   customerLoyaltyPoints,
+  hasCustomer = false,
   isSubmitting = false,
+  submitError = null,
   mode = "complete",
   initialPaymentMethod = "Cash",
   initialIsCredit = false,
@@ -49,6 +55,7 @@ export function StoreCheckoutModal({
   ]);
   const [loyaltyRedeem, setLoyaltyRedeem] = useState(initialLoyalty);
   const [isCredit, setIsCredit] = useState(initialIsCredit || initialPaymentMethod === "Credit");
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -62,18 +69,48 @@ export function StoreCheckoutModal({
   const netTotal = Math.max(0, total - loyaltyValue);
   const paid = payments.reduce((s, p) => s + p.amount, 0);
   const change = Math.max(0, paid - netTotal);
+  const shortfall = Math.max(0, netTotal - paid);
 
   useEffect(() => {
     setPayments([defaultRow(initialPaymentMethod, netTotal)]);
     setIsCredit(initialIsCredit || initialPaymentMethod === "Credit");
+    setPaymentError(null);
   }, [netTotal, initialPaymentMethod, initialIsCredit]);
 
   function updatePayment(index: number, patch: Partial<StorePaymentLine>): void {
     setPayments((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    setPaymentError(null);
   }
 
   function handleConfirm(): void {
-    const method: StorePaymentMethod = payments.length > 1 ? "Cash" : payments[0]?.method ?? "Cash";
+    if (mode === "hold") {
+      onConfirm({
+        paymentMethod: payments[0]?.method ?? "Cash",
+        payments: [],
+        loyaltyPointsRedeem: loyaltyRedeem,
+        isCredit: false,
+      });
+      return;
+    }
+
+    if (isCredit && !hasCustomer) {
+      setPaymentError("Select a customer before credit sale (udhaar).");
+      return;
+    }
+
+    if (paid < netTotal && !isCredit) {
+      setPaymentError(`Payment short by ${formatPkr(shortfall)}. Add payment or mark Credit sale.`);
+      return;
+    }
+
+    const method: StorePaymentMethod =
+      isCredit && payments.every((p) => p.amount <= 0)
+        ? "Credit"
+        : payments.length > 1
+          ? payments[0]?.method ?? "Cash"
+          : payments[0]?.method ?? "Cash";
+
+    setPaymentError(null);
     onConfirm({
       paymentMethod: method,
       payments: payments.filter((p) => p.amount > 0),
@@ -81,6 +118,9 @@ export function StoreCheckoutModal({
       isCredit,
     });
   }
+
+  const canPay =
+    mode === "hold" || isCredit || paid >= netTotal;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose} role="presentation">
@@ -138,15 +178,42 @@ export function StoreCheckoutModal({
                       ))}
                     </PharmacySelect>
                     <PharmacyInput type="number" min={0} value={row.amount || ""} onChange={(e) => updatePayment(i, { amount: Number(e.target.value) || 0 })} className="w-28" />
+                    {payments.length > 1 ? (
+                      <button
+                        type="button"
+                        className="rounded-lg px-2 text-slate-400 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
+                        onClick={() => setPayments((prev) => prev.filter((_, idx) => idx !== i))}
+                        aria-label="Remove payment"
+                      >
+                        ×
+                      </button>
+                    ) : null}
                   </div>
                 ))}
                 {change > 0 ? <p className="text-xs text-emerald-600">Change due: {formatPkr(change)}</p> : null}
+                {shortfall > 0 && !isCredit ? (
+                  <p className="text-xs text-amber-600">Still due: {formatPkr(shortfall)}</p>
+                ) : null}
               </div>
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={isCredit} onChange={(e) => setIsCredit(e.target.checked)} className="rounded" />
+                <input
+                  type="checkbox"
+                  checked={isCredit}
+                  onChange={(e) => {
+                    setIsCredit(e.target.checked);
+                    setPaymentError(null);
+                  }}
+                  className="rounded"
+                />
                 Credit sale (add to customer balance)
               </label>
             </>
+          ) : null}
+
+          {paymentError || submitError ? (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              {paymentError || submitError}
+            </p>
           ) : null}
         </div>
 
@@ -154,7 +221,7 @@ export function StoreCheckoutModal({
           <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium dark:border-slate-700">Cancel</button>
           <button
             type="button"
-            disabled={isSubmitting || (mode === "complete" && paid < netTotal && !isCredit)}
+            disabled={isSubmitting || !canPay}
             onClick={handleConfirm}
             className="flex-1 rounded-lg bg-sky-600 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >

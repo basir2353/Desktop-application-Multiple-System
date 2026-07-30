@@ -312,6 +312,8 @@ $doc.add_PrintPage({{
   }}
   $e.HasMorePages = $false
 }})
+# Silent spool — no Windows "Printing / Page 1 of…" status dialog (that freezes the app).
+$doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $doc.Print()
 $font.Dispose()
 $doc.Dispose()
@@ -382,8 +384,7 @@ fn print_via_out_printer(printer_name: &str, path: &str) -> Result<(), String> {
 ///   3) Out-Printer / text spooler fallback
 ///
 /// Virtual PDF/XPS: Out-Printer first (Save dialog works).
-#[tauri::command]
-fn print_to_printer(
+fn print_to_printer_sync(
     printer_name: String,
     content: String,
     job_name: Option<String>,
@@ -490,9 +491,24 @@ fn print_to_printer(
     Ok(last_job_id)
 }
 
-/// Prints a PNG to a named OS printer via GDI — preserves styled HTML receipt layout.
+/// Async wrapper — PowerShell print must not block the UI/WebView thread.
 #[tauri::command]
-fn print_image_to_printer(
+async fn print_to_printer(
+    printer_name: String,
+    content: String,
+    job_name: Option<String>,
+    copies: Option<u32>,
+    paper_width_mm: Option<u32>,
+) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        print_to_printer_sync(printer_name, content, job_name, copies, paper_width_mm)
+    })
+    .await
+    .map_err(|e| format!("Print task failed: {e}"))?
+}
+
+/// Prints a PNG to a named OS printer via GDI — preserves styled HTML receipt layout.
+fn print_image_to_printer_sync(
     printer_name: String,
     png_bytes: Vec<u8>,
     job_name: Option<String>,
@@ -531,6 +547,22 @@ fn print_image_to_printer(
             Err(e)
         }
     }
+}
+
+/// Async wrapper — PowerShell/GDI print must not block the UI/WebView thread.
+#[tauri::command]
+async fn print_image_to_printer(
+    printer_name: String,
+    png_bytes: Vec<u8>,
+    job_name: Option<String>,
+    copies: Option<u32>,
+    paper_width_mm: Option<u32>,
+) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        print_image_to_printer_sync(printer_name, png_bytes, job_name, copies, paper_width_mm)
+    })
+    .await
+    .map_err(|e| format!("Print task failed: {e}"))?
 }
 
 fn print_via_gdi_image(
@@ -611,6 +643,8 @@ try {{
       $script:srcY += [int]$srcH
       $e.HasMorePages = ($script:srcY -lt $img.Height)
     }})
+    # Silent spool — no Windows "Printing / Page 1 of…" status dialog (that freezes the app).
+    $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
     $doc.Print()
     $doc.Dispose()
   }}

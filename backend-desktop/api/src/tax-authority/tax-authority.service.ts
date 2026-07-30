@@ -6,14 +6,20 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { ZodError } from "zod";
 import {
   fbrConnectSchema,
+  issuePraInvoiceSchema,
   praConnectSchema,
   sendTaxInvoiceSchema,
   type FbrConnectInput,
+  type IssuePraInvoiceInput,
+  type IssuePraInvoiceResult,
   type PraConnectInput,
+  type PraFiscalInvoice,
+  type PraInvoiceMode,
+  type TaxAuthorityFeatures,
   type TaxAuthorityStatus,
   type TaxConnectResult,
   type TaxInvoice,
@@ -24,6 +30,8 @@ import {
   popsBranches,
   pharmacySales,
   storeSales,
+  storeSaleLines,
+  storeProducts,
   organizations,
   taxAuthorityInvoices,
   taxAuthorityProfiles,
@@ -56,33 +64,92 @@ export class TaxAuthorityService {
 
   constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
 
-  async getFeatures(organizationId: string): Promise<{ fbrEnabled: boolean; praEnabled: boolean }> {
+  async getFeatures(organizationId: string): Promise<TaxAuthorityFeatures> {
     const rows = await this.db
       .select({
         fbrEnabled: organizations.fbrEnabled,
         praEnabled: organizations.praEnabled,
+        praFakeEnabled: organizations.praFakeEnabled,
+        praRealEnabled: organizations.praRealEnabled,
       })
       .from(organizations)
       .where(eq(organizations.id, organizationId))
       .limit(1);
     const row = rows[0];
+    let praFakeEnabled = Boolean(row?.praFakeEnabled);
+    let praRealEnabled = Boolean(row?.praRealEnabled);
+    // Legacy: praEnabled alone with both new flags false → treat as real PRA.
+    if (Boolean(row?.praEnabled) && !praFakeEnabled && !praRealEnabled) {
+      praRealEnabled = true;
+    }
+    // One-time runtime normalization: prefer Real when corrupt (both true).
+    if (praFakeEnabled && praRealEnabled) {
+      praFakeEnabled = false;
+    }
     return {
       fbrEnabled: Boolean(row?.fbrEnabled),
-      praEnabled: Boolean(row?.praEnabled),
+      praFakeEnabled,
+      praRealEnabled,
+      praEnabled: praFakeEnabled || praRealEnabled,
     };
   }
 
   /** Org Admin / Incharge: toggle PRA (and optionally FBR) for this business. */
   async setFeatures(
     organizationId: string,
-    patch: { praEnabled?: boolean; fbrEnabled?: boolean },
-  ): Promise<{ fbrEnabled: boolean; praEnabled: boolean }> {
-    if (patch.praEnabled === undefined && patch.fbrEnabled === undefined) {
-      throw new BadRequestException("Provide praEnabled and/or fbrEnabled");
+    patch: {
+      praEnabled?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
+      fbrEnabled?: boolean;
+    },
+  ): Promise<TaxAuthorityFeatures> {
+    if (
+      patch.praEnabled === undefined &&
+      patch.praFakeEnabled === undefined &&
+      patch.praRealEnabled === undefined &&
+      patch.fbrEnabled === undefined
+    ) {
+      throw new BadRequestException(
+        "Provide praEnabled, praFakeEnabled, praRealEnabled, and/or fbrEnabled",
+      );
     }
-    const update: Partial<{ praEnabled: boolean; fbrEnabled: boolean }> = {};
-    if (typeof patch.praEnabled === "boolean") update.praEnabled = patch.praEnabled;
+
+    const current = await this.getFeatures(organizationId);
+    const update: Partial<{
+      praEnabled: boolean;
+      praFakeEnabled: boolean;
+      praRealEnabled: boolean;
+      fbrEnabled: boolean;
+    }> = {};
+
     if (typeof patch.fbrEnabled === "boolean") update.fbrEnabled = patch.fbrEnabled;
+
+    const fakeProvided = typeof patch.praFakeEnabled === "boolean";
+    const realProvided = typeof patch.praRealEnabled === "boolean";
+    if (fakeProvided || realProvided) {
+      let praFakeEnabled = fakeProvided ? patch.praFakeEnabled! : current.praFakeEnabled;
+      let praRealEnabled = realProvided ? patch.praRealEnabled! : current.praRealEnabled;
+      // Fake and Real must never both be true.
+      if (fakeProvided && realProvided && patch.praFakeEnabled && patch.praRealEnabled) {
+        // Both true in same payload → prefer Real.
+        praFakeEnabled = false;
+        praRealEnabled = true;
+      } else if (fakeProvided && patch.praFakeEnabled) {
+        praRealEnabled = false;
+      } else if (realProvided && patch.praRealEnabled) {
+        praFakeEnabled = false;
+      } else if (praFakeEnabled && praRealEnabled) {
+        praFakeEnabled = false;
+      }
+      update.praFakeEnabled = praFakeEnabled;
+      update.praRealEnabled = praRealEnabled;
+      update.praEnabled = praFakeEnabled || praRealEnabled;
+    } else if (typeof patch.praEnabled === "boolean") {
+      update.praEnabled = patch.praEnabled;
+      update.praFakeEnabled = false;
+      update.praRealEnabled = patch.praEnabled;
+    }
 
     const updated = await this.db
       .update(organizations)
@@ -91,16 +158,16 @@ export class TaxAuthorityService {
       .returning({
         fbrEnabled: organizations.fbrEnabled,
         praEnabled: organizations.praEnabled,
+        praFakeEnabled: organizations.praFakeEnabled,
+        praRealEnabled: organizations.praRealEnabled,
       });
     const row = updated[0];
     if (!row) throw new NotFoundException("Organization not found");
+    const features = await this.getFeatures(organizationId);
     this.logger.log(
-      `Tax features updated for org ${organizationId}: FBR=${row.fbrEnabled} PRA=${row.praEnabled}`,
+      `Tax features updated for org ${organizationId}: FBR=${features.fbrEnabled} PRA=${features.praEnabled} fake=${features.praFakeEnabled} real=${features.praRealEnabled}`,
     );
-    return {
-      fbrEnabled: Boolean(row.fbrEnabled),
-      praEnabled: Boolean(row.praEnabled),
-    };
+    return features;
   }
 
   async getStatus(organizationId: string, branchCode: string): Promise<TaxAuthorityStatus> {
@@ -113,6 +180,8 @@ export class TaxAuthorityService {
         branchCode: branch.code,
         fbrEnabled: features.fbrEnabled,
         praEnabled: features.praEnabled,
+        praFakeEnabled: features.praFakeEnabled,
+        praRealEnabled: features.praRealEnabled,
         company: {
           companyName: "",
           ntn: "",
@@ -151,6 +220,8 @@ export class TaxAuthorityService {
       branchCode: branch.code,
       fbrEnabled: features.fbrEnabled,
       praEnabled: features.praEnabled,
+      praFakeEnabled: features.praFakeEnabled,
+      praRealEnabled: features.praRealEnabled,
       company: {
         companyName: profile.companyName,
         ntn: profile.ntn,
@@ -375,7 +446,14 @@ export class TaxAuthorityService {
     const profile = await this.requireProfile(organizationId, branch.id);
 
     const source = await this.loadSourceDocument(organizationId, branch.id, input.sourceType, input.sourceId);
-    const existing = await this.findInvoice(organizationId, authority, input.sourceType, input.sourceId);
+    const invoiceMode: PraInvoiceMode = "real";
+    const existing = await this.findInvoice(
+      organizationId,
+      authority,
+      input.sourceType,
+      input.sourceId,
+      invoiceMode,
+    );
     if (existing && existing.status === "verified" && !input.force) {
       return { invoice: this.mapInvoice(existing), message: "Invoice already submitted" };
     }
@@ -392,6 +470,7 @@ export class TaxAuthorityService {
           organizationId,
           branchId: branch.id,
           authority,
+          invoiceMode,
           sourceType: input.sourceType,
           sourceId: input.sourceId,
           sourceRef: source.ref,
@@ -410,6 +489,7 @@ export class TaxAuthorityService {
         .update(taxAuthorityInvoices)
         .set({
           status: "submitting",
+          invoiceMode,
           requestJson: JSON.stringify(payload),
           attemptCount: row.attemptCount + 1,
           lastAttemptAt: now,
@@ -427,6 +507,7 @@ export class TaxAuthorityService {
         .update(taxAuthorityInvoices)
         .set({
           status: "verified",
+          invoiceMode,
           responseJson: JSON.stringify(result.raw),
           authorityInvoiceNumber: result.invoiceNumber,
           qrPayload: result.qrPayload,
@@ -435,6 +516,36 @@ export class TaxAuthorityService {
         })
         .where(eq(taxAuthorityInvoices.id, row.id))
         .returning();
+
+      if (authority === "pra" && input.sourceType === "bill") {
+        const invoiceId =
+          typeof result.raw === "object" &&
+          result.raw &&
+          "invoiceId" in result.raw &&
+          (result.raw as { invoiceId?: unknown }).invoiceId
+            ? String((result.raw as { invoiceId: unknown }).invoiceId)
+            : `FISC-${Date.now()}-${Math.floor(100000 + Math.random() * 900000)}`;
+        await this.db
+          .update(taxAuthorityInvoices)
+          .set({
+            responseJson: JSON.stringify({
+              ...(typeof result.raw === "object" && result.raw ? result.raw : { raw: result.raw }),
+              invoiceId,
+              invoiceNumber: result.invoiceNumber,
+              usin: `USIN-${source.ref.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || input.sourceId.slice(0, 8)}`,
+              issuedAt: new Date().toISOString(),
+            }),
+          })
+          .where(eq(taxAuthorityInvoices.id, row.id));
+        await this.updateBillPraFields(organizationId, input.sourceId, {
+          praMode: "real",
+          praInvoiceNumber: result.invoiceNumber,
+          praInvoiceId: invoiceId,
+          praQrPayload: result.qrPayload,
+          praIssuedAt: new Date(),
+        });
+      }
+
       return { invoice: this.mapInvoice(saved!), message: "Invoice submitted successfully" };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -451,8 +562,260 @@ export class TaxAuthorityService {
   }
 
   /**
+   * Issue a Fake or Real PRA fiscal invoice for a sale/bill.
+   * Fake: local unique numbers + QR (not sent to PRA). Real: e-IMS via sendInvoice.
+   */
+  async issuePraInvoice(
+    organizationId: string,
+    body: unknown,
+  ): Promise<IssuePraInvoiceResult> {
+    const input = this.parseOrThrow(issuePraInvoiceSchema, body) as IssuePraInvoiceInput;
+    await this.assertPraModeEnabled(organizationId, input.mode);
+
+    if (input.mode === "real") {
+      const sent = await this.sendInvoice(organizationId, "pra", {
+        branchCode: input.branchCode,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        force: input.force,
+      });
+      const fiscal = await this.buildFiscalFromInvoice(
+        organizationId,
+        input.branchCode,
+        input.sourceType,
+        input.sourceId,
+        "real",
+        sent.invoice,
+      );
+      return {
+        invoice: sent.invoice,
+        fiscal,
+        message: sent.message,
+      };
+    }
+
+    // —— Fake PRA ——
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const profile = await this.getProfile(organizationId, branch.id);
+    const source = await this.loadSourceDocument(
+      organizationId,
+      branch.id,
+      input.sourceType,
+      input.sourceId,
+    );
+
+    const existing = await this.findInvoice(
+      organizationId,
+      "pra",
+      input.sourceType,
+      input.sourceId,
+      "fake",
+    );
+    if (existing && existing.status === "submitted" && !input.force) {
+      const fiscal = await this.buildFiscalFromInvoice(
+        organizationId,
+        input.branchCode,
+        input.sourceType,
+        input.sourceId,
+        "fake",
+        this.mapInvoice(existing),
+      );
+      return {
+        invoice: this.mapInvoice(existing),
+        fiscal,
+        message: "Fake PRA invoice already issued",
+      };
+    }
+
+        const now = new Date();
+    // Short Fake PRA invoice #: 8 digits + /MM/YY (e.g. 86142144/07/26)
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const yy = String(now.getFullYear()).slice(-2);
+    const digits = String(Math.floor(1e7 + Math.random() * 9e7)).slice(0, 8);
+    const invoiceNumber = `${digits}/${mm}/${yy}`;
+    const orderKey =
+      source.ref.replace(/[^A-Za-z0-9-]/g, "").slice(0, 24) || String(Date.now()).slice(-8);
+    const invoiceId = `FISC-${orderKey}-${Date.now().toString(36).toUpperCase()}`;
+    const usin = `USIN-${orderKey}`;
+    const dateStr = now.toISOString().slice(0, 10);
+    const qrPayload = `PRA|${invoiceNumber}|${orderKey}|${invoiceId}|${source.totalPkr}|${dateStr}`;
+
+const responsePayload = {
+      mode: "fake",
+      invoiceNumber,
+      invoiceId,
+      usin,
+      qrPayload,
+      issuedAt: now.toISOString(),
+    };
+
+    let row = existing;
+    if (!row) {
+      const [created] = await this.db
+        .insert(taxAuthorityInvoices)
+        .values({
+          organizationId,
+          branchId: branch.id,
+          authority: "pra",
+          invoiceMode: "fake",
+          sourceType: input.sourceType,
+          sourceId: input.sourceId,
+          sourceRef: source.ref,
+          status: "submitted",
+          taxableAmountPkr: source.taxableAmountPkr,
+          taxAmountPkr: source.taxAmountPkr,
+          requestJson: JSON.stringify({ mode: "fake", sourceRef: source.ref }),
+          responseJson: JSON.stringify(responsePayload),
+          authorityInvoiceNumber: invoiceNumber,
+          qrPayload,
+          attemptCount: 1,
+          lastAttemptAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      row = created!;
+    } else {
+      const [updated] = await this.db
+        .update(taxAuthorityInvoices)
+        .set({
+          status: "submitted",
+          invoiceMode: "fake",
+          responseJson: JSON.stringify(responsePayload),
+          authorityInvoiceNumber: invoiceNumber,
+          qrPayload,
+          attemptCount: row.attemptCount + 1,
+          lastAttemptAt: now,
+          lastError: null,
+          updatedAt: now,
+        })
+        .where(eq(taxAuthorityInvoices.id, row.id))
+        .returning();
+      row = updated!;
+    }
+
+    if (input.sourceType === "bill") {
+      await this.updateBillPraFields(organizationId, input.sourceId, {
+        praMode: "fake",
+        praInvoiceNumber: invoiceNumber,
+        praInvoiceId: invoiceId,
+        praQrPayload: qrPayload,
+        praIssuedAt: now,
+      });
+    }
+
+    const invoice = this.mapInvoice(row);
+    const fiscal: PraFiscalInvoice = {
+      mode: "fake",
+      invoiceNumber,
+      invoiceId,
+      qrPayload,
+      usin,
+      issuedAt: now.toISOString(),
+      sellerName: profile?.companyName ?? "",
+      ntn: profile?.ntn ?? "",
+      strn: profile?.strn ?? "",
+      branchCode: profile?.praBranchCode || branch.code,
+      sourceRef: source.ref,
+      taxableAmountPkr: source.taxableAmountPkr,
+      taxAmountPkr: source.taxAmountPkr,
+      totalAmountPkr: source.totalPkr,
+      lines: source.lines.map((line) => ({
+        label: line.description,
+        qty: Math.max(1, Math.round(line.qty)),
+        unitPrice:
+          line.qty > 0 ? Math.round(line.amount / line.qty) : Math.round(line.amount),
+      })),
+    };
+
+    return {
+      invoice,
+      fiscal,
+      message: "Fake PRA invoice issued",
+    };
+  }
+
+  /**
+   * Return Fake/Real PRA fiscal details for a source from bill columns or latest invoice.
+   */
+  async getFiscalForSource(
+    organizationId: string,
+    branchCode: string,
+    sourceType: TaxInvoiceSourceType,
+    sourceId: string,
+  ): Promise<PraFiscalInvoice | null> {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+
+    if (sourceType === "bill") {
+      const [bill] = await this.db
+        .select()
+        .from(popsBills)
+        .where(
+          and(
+            eq(popsBills.id, sourceId),
+            eq(popsBills.organizationId, organizationId),
+            eq(popsBills.branchId, branch.id),
+          ),
+        )
+        .limit(1);
+      if (bill?.praInvoiceNumber && (bill.praMode === "fake" || bill.praMode === "real")) {
+        const profile = await this.getProfile(organizationId, branch.id);
+        const lines = this.parseLines(bill.linesJson);
+        return {
+          mode: bill.praMode,
+          invoiceNumber: bill.praInvoiceNumber,
+          invoiceId: bill.praInvoiceId ?? bill.praInvoiceNumber,
+          qrPayload: bill.praQrPayload ?? bill.praInvoiceNumber,
+          usin: `USIN-${bill.billRef.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || bill.id.slice(0, 8)}`,
+          issuedAt: bill.praIssuedAt?.toISOString() ?? bill.createdAt.toISOString(),
+          sellerName: profile?.companyName ?? "",
+          ntn: profile?.ntn ?? "",
+          strn: profile?.strn ?? "",
+          branchCode: profile?.praBranchCode || branch.code,
+          sourceRef: bill.billRef,
+          taxableAmountPkr: Math.max(0, bill.subtotalPkr - bill.discountPkr),
+          taxAmountPkr: bill.taxPkr,
+          totalAmountPkr: bill.totalPkr,
+          lines: lines.map((line) => ({
+            label: line.description,
+            qty: Math.max(1, Math.round(line.qty)),
+            unitPrice:
+              line.qty > 0 ? Math.round(line.amount / line.qty) : Math.round(line.amount),
+          })),
+        };
+      }
+    }
+
+    const [latest] = await this.db
+      .select()
+      .from(taxAuthorityInvoices)
+      .where(
+        and(
+          eq(taxAuthorityInvoices.organizationId, organizationId),
+          eq(taxAuthorityInvoices.branchId, branch.id),
+          eq(taxAuthorityInvoices.authority, "pra"),
+          eq(taxAuthorityInvoices.sourceType, sourceType),
+          eq(taxAuthorityInvoices.sourceId, sourceId),
+        ),
+      )
+      .orderBy(desc(taxAuthorityInvoices.createdAt))
+      .limit(1);
+
+    if (!latest?.authorityInvoiceNumber) return null;
+    return this.buildFiscalFromInvoice(
+      organizationId,
+      branchCode,
+      sourceType,
+      sourceId,
+      latest.invoiceMode === "fake" ? "fake" : "real",
+      this.mapInvoice(latest),
+    );
+  }
+
+  /**
    * Fire-and-forget enqueue after a sale is completed.
    * Never throws to the caller — failures are logged and queued as failed/queued rows.
+   *
+   * PRA auto-enqueue only when Real is enabled and Fake is not (both → client chooses).
    */
   async enqueueFromSale(params: {
     organizationId: string;
@@ -476,8 +839,10 @@ export class TaxAuthorityService {
       ) {
         authorities.push("fbr");
       }
+      // Real-only: auto-enqueue. Fake-only or both → client issues via pay flow / issue-invoice.
       if (
-        features.praEnabled &&
+        features.praRealEnabled &&
+        !features.praFakeEnabled &&
         (profile.praStatus === "connected" || profile.praStatus === "expired")
       ) {
         authorities.push("pra");
@@ -485,11 +850,13 @@ export class TaxAuthorityService {
       if (authorities.length === 0) return;
 
       for (const authority of authorities) {
+        const invoiceMode: PraInvoiceMode = "real";
         const existing = await this.findInvoice(
           params.organizationId,
           authority,
           params.sourceType,
           params.sourceId,
+          invoiceMode,
         );
         if (existing) continue;
 
@@ -497,6 +864,7 @@ export class TaxAuthorityService {
           organizationId: params.organizationId,
           branchId: params.branchId,
           authority,
+          invoiceMode,
           sourceType: params.sourceType,
           sourceId: params.sourceId,
           sourceRef: params.sourceRef,
@@ -812,6 +1180,7 @@ export class TaxAuthorityService {
     authority: "fbr" | "pra",
     sourceType: string,
     sourceId: string,
+    invoiceMode: PraInvoiceMode = "real",
   ) {
     const [row] = await this.db
       .select()
@@ -820,12 +1189,105 @@ export class TaxAuthorityService {
         and(
           eq(taxAuthorityInvoices.organizationId, organizationId),
           eq(taxAuthorityInvoices.authority, authority),
+          eq(taxAuthorityInvoices.invoiceMode, invoiceMode),
           eq(taxAuthorityInvoices.sourceType, sourceType),
           eq(taxAuthorityInvoices.sourceId, sourceId),
         ),
       )
       .limit(1);
     return row ?? null;
+  }
+
+  private async updateBillPraFields(
+    organizationId: string,
+    billId: string,
+    fields: {
+      praMode: PraInvoiceMode;
+      praInvoiceNumber: string;
+      praInvoiceId: string;
+      praQrPayload: string;
+      praIssuedAt: Date;
+    },
+  ): Promise<void> {
+    await this.db
+      .update(popsBills)
+      .set({
+        praMode: fields.praMode,
+        praInvoiceNumber: fields.praInvoiceNumber,
+        praInvoiceId: fields.praInvoiceId,
+        praQrPayload: fields.praQrPayload,
+        praIssuedAt: fields.praIssuedAt,
+      })
+      .where(and(eq(popsBills.id, billId), eq(popsBills.organizationId, organizationId)));
+  }
+
+  private async buildFiscalFromInvoice(
+    organizationId: string,
+    branchCode: string,
+    sourceType: TaxInvoiceSourceType,
+    sourceId: string,
+    mode: PraInvoiceMode,
+    invoice: TaxInvoice,
+  ): Promise<PraFiscalInvoice> {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const profile = await this.getProfile(organizationId, branch.id);
+    const source = await this.loadSourceDocument(organizationId, branch.id, sourceType, sourceId);
+
+    let invoiceId = invoice.authorityInvoiceNumber ?? `FISC-${invoice.id.slice(0, 8)}`;
+    let usin = `USIN-${source.ref.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || invoice.id.slice(0, 8)}`;
+    let issuedAt = invoice.updatedAt;
+
+    const [row] = await this.db
+      .select()
+      .from(taxAuthorityInvoices)
+      .where(eq(taxAuthorityInvoices.id, invoice.id))
+      .limit(1);
+    if (row?.responseJson) {
+      try {
+        const parsed = JSON.parse(row.responseJson) as Record<string, unknown>;
+        if (typeof parsed.invoiceId === "string" && parsed.invoiceId) invoiceId = parsed.invoiceId;
+        if (typeof parsed.usin === "string" && parsed.usin) usin = parsed.usin;
+        if (typeof parsed.issuedAt === "string" && parsed.issuedAt) issuedAt = parsed.issuedAt;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (sourceType === "bill") {
+      const [bill] = await this.db
+        .select({
+          praInvoiceId: popsBills.praInvoiceId,
+          praIssuedAt: popsBills.praIssuedAt,
+        })
+        .from(popsBills)
+        .where(and(eq(popsBills.id, sourceId), eq(popsBills.organizationId, organizationId)))
+        .limit(1);
+      if (bill?.praInvoiceId) invoiceId = bill.praInvoiceId;
+      if (bill?.praIssuedAt) issuedAt = bill.praIssuedAt.toISOString();
+    }
+
+    return {
+      mode,
+      invoiceNumber: invoice.authorityInvoiceNumber ?? invoiceId,
+      invoiceId,
+      qrPayload: invoice.qrPayload ?? invoice.authorityInvoiceNumber ?? invoiceId,
+      usin,
+      issuedAt,
+      sellerName: profile?.companyName ?? "",
+      ntn: profile?.ntn ?? "",
+      strn: profile?.strn ?? "",
+      branchCode: profile?.praBranchCode || branch.code,
+      sourceRef: source.ref,
+      taxableAmountPkr: source.taxableAmountPkr,
+      taxAmountPkr: source.taxAmountPkr,
+      totalAmountPkr: source.totalPkr,
+      lines: source.lines.map((line) => ({
+        label: line.description,
+        qty: Math.max(1, Math.round(line.qty)),
+        unitPrice:
+          line.qty > 0 ? Math.round(line.amount / line.qty) : Math.round(line.amount),
+      })),
+    };
   }
 
   private async loadSourceDocument(
@@ -870,13 +1332,42 @@ export class TaxAuthorityService {
         )
         .limit(1);
       if (!row) throw new NotFoundException("Store sale not found");
+      const saleLines = await this.db
+        .select()
+        .from(storeSaleLines)
+        .where(eq(storeSaleLines.saleId, row.id));
+      const productIds = [...new Set(saleLines.map((l) => l.productId))];
+      const products =
+        productIds.length > 0
+          ? await this.db
+              .select()
+              .from(storeProducts)
+              .where(
+                and(
+                  eq(storeProducts.organizationId, organizationId),
+                  inArray(storeProducts.id, productIds),
+                ),
+              )
+          : [];
+      const productName = (productId: string, displayName: string | null) => {
+        if (displayName?.trim()) return displayName.trim();
+        return products.find((p) => p.id === productId)?.name ?? "Item";
+      };
       return {
         ref: row.invoiceNumber,
         date: row.createdAt,
         taxableAmountPkr: Math.max(0, row.subtotalPkr - row.discountPkr - row.promotionDiscountPkr),
         taxAmountPkr: row.taxPkr,
         totalPkr: row.totalPkr,
-        lines: [],
+        lines: saleLines.map((l) => {
+          const qty = l.isWeighed === "yes" ? Math.max(0.001, l.qty / 1000) : Math.max(1, l.qty);
+          return {
+            description: productName(l.productId, l.displayName),
+            qty,
+            amount: l.lineTotalPkr,
+            tax: 0,
+          };
+        }),
       };
     }
 
@@ -1096,10 +1587,38 @@ export class TaxAuthorityService {
     authority: "fbr" | "pra",
   ): Promise<void> {
     const features = await this.getFeatures(organizationId);
-    const enabled = authority === "fbr" ? features.fbrEnabled : features.praEnabled;
-    if (!enabled) {
+    if (authority === "fbr") {
+      if (!features.fbrEnabled) {
+        throw new ForbiddenException(
+          "FBR is not enabled for this business. Contact the platform Super Admin.",
+        );
+      }
+      return;
+    }
+    // Real PRA submit / connect requires Real PRA grant (legacy praEnabled → real).
+    if (!features.praRealEnabled) {
       throw new ForbiddenException(
-        `${authority.toUpperCase()} is not enabled for this business. Contact the platform Super Admin.`,
+        "Real PRA is not enabled for this business. Contact the platform Super Admin.",
+      );
+    }
+  }
+
+  private async assertPraModeEnabled(
+    organizationId: string,
+    mode: PraInvoiceMode,
+  ): Promise<void> {
+    const features = await this.getFeatures(organizationId);
+    if (mode === "fake") {
+      if (!features.praFakeEnabled) {
+        throw new ForbiddenException(
+          "Fake PRA is not enabled for this business. Contact the platform Super Admin.",
+        );
+      }
+      return;
+    }
+    if (!features.praRealEnabled) {
+      throw new ForbiddenException(
+        "Real PRA is not enabled for this business. Contact the platform Super Admin.",
       );
     }
   }
@@ -1108,12 +1627,14 @@ export class TaxAuthorityService {
     return {
       id: row.id,
       authority: row.authority === "pra" ? "pra" : "fbr",
+      invoiceMode: row.invoiceMode === "fake" ? "fake" : "real",
       sourceType:
         row.sourceType === "store_sale"
           ? "store_sale"
           : row.sourceType === "pharmacy_sale"
             ? "pharmacy_sale"
             : "bill",
+      sourceId: row.sourceId,
       sourceRef: row.sourceRef,
       status:
         row.status === "verified" ||

@@ -27,6 +27,7 @@ import {
   systemTypeForBusinessSystemId,
 } from "../lib/businessSystems";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
+import { resolvePraFlags } from "./superAdminHelpers";
 
 const STATUS_ACTIONS: { status: BusinessStatus; label: string }[] = [
   { status: "active", label: "Activate" },
@@ -59,7 +60,8 @@ function emptyForm(
     licenceKey: "",
     licenceExpiresAtLocal: defaultExpiryDateForPlan(plan, planMeta),
     fbrEnabled: false,
-    praEnabled: false,
+    praFakeEnabled: false,
+    praRealEnabled: false,
   };
 }
 
@@ -145,6 +147,23 @@ export function SuperAdminBusinessesPage(): JSX.Element {
     },
   });
 
+  const taxMut = useMutation({
+    mutationFn: ({
+      id,
+      fbrEnabled,
+      praFakeEnabled,
+      praRealEnabled,
+    }: {
+      id: string;
+      fbrEnabled: boolean;
+      praFakeEnabled: boolean;
+      praRealEnabled: boolean;
+    }) => updatePlatformBusiness(id, { fbrEnabled, praFakeEnabled, praRealEnabled }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["platform"] });
+    },
+  });
+
   const deleteMut = useMutation({
     mutationFn: deletePlatformBusiness,
     onSuccess: async () => {
@@ -171,6 +190,13 @@ export function SuperAdminBusinessesPage(): JSX.Element {
           <p className={`mt-1 text-sm ${mutedClass}`}>
             Create client installations with a real licence plan, manage status, and open a business
             for full control.
+          </p>
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+            <strong>FBR / Fake PRA / Real PRA:</strong> toggle in the table below, open{" "}
+            <Link to="/super-admin/tax" className="font-semibold underline">
+              FBR / Fake · Real PRA
+            </Link>
+            , or click <strong>Manage</strong> → Tax authority section.
           </p>
         </div>
         <Button
@@ -388,7 +414,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
 
             <section className="space-y-3">
               <SectionTitle>Tax authorities</SectionTitle>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <TaxChip
                   checked={Boolean(form.fbrEnabled)}
                   title="Enable FBR"
@@ -396,10 +422,28 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                   onChange={(checked) => setForm((f) => ({ ...f, fbrEnabled: checked }))}
                 />
                 <TaxChip
-                  checked={Boolean(form.praEnabled)}
-                  title="Enable PRA"
-                  description="Punjab Revenue Authority e-invoicing"
-                  onChange={(checked) => setForm((f) => ({ ...f, praEnabled: checked }))}
+                  checked={Boolean(form.praFakeEnabled)}
+                  title="Enable Fake PRA"
+                  description="Simulated PRA invoices (testing)"
+                  onChange={(checked) =>
+                    setForm((f) => ({
+                      ...f,
+                      praFakeEnabled: checked,
+                      ...(checked ? { praRealEnabled: false } : {}),
+                    }))
+                  }
+                />
+                <TaxChip
+                  checked={Boolean(form.praRealEnabled)}
+                  title="Enable Real PRA"
+                  description="Live Punjab Revenue Authority e-invoicing"
+                  onChange={(checked) =>
+                    setForm((f) => ({
+                      ...f,
+                      praRealEnabled: checked,
+                      ...(checked ? { praFakeEnabled: false } : {}),
+                    }))
+                  }
                 />
               </div>
             </section>
@@ -463,7 +507,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                 <th className="px-4 py-3 font-medium">System</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Licence</th>
-                <th className="px-4 py-3 font-medium">FBR / PRA</th>
+                <th className="px-4 py-3 font-medium">FBR / Fake PRA / Real PRA</th>
                 <th className="px-4 py-3 font-medium">Admin</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
@@ -481,6 +525,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                     b.licenceExpired === true ||
                     (b.licenceExpiresAt != null &&
                       new Date(b.licenceExpiresAt).getTime() < Date.now());
+                  const pra = resolvePraFlags(b);
                   return (
                     <tr key={b.id}>
                       <td className="px-4 py-3">
@@ -508,9 +553,64 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                             : "No expiry"}
                         </p>
                       </td>
-                      <td className="px-4 py-3 text-xs">
-                        <p>{b.fbrEnabled ? "FBR on" : "FBR off"}</p>
-                        <p className={mutedClass}>{b.praEnabled ? "PRA on" : "PRA off"}</p>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1.5 text-xs">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={Boolean(b.fbrEnabled)}
+                              disabled={taxMut.isPending}
+                              onChange={(e) =>
+                                taxMut.mutate({
+                                  id: b.id,
+                                  fbrEnabled: e.target.checked,
+                                  praFakeEnabled: pra.praFakeEnabled,
+                                  praRealEnabled: pra.praRealEnabled,
+                                })
+                              }
+                            />
+                            <span>FBR</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={pra.praFakeEnabled}
+                              disabled={taxMut.isPending}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                taxMut.mutate({
+                                  id: b.id,
+                                  fbrEnabled: Boolean(b.fbrEnabled),
+                                  praFakeEnabled: checked,
+                                  praRealEnabled: checked ? false : pra.praRealEnabled,
+                                });
+                              }}
+                            />
+                            <span className="font-medium text-amber-800 dark:text-amber-300">
+                              Fake PRA
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={pra.praRealEnabled}
+                              disabled={taxMut.isPending}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                taxMut.mutate({
+                                  id: b.id,
+                                  fbrEnabled: Boolean(b.fbrEnabled),
+                                  praFakeEnabled: checked ? false : pra.praFakeEnabled,
+                                  praRealEnabled: checked,
+                                });
+                              }}
+                            />
+                            <span>Real PRA</span>
+                          </label>
+                        </div>
                       </td>
                       <td className="px-4 py-3">{b.adminEmail ?? "—"}</td>
                       <td className="px-4 py-3">

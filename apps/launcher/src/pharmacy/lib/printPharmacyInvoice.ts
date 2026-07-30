@@ -1,78 +1,75 @@
-import { saleUnitLabel, type PharmacySale } from "@platform/contracts";
+import type { PharmacySale } from "@platform/contracts";
+import {
+  printReceiptDetailed,
+  withPrinterProfile,
+  type PrintTicketInput,
+} from "../../pops/lib/printTicket";
+import { resolvePraFooterForSource } from "../../pops/lib/praPaidPrint";
+import { loadBillPrintSettings } from "../../pops/lib/billPrintSettings";
+import { resolveReceiptPrinter } from "../../pops/lib/printerRouting";
+import { useSessionStore } from "../../stores/sessionStore";
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function saleToTicketInput(
+  branchName: string,
+  branchCode: string,
+  sale: PharmacySale,
+): Omit<PrintTicketInput, "kind"> {
+  const discountPct = sale.subtotal > 0 ? Math.round((sale.discount / sale.subtotal) * 100) : 0;
+  return {
+    branchName,
+    branchCode,
+    orderRef: sale.invoiceNumber,
+    billRef: sale.invoiceNumber,
+    modeLabel: sale.paymentMethod || "Paid",
+    tableLabel: "Counter",
+    waiterName: useSessionStore.getState().claims?.role?.trim() || "Cashier",
+    notes: sale.patientName ? `Customer: ${sale.patientName}` : undefined,
+    lines: sale.lines.map((line) => ({
+      label: line.batchNumber
+        ? `${line.medicineName} · Batch ${line.batchNumber}`
+        : line.medicineName,
+      qty: line.qty > 0 ? line.qty : 1,
+      unitPrice: line.unitPrice,
+    })),
+    subtotal: sale.subtotal,
+    discount: sale.discount,
+    service: 0,
+    tax: sale.tax,
+    total: sale.total,
+    servicePct: 0,
+    discountPct,
+  };
 }
 
-function formatMoney(pkr: number): string {
-  return `Rs ${pkr.toLocaleString("en-PK")}`;
-}
-
+/** Print pharmacy invoice with the same POS slip design + PRA Invoice # / QR when enabled. */
 export function printPharmacyInvoice(
   branchName: string,
   branchCode: string,
   sale: PharmacySale,
 ): boolean {
-  const printedAt = new Date().toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
-  const paymentRows =
-    sale.payments.length > 1
-      ? sale.payments
-          .map((p) => `<div class="row"><span>${escapeHtml(p.method)}</span><span>${formatMoney(p.amount)}</span></div>`)
-          .join("")
-      : "";
-  const lineRows = sale.lines
-    .map((line) => {
-      const qtyLabel =
-        line.saleUnit != null ? saleUnitLabel(line.saleUnit, line.qty) : String(line.qty);
-      return `<tr>
-        <td>${escapeHtml(line.medicineName)}${line.batchNumber ? `<br/><small>Batch: ${escapeHtml(line.batchNumber)}</small>` : ""}</td>
-        <td class="qty">${escapeHtml(qtyLabel)}</td>
-        <td class="amt">${formatMoney(line.unitPrice)}</td>
-        <td class="amt">${formatMoney(line.lineTotal)}</td>
-      </tr>`;
-    })
-    .join("");
-
-  const html = `<!DOCTYPE html><html><head><title>Invoice ${escapeHtml(sale.invoiceNumber)}</title>
-    <style>
-      body { font-family: system-ui, sans-serif; font-size: 12px; max-width: 320px; margin: 0 auto; padding: 12px; }
-      h1 { font-size: 14px; margin: 0 0 4px; text-align: center; }
-      .meta { text-align: center; color: #444; margin-bottom: 12px; font-size: 11px; }
-      table { width: 100%; border-collapse: collapse; }
-      th, td { padding: 4px 2px; text-align: left; border-bottom: 1px dashed #ccc; }
-      .qty { text-align: center; width: 32px; }
-      .amt { text-align: right; }
-      .totals { margin-top: 10px; }
-      .row { display: flex; justify-content: space-between; padding: 2px 0; }
-      .grand { font-weight: bold; font-size: 14px; border-top: 1px solid #000; margin-top: 4px; padding-top: 4px; }
-    </style></head><body>
-    <h1>Pharmacy Tax Invoice</h1>
-    <div class="meta">${escapeHtml(branchName)} (${escapeHtml(branchCode)})<br/>
-    Invoice: ${escapeHtml(sale.invoiceNumber)}<br/>
-    ${sale.patientName ? `Customer: ${escapeHtml(sale.patientName)}<br/>` : ""}
-    Payment: ${escapeHtml(sale.paymentMethod)}<br/>
-    ${paymentRows ? `<div class="totals" style="margin-top:6px">${paymentRows}</div>` : ""}
-    ${printedAt}</div>
-    <table><thead><tr><th>Item</th><th class="qty">Qty</th><th class="amt">Rate</th><th class="amt">Total</th></tr></thead>
-    <tbody>${lineRows}</tbody></table>
-    <div class="totals">
-      <div class="row"><span>Subtotal</span><span>${formatMoney(sale.subtotal)}</span></div>
-      ${sale.tax > 0 ? `<div class="row"><span>Tax</span><span>${formatMoney(sale.tax)}</span></div>` : ""}
-      ${sale.discount > 0 ? `<div class="row"><span>Discount</span><span>− ${formatMoney(sale.discount)}</span></div>` : ""}
-      <div class="row grand"><span>Total</span><span>${formatMoney(sale.total)}</span></div>
-    </div>
-    <p style="text-align:center;margin-top:16px;font-size:10px;">Thank you — get well soon!</p>
-    </body></html>`;
-
-  const win = window.open("", "_blank", "width=400,height=600");
-  if (!win) return false;
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  win.print();
+  void (async () => {
+    const base = saleToTicketInput(branchName, branchCode, sale);
+    const resolved = await resolvePraFooterForSource({
+      branchCode,
+      sourceType: "pharmacy_sale",
+      sourceId: sale.id,
+      orderRef: sale.invoiceNumber,
+      issueIfMissing: true,
+    });
+    if (resolved.blockedReal && resolved.notice) {
+      window.alert(resolved.notice);
+    }
+    const userId = useSessionStore.getState().claims?.sub ?? null;
+    const profile = resolveReceiptPrinter(branchCode, userId);
+    const payload = withPrinterProfile(
+      {
+        ...base,
+        praFiscal: resolved.footer,
+        billPrintSettings: loadBillPrintSettings(branchCode),
+      },
+      profile,
+    );
+    await printReceiptDetailed(payload);
+  })();
   return true;
 }

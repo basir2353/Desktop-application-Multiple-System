@@ -678,6 +678,11 @@ export class BillingService implements OnApplicationBootstrap {
       riderName,
       deliveryChargePkr: row.deliveryChargePkr,
       status: row.status as "held" | "completed" | "void" | "open",
+      praMode: row.praMode === "fake" || row.praMode === "real" ? row.praMode : null,
+      praInvoiceNumber: row.praInvoiceNumber ?? null,
+      praInvoiceId: row.praInvoiceId ?? null,
+      praQrPayload: row.praQrPayload ?? null,
+      praIssuedAt: row.praIssuedAt ? row.praIssuedAt.toISOString() : null,
       createdAt: row.createdAt.toISOString(),
     };
   }

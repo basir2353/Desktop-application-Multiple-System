@@ -1,6 +1,7 @@
 import { Button } from "@platform/ui";
 import { useEffect, useMemo, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
+import { useSessionStore } from "../../../stores/sessionStore";
 import {
   DEFAULT_POS_SETTINGS,
   loadPosSettings,
@@ -20,17 +21,33 @@ import {
 } from "../../lib/terminalAuth";
 import { computeTicketTotals } from "../../lib/posDiscount";
 import { DashboardBusinessDaySettings } from "../../components/dashboard/DashboardBusinessDaySettings";
+import { TaxAuthoritySettingsPanel } from "../../components/TaxAuthoritySettingsPanel";
+import {
+  isTaxAuthorityEnabled,
+  useTaxAuthorityFeatures,
+} from "../../hooks/useTaxAuthorityFeatures";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useThemeStore } from "../../../stores/themeStore";
+import { hasAnyPermission, sessionCanManageUsers } from "../../lib/roleAccess";
 import { PageHeader } from "../../ui/PageHeader";
 
 export function SettingsPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
+  const claims = useSessionStore((s) => s.claims);
   const themeMode = useThemeStore((s) => s.mode);
   const [saved, setSaved] = useState<PosSettings>(DEFAULT_POS_SETTINGS);
   const [draft, setDraft] = useState<PosSettings>(DEFAULT_POS_SETTINGS);
   const [notice, setNotice] = useState<string | null>(null);
+  const [taxError, setTaxError] = useState<string | null>(null);
   const terminalId = getOrCreateTerminalId();
+  const taxFeatures = useTaxAuthorityFeatures();
+  const taxUnlockedBySuperAdmin = isTaxAuthorityEnabled(taxFeatures.data);
+
+  const canManageTaxFeatures =
+    sessionCanManageUsers(claims) ||
+    hasAnyPermission(claims?.permissions, ["pops.accounting.manage", "pops.users.manage"]);
+  /** Settings FBR/PRA toggles only after Super Admin enables tax for this business. */
+  const showTaxFeatureToggles = canManageTaxFeatures && taxUnlockedBySuperAdmin;
 
   const authorizedTerminals = useMemo(
     () => loadAuthorizedTerminals(branch?.code),
@@ -86,19 +103,81 @@ export function SettingsPage(): JSX.Element {
   }
 
   if (!branch?.code) {
-    return <PageHeader title="Settings" subtitle="Select a branch to configure POS charges." />;
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Settings"
+          subtitle="Select a branch for POS charges, or manage FBR / PRA for the business below."
+        />
+        {notice ? (
+          <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+            {notice}
+          </p>
+        ) : null}
+        {taxError ? (
+          <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            {taxError}
+          </p>
+        ) : null}
+        {showTaxFeatureToggles ? (
+          <TaxAuthoritySettingsPanel
+            onNotice={(m) => {
+              setTaxError(null);
+              setNotice(m);
+            }}
+            onError={(m) => {
+              setNotice(null);
+              setTaxError(m);
+            }}
+          />
+        ) : canManageTaxFeatures ? (
+          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            FBR / PRA Settings appear here only after the platform Super Admin enables FBR, Fake
+            PRA, or Real PRA for this business.
+          </p>
+        ) : (
+          <p className="text-sm text-slate-500">
+            Ask an Admin to manage FBR / Fake PRA / Real PRA in Settings (after Super Admin unlocks
+            tax for this business).
+          </p>
+        )}
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        subtitle={`Branch configuration for ${branch.name} (${branch.code}) — POS, tax, and terminals.`}
+        subtitle={`Branch configuration for ${branch.name} (${branch.code}) — POS, tax, FBR/PRA, and terminals.`}
       />
 
       {notice ? (
-        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
           {notice}
+        </p>
+      ) : null}
+      {taxError ? (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+          {taxError}
+        </p>
+      ) : null}
+
+      {showTaxFeatureToggles ? (
+        <TaxAuthoritySettingsPanel
+          onNotice={(m) => {
+            setTaxError(null);
+            setNotice(m);
+          }}
+          onError={(m) => {
+            setNotice(null);
+            setTaxError(m);
+          }}
+        />
+      ) : canManageTaxFeatures ? (
+        <p className="max-w-xl rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+          FBR / PRA Settings appear here only after the platform Super Admin enables FBR, Fake PRA,
+          or Real PRA for this business.
         </p>
       ) : null}
 

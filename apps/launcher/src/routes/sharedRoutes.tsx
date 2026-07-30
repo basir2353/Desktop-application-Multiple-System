@@ -63,6 +63,8 @@ export function sharedRoutes(): JSX.Element {
       <Route path="tax" element={<TaxPage />} />
       <Route path="tax/fbr" element={<TaxPage />} />
       <Route path="tax/pra" element={<TaxPage />} />
+      <Route path="tax/pra-real" element={<TaxPage />} />
+      <Route path="tax/pra-fake" element={<TaxPage />} />
       <Route path="tax/invoices" element={<TaxPage />} />
       <Route path="printer" element={<PrinterPage />} />
       <Route path="closing" element={<ClosingPage />} />

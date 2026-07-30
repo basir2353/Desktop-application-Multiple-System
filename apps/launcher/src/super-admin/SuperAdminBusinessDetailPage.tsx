@@ -18,7 +18,7 @@ import {
   updatePlatformUser,
 } from "../lib/platformApi";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
-import { businessNotesKey } from "./superAdminHelpers";
+import { businessNotesKey, resolvePraFlags } from "./superAdminHelpers";
 
 const STATUS_ACTIONS: { status: BusinessStatus; label: string }[] = [
   { status: "active", label: "Activate" },
@@ -42,7 +42,8 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
   const [key, setKey] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [fbrEnabled, setFbrEnabled] = useState(false);
-  const [praEnabled, setPraEnabled] = useState(false);
+  const [praFakeEnabled, setPraFakeEnabled] = useState(false);
+  const [praRealEnabled, setPraRealEnabled] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [resetFor, setResetFor] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -61,7 +62,9 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
     setKey(business.data.licenceKey ?? "");
     setExpiresAt(business.data.licenceExpiresAt ? business.data.licenceExpiresAt.slice(0, 10) : "");
     setFbrEnabled(Boolean(business.data.fbrEnabled));
-    setPraEnabled(Boolean(business.data.praEnabled));
+    const pra = resolvePraFlags(business.data);
+    setPraFakeEnabled(pra.praFakeEnabled);
+    setPraRealEnabled(pra.praRealEnabled);
   }, [business.data]);
 
   useEffect(() => {
@@ -83,21 +86,25 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         licenceKey: key.trim() || null,
         licenceExpiresAt: expiresAt ? new Date(`${expiresAt}T23:59:59.000Z`).toISOString() : null,
         fbrEnabled,
-        praEnabled,
+        praFakeEnabled,
+        praRealEnabled,
       }),
     onSuccess: async (saved) => {
       setFbrEnabled(Boolean(saved.fbrEnabled));
-      setPraEnabled(Boolean(saved.praEnabled));
+      const savedPra = resolvePraFlags(saved);
+      setPraFakeEnabled(savedPra.praFakeEnabled);
+      setPraRealEnabled(savedPra.praRealEnabled);
       const applied =
         Boolean(saved.fbrEnabled) === Boolean(fbrEnabled) &&
-        Boolean(saved.praEnabled) === Boolean(praEnabled);
+        savedPra.praFakeEnabled === praFakeEnabled &&
+        savedPra.praRealEnabled === praRealEnabled;
       if (!applied) {
         setMessage(
           "Tax settings were not applied by the server. Redeploy backend-desktop, then try again.",
         );
       } else {
         setMessage(
-          `Saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"} — business admins can open Tax & compliance after refresh.`,
+          `Saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${savedPra.praEnabled ? "ON" : "OFF"} (fake ${savedPra.praFakeEnabled ? "ON" : "OFF"} / real ${savedPra.praRealEnabled ? "ON" : "OFF"}) — business admins can open Tax & compliance after refresh.`,
         );
       }
       await qc.invalidateQueries({ queryKey: ["platform"] });
@@ -106,20 +113,24 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
   });
 
   const saveTaxMut = useMutation({
-    mutationFn: () => updatePlatformBusiness(businessId, { fbrEnabled, praEnabled }),
+    mutationFn: () =>
+      updatePlatformBusiness(businessId, { fbrEnabled, praFakeEnabled, praRealEnabled }),
     onSuccess: async (saved) => {
+      const savedPra = resolvePraFlags(saved);
       const applied =
         Boolean(saved.fbrEnabled) === Boolean(fbrEnabled) &&
-        Boolean(saved.praEnabled) === Boolean(praEnabled);
+        savedPra.praFakeEnabled === praFakeEnabled &&
+        savedPra.praRealEnabled === praRealEnabled;
       setFbrEnabled(Boolean(saved.fbrEnabled));
-      setPraEnabled(Boolean(saved.praEnabled));
+      setPraFakeEnabled(savedPra.praFakeEnabled);
+      setPraRealEnabled(savedPra.praRealEnabled);
       if (!applied) {
         setMessage(
           "Tax settings were not applied by the server. Hosted API is outdated — redeploy backend-desktop.",
         );
       } else {
         setMessage(
-          `Tax settings saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${saved.praEnabled ? "ON" : "OFF"}`,
+          `Tax settings saved. FBR ${saved.fbrEnabled ? "ON" : "OFF"} · PRA ${savedPra.praEnabled ? "ON" : "OFF"} (fake ${savedPra.praFakeEnabled ? "ON" : "OFF"} / real ${savedPra.praRealEnabled ? "ON" : "OFF"})`,
         );
       }
       await qc.invalidateQueries({ queryKey: ["platform", "businesses", businessId] });
@@ -288,7 +299,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         <p className={`text-sm ${mutedClass}`}>
           Enable integrations for this business. Branch admins can only connect credentials when enabled here.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
             <input
               type="checkbox"
@@ -307,13 +318,35 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
-              checked={praEnabled}
-              onChange={(e) => setPraEnabled(e.target.checked)}
+              checked={praFakeEnabled}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setPraFakeEnabled(checked);
+                if (checked) setPraRealEnabled(false);
+              }}
             />
             <span>
-              <span className="block text-sm font-medium">Enable PRA</span>
+              <span className="block text-sm font-medium">Enable Fake PRA</span>
               <span className={`text-xs ${mutedClass}`}>
-                Punjab Revenue Authority e-invoicing for this business
+                Simulated Punjab Revenue Authority invoices (testing)
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={praRealEnabled}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setPraRealEnabled(checked);
+                if (checked) setPraFakeEnabled(false);
+              }}
+            />
+            <span>
+              <span className="block text-sm font-medium">Enable Real PRA</span>
+              <span className={`text-xs ${mutedClass}`}>
+                Live Punjab Revenue Authority e-invoicing for this business
               </span>
             </span>
           </label>

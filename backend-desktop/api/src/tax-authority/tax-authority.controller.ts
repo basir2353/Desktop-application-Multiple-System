@@ -6,13 +6,26 @@ import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
 import { TaxAuthorityService } from "./tax-authority.service";
 
-/** FBR/PRA feature flags are owned by Super Admin (business create/edit), not store staff. */
-function assertSuperAdminTaxFeatures(user: AccessJwtPayload): void {
-  if (!isSuperAdmin(user) && !user.permissions?.includes("platform.businesses.manage")) {
-    throw new ForbiddenException(
-      "Only Super Admin can enable or disable FBR / PRA for a business.",
-    );
+/**
+ * After Super Admin unlocks FBR/PRA for the business, org Admin / Accountant / Owner
+ * may toggle Fake ↔ Real and FBR in Settings. Platform Super Admin always can.
+ */
+function assertCanManageTaxFeatures(user: AccessJwtPayload): void {
+  if (isSuperAdmin(user) || user.permissions?.includes("platform.businesses.manage")) return;
+  if (user.permissions?.includes("*")) return;
+  if (
+    user.permissions?.includes("pops.accounting.manage") ||
+    user.permissions?.includes("pops.users.manage")
+  ) {
+    return;
   }
+  const role = String(user.role ?? "").toLowerCase();
+  if (role === "admin" || role === "owner" || role === "accountant" || role === "incharge") {
+    return;
+  }
+  throw new ForbiddenException(
+    "Only Admin or Accountant can enable or disable FBR / Fake PRA / Real PRA.",
+  );
 }
 
 @Controller()
@@ -74,6 +87,32 @@ export class TaxAuthorityController {
     return this.tax.sendInvoice(user.organizationId, "pra", body);
   }
 
+  @Post("v1/pra/issue-invoice")
+  @RequirePermissions("pops.read")
+  issuePraInvoice(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.tax.issuePraInvoice(user.organizationId, body);
+  }
+
+  @Get("v1/pra/fiscal-for-source")
+  @RequirePermissions("pops.read")
+  praFiscalForSource(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("sourceType") sourceType: string,
+    @Query("sourceId") sourceId: string,
+  ) {
+    const st =
+      sourceType === "store_sale" || sourceType === "pharmacy_sale" || sourceType === "bill"
+        ? sourceType
+        : "bill";
+    return this.tax.getFiscalForSource(
+      user.organizationId,
+      branchCode?.trim() ?? "",
+      st,
+      sourceId?.trim() ?? "",
+    );
+  }
+
   @Get("v1/pra/invoices")
   @RequirePermissions("pops.read")
   listPraInvoices(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
@@ -90,11 +129,19 @@ export class TaxAuthorityController {
   @RequirePermissions("pops.read")
   setFeatures(
     @CurrentUser() user: AccessJwtPayload,
-    @Body() body: { praEnabled?: boolean; fbrEnabled?: boolean },
+    @Body()
+    body: {
+      praEnabled?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
+      fbrEnabled?: boolean;
+    },
   ) {
-    assertSuperAdminTaxFeatures(user);
+    assertCanManageTaxFeatures(user);
     return this.tax.setFeatures(user.organizationId, {
       praEnabled: typeof body?.praEnabled === "boolean" ? body.praEnabled : undefined,
+      praFakeEnabled: typeof body?.praFakeEnabled === "boolean" ? body.praFakeEnabled : undefined,
+      praRealEnabled: typeof body?.praRealEnabled === "boolean" ? body.praRealEnabled : undefined,
       fbrEnabled: typeof body?.fbrEnabled === "boolean" ? body.fbrEnabled : undefined,
     });
   }

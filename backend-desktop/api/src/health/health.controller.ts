@@ -109,6 +109,21 @@ export class HealthController {
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS lot_number text`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS manufacturing_date date`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS promotion_discount_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS loyalty_points_earned integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS loyalty_points_redeemed integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS amount_paid_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS amount_due_pkr integer NOT NULL DEFAULT 0`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS payments_json text`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS shift_id uuid`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS terminal_id text`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS held_label text`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS held_cart_json text`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS coupon_code text`,
+      `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS gift_card_number text`,
+      `ALTER TABLE store_sale_lines ADD COLUMN IF NOT EXISTS display_name text`,
+      `ALTER TABLE store_sale_lines ADD COLUMN IF NOT EXISTS is_weighed text NOT NULL DEFAULT 'no'`,
+      `ALTER TABLE store_sale_lines ADD COLUMN IF NOT EXISTS batch_id uuid`,
     ];
     let storePatched = 0;
     for (const statement of storeAlters) {

@@ -108,6 +108,8 @@ export class PlatformService {
         enabledModules: organizations.enabledModules,
         fbrEnabled: organizations.fbrEnabled,
         praEnabled: organizations.praEnabled,
+        praFakeEnabled: organizations.praFakeEnabled,
+        praRealEnabled: organizations.praRealEnabled,
         createdBy: organizations.createdBy,
         createdAt: organizations.createdAt,
       })
@@ -209,7 +211,7 @@ export class PlatformService {
         licenceExpiresAt: input.licenceExpiresAt ? new Date(input.licenceExpiresAt) : null,
         enabledModules: input.enabledModules ?? null,
         fbrEnabled: input.fbrEnabled ?? false,
-        praEnabled: input.praEnabled ?? false,
+        ...this.resolvePraFlagsForWrite(input),
         createdBy: actor.sub,
       })
       .returning();
@@ -272,7 +274,10 @@ export class PlatformService {
           : {}),
         ...(input.enabledModules !== undefined ? { enabledModules: input.enabledModules } : {}),
         ...(input.fbrEnabled !== undefined ? { fbrEnabled: input.fbrEnabled } : {}),
-        ...(input.praEnabled !== undefined ? { praEnabled: input.praEnabled } : {}),
+        ...this.resolvePraFlagsForUpdate(input, {
+          praFakeEnabled: existing.praFakeEnabled,
+          praRealEnabled: existing.praRealEnabled,
+        }),
         updatedAt: new Date(),
       })
       .where(eq(organizations.id, businessId))
@@ -890,6 +895,80 @@ export class PlatformService {
     return shipped.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
   }
 
+  /** Resolve Fake/Real PRA flags for create; sync legacy praEnabled. Mutual exclusive. */
+  private resolvePraFlagsForWrite(input: {
+    praEnabled?: boolean;
+    praFakeEnabled?: boolean;
+    praRealEnabled?: boolean;
+  }): { praEnabled: boolean; praFakeEnabled: boolean; praRealEnabled: boolean } {
+    const fakeProvided = input.praFakeEnabled !== undefined;
+    const realProvided = input.praRealEnabled !== undefined;
+    if (fakeProvided || realProvided) {
+      let praFakeEnabled = Boolean(input.praFakeEnabled);
+      let praRealEnabled = Boolean(input.praRealEnabled);
+      // Fake and Real must never both be true — prefer Real when both true in same payload.
+      if (praFakeEnabled && praRealEnabled) {
+        praFakeEnabled = false;
+      }
+      return {
+        praFakeEnabled,
+        praRealEnabled,
+        praEnabled: praFakeEnabled || praRealEnabled,
+      };
+    }
+    const praEnabled = Boolean(input.praEnabled);
+    return {
+      praEnabled,
+      praFakeEnabled: false,
+      praRealEnabled: praEnabled,
+    };
+  }
+
+  /** Partial update: sync praEnabled when fake/real change; legacy praEnabled → real. Mutual exclusive. */
+  private resolvePraFlagsForUpdate(
+    input: {
+      praEnabled?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
+    },
+    current: { praFakeEnabled?: boolean; praRealEnabled?: boolean },
+  ): Partial<{ praEnabled: boolean; praFakeEnabled: boolean; praRealEnabled: boolean }> {
+    const fakeProvided = input.praFakeEnabled !== undefined;
+    const realProvided = input.praRealEnabled !== undefined;
+    if (fakeProvided || realProvided) {
+      let praFakeEnabled = fakeProvided
+        ? Boolean(input.praFakeEnabled)
+        : Boolean(current.praFakeEnabled);
+      let praRealEnabled = realProvided
+        ? Boolean(input.praRealEnabled)
+        : Boolean(current.praRealEnabled);
+      // Enabling one clears the other; both true in same payload → prefer Real.
+      if (fakeProvided && realProvided && Boolean(input.praFakeEnabled) && Boolean(input.praRealEnabled)) {
+        praFakeEnabled = false;
+        praRealEnabled = true;
+      } else if (fakeProvided && Boolean(input.praFakeEnabled)) {
+        praRealEnabled = false;
+      } else if (realProvided && Boolean(input.praRealEnabled)) {
+        praFakeEnabled = false;
+      } else if (praFakeEnabled && praRealEnabled) {
+        praFakeEnabled = false;
+      }
+      return {
+        praFakeEnabled,
+        praRealEnabled,
+        praEnabled: praFakeEnabled || praRealEnabled,
+      };
+    }
+    if (input.praEnabled !== undefined) {
+      return {
+        praEnabled: input.praEnabled,
+        praFakeEnabled: false,
+        praRealEnabled: input.praEnabled,
+      };
+    }
+    return {};
+  }
+
   private toBusiness(
     row: {
       id: string;
@@ -902,6 +981,8 @@ export class PlatformService {
       enabledModules?: string[] | null;
       fbrEnabled?: boolean;
       praEnabled?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
       createdBy: string | null;
       createdAt: Date;
     },
@@ -913,6 +994,17 @@ export class PlatformService {
     const licenceDaysLeft = expiresAt
       ? Math.ceil((expiresAt.getTime() - now) / (24 * 60 * 60 * 1000))
       : undefined;
+    let praFakeEnabled = Boolean(row.praFakeEnabled);
+    let praRealEnabled = Boolean(row.praRealEnabled);
+    // Legacy: praEnabled alone with both new flags false → treat as real.
+    if (Boolean(row.praEnabled) && !praFakeEnabled && !praRealEnabled) {
+      praRealEnabled = true;
+    }
+    // Prefer Real when corrupt (both true).
+    if (praFakeEnabled && praRealEnabled) {
+      praFakeEnabled = false;
+    }
+    const praEnabled = praFakeEnabled || praRealEnabled;
     return {
       id: row.id,
       name: row.name,
@@ -923,7 +1015,9 @@ export class PlatformService {
       licenceExpiresAt: expiresAt?.toISOString() ?? null,
       enabledModules: row.enabledModules ?? null,
       fbrEnabled: row.fbrEnabled ?? false,
-      praEnabled: row.praEnabled ?? false,
+      praEnabled,
+      praFakeEnabled,
+      praRealEnabled,
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
       adminEmail: extras?.adminEmail ?? null,

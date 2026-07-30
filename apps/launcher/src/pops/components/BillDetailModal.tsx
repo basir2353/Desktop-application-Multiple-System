@@ -15,6 +15,8 @@ type Props = {
   billPrintSettings: BillPrintSettings;
   onClose: () => void;
   onReprint?: () => void;
+  onViewPra?: () => void;
+  onRealPra?: () => void;
   onEdit?: () => void;
   onAddItem?: () => void;
   onPay?: () => void;
@@ -47,6 +49,8 @@ export function BillDetailModal({
   billPrintSettings,
   onClose,
   onReprint,
+  onViewPra,
+  onRealPra,
   onEdit,
   onAddItem,
   onPay,
@@ -103,6 +107,13 @@ export function BillDetailModal({
             <Meta label="Table / station" value={bill.tableLabel} />
             <Meta label="Waiter" value={bill.waiterName} />
             <Meta label="Created" value={formatWhen(bill.createdAt)} />
+            {bill.praInvoiceNumber ? (
+              <Meta
+                label="PRA invoice #"
+                value={`${bill.praInvoiceNumber}${bill.praMode ? ` (${bill.praMode})` : ""}`}
+                className="col-span-2"
+              />
+            ) : null}
             {bill.notes ? <Meta label="Notes" value={bill.notes} className="col-span-2" /> : null}
             {bill.riderName ? <Meta label="Rider" value={bill.riderName} /> : null}
             {bill.splitGroupRef ? <Meta label="Split group" value={bill.splitGroupRef} /> : null}
@@ -183,6 +194,16 @@ export function BillDetailModal({
           {onReprint ? (
             <Button variant="ghost" className="text-xs" onClick={onReprint}>
               Reprint invoice
+            </Button>
+          ) : null}
+          {onViewPra ? (
+            <Button variant="ghost" className="text-xs" onClick={onViewPra}>
+              View PRA
+            </Button>
+          ) : null}
+          {onRealPra ? (
+            <Button variant="ghost" className="text-xs" onClick={onRealPra}>
+              Real PRA
             </Button>
           ) : null}
           {onAddItem ? (

@@ -104,6 +104,8 @@ export default function OrderScreen() {
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
+    // Floor bookingStatus is the source of truth for Free/Booked chips — keep it fresh.
+    refetchInterval: orderWriteBusy ? false : 4_000,
   });
 
   const menuQuery = useQuery({
@@ -117,14 +119,14 @@ export default function OrderScreen() {
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
     // Pause polling while sending — slow Wi‑Fi cannot finish POST if GETs keep fighting for bandwidth.
-    refetchInterval: orderWriteBusy ? false : 8_000,
+    refetchInterval: orderWriteBusy ? false : 4_000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: orderWriteBusy ? false : 12_000,
+    refetchInterval: orderWriteBusy ? false : 6_000,
   });
 
   const ridersQuery = useQuery({
@@ -146,6 +148,8 @@ export default function OrderScreen() {
 
   const activeTableId = tableId ?? tables[0]?.tableNumber ?? null;
   const activeTableOccupancy = occupancyForTable(tableOccupancy, activeTableId);
+  const activeFloorTable = tables.find((t) => t.tableNumber === activeTableId);
+  const activeTableFloorBooked = activeFloorTable?.bookingStatus === "booked";
   const activeTableLockedByOther = Boolean(activeTableOccupancy && !activeTableOccupancy.mine);
   const draftKey = orderMode === "dine-in" ? activeTableId : orderMode;
   const activeRiders = useMemo(
@@ -184,8 +188,21 @@ export default function OrderScreen() {
   function validateOrderTarget(): string | null {
     if (orderMode === "dine-in" && !activeTableId) return "Select a table first.";
     if (orderMode === "dine-in" && !editingOrder && activeTableLockedByOther) {
-      const owner = activeTableOccupancy?.ownerName ?? "another waiter";
+      const owner =
+        activeTableOccupancy?.ownerName ??
+        activeFloorTable?.bookedOrderRef ??
+        "another waiter";
       return `Table ${activeTableId} is booked by ${owner}. You can view the order but not edit it.`;
+    }
+    if (
+      orderMode === "dine-in" &&
+      !editingOrder &&
+      activeTableFloorBooked &&
+      !activeTableOccupancy?.mine
+    ) {
+      return activeFloorTable?.bookedOrderRef
+        ? `Table ${activeTableId} is booked · ${activeFloorTable.bookedOrderRef}. Close or complete that order first.`
+        : `Table ${activeTableId} is booked. Close or complete the current order first.`;
     }
     if (orderMode === "delivery") {
       if (activeRiders.length === 0) return "Add an active rider in the desktop Delivery module first.";
@@ -206,6 +223,7 @@ export default function OrderScreen() {
   function invalidateOrderFeeds(): void {
     void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
     void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    void queryClient.invalidateQueries({ queryKey: ["tables"] });
   }
 
   function applyTicketEdit(ticket: KitchenTicket): void {
@@ -590,13 +608,30 @@ export default function OrderScreen() {
     if (editingOrder) return;
     setTableId(tableNumber);
     setShowMenu(false);
-    setNotice(null);
     if (!drafts[tableNumber]) {
       setDrafts((prev) => ({
         ...prev,
         [tableNumber]: emptyDraft(newOrderRef()),
       }));
     }
+    const floorTable = tables.find((t) => t.tableNumber === tableNumber);
+    const occ = occupancyForTable(tableOccupancy, tableNumber);
+    const booked = floorTable?.bookingStatus === "booked" || Boolean(occ);
+    if (!booked) {
+      setNotice(`Table ${tableNumber} is free.`);
+      return;
+    }
+    if (occ?.mine) {
+      setNotice(`Table ${tableNumber} is booked — your order.`);
+      return;
+    }
+    const who =
+      occ?.ownerName ?? floorTable?.bookedOrderRef ?? null;
+    setNotice(
+      who
+        ? `Table ${tableNumber} is booked · ${who}.`
+        : `Table ${tableNumber} is booked.`,
+    );
   }
 
   function startEditTicket(ticket: KitchenTicket): void {
@@ -700,15 +735,23 @@ export default function OrderScreen() {
             >
               {tables.map((t) => {
                 const occ = occupancyForTable(tableOccupancy, t.tableNumber);
+                const floorBooked = t.bookingStatus === "booked";
+                const isBooked = floorBooked || Boolean(occ);
                 const lockedByOther = Boolean(occ && !occ.mine);
                 return (
                   <Chip
                     key={t.id}
                     label={t.tableNumber}
                     selected={activeTableId === t.tableNumber}
-                    tone={occ ? (occ.mine ? "mine" : "locked") : undefined}
+                    tone={isBooked ? (occ?.mine ? "mine" : "locked") : undefined}
                     sublabel={
-                      occ ? (occ.mine ? "Your order" : occ.ownerName ?? "Booked") : undefined
+                      isBooked
+                        ? occ?.mine
+                          ? "Your order"
+                          : t.bookedOrderRef
+                            ? `Booked · ${t.bookedOrderRef}`
+                            : occ?.ownerName ?? "Booked"
+                        : "Free"
                     }
                     disabled={lockedByOther}
                     onPress={() => selectTable(t.tableNumber)}
@@ -720,8 +763,19 @@ export default function OrderScreen() {
           {activeTableLockedByOther && !editingOrder ? (
             <Text style={styles.lockedTableHint}>
               Table {activeTableId} is booked by{" "}
-              {activeTableOccupancy?.ownerName ?? "another waiter"}. You can view the order below,
-              but only they can edit it. The table frees up when the order is done.
+              {activeTableOccupancy?.ownerName ??
+                activeFloorTable?.bookedOrderRef ??
+                "another waiter"}
+              . You can view the order below, but only they can edit it. The table frees up when
+              the order is done.
+            </Text>
+          ) : activeTableFloorBooked && !activeTableOccupancy?.mine && !editingOrder ? (
+            <Text style={styles.lockedTableHint}>
+              Table {activeTableId} is booked
+              {activeFloorTable?.bookedOrderRef
+                ? ` · ${activeFloorTable.bookedOrderRef}`
+                : ""}
+              . Close or complete that order before starting a new one.
             </Text>
           ) : null}
         </Card>
