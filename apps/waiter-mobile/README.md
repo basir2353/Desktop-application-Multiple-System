@@ -66,5 +66,5 @@ Bottom tabs: **Home · Orders · Menu · Tax · More**
 | Home | Live sales, kitchen, PRA status, branch switcher |
 | Orders | Open bills + kitchen queue (advance tickets) |
 | Menu | Search / filter · turn items ON/OFF |
-| Tax | Fake/Real/FBR Active · today dashboard · period reports |
+| Tax | FPRA/Real/FBR Active · today dashboard · period reports |
 | More | Sales, reports, payout, users, tables, kitchen, inventory, printers |

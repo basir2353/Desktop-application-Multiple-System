@@ -31,7 +31,7 @@ function footerFromBillFields(bill: Bill, mode: PraInvoiceMode): PraReceiptFoote
 
 /**
  * Resolve PRA invoice # + QR for a waiter/staff receipt print.
- * Uses existing bill PRA fields, else fetches/issues when Fake/Real PRA is on.
+ * Uses existing bill PRA fields, else fetches/issues when FPRA/Real PRA is on.
  */
 export async function resolvePraFooterForBillPrint(input: {
   branchCode: string;

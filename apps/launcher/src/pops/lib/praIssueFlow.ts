@@ -13,7 +13,7 @@ import { printPraFiscalSlip } from "./printPraFiscal";
 export const REAL_PRA_NOT_CONNECTED_MSG =
   "Real PRA is not connected. Please connect your PRA account before uploading invoices.";
 
-/** Issue Fake/Real PRA for a completed bill (does not print). */
+/** Issue FPRA/Real PRA for a completed bill (does not print). */
 export async function issuePraForBill(input: {
   branchCode: string;
   billId: string;
@@ -27,7 +27,7 @@ export async function issuePraForBill(input: {
   });
 }
 
-/** Issue Fake/Real PRA for bill / store sale / pharmacy sale. */
+/** Issue FPRA/Real PRA for bill / store sale / pharmacy sale. */
 export async function issuePraForSource(input: {
   branchCode: string;
   sourceType: "bill" | "store_sale" | "pharmacy_sale";
@@ -140,7 +140,7 @@ export function resolveAutoPraMode(features: {
   return null;
 }
 
-/** RPRA button: Fake Active only. Click sends that ticket to Real PRA + Real print. */
+/** RPRA button: FPRA Active only. Click sends that ticket to Real PRA + Real print. */
 export function canShowRpraButton(features: {
   praFakeEnabled?: boolean;
   praRealEnabled?: boolean;
@@ -167,7 +167,7 @@ export type AutoIssuePraResult = {
 };
 
 /**
- * When Fake/Real PRA is ON, issue fiscal for a completed bill (Real = client PostData).
+ * When FPRA/Real PRA is ON, issue fiscal for a completed bill (Real = client PostData).
  * Always re-fetches tax features so Pay never skips Real due to a stale cache.
  */
 export async function autoIssuePraForCompletedBill(input: {

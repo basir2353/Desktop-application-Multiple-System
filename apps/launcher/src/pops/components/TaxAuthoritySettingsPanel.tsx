@@ -10,7 +10,7 @@ import { mutedClass, panelClass } from "../lib/themeClasses";
 
 /**
  * Org Admin / Accountant: activate FBR, FPRA, or Real PRA.
- * Fake and Real are mutually exclusive.
+ * FPRA and Real are mutually exclusive.
  */
 export function TaxAuthoritySettingsPanel({
   onNotice,
@@ -52,7 +52,7 @@ export function TaxAuthoritySettingsPanel({
   }
 
   function setFakePra(checked: boolean): void {
-    // Mutual exclusive: enabling Fake clears Real.
+    // Mutual exclusive: enabling FPRA clears Real.
     saveMut.mutate(
       checked
         ? { praFakeEnabled: true, praRealEnabled: false }
@@ -61,7 +61,7 @@ export function TaxAuthoritySettingsPanel({
   }
 
   function setRealPra(checked: boolean): void {
-    // Mutual exclusive: enabling Real clears Fake.
+    // Mutual exclusive: enabling Real clears FPRA.
     saveMut.mutate(
       checked
         ? { praRealEnabled: true, praFakeEnabled: false }

@@ -1464,8 +1464,8 @@ export class TaxAuthorityService {
   }
 
   /**
-   * Issue a Fake or Real PRA fiscal invoice for a sale/bill.
-   * Fake: local unique numbers + QR (not sent to PRA). Real: e-IMS via sendInvoice.
+   * Issue a FPRA or Real PRA fiscal invoice for a sale/bill.
+   * FPRA: local unique numbers + QR (not sent to PRA). Real: e-IMS via sendInvoice.
    */
   async issuePraInvoice(
     organizationId: string,
@@ -1872,7 +1872,7 @@ const responsePayload = {
   }
 
   /**
-   * Return Fake/Real PRA fiscal details for a source from bill columns or latest invoice.
+   * Return FPRA/Real PRA fiscal details for a source from bill columns or latest invoice.
    */
   async getFiscalForSource(
     organizationId: string,
@@ -1952,7 +1952,7 @@ const responsePayload = {
    * Fire-and-forget enqueue after a sale is completed.
    * Never throws to the caller — failures are logged and queued as failed/queued rows.
    *
-   * PRA auto-enqueue only when Real is enabled and Fake is not (both → client chooses).
+   * PRA auto-enqueue only when Real is enabled and FPRA is not (both → client chooses).
    */
   async enqueueFromSale(params: {
     organizationId: string;
@@ -2859,7 +2859,7 @@ const responsePayload = {
       }
       return;
     }
-    // Fake OR Real grant allows Real PRA connect / upload (Fake shops use RPRA manually).
+    // FPRA OR Real grant allows Real PRA connect / upload (FPRA shops use RPRA manually).
     if (!features.praRealEnabled && !features.praFakeEnabled && !features.praEnabled) {
       throw new ForbiddenException(
         "PRA is not enabled for this business. Contact the platform Super Admin.",
@@ -2880,7 +2880,7 @@ const responsePayload = {
       }
       return;
     }
-    // Real fiscal: allow when Real is ON, or Fake is ON (manual RPRA while Fake is default).
+    // Real fiscal: allow when Real is ON, or FPRA is ON (manual RPRA while FPRA is default).
     if (!features.praRealEnabled && !features.praFakeEnabled && !features.praEnabled) {
       throw new ForbiddenException(
         "PRA is not enabled for this business. Contact the platform Super Admin.",

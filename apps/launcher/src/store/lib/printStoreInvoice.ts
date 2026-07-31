@@ -241,7 +241,7 @@ export type StoreInvoicePrintResult = {
 };
 
 /**
- * Restaurant-style finalize: issue Fake/Real PRA (when enabled), embed Invoice # + QR, then print.
+ * Restaurant-style finalize: issue FPRA/Real PRA (when enabled), embed Invoice # + QR, then print.
  */
 export async function printStoreInvoiceAsync(
   branchName: string,

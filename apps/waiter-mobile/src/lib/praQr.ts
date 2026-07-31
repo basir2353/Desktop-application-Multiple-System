@@ -43,7 +43,7 @@ export function realPraVerifyUrl(invoiceNumber: string): string {
 }
 
 /**
- * Real PRA QR = public auto-verify link. Fake = phone-block wrapper.
+ * Real PRA QR = public auto-verify link. FPRA = phone-block wrapper.
  */
 export function sanitizePraQrPayload(
   payload: string,
@@ -151,10 +151,6 @@ export function preparePraReceiptFooter(input: {
 }
 
 export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
-  const caption =
-    pra.mode === "real"
-      ? "Scan QR → invoice details open automatically"
-      : "This invoice generated on the PRA";
   return `
   <div class="pra-fbr-block">
     <div class="pra-rule"></div>
@@ -172,7 +168,6 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
       </tr>
     </table>
     <div class="pra-logo-label">Punjab Revenue Authority</div>
-    <div class="pra-qr-caption">${caption}</div>
   </div>`;
 }
 
@@ -244,16 +239,6 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       font-size: 9px;
       font-weight: 700;
       line-height: 1.2;
-      color: #000;
-    }
-    .pra-qr-caption {
-      display: block;
-      width: 100%;
-      margin-top: 6px;
-      text-align: center !important;
-      font-size: 10px;
-      font-weight: 600;
-      line-height: 1.3;
       color: #000;
     }
     .meta-pra-invoice .meta-value {

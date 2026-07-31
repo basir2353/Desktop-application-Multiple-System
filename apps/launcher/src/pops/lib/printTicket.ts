@@ -83,7 +83,7 @@ export type PrintTicketInput = {
    * so kitchen staff can tell it apart from a new order.
    */
   isOrderUpdate?: boolean;
-  /** Fake/Real PRA footer (invoice # + QR) printed under the order receipt. */
+  /** FPRA/Real PRA footer (invoice # + QR) printed under the order receipt. */
   praFiscal?: PraReceiptFooter | null;
 };
 

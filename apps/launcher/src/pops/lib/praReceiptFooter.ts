@@ -20,7 +20,7 @@ export async function preparePraReceiptFooter(input: {
   orderRef: string;
   qrPayload: string;
 }): Promise<PraReceiptFooter> {
-  // Real: QR = exact e-IMS InvoiceNumber. Fake: sanitized / phone-block payload.
+  // Real: QR = exact e-IMS InvoiceNumber. FPRA: sanitized / phone-block payload.
   const raw = (input.qrPayload?.trim() || input.invoiceNumber).trim();
   const qrPayload = sanitizePraQrPayload(raw, input.mode);
   const qrDataUrl = await praQrDataUrl(qrPayload, 160, input.mode);
@@ -60,11 +60,6 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
       </tr>
     </table>
     <div class="pra-logo-label">Punjab Revenue Authority</div>
-    <div class="pra-qr-caption">${
-      pra.mode === "real"
-        ? "Scan QR → invoice details open automatically"
-        : "This invoice generated on the PRA"
-    }</div>
   </div>`;
 }
 
@@ -129,16 +124,6 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       line-height: 1.35;
       color: #000;
       word-break: break-all;
-    }
-    .pra-qr-caption {
-      display: block;
-      width: 100%;
-      margin-top: 4px;
-      text-align: center !important;
-      font-size: 10px;
-      font-weight: 600;
-      line-height: 1.3;
-      color: #000;
     }
     .pra-qr-fallback {
       display: inline-block;

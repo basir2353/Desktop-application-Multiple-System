@@ -1,4 +1,4 @@
-/** API helpers for Fake / Real PRA fiscal invoices. */
+/** API helpers for FPRA / Real PRA fiscal invoices. */
 
 import {
   issuePraInvoiceResultSchema,

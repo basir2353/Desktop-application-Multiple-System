@@ -221,7 +221,7 @@ export function PraRealIntegrationPanel(props: {
       // Clear only the secret inputs — placeholders will show "saved" masks from status.
       onPraChange({ ...pra, accessCode: "", password: "", token: "" });
       try {
-        // Fake Active: keep Fake on — save credentials only until Real is turned Active.
+        // FPRA Active: keep FPRA on — save credentials only until Real is turned Active.
         if (credentialsUnlocked && !praRealEnabled) {
           onMessage(`${res.message} · Credentials saved (FPRA stays Active).`);
         } else {

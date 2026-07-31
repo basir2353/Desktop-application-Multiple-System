@@ -30,7 +30,7 @@ export function realPraVerifyUrl(invoiceNumber: string): string {
 }
 
 /**
- * Real PRA QR = public auto-verify link. Fake = phone-block wrapper.
+ * Real PRA QR = public auto-verify link. FPRA = phone-block wrapper.
  */
 export function sanitizePraQrPayload(
   payload: string,

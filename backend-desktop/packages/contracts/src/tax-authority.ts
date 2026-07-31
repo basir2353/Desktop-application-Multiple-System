@@ -135,7 +135,7 @@ export const taxAuthorityFeaturesSchema = z.object({
   praRealAllowed: z.boolean().default(false),
   /** Org Admin Active: FBR on/off. */
   fbrEnabled: z.boolean(),
-  /** True when Fake and/or Real PRA Active (legacy-compatible). */
+  /** True when FPRA and/or Real PRA Active (legacy-compatible). */
   praEnabled: z.boolean(),
   /** Org Admin Active: FPRA. */
   praFakeEnabled: z.boolean().default(false),
@@ -228,7 +228,7 @@ export const taxInvoiceSchema = z.object({
 });
 export type TaxInvoice = z.infer<typeof taxInvoiceSchema>;
 
-/** Fake or Real PRA fiscal details attached to a sale / bill. */
+/** FPRA or Real PRA fiscal details attached to a sale / bill. */
 export const praFiscalInvoiceSchema = z.object({
   mode: praInvoiceModeSchema,
   invoiceNumber: z.string(),

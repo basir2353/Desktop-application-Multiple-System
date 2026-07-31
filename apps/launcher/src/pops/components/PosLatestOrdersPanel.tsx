@@ -202,7 +202,7 @@ export function PosLatestOrdersPanel({
     },
   });
 
-  /** Fake Active → RPRA uploads this paid ticket to Real PRA and reprints Real slip. */
+  /** FPRA Active → RPRA uploads this paid ticket to Real PRA and reprints Real slip. */
   const rpraMutation = useMutation({
     mutationFn: async (order: PosRecentOrder) => {
       if (!branch?.code) throw new Error("Select a branch before uploading to Real PRA.");
@@ -527,7 +527,7 @@ export function PosLatestOrdersPanel({
                 const showChangeTable =
                   canManageTables && canChangePosRecentOrderTable(order) && Boolean(branch?.code);
                 const showEdit = Boolean(onEdit) && canEditPosRecentOrder(order);
-                // Fake Active only — never on Real Active / Real invoice tickets.
+                // FPRA Active only — never on Real Active / Real invoice tickets.
                 const showRpra =
                   canShowRpraForBill({
                     praFakeEnabled,

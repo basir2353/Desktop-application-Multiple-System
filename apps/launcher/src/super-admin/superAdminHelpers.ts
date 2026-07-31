@@ -79,7 +79,7 @@ export function businessNotesKey(businessId: string): string {
   return `business_notes_${businessId}`;
 }
 
-/** Resolve Fake/Real PRA section flags from Business (Super Admin = Allowed). Both may be on. */
+/** Resolve FPRA/Real PRA section flags from Business (Super Admin = Allowed). Both may be on. */
 export function resolvePraFlags(b: {
   praEnabled?: boolean | null;
   praFakeEnabled?: boolean | null;
