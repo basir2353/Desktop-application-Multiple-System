@@ -540,8 +540,20 @@ function namesRoughlyMatch(a: string, b: string): boolean {
   return left === right || left.includes(right) || right.includes(left);
 }
 
-/** Resolve a real Windows spooler name for a queued silent job (never open a dialog).
- * Never returns PDF / XPS / Fax / OneNote — those create file prompts, not thermal slips.
+/** PDF / XPS file targets allowed when no thermal printer is linked (laptop testing). */
+function acceptPdfFileTarget(name: string | null | undefined): string | null {
+  const n = name?.trim() || "";
+  if (!n) return null;
+  if (isXpsSystemPrinter(n)) return preferPdfOverXpsPrinter(n);
+  if (/print\s*to\s*pdf|microsoft\s*print\s*to\s*pdf/i.test(n)) return n;
+  // Linked "Microsoft PDF" style names
+  if (isVirtualSystemPrinter(n) && /\bpdf\b/i.test(n)) return "Microsoft Print to PDF";
+  return null;
+}
+
+/** Resolve a Windows spooler name for a queued silent job (never open a dialog).
+ * Prefers physical thermal/USB; if none linked, falls back to Microsoft Print to PDF
+ * so waiter/mobile jobs still open on the laptop (Save As).
  */
 export async function resolveSilentSystemPrinterName(input: {
   branchCode: string;
@@ -556,7 +568,7 @@ export async function resolveSilentSystemPrinterName(input: {
   const physicalOs = os.filter((p) => !p.isVirtual && !isVirtualSystemPrinter(p.name));
   const osNames = physicalOs.map((p) => p.name).filter(Boolean);
 
-  const accept = (name: string | null | undefined): string | null => {
+  const acceptPhysical = (name: string | null | undefined): string | null => {
     const n = name?.trim() || "";
     if (!n) return null;
     if (isVirtualSystemPrinter(n)) return null;
@@ -573,6 +585,9 @@ export async function resolveSilentSystemPrinterName(input: {
     if (exactOs) return exactOs;
     const fuzzyOs = osNames.find((n) => namesRoughlyMatch(n, hint));
     if (fuzzyOs) return fuzzyOs;
+    // User linked Microsoft Print to PDF / XPS in POS — allow for laptop testing.
+    const pdfHint = acceptPdfFileTarget(hint);
+    if (pdfHint) return pdfHint;
   }
 
   const branchPrinters = await listLocalBranchPrinters(branchCode);
@@ -580,8 +595,10 @@ export async function resolveSilentSystemPrinterName(input: {
     const byName = branchPrinters.find(
       (p) => namesRoughlyMatch(p.name, hint) || namesRoughlyMatch(p.windowsPrinterName ?? "", hint),
     );
-    const linked = accept(byName?.windowsPrinterName);
+    const linked = acceptPhysical(byName?.windowsPrinterName);
     if (linked) return linked;
+    const linkedPdf = acceptPdfFileTarget(byName?.windowsPrinterName);
+    if (linkedPdf) return linkedPdf;
   }
 
   try {
@@ -591,38 +608,58 @@ export async function resolveSilentSystemPrinterName(input: {
     const kind = String(input.kind ?? "receipt").toLowerCase();
     if (kind === "kot") {
       const kitchen = resolveDefaultPrinterByType(branchCode, "kitchen");
-      const kitchenName = accept(kitchen?.systemPrinterName);
+      const kitchenName = acceptPhysical(kitchen?.systemPrinterName);
       if (kitchenName) return kitchenName;
       const bar = resolveDefaultPrinterByType(branchCode, "bar");
-      const barName = accept(bar?.systemPrinterName);
+      const barName = acceptPhysical(bar?.systemPrinterName);
       if (barName) return barName;
       const routing = loadPrinterRouting(branchCode);
       const anyKot = routing.printers.find(
         (p) =>
           (p.printerType === "kitchen" || p.printerType === "bar") &&
-          accept(p.systemPrinterName),
+          acceptPhysical(p.systemPrinterName),
       );
-      const anyKotName = accept(anyKot?.systemPrinterName);
+      const anyKotName = acceptPhysical(anyKot?.systemPrinterName);
       if (anyKotName) return anyKotName;
     }
     const receipt = resolveReceiptPrinter(branchCode);
-    const receiptName = accept(receipt?.systemPrinterName);
+    const receiptName = acceptPhysical(receipt?.systemPrinterName);
     if (receiptName) return receiptName;
-    const any = loadPrinterRouting(branchCode).printers.find((p) => accept(p.systemPrinterName));
-    const anyName = accept(any?.systemPrinterName);
+    const any = loadPrinterRouting(branchCode).printers.find((p) => acceptPhysical(p.systemPrinterName));
+    const anyName = acceptPhysical(any?.systemPrinterName);
     if (anyName) return anyName;
+
+    // Routing only has PDF/XPS linked — use that for laptop.
+    const anyPdf = loadPrinterRouting(branchCode).printers
+      .map((p) => acceptPdfFileTarget(p.systemPrinterName))
+      .find(Boolean);
+    if (anyPdf) return anyPdf;
   } catch {
     // ignore routing errors
   }
 
-  const firstBranch = branchPrinters.find((p) => accept(p.windowsPrinterName));
-  const firstBranchName = accept(firstBranch?.windowsPrinterName);
+  const firstBranch = branchPrinters.find((p) => acceptPhysical(p.windowsPrinterName));
+  const firstBranchName = acceptPhysical(firstBranch?.windowsPrinterName);
   if (firstBranchName) return firstBranchName;
 
-  // Prefer default physical printer; never fall back to XPS/PDF.
+  const firstBranchPdf = branchPrinters
+    .map((p) => acceptPdfFileTarget(p.windowsPrinterName))
+    .find(Boolean);
+  if (firstBranchPdf) return firstBranchPdf;
+
+  // Prefer default physical printer.
   const defaultPhysical = physicalOs.find((p) => p.isDefault)?.name;
   if (defaultPhysical) return defaultPhysical;
-  return osNames[0] ?? null;
+  if (osNames[0]) return osNames[0];
+
+  // No thermal linked — laptop fallback: Microsoft Print to PDF (opens Save As).
+  const pdfOnOs = os.find((p) => /print\s*to\s*pdf/i.test(p.name))?.name;
+  if (pdfOnOs) return pdfOnOs;
+  const defaultOs = os.find((p) => p.isDefault)?.name;
+  const defaultPdf = acceptPdfFileTarget(defaultOs);
+  if (defaultPdf) return defaultPdf;
+  if (os.length > 0) return "Microsoft Print to PDF";
+  return null;
 }
 
 async function pngBytesFromPayload(
@@ -670,16 +707,20 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
     return {
       ok: false,
       error:
-        "No physical Windows printer linked for this branch. Link a thermal/USB printer in POS (not PDF/XPS).",
+        "No Windows printer found. Link a thermal/USB printer in POS, or Microsoft Print to PDF for laptop testing.",
     };
   }
 
-  // Still refuse Fax/OneNote etc. PDF is allowed only as last-resort file target.
+  // Allow PDF (laptop). Remap XPS → PDF. Still refuse Fax/OneNote.
   if (isVirtualSystemPrinter(printer) && !/print\s*to\s*pdf/i.test(printer)) {
-    return {
-      ok: false,
-      error: `Refusing virtual printer "${printer}". Link a real kitchen/bill printer (or PDF).`,
-    };
+    if (isXpsSystemPrinter(printer)) {
+      printer = preferPdfOverXpsPrinter(printer) ?? "Microsoft Print to PDF";
+    } else {
+      return {
+        ok: false,
+        error: `Refusing virtual printer "${printer}". Link a real kitchen/bill printer (or Microsoft Print to PDF).`,
+      };
+    }
   }
 
   const rendered = await pngBytesFromPayload(payload);

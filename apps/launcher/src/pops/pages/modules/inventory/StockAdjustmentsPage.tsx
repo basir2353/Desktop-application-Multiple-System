@@ -2,6 +2,7 @@ import { ADJUSTMENT_TYPES, type StockAdjustment } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { createStockAdjustment, fetchBranchInventory, updateAdjustmentStatus } from "../../../api/inventory";
+import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { linkDangerClass, linkSuccessClass } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
@@ -13,6 +14,7 @@ export function StockAdjustmentsPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
   const [error, setError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [form, setForm] = useState({ ingredientId: "", type: "Add" as "Add" | "Remove", qty: "1", reason: "" });
 
   const query = useQuery({
@@ -46,6 +48,7 @@ export function StockAdjustmentsPage(): JSX.Element {
 
   const ingredients = query.data?.ingredients ?? [];
   const adjustments = query.data?.adjustments ?? [];
+  const selectedIng = ingredients.find((i) => i.id === form.ingredientId);
 
   return (
     <div className="space-y-4">
@@ -55,10 +58,16 @@ export function StockAdjustmentsPage(): JSX.Element {
       {canManage ? (
         <InventoryFormPanel title="New adjustment" submitLabel="Submit for approval" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || !form.reason.trim() || createMutation.isPending}>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <select className={selectClass} value={form.ingredientId} onChange={(e) => setForm({ ...form, ingredientId: e.target.value })}>
-              <option value="">Ingredient</option>
-              {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-            </select>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className={`${inputClass} flex items-center justify-between text-left`}
+            >
+              <span className={selectedIng ? "truncate text-slate-900 dark:text-white" : "text-slate-500"}>
+                {selectedIng ? selectedIng.name : "Select ingredient…"}
+              </span>
+              <span className="text-slate-500" aria-hidden>▾</span>
+            </button>
             <select className={selectClass} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as typeof form.type })}>
               {ADJUSTMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
@@ -66,6 +75,21 @@ export function StockAdjustmentsPage(): JSX.Element {
             <input className={inputClass} placeholder="Reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
           </div>
         </InventoryFormPanel>
+      ) : null}
+
+      {pickerOpen ? (
+        <IngredientPickerModal
+          ingredients={ingredients}
+          single
+          title="Select ingredient"
+          subtitle="Search and pick one ingredient for this adjustment."
+          onClose={() => setPickerOpen(false)}
+          onConfirm={(ids) => {
+            const id = ids[0] ?? "";
+            setForm((f) => ({ ...f, ingredientId: id }));
+            setPickerOpen(false);
+          }}
+        />
       ) : null}
 
       <SimpleTable<StockAdjustment>

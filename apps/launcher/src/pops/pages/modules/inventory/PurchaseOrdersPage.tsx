@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { createPurchaseOrder, fetchBranchInventory, updatePurchaseOrderStatus } from "../../../api/inventory";
+import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import {
   cardClass,
@@ -14,6 +15,7 @@ import {
 } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
+import { SearchableSelect } from "../../../ui/SearchableSelect";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { InventoryError, InventoryLoading } from "./InventoryUi";
 import { InventoryFlowBanner } from "./InventoryFlowBanner";
@@ -28,10 +30,6 @@ function poTone(status: PoStatus): "neutral" | "success" | "warning" | "danger" 
 
 type PoLineRow = { ingredientId: string; qty: string; unitCost: string };
 
-function emptyLine(): PoLineRow {
-  return { ingredientId: "", qty: "1", unitCost: "0" };
-}
-
 function FieldLabel({ children }: { children: string }): JSX.Element {
   return (
     <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -44,13 +42,14 @@ export function PurchaseOrdersPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
   const [error, setError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [meta, setMeta] = useState({
     supplierId: "",
     expectedDate: "",
     requestedBy: "",
     chef: "",
   });
-  const [lines, setLines] = useState<PoLineRow[]>([emptyLine()]);
+  const [lines, setLines] = useState<PoLineRow[]>([]);
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
@@ -62,17 +61,13 @@ export function PurchaseOrdersPage(): JSX.Element {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
   }
 
-  function addLine(): void {
-    setLines((prev) => [...prev, emptyLine()]);
-  }
-
   function removeLine(index: number): void {
-    setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+    setLines((prev) => prev.filter((_, i) => i !== index));
   }
 
   function resetForm(): void {
     setMeta({ supplierId: "", expectedDate: "", requestedBy: "", chef: "" });
-    setLines([emptyLine()]);
+    setLines([]);
   }
 
   const validLines = lines.filter((line) => line.ingredientId && Number(line.qty) > 0);
@@ -114,6 +109,29 @@ export function PurchaseOrdersPage(): JSX.Element {
   const suppliers = query.data?.suppliers.filter((s) => s.active) ?? [];
   const ingredients = query.data?.ingredients ?? [];
   const orders = query.data?.purchaseOrders ?? [];
+
+  function addIngredientsFromPicker(ids: string[]): void {
+    setLines((prev) => {
+      const existing = new Set(prev.map((l) => l.ingredientId));
+      const next = [...prev];
+      for (const id of ids) {
+        if (existing.has(id)) continue;
+        const ing = ingredients.find((i) => i.id === id);
+        next.push({
+          ingredientId: id,
+          qty: "1",
+          unitCost: String(ing?.unitCost ?? 0),
+        });
+      }
+      return next;
+    });
+    setPickerOpen(false);
+  }
+
+  const supplierOptions = useMemo(
+    () => suppliers.map((s) => ({ value: s.id, label: s.name })),
+    [suppliers],
+  );
 
   const stats = useMemo(() => {
     const pending = orders.filter((o) => ["Draft", "Pending", "Approved", "Ordered"].includes(o.status)).length;
@@ -206,10 +224,14 @@ export function PurchaseOrdersPage(): JSX.Element {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <label>
                   <FieldLabel>Supplier</FieldLabel>
-                  <select className={selectClass} value={meta.supplierId} onChange={(e) => setMeta({ ...meta, supplierId: e.target.value })} required>
-                    <option value="">Select supplier</option>
-                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={supplierOptions}
+                    value={meta.supplierId}
+                    onChange={(supplierId) => setMeta({ ...meta, supplierId })}
+                    placeholder="Select supplier"
+                    searchPlaceholder="Search supplier…"
+                    required
+                  />
                 </label>
                 <label>
                   <FieldLabel>Expected date</FieldLabel>
@@ -238,6 +260,11 @@ export function PurchaseOrdersPage(): JSX.Element {
               </div>
 
               <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+                {lines.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-slate-500">
+                    No items yet — search and add ingredients below.
+                  </div>
+                ) : (
                 <table className="w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
                     <tr>
@@ -255,13 +282,18 @@ export function PurchaseOrdersPage(): JSX.Element {
                       const ing = ingredients.find((i) => i.id === line.ingredientId);
                       const lineTotal = Number(line.qty) * Number(line.unitCost);
                       return (
-                        <tr key={index} className="bg-white dark:bg-slate-900/20">
+                        <tr key={line.ingredientId || index} className="bg-white dark:bg-slate-900/20">
                           <td className="px-3 py-2 text-xs text-slate-400">{index + 1}</td>
                           <td className="px-3 py-2">
-                            <select className={selectClass} value={line.ingredientId} onChange={(e) => updateLine(index, { ingredientId: e.target.value })}>
-                              <option value="">Select ingredient</option>
-                              {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-                            </select>
+                            <div className="text-sm font-medium text-slate-900 dark:text-white">
+                              {ing?.name ?? "—"}
+                            </div>
+                            {ing ? (
+                              <div className="text-[10px] text-slate-500">
+                                {ing.sku}
+                                {ing.categoryName ? ` · ${ing.categoryName}` : ""}
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-3 py-2">
                             <input className={inputClass} type="number" min={1} placeholder="Qty" value={line.qty} onChange={(e) => updateLine(index, { qty: e.target.value })} />
@@ -276,9 +308,8 @@ export function PurchaseOrdersPage(): JSX.Element {
                           <td className="px-2 py-2 text-center">
                             <button
                               type="button"
-                              className={`rounded p-1 text-xs ${linkDangerClass} hover:bg-red-50 disabled:opacity-30 dark:hover:bg-red-950/30`}
+                              className={`rounded p-1 text-xs ${linkDangerClass} hover:bg-red-50 dark:hover:bg-red-950/30`}
                               onClick={() => removeLine(index)}
-                              disabled={lines.length === 1}
                               aria-label="Remove item"
                               title="Remove item"
                             >
@@ -290,17 +321,30 @@ export function PurchaseOrdersPage(): JSX.Element {
                     })}
                   </tbody>
                 </table>
+                )}
               </div>
 
               <button
                 type="button"
-                onClick={addLine}
+                onClick={() => setPickerOpen(true)}
                 className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 px-4 py-2 text-xs font-semibold text-indigo-700 transition hover:border-indigo-400 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
               >
-                <span className="text-base leading-none">+</span> Add item
+                <span className="text-base leading-none">+</span>{" "}
+                {lines.length === 0 ? "Select ingredients…" : "Add item"}
               </button>
             </section>
           </div>
+
+          {pickerOpen ? (
+            <IngredientPickerModal
+              ingredients={ingredients}
+              excludedIds={new Set(lines.map((l) => l.ingredientId).filter(Boolean))}
+              title="Select ingredients"
+              subtitle="Choose one or more items to add to this kitchen demand."
+              onClose={() => setPickerOpen(false)}
+              onConfirm={addIngredientsFromPicker}
+            />
+          ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/50">
             <span className={`text-xs ${mutedClass}`}>

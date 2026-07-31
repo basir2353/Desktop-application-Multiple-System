@@ -193,8 +193,9 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="hr/salary-slips" element={<SalarySlipsPage />} />
       <Route path="delivery" element={<DeliveryPage />} />
       <Route path="crm" element={<CrmPage />} />
-      <Route path="reports" element={<ReportsPage />} />
       <Route path="reports/kitchen-cancellations" element={<KitchenCancellationsPage />} />
+      <Route path="reports/:reportId" element={<ReportsPage />} />
+      <Route path="reports" element={<ReportsPage />} />
       <Route path="manufacturing" element={<ManufacturingPage />} />
       <Route path="content" element={<ContentPage />} />
     </>

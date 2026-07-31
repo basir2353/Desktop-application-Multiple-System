@@ -6,12 +6,12 @@ import { useNavigate } from "react-router-dom";
 import { fetchPraFiscalForSource } from "../../../lib/praApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
-import { sessionCanManageFloor, sessionCanManageUsers } from "../../lib/roleAccess";
-import { fetchCompletedOrders, completeBill, deleteBill } from "../../api/billing";
+import { sessionCanManageFloor } from "../../lib/roleAccess";
+import { fetchCompletedOrders, completeBill } from "../../api/billing";
 import { fetchKitchenTickets } from "../../api/kitchen";
 import { loadBusinessDaySettings } from "../../lib/businessDay";
 import { loadPosSettings } from "../../lib/posSettings";
-import { karachiYear, businessDateKey } from "../../lib/orderSales";
+import { karachiYear } from "../../lib/orderSales";
 import {
   buildUnifiedOrders,
   canChangeOrderTable,
@@ -55,8 +55,7 @@ import { resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRout
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
-import { linkActionClass, linkDangerClass, linkSuccessClass, linkWarningClass, tableOrderRefClass } from "../../lib/themeClasses";
-import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
+import { linkActionClass, linkSuccessClass, linkWarningClass, tableOrderRefClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import {
   ModuleCountBadge,
@@ -113,7 +112,6 @@ export function OrdersPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const canManageTables = sessionCanManageFloor(claims);
-  const canBulkDelete = sessionCanManageUsers(claims);
   const businessDay = useMemo(
     () => loadBusinessDaySettings(branch?.code),
     [branch?.code],
@@ -138,9 +136,6 @@ export function OrdersPage(): JSX.Element {
     billRef: string;
   } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [bulkDeleteFrom, setBulkDeleteFrom] = useState("");
-  const [bulkDeleteTo, setBulkDeleteTo] = useState("");
-  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [praFiscal, setPraFiscal] = useState<PraFiscalInvoice | null>(null);
   const [praModalOpen, setPraModalOpen] = useState(false);
   const [praPrinting, setPraPrinting] = useState(false);
@@ -219,16 +214,6 @@ export function OrdersPage(): JSX.Element {
       setNotice(
         `Payment completed — ${bill.billRef}${autoPra.notice ? `. ${autoPra.notice}` : ""}`,
       );
-    },
-    onError: (err: Error) => setNotice(err.message),
-  });
-
-  const deleteBillMutation = useMutation({
-    mutationFn: (billId: string) => deleteBill(billId),
-    onSuccess: (result) => {
-      setSelectedOrder(null);
-      void ordersQuery.refetch();
-      setNotice(`Order deleted — ${result.billRef}`);
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -441,44 +426,6 @@ export function OrdersPage(): JSX.Element {
     }
   }
 
-  function confirmDeleteOrder(bill: Bill): void {
-    if (!confirmDeleteBill(bill)) return;
-    deleteBillMutation.mutate(bill.id);
-  }
-
-  async function bulkDeleteByDateRange(): Promise<void> {
-    if (!bulkDeleteFrom || !bulkDeleteTo) {
-      setNotice("Select both from and to dates for bulk delete.");
-      return;
-    }
-    const billsToDelete = (ordersQuery.data ?? []).filter((bill) => {
-      const key = businessDateKey(bill.createdAt, businessDay);
-      return key >= bulkDeleteFrom && key <= bulkDeleteTo;
-    });
-    if (billsToDelete.length === 0) {
-      setNotice("No bills found in the selected date range.");
-      return;
-    }
-    const confirmed = window.confirm(
-      `Permanently delete ${billsToDelete.length} bill(s) from ${bulkDeleteFrom} to ${bulkDeleteTo}? This cannot be undone.`,
-    );
-    if (!confirmed) return;
-    setBulkDeleting(true);
-    let deleted = 0;
-    try {
-      for (const bill of billsToDelete) {
-        await deleteBill(bill.id);
-        deleted += 1;
-      }
-      void ordersQuery.refetch();
-      setNotice(`Bulk delete complete — ${deleted} order(s) removed.`);
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Bulk delete failed.");
-    } finally {
-      setBulkDeleting(false);
-    }
-  }
-
   const isLoading = ordersQuery.isLoading || kitchenQuery.isLoading;
   const isError = ordersQuery.isError || kitchenQuery.isError;
   const errorMessage = (ordersQuery.error ?? kitchenQuery.error) as Error | null;
@@ -538,39 +485,6 @@ export function OrdersPage(): JSX.Element {
         onTimeToChange={setFilterTimeTo}
         onClear={clearDateFilters}
       />
-
-      {canBulkDelete ? (
-        <div className="flex flex-wrap items-end gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-          <div className="text-xs font-medium text-red-300">Bulk delete (admin only)</div>
-          <label className="text-xs text-slate-400">
-            From
-            <input
-              type="date"
-              value={bulkDeleteFrom}
-              onChange={(e) => setBulkDeleteFrom(e.target.value)}
-              className="mt-1 block rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-white"
-            />
-          </label>
-          <label className="text-xs text-slate-400">
-            To
-            <input
-              type="date"
-              value={bulkDeleteTo}
-              onChange={(e) => setBulkDeleteTo(e.target.value)}
-              className="mt-1 block rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-white"
-            />
-          </label>
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-8 text-xs text-red-300"
-            disabled={bulkDeleting}
-            onClick={() => void bulkDeleteByDateRange()}
-          >
-            {bulkDeleting ? "Deleting…" : "Delete orders in range"}
-          </Button>
-        </div>
-      ) : null}
 
       {!isLoading ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -806,15 +720,6 @@ export function OrdersPage(): JSX.Element {
                       WhatsApp
                     </button>
                   ) : null}
-                  {canBulkDelete && r.source === "bill" ? (
-                    <button
-                      type="button"
-                      className={`text-xs ${linkDangerClass}`}
-                      onClick={() => confirmDeleteOrder(r.bill)}
-                    >
-                      Delete
-                    </button>
-                  ) : null}
                 </span>
               ),
             },
@@ -857,11 +762,6 @@ export function OrdersPage(): JSX.Element {
             setSelectedOrder(null);
             setChangeTableOrder(order);
           }}
-          onDeleteBill={
-            canBulkDelete && selectedOrder.source === "bill"
-              ? () => confirmDeleteOrder(selectedOrder.bill)
-              : undefined
-          }
         />
       ) : null}
 

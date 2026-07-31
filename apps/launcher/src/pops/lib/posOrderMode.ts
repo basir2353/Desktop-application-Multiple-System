@@ -62,17 +62,55 @@ export function posDeliveryNotes(
   phone: string,
   address: string,
 ): string | undefined {
+  return posCustomerOrderNotes("Delivery", customerName, phone, address);
+}
+
+/** Customer / phone / address notes for takeaway, delivery, online, etc. */
+export function posCustomerOrderNotes(
+  channelLabel: string,
+  customerName: string,
+  phone: string,
+  address?: string,
+): string | undefined {
+  const prefix = channelLabel.trim() || "Order";
   const name = customerName.trim();
   const ph = phone.trim();
-  const addr = address.trim();
+  const addr = (address ?? "").trim();
   if (!name && !ph && !addr) return undefined;
-  if (name && ph && addr) return `Delivery · ${name} · ${ph} · ${addr}`;
-  if (name && ph) return `Delivery · ${name} · ${ph}`;
-  if (name && addr) return `Delivery · ${name} · ${addr}`;
-  if (ph && addr) return `Delivery · ${ph} · ${addr}`;
-  if (name) return `Delivery · ${name}`;
-  if (ph) return `Delivery · ${ph}`;
-  return `Delivery · ${addr}`;
+  if (name && ph && addr) return `${prefix} · ${name} · ${ph} · ${addr}`;
+  if (name && ph) return `${prefix} · ${name} · ${ph}`;
+  if (name && addr) return `${prefix} · ${name} · ${addr}`;
+  if (ph && addr) return `${prefix} · ${ph} · ${addr}`;
+  if (name) return `${prefix} · ${name}`;
+  if (ph) return `${prefix} · ${ph}`;
+  return `${prefix} · ${addr}`;
+}
+
+/** Modes that show the Customer details panel on the ticket. */
+export const POS_CUSTOMER_PANEL_MODES: readonly PosOrderMode[] = [
+  "dine-in",
+  "takeaway",
+  "delivery",
+  "online",
+  "foodpanda",
+];
+
+/**
+ * Modes where confirming customer details auto-prints the invoice/receipt
+ * (Training / Ready-style counter orders — takeaway & pickup channels).
+ */
+export const POS_CUSTOMER_AUTOPRINT_MODES: readonly PosOrderMode[] = [
+  "takeaway",
+  "online",
+  "foodpanda",
+];
+
+export function posModeShowsCustomerPanel(mode: PosOrderMode): boolean {
+  return POS_CUSTOMER_PANEL_MODES.includes(mode);
+}
+
+export function posModeAutoPrintsOnCustomer(mode: PosOrderMode): boolean {
+  return POS_CUSTOMER_AUTOPRINT_MODES.includes(mode);
 }
 
 /** Notes stored on tickets/bills so print shows who took staff food and when. */

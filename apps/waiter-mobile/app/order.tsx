@@ -83,6 +83,8 @@ export default function OrderScreen() {
 
   const branchCode = branch?.code ?? "";
   const [tableId, setTableId] = useState<string | null>(null);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [tableSearch, setTableSearch] = useState("");
   const [showMenu, setShowMenu] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -138,6 +140,52 @@ export default function OrderScreen() {
   const tables = useMemo(() => {
     return (floorQuery.data?.tables ?? []).filter((t) => t.isActive);
   }, [floorQuery.data]);
+
+  const sections = useMemo(() => {
+    const all = (floorQuery.data?.sections ?? [])
+      .filter((s) => s.isActive)
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    // Only show sections that have at least one active table.
+    return all.filter((s) => tables.some((t) => t.sectionId === s.id));
+  }, [floorQuery.data?.sections, tables]);
+
+  const sectionTables = useMemo(() => {
+    if (sections.length === 0) return tables;
+    if (!selectedSectionId) return tables;
+    return tables
+      .filter((t) => t.sectionId === selectedSectionId)
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.tableNumber.localeCompare(b.tableNumber, undefined, { numeric: true }));
+  }, [tables, sections.length, selectedSectionId]);
+
+  const selectedSection = sections.find((s) => s.id === selectedSectionId) ?? null;
+
+  const visibleTables = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q) return sectionTables;
+    return sectionTables.filter(
+      (t) =>
+        t.tableNumber.toLowerCase().includes(q) ||
+        (t.bookedOrderRef ?? "").toLowerCase().includes(q),
+    );
+  }, [sectionTables, tableSearch]);
+
+  // Keep the selected hall in sync with the active table (edit mode / section switch).
+  useEffect(() => {
+    if (sections.length === 0) {
+      if (selectedSectionId) setSelectedSectionId(null);
+      return;
+    }
+    const fromTable = tables.find((t) => t.tableNumber === tableId)?.sectionId ?? null;
+    if (fromTable && sections.some((s) => s.id === fromTable)) {
+      if (selectedSectionId !== fromTable) setSelectedSectionId(fromTable);
+      return;
+    }
+    if (!selectedSectionId || !sections.some((s) => s.id === selectedSectionId)) {
+      setSelectedSectionId(sections[0]!.id);
+    }
+  }, [sections, tables, tableId, selectedSectionId]);
 
   const myUserId = claims?.sub ?? null;
 
@@ -604,17 +652,35 @@ export default function OrderScreen() {
     }
   }
 
+  function selectSection(sectionId: string): void {
+    if (editingOrder) return;
+    setSelectedSectionId(sectionId);
+    setTableSearch("");
+    setShowMenu(false);
+    setNotice(null);
+    // Keep current table if it belongs to this section; otherwise pick first free table.
+    const inSection = tables.filter((t) => t.sectionId === sectionId);
+    if (tableId && inSection.some((t) => t.tableNumber === tableId)) return;
+    const firstFree = inSection.find((t) => t.bookingStatus !== "booked");
+    const next = firstFree?.tableNumber ?? inSection[0]?.tableNumber ?? null;
+    if (next) selectTable(next);
+    else setTableId(null);
+  }
+
   function selectTable(tableNumber: string): void {
     if (editingOrder) return;
     setTableId(tableNumber);
     setShowMenu(false);
+    const floorTable = tables.find((t) => t.tableNumber === tableNumber);
+    if (floorTable?.sectionId) {
+      setSelectedSectionId(floorTable.sectionId);
+    }
     if (!drafts[tableNumber]) {
       setDrafts((prev) => ({
         ...prev,
         [tableNumber]: emptyDraft(newOrderRef()),
       }));
     }
-    const floorTable = tables.find((t) => t.tableNumber === tableNumber);
     const occ = occupancyForTable(tableOccupancy, tableNumber);
     const booked = floorTable?.bookingStatus === "booked" || Boolean(occ);
     if (!booked) {
@@ -728,37 +794,90 @@ export default function OrderScreen() {
               message="Configure tables in the desktop app to start taking orders."
             />
           ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.tableRow}
-            >
-              {tables.map((t) => {
-                const occ = occupancyForTable(tableOccupancy, t.tableNumber);
-                const floorBooked = t.bookingStatus === "booked";
-                const isBooked = floorBooked || Boolean(occ);
-                const lockedByOther = Boolean(occ && !occ.mine);
-                return (
-                  <Chip
-                    key={t.id}
-                    label={t.tableNumber}
-                    selected={activeTableId === t.tableNumber}
-                    tone={isBooked ? (occ?.mine ? "mine" : "locked") : undefined}
-                    sublabel={
-                      isBooked
-                        ? occ?.mine
-                          ? "Your order"
-                          : t.bookedOrderRef
-                            ? `Booked · ${t.bookedOrderRef}`
-                            : occ?.ownerName ?? "Booked"
-                        : "Free"
-                    }
-                    disabled={lockedByOther}
-                    onPress={() => selectTable(t.tableNumber)}
-                  />
-                );
-              })}
-            </ScrollView>
+            <View style={styles.tablePicker}>
+              {sections.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.tableRow}
+                >
+                  {sections.map((section) => {
+                    const count = tables.filter((t) => t.sectionId === section.id).length;
+                    return (
+                      <Chip
+                        key={section.id}
+                        label={section.name}
+                        selected={selectedSectionId === section.id}
+                        sublabel={`${count} table${count === 1 ? "" : "s"}`}
+                        disabled={Boolean(editingOrder)}
+                        onPress={() => selectSection(section.id)}
+                      />
+                    );
+                  })}
+                </ScrollView>
+              ) : null}
+              {sections.length > 0 || sectionTables.length > 8 ? (
+                <Input
+                  placeholder={
+                    selectedSection
+                      ? `Search tables in ${selectedSection.name}…`
+                      : "Search table number…"
+                  }
+                  value={tableSearch}
+                  onChangeText={setTableSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!editingOrder}
+                />
+              ) : null}
+              {sections.length > 0 && sectionTables.length === 0 ? (
+                <EmptyState
+                  title="No tables"
+                  message="No tables in this section."
+                />
+              ) : visibleTables.length === 0 ? (
+                <EmptyState
+                  title="No matches"
+                  message={
+                    tableSearch.trim()
+                      ? `No tables match “${tableSearch.trim()}”.`
+                      : "No tables available."
+                  }
+                />
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.tableRow}
+                >
+                  {visibleTables.map((t) => {
+                    const occ = occupancyForTable(tableOccupancy, t.tableNumber);
+                    const floorBooked = t.bookingStatus === "booked";
+                    const isBooked = floorBooked || Boolean(occ);
+                    const lockedByOther = Boolean(occ && !occ.mine);
+                    return (
+                      <Chip
+                        key={t.id}
+                        label={t.tableNumber}
+                        selected={activeTableId === t.tableNumber}
+                        tone={isBooked ? (occ?.mine ? "mine" : "locked") : undefined}
+                        sublabel={
+                          isBooked
+                            ? occ?.mine
+                              ? "Your order"
+                              : t.bookedOrderRef
+                                ? `Booked · ${t.bookedOrderRef}`
+                                : occ?.ownerName ?? "Booked"
+                            : "Free"
+                        }
+                        disabled={lockedByOther || Boolean(editingOrder)}
+                        onPress={() => selectTable(t.tableNumber)}
+                      />
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
           )}
           {activeTableLockedByOther && !editingOrder ? (
             <Text style={styles.lockedTableHint}>
@@ -1323,6 +1442,9 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 13,
     marginTop: 2,
+  },
+  tablePicker: {
+    gap: 10,
   },
   tableRow: {
     gap: 8,

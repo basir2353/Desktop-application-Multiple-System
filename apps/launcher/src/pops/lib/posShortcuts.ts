@@ -13,6 +13,7 @@ export const POS_SHORTCUTS = {
   search: { key: "F9", label: "Item search" },
   payOut: { key: "F10", label: "Paying out" },
   theme: { key: "F11", label: "Theme" },
+  customer: { key: "F12", label: "Customer" },
 } as const;
 
 export type PosShortcutId = keyof typeof POS_SHORTCUTS;

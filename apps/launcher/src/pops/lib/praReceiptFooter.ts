@@ -14,19 +14,26 @@ export type PraReceiptFooter = {
   qrDataUrl?: string;
 };
 
+/** Drop leading zeros on numeric FPRA #s so slips show 35929 not 00000006. */
+export function formatPraInvoiceNumberForSlip(invoiceNumber: string): string {
+  const t = invoiceNumber.trim();
+  if (/^\d+$/.test(t)) return String(Number(t));
+  return t;
+}
+
 export async function preparePraReceiptFooter(input: {
   mode: PraInvoiceMode;
   invoiceNumber: string;
   orderRef: string;
   qrPayload: string;
 }): Promise<PraReceiptFooter> {
-  // Real: QR = exact e-IMS InvoiceNumber. FPRA: sanitized / phone-block payload.
+  // Real: public verify URL. FPRA: https site that only shows "Not Found".
   const raw = (input.qrPayload?.trim() || input.invoiceNumber).trim();
   const qrPayload = sanitizePraQrPayload(raw, input.mode);
   const qrDataUrl = await praQrDataUrl(qrPayload, 160, input.mode);
   return {
     mode: input.mode,
-    invoiceNumber: input.invoiceNumber.trim(),
+    invoiceNumber: formatPraInvoiceNumberForSlip(input.invoiceNumber),
     orderRef: input.orderRef,
     qrPayload,
     qrDataUrl,

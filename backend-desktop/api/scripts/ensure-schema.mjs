@@ -26,7 +26,7 @@ const STATEMENTS = [
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_allowed boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_real_allowed boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_invoice_seq integer NOT NULL DEFAULT 0`,
-  // Continue FPRA sequence after existing fake invoices (avoid restarting at 00000001).
+  // Continue FPRA sequence after existing fake invoices (avoid restarting at 1).
   `UPDATE organizations o
    SET pra_fake_invoice_seq = sub.cnt
    FROM (

@@ -1,15 +1,14 @@
 import type { PraInvoiceMode } from "@platform/contracts";
 import { getApiBaseUrl } from "./apiBase";
 
-/**
- * Dead https host (RFC `.invalid`) — FPRA only.
- * Real PRA QR opens our public verify page (auto-searches e-IMS).
- */
-const PRA_PHONE_BLOCK_PREFIX = "https://pra-inv.invalid/v1/";
-
-/** Public host for phone QR scans (never localhost). */
+/** Public host for phone QR scans (never localhost). Real PRA only. */
 function praPublicVerifyBase(): string {
   return `${getApiBaseUrl().replace(/\/$/, "")}/v1/pra/public-verify`;
+}
+
+/** FPRA slip QR — real https site that only shows "Not Found". */
+export function fpraNotFoundUrl(): string {
+  return `${getApiBaseUrl().replace(/\/$/, "")}/v1/pra/not-found`;
 }
 
 /** Compact PRA mark for thermal receipts (inline SVG). */
@@ -43,12 +42,15 @@ export function realPraVerifyUrl(invoiceNumber: string): string {
 }
 
 /**
- * Real PRA QR = public auto-verify link. FPRA = phone-block wrapper.
+ * Real PRA QR = public auto-verify link.
+ * FPRA slip QR = https site that shows only "Not Found" (opens in browser, not Google search).
  */
 export function sanitizePraQrPayload(
   payload: string,
   mode?: PraInvoiceMode | null,
 ): string {
+  if (mode === "fake") return fpraNotFoundUrl();
+
   let cleaned = payload
     .split("|")
     .map((p) => p.trim())
@@ -57,6 +59,10 @@ export function sanitizePraQrPayload(
     .trim();
 
   if (!cleaned) cleaned = "PRA";
+
+  if (/\/v1\/pra\/not-found/i.test(cleaned)) return fpraNotFoundUrl();
+  if (/^data:text\/html/i.test(cleaned)) return fpraNotFoundUrl();
+  if (/^invalid qr code$/i.test(cleaned)) return fpraNotFoundUrl();
 
   if (/\/v1\/pra\/public-verify/i.test(cleaned)) return cleaned;
 
@@ -85,21 +91,14 @@ export function sanitizePraQrPayload(
     return realPraVerifyUrl(cleaned);
   }
 
-  if (/^https:\/\/pra-inv\.invalid\//i.test(cleaned)) return cleaned;
-  if (/^pra-inv:\/\//i.test(cleaned)) {
-    try {
-      const inner = decodeURIComponent(cleaned.replace(/^pra-inv:\/\/v1\//i, ""));
-      return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(inner || "PRA")}`;
-    } catch {
-      return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(cleaned)}`;
-    }
-  }
+  if (/^https:\/\/pra-inv\.invalid\//i.test(cleaned)) return fpraNotFoundUrl();
+  if (/^pra-inv:\/\//i.test(cleaned)) return fpraNotFoundUrl();
 
   if (/^https:\/\//i.test(cleaned) && /fbr\.gov|fbr\.gov\.pk/i.test(cleaned)) {
     return cleaned;
   }
 
-  return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(cleaned)}`;
+  return fpraNotFoundUrl();
 }
 
 /** Inline SVG QR — works in silent HTML→PNG without network (no remote img). */
@@ -139,6 +138,7 @@ export function preparePraReceiptFooter(input: {
   orderRef: string;
   qrPayload: string;
 }): PraReceiptFooter {
+  // Real: public verify URL. FPRA: https site that only shows "Not Found".
   const raw = (input.qrPayload?.trim() || input.invoiceNumber).trim();
   const qrPayload = sanitizePraQrPayload(raw, input.mode);
   return {

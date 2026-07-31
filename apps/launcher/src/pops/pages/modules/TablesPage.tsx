@@ -32,6 +32,7 @@ export function TablesPage(): JSX.Element {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [newSectionName, setNewSectionName] = useState("");
   const [tableForm, setTableForm] = useState({ tableNumber: "", seats: "4" });
+  const [tableSearch, setTableSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const floorQuery = useQuery({
@@ -58,6 +59,16 @@ export function TablesPage(): JSX.Element {
     () => allTables.filter((t) => t.sectionId === selectedSection?.id),
     [allTables, selectedSection?.id],
   );
+
+  const filteredSectionTables = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q) return sectionTables;
+    return sectionTables.filter(
+      (t) =>
+        t.tableNumber.toLowerCase().includes(q) ||
+        String(t.seats).includes(q),
+    );
+  }, [sectionTables, tableSearch]);
 
   function invalidate(): void {
     void queryClient.invalidateQueries({ queryKey: ["tables"] });
@@ -180,7 +191,10 @@ export function TablesPage(): JSX.Element {
               <li key={section.id}>
                 <button
                   type="button"
-                  onClick={() => setSelectedSectionId(section.id)}
+                  onClick={() => {
+                    setSelectedSectionId(section.id);
+                    setTableSearch("");
+                  }}
                   className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm transition ${
                     selectedSection?.id === section.id
                       ? "bg-amber-500/15 text-white ring-1 ring-amber-500/30"
@@ -224,6 +238,16 @@ export function TablesPage(): JSX.Element {
               </div>
 
               <div className="mb-4 rounded-lg border border-slate-800 bg-slate-900/30 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search tables</div>
+                <input
+                  className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+                  placeholder={`Search in ${selectedSection.name}…`}
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                />
+              </div>
+
+              <div className="mb-4 rounded-lg border border-slate-800 bg-slate-900/30 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Add table</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <input
@@ -252,12 +276,16 @@ export function TablesPage(): JSX.Element {
                 </div>
               </div>
 
-              {sectionTables.length === 0 ? (
-                <p className="text-sm text-slate-500">No tables in this section yet.</p>
+              {filteredSectionTables.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  {tableSearch.trim()
+                    ? `No tables match “${tableSearch.trim()}” in this section.`
+                    : "No tables in this section yet."}
+                </p>
               ) : (
                 <SimpleTable
                   rowKey={(r) => r.id}
-                  rows={sectionTables}
+                  rows={filteredSectionTables}
                   columns={[
                     {
                       key: "tableNumber",

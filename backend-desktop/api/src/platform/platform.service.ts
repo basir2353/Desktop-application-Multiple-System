@@ -912,7 +912,7 @@ export class PlatformService {
     return shipped.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
   }
 
-  /** Super Admin: section visibility (FPRA + Real can both be shown). Active stays with Org Admin. */
+  /** Super Admin: section visibility (Fake + Real can both be shown). Active stays with Org Admin. */
   private resolvePraSectionGrantsForWrite(input: {
     praEnabled?: boolean;
     praFakeEnabled?: boolean;

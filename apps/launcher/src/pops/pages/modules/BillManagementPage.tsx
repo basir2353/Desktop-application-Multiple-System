@@ -8,7 +8,6 @@ import { usePopsStore } from "../../../stores/popsStore";
 import {
   completeBill,
   createBill,
-  deleteBill,
   fetchCompletedOrders,
   fetchWaiters,
   updateBill,
@@ -19,7 +18,6 @@ import { loadBusinessDaySettings } from "../../lib/businessDay";
 import { billChannelLabel, businessDateKey, filterOrdersByDateTime, ordersPageBills } from "../../lib/orderSales";
 import { effectiveTaxPct, loadPosSettings } from "../../lib/posSettings";
 import { discountAmountFromPct } from "../../lib/posDiscount";
-import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
 import { printBillAsync } from "../../lib/printTicket";
 import {
   loadBillPrintSettings,
@@ -315,16 +313,6 @@ export function BillManagementPage(): JSX.Element {
     onError: (err: Error) => setNotice(err.message),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (billId: string) => deleteBill(billId),
-    onSuccess: (result) => {
-      invalidate();
-      setDetailBill(null);
-      setNotice(`Order deleted — ${result.billRef}`);
-    },
-    onError: (err: Error) => setNotice(err.message),
-  });
-
   async function printBillToAssigned(
     branchName: string,
     branchCode: string,
@@ -371,11 +359,6 @@ export function BillManagementPage(): JSX.Element {
   function confirmVoid(bill: Bill): void {
     if (!confirm(`Void bill ${bill.billRef}? This cannot be undone.`)) return;
     voidMutation.mutate(bill.id);
-  }
-
-  function confirmDelete(bill: Bill): void {
-    if (!confirmDeleteBill(bill)) return;
-    deleteMutation.mutate(bill.id);
   }
 
   if (!branch?.code) {
@@ -620,9 +603,6 @@ export function BillManagementPage(): JSX.Element {
                       Void
                     </button>
                   ) : null}
-                  <button type="button" className={`text-xs ${linkDangerClass}`} onClick={() => confirmDelete(r)}>
-                    Delete
-                  </button>
                 </span>
               ),
             },
@@ -647,7 +627,6 @@ export function BillManagementPage(): JSX.Element {
               ? () => confirmVoid(detailBill)
               : undefined
           }
-          onDelete={() => confirmDelete(detailBill)}
         />
       ) : null}
 

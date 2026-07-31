@@ -25,10 +25,8 @@ import {
   useTaxAuthorityFeatures,
 } from "../../hooks/useTaxAuthorityFeatures";
 import {
-  autoIssuePraForCompletedBill,
   canEmbedPraOnSlip,
   printIssuedPraSlip,
-  REAL_PRA_NOT_CONNECTED_MSG,
 } from "../../lib/praIssueFlow";
 import { preparePraReceiptFooter } from "../../lib/praReceiptFooter";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
@@ -46,7 +44,9 @@ import {
   POS_ORDER_MODES,
   parseStaffFoodPersonFromStation,
   posBillTableLabel,
-  posDeliveryNotes,
+  posCustomerOrderNotes,
+  posModeAutoPrintsOnCustomer,
+  posModeShowsCustomerPanel,
   posOrderModeLabel,
   posPrintTableLabel,
   posStaffFoodNotes,
@@ -328,6 +328,8 @@ export function PosPage(): JSX.Element {
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
   const deliveryCustomerFieldRef = useRef<HTMLDivElement>(null);
+  const deliveryCustomerInputRef = useRef<HTMLInputElement>(null);
+  const deliveryPhoneInputRef = useRef<HTMLInputElement>(null);
   const pendingEditRef = useRef<PosEditLocationState | null>(
     (location.state as PosEditLocationState | null) ?? null,
   );
@@ -459,21 +461,25 @@ export function PosPage(): JSX.Element {
   ]);
 
   useEffect(() => {
-    if (mode !== "delivery") setDeliveryDetailsOpen(false);
+    if (!posModeShowsCustomerPanel(mode)) setDeliveryDetailsOpen(false);
   }, [mode]);
 
   const deliveryDetailsSummary = useMemo(() => {
     const parts: string[] = [];
     if (deliveryCustomer.trim()) parts.push(deliveryCustomer.trim());
     if (deliveryPhone.trim()) parts.push(deliveryPhone.trim());
-    if (deliveryAddress.trim()) parts.push(deliveryAddress.trim());
-    if (deliveryRiderId) {
-      const rider = activeRiders.find((r) => r.id === deliveryRiderId);
-      parts.push(rider?.name ?? "Rider");
+    if (mode === "delivery") {
+      if (deliveryAddress.trim()) parts.push(deliveryAddress.trim());
+      if (deliveryRiderId) {
+        const rider = activeRiders.find((r) => r.id === deliveryRiderId);
+        parts.push(rider?.name ?? "Rider");
+      }
+      if (deliveryChargePkr > 0) parts.push(String(deliveryChargePkr));
     }
-    if (deliveryChargePkr > 0) parts.push(String(deliveryChargePkr));
-    return parts.length > 0 ? parts.join(" · ") : "Tap to enter delivery details";
+    if (parts.length > 0) return parts.join(" · ");
+    return mode === "delivery" ? "Tap to enter delivery details" : "Tap to enter customer details";
   }, [
+    mode,
     deliveryCustomer,
     deliveryPhone,
     deliveryAddress,
@@ -674,7 +680,7 @@ export function PosPage(): JSX.Element {
       setOrderRef(peekNextOrderRef(branch?.code));
     }
     setMode(nextMode);
-    if (nextMode === "delivery") {
+    if (posModeShowsCustomerPanel(nextMode)) {
       setDeliveryDetailsOpen(true);
     }
   }
@@ -1077,10 +1083,18 @@ export function PosPage(): JSX.Element {
   const modeLabel = posOrderModeLabel(mode);
   const orderNotes =
     mode === "delivery"
-      ? posDeliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress)
-      : mode === "staff-food"
-        ? posStaffFoodNotes(staffFoodConsumerType, staffFoodPersonName, staffFoodExtraNotes)
-        : undefined;
+      ? posCustomerOrderNotes("Delivery", deliveryCustomer, deliveryPhone, deliveryAddress)
+      : mode === "takeaway"
+        ? posCustomerOrderNotes("Takeaway", deliveryCustomer, deliveryPhone)
+        : mode === "dine-in"
+          ? posCustomerOrderNotes("Dine-in", deliveryCustomer, deliveryPhone)
+          : mode === "online"
+            ? posCustomerOrderNotes("Online", deliveryCustomer, deliveryPhone)
+            : mode === "foodpanda"
+              ? posCustomerOrderNotes("Foodpanda", deliveryCustomer, deliveryPhone)
+              : mode === "staff-food"
+                ? posStaffFoodNotes(staffFoodConsumerType, staffFoodPersonName, staffFoodExtraNotes)
+                : undefined;
   const stationLabel = posStationLabel(mode, tableLabel, staffFoodPersonName, staffFoodConsumerType);
   const billTableLabel = posBillTableLabel(
     mode,
@@ -1130,15 +1144,18 @@ export function PosPage(): JSX.Element {
 
   const kitchenLines = () =>
     printOrderedCart().map((line) => ({
-      label: formatMenuItemPrintLabel({
-        name: line.item.name,
-        secondaryName: line.item.secondaryName,
-        portion: line.item.portion,
-        variantLabel: line.variant?.label ?? null,
-      }),
+      label:
+        line.lineLabel?.trim() ||
+        formatMenuItemPrintLabel({
+          name: line.item.name,
+          secondaryName: line.item.secondaryName,
+          portion: line.item.portion,
+          variantLabel: line.variant?.label ?? null,
+        }),
       qty: line.qty,
       unitPrice: line.unitPrice,
-      menuItemId: line.item.id,
+      // Only attach real catalog ids — orphan edit lines must not send fake UUIDs.
+      ...(menuById.has(line.item.id) ? { menuItemId: line.item.id } : {}),
     }));
 
   function invalidateOrderFeeds(): void {
@@ -1285,12 +1302,37 @@ export function PosPage(): JSX.Element {
 
   function loadRecentOrderForEdit(order: PosRecentOrder): void {
     if (order.kind === "pending" && order.kitchenTicket) {
-      applyTicketToPos(order.kitchenTicket);
+      if (order.kitchenTicket.status === "done") {
+        setPrintNotice({
+          message: "This order is finalized — editing is locked.",
+          tone: "error",
+        });
+        return;
+      }
+      const fresh =
+        (kitchenQuery.data ?? []).find((row) => row.id === order.kitchenTicket!.id) ??
+        order.kitchenTicket;
+      if (menuItems.length === 0) {
+        pendingEditRef.current = { editTicketId: fresh.id };
+        setPrintNotice({ message: "Loading menu to open order for edit…", tone: "success" });
+        return;
+      }
+      applyTicketToPos(fresh);
       return;
     }
     if (order.bill?.status === "held") {
+      if (menuItems.length === 0) {
+        pendingEditRef.current = { editBillId: order.bill.id };
+        setPrintNotice({ message: "Loading menu to open held bill for edit…", tone: "success" });
+        return;
+      }
       applyBillToPos(order.bill);
+      return;
     }
+    setPrintNotice({
+      message: "This order cannot be edited. Use Print for kitchen ticket or Close to finalize.",
+      tone: "error",
+    });
   }
 
   function loadRecentOrderForPayment(order: PosRecentOrder): void {
@@ -1299,11 +1341,25 @@ export function PosPage(): JSX.Element {
       return;
     }
     if (order.kind === "pending" && order.kitchenTicket) {
-      applyTicketToPos(order.kitchenTicket);
+      const fresh =
+        (kitchenQuery.data ?? []).find((row) => row.id === order.kitchenTicket!.id) ??
+        order.kitchenTicket;
+      if (menuItems.length === 0) {
+        pendingEditRef.current = { editTicketId: fresh.id };
+        setCheckoutModal("pay");
+        setPrintNotice({ message: "Loading menu for payment…", tone: "success" });
+        return;
+      }
+      applyTicketToPos(fresh);
       setCheckoutModal("pay");
       return;
     }
     if (order.bill?.status === "held") {
+      if (menuItems.length === 0) {
+        pendingEditRef.current = { editBillId: order.bill.id };
+        setCheckoutModal("pay");
+        return;
+      }
       applyBillToPos(order.bill);
       setCheckoutModal("pay");
     }
@@ -1441,15 +1497,16 @@ export function PosPage(): JSX.Element {
         ...deliveryExtras(),
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (ticket) => {
       const wasTicketEdit = editingOrder?.kind === "ticket";
-      const printed = await printKitchenKotsOnPay(orderRef);
+      const printed = await printKitchenKotsOnPay(ticket.orderRef ?? orderRef);
       const kotOk = printed.errors.length === 0;
       const printErrors = printed.errors;
       if (!wasTicketEdit) {
         await persistStaffFoodRecord();
       }
       invalidateOrderFeeds();
+      // Always clear the ticket panel after Order / Update / Print order.
       setEditingOrder(null);
       resetAfterKitchenOrder();
       if (kotOk) {
@@ -1464,7 +1521,7 @@ export function PosPage(): JSX.Element {
       } else {
         setPrintNotice({
           tone: "error",
-          message: `Order saved, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers, or Printer → All Printers / Printer by Section, and link a real OS printer.`,
+          message: `Order ${wasTicketEdit ? "updated" : "saved"}, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers, or Printer → All Printers / Printer by Section, and link a real OS printer.`,
         });
       }
     },
@@ -1680,6 +1737,7 @@ export function PosPage(): JSX.Element {
           total: bill.total,
           servicePct: bill.servicePct,
           taxPct: bill.taxPct,
+          payments: bill.payments?.length ? bill.payments : undefined,
         },
         receiptProfile,
       );
@@ -1770,39 +1828,9 @@ export function PosPage(): JSX.Element {
 
       resetAfterBill();
 
-      // Real/FPRA ON → always auto-issue before receipt (no RPRA click needed).
-      if (!branch?.code) {
-        const receipt = await finishReceipts(null);
-        applyPayNotices(receipt, "", false);
-        return;
-      }
-
-      const autoPra = await autoIssuePraForCompletedBill({
-        branchCode: branch.code,
-        billId: bill.id,
-      });
-
-      if (!autoPra.mode) {
-        const receipt = await finishReceipts(null);
-        applyPayNotices(receipt, "", false);
-        return;
-      }
-
-      if (autoPra.blockedReal) {
-        window.alert(autoPra.notice || REAL_PRA_NOT_CONNECTED_MSG);
-        const receipt = await finishReceipts(null);
-        applyPayNotices(receipt, ` ${autoPra.notice}`, true);
-        return;
-      }
-
-      const fiscal = canEmbedPraOnSlip(autoPra.fiscal) ? autoPra.fiscal : null;
-      const praExtra = autoPra.notice ? ` ${autoPra.notice}` : "";
-      const receipt = await finishReceipts(fiscal);
-      if (fiscal) {
-        setPraFiscal(fiscal);
-        invalidateOrderFeeds();
-      }
-      applyPayNotices(receipt, praExtra, autoPra.failed);
+      // Pay / Invoice print = simple receipt only. PRA issues on Close when Tax Active.
+      const receipt = await finishReceipts(null);
+      applyPayNotices(receipt, "", false);
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
@@ -1898,6 +1926,7 @@ export function PosPage(): JSX.Element {
               total: bill.total,
               servicePct: bill.servicePct,
               taxPct: bill.taxPct,
+              payments: bill.payments?.length ? bill.payments : undefined,
             },
             receiptProfile,
           );
@@ -1941,54 +1970,12 @@ export function PosPage(): JSX.Element {
 
       resetAfterBill();
 
-      if (!branch?.code) {
-        const { printOk } = await printAllReceipts();
-        setPrintNotice(
-          noticeFromPrintResult(
-            printOk,
-            `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
-          ),
-        );
-        return;
-      }
-
-      const praNotices: string[] = [];
-      const fiscals: PraFiscalInvoice[] = [];
-      const fiscalByBillId: Record<string, PraFiscalInvoice> = {};
-      let anyBlocked = false;
-
-      for (const bill of bills) {
-        const autoPra = await autoIssuePraForCompletedBill({
-          branchCode: branch.code,
-          billId: bill.id,
-        });
-        if (!autoPra.mode) break;
-        if (autoPra.blockedReal) {
-          anyBlocked = true;
-          praNotices.push(autoPra.notice);
-          break;
-        }
-        if (autoPra.fiscal && canEmbedPraOnSlip(autoPra.fiscal)) {
-          fiscals.push(autoPra.fiscal);
-          fiscalByBillId[bill.id] = autoPra.fiscal;
-        }
-        if (autoPra.notice) praNotices.push(`${bill.billRef}: ${autoPra.notice}`);
-      }
-
-      if (anyBlocked) {
-        window.alert(praNotices[0] || REAL_PRA_NOT_CONNECTED_MSG);
-      }
-
-      const { printOk } = await printAllReceipts(fiscalByBillId);
-      if (fiscals.length > 0) {
-        setPraFiscal(fiscals[fiscals.length - 1] ?? null);
-        invalidateOrderFeeds();
-      }
-      const praExtra = praNotices.length > 0 ? ` ${praNotices.join(" · ")}` : "";
+      // Split Pay = simple receipts only. PRA issues on Close when Tax Active.
+      const { printOk } = await printAllReceipts();
       setPrintNotice(
         noticeFromPrintResult(
-          printOk && !anyBlocked,
-          `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}${praExtra}`,
+          printOk,
+          `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
         ),
       );
     },
@@ -2143,6 +2130,26 @@ export function PosPage(): JSX.Element {
     setCheckoutModal("invoice");
   }
 
+  function openCustomerShortcut(): void {
+    if (editingOrder) return;
+    if (!posModeShowsCustomerPanel(mode)) {
+      switchMode("takeaway");
+    }
+    setDeliveryDetailsOpen(true);
+    window.setTimeout(() => {
+      deliveryCustomerInputRef.current?.focus();
+      deliveryCustomerInputRef.current?.select();
+    }, 0);
+  }
+
+  function applyCustomerDetails(): void {
+    setDeliveryDetailsOpen(false);
+    setDeliveryCustomerPickerOpen(false);
+    if (posModeAutoPrintsOnCustomer(mode) && cart.length > 0 && !checkoutMutation.isPending) {
+      runPrintInvoice();
+    }
+  }
+
   function openHoldBill(): void {
     setCheckoutModal("hold");
   }
@@ -2178,6 +2185,7 @@ export function PosPage(): JSX.Element {
     printBill: () => {},
     payOut: () => {},
     theme: () => {},
+    customer: () => {},
   });
 
   posShortcutActionsRef.current = {
@@ -2222,6 +2230,7 @@ export function PosPage(): JSX.Element {
     },
     payOut: () => setPayOutModalOpen(true),
     theme: () => useThemeStore.getState().toggle(),
+    customer: () => openCustomerShortcut(),
   };
 
   useEffect(() => {
@@ -2356,6 +2365,14 @@ export function PosPage(): JSX.Element {
             onClick={() => setPayOutModalOpen(true)}
           >
             Paying out
+          </button>
+          <button
+            type="button"
+            className={POS_TOOLBAR_BTN}
+            title={`${POS_SHORTCUTS.customer.label} (${POS_SHORTCUTS.customer.key})`}
+            onClick={() => openCustomerShortcut()}
+          >
+            Customer
           </button>
           <button
             type="button"
@@ -2758,7 +2775,7 @@ export function PosPage(): JSX.Element {
               </div>
             ) : null}
 
-            {mode === "delivery" ? (
+            {posModeShowsCustomerPanel(mode) ? (
               <div className="mt-2">
                 <button
                   type="button"
@@ -2782,15 +2799,22 @@ export function PosPage(): JSX.Element {
                 </button>
                 {deliveryDetailsOpen ? (
                   <div className="mt-1.5 grid grid-cols-1 gap-1.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700/60 dark:bg-slate-950/40">
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <div className="relative" ref={deliveryCustomerFieldRef}>
+                    <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-1.5">
+                      <div className="relative min-w-0" ref={deliveryCustomerFieldRef}>
                         <input
+                          ref={deliveryCustomerInputRef}
                           placeholder="Customer (type * or # to search)"
                           value={deliveryCustomer}
                           onChange={(e) => handleDeliveryCustomerChange(e.target.value)}
                           onFocus={() => {
                             if (Math.max(deliveryCustomer.lastIndexOf("*"), deliveryCustomer.lastIndexOf("#")) !== -1) {
                               setDeliveryCustomerPickerOpen(true);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              deliveryPhoneInputRef.current?.focus();
                             }
                           }}
                           className={`${TICKET_INPUT_CLASS} py-1.5`}
@@ -2805,8 +2829,8 @@ export function PosPage(): JSX.Element {
                               </p>
                             ) : filteredDeliveryCustomers.length === 0 ? (
                               <p className="px-2.5 py-2 text-xs text-slate-500">
-                                No existing customers yet — fill in Customer/Phone on a delivery order once, or add
-                                one from Accounts, and it'll show up here next time.
+                                No existing customers yet — fill in Customer/Phone once, or add one from Accounts,
+                                and it&apos;ll show up here next time.
                               </p>
                             ) : (
                               filteredDeliveryCustomers.map((customer) => (
@@ -2828,47 +2852,68 @@ export function PosPage(): JSX.Element {
                         ) : null}
                       </div>
                       <input
+                        ref={deliveryPhoneInputRef}
                         placeholder="Phone"
                         type="tel"
                         value={deliveryPhone}
                         onChange={(e) => setDeliveryPhone(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            applyCustomerDetails();
+                          }
+                        }}
                         className={`${TICKET_INPUT_CLASS} py-1.5`}
+                        title="Customer phone"
                       />
                     </div>
-                    <input
-                      placeholder="Delivery address"
-                      value={deliveryAddress}
-                      onChange={(e) => setDeliveryAddress(e.target.value)}
-                      className={`${TICKET_INPUT_CLASS} py-1.5`}
-                    />
-                    <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-1.5">
-                      <select
-                        value={deliveryRiderId}
-                        onChange={(e) => setDeliveryRiderId(e.target.value)}
-                        required
-                        className={`${TICKET_INPUT_CLASS} py-1.5 ${
-                          !deliveryRiderId ? "border-amber-400 dark:border-amber-500/40" : ""
-                        }`}
-                      >
-                        <option value="">Rider *</option>
-                        {activeRiders.map((rider) => (
-                          <option key={rider.id} value={rider.id}>
-                            {rider.name}
-                            {rider.phone ? ` · ${rider.phone}` : ""}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        min={0}
-                        max={50000}
-                        placeholder="Charge"
-                        title="Delivery charge"
-                        value={deliveryChargePkr}
-                        onChange={(e) => setDeliveryChargePkr(Math.max(0, Number(e.target.value) || 0))}
-                        className={`${TICKET_INPUT_CLASS} py-1.5 text-right tabular-nums`}
-                      />
-                    </div>
+                    {mode === "delivery" ? (
+                      <>
+                        <input
+                          placeholder="Delivery address"
+                          value={deliveryAddress}
+                          onChange={(e) => setDeliveryAddress(e.target.value)}
+                          className={`${TICKET_INPUT_CLASS} py-1.5`}
+                        />
+                        <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-1.5">
+                          <select
+                            value={deliveryRiderId}
+                            onChange={(e) => setDeliveryRiderId(e.target.value)}
+                            required
+                            className={`${TICKET_INPUT_CLASS} py-1.5 ${
+                              !deliveryRiderId ? "border-amber-400 dark:border-amber-500/40" : ""
+                            }`}
+                          >
+                            <option value="">Rider *</option>
+                            {activeRiders.map((rider) => (
+                              <option key={rider.id} value={rider.id}>
+                                {rider.name}
+                                {rider.phone ? ` · ${rider.phone}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            min={0}
+                            max={50000}
+                            placeholder="Charge"
+                            title="Delivery charge"
+                            value={deliveryChargePkr}
+                            onChange={(e) => setDeliveryChargePkr(Math.max(0, Number(e.target.value) || 0))}
+                            className={`${TICKET_INPUT_CLASS} py-1.5 text-right tabular-nums`}
+                          />
+                        </div>
+                      </>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => applyCustomerDetails()}
+                      className="rounded-md border border-amber-500/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-500/25 dark:text-amber-100"
+                    >
+                      {posModeAutoPrintsOnCustomer(mode) && cart.length > 0
+                        ? "Apply & print receipt"
+                        : "Apply customer"}
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -3229,13 +3274,14 @@ export function PosPage(): JSX.Element {
                 className={POS_SECONDARY_BTN}
                 disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
                 onClick={() => runPrintOrder()}
+                title="Print kitchen order ticket — order stays editable"
               >
                 {createOrderMutation.isPending ? "…" : "Print order"}
               </button>
               <button
                 type="button"
                 className={POS_SECONDARY_BTN}
-                title={`${POS_SHORTCUTS.printBill.label} (${POS_SHORTCUTS.printBill.key})`}
+                title={`${POS_SHORTCUTS.printBill.label} (${POS_SHORTCUTS.printBill.key}) — final bill`}
                 disabled={cart.length === 0 || checkoutMutation.isPending}
                 onClick={() => runPrintInvoice()}
               >

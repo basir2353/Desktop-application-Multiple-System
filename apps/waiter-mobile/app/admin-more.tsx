@@ -79,8 +79,8 @@ export default function AdminMoreScreen() {
         <Subtitle>Floor & stock</Subtitle>
         <ActionTile
           icon="🪑"
-          title="Tables"
-          subtitle="Floor status · occupied / free"
+          title="Table Plan"
+          subtitle="Sections · search · add tables"
           onPress={() => router.push("/admin-tables")}
         />
         <ActionTile

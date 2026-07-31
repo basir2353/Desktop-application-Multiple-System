@@ -8,16 +8,17 @@ import {
   fetchProductionBatches,
   postProductionBatch,
 } from "../../api/inventory";
+import { IngredientPickerModal } from "../../components/IngredientPickerModal";
 import {
   formatPkr,
   inputClass,
-  selectClass,
   useInventoryAccess,
   useInvalidateInventory,
 } from "../../hooks/useInventory";
 import { accentValueClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
+import { SearchableSelect } from "../../ui/SearchableSelect";
 import { SimpleTable } from "../../ui/SimpleTable";
 import { InventoryError, InventoryFormPanel, InventoryLoading } from "./inventory/InventoryUi";
 
@@ -44,6 +45,7 @@ export function ManufacturingPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [outputPickerOpen, setOutputPickerOpen] = useState(false);
   const [form, setForm] = useState<NewBatchForm>(emptyForm);
 
   const batchesQuery = useQuery({
@@ -153,19 +155,16 @@ export function ManufacturingPage(): JSX.Element {
           disabled={!form.recipeId || !form.outputQty || createMutation.isPending}
         >
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            <select
-              className={selectClass}
+            <SearchableSelect
+              options={activeRecipes.map((r) => ({
+                value: r.id,
+                label: r.portionSize ? `${r.name} (${r.portionSize})` : r.name,
+              }))}
               value={form.recipeId}
-              onChange={(e) => setForm({ ...form, recipeId: e.target.value })}
-            >
-              <option value="">Recipe *</option>
-              {activeRecipes.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                  {r.portionSize ? ` (${r.portionSize})` : ""}
-                </option>
-              ))}
-            </select>
+              onChange={(recipeId) => setForm({ ...form, recipeId })}
+              placeholder="Recipe *"
+              searchPlaceholder="Search recipe…"
+            />
             <input
               className={inputClass}
               type="number"
@@ -183,18 +182,17 @@ export function ManufacturingPage(): JSX.Element {
               value={form.wastePct}
               onChange={(e) => setForm({ ...form, wastePct: e.target.value })}
             />
-            <select
-              className={selectClass}
-              value={form.outputIngredientId}
-              onChange={(e) => setForm({ ...form, outputIngredientId: e.target.value })}
+            <button
+              type="button"
+              onClick={() => setOutputPickerOpen(true)}
+              className={`${inputClass} flex items-center justify-between text-left`}
             >
-              <option value="">Finished goods ingredient (optional)</option>
-              {ingredients.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.name} ({i.sku})
-                </option>
-              ))}
-            </select>
+              <span className={form.outputIngredientId ? "truncate text-white" : "text-slate-500"}>
+                {ingredients.find((i) => i.id === form.outputIngredientId)?.name ??
+                  "Finished goods ingredient (optional)"}
+              </span>
+              <span className="text-slate-500" aria-hidden>▾</span>
+            </button>
             <input
               className={`sm:col-span-2 ${inputClass}`}
               placeholder="Output notes (optional)"
@@ -208,6 +206,20 @@ export function ManufacturingPage(): JSX.Element {
             </p>
           ) : null}
         </InventoryFormPanel>
+      ) : null}
+
+      {outputPickerOpen ? (
+        <IngredientPickerModal
+          ingredients={ingredients}
+          single
+          title="Select ingredient"
+          subtitle="Optional finished-goods ingredient for this batch."
+          onClose={() => setOutputPickerOpen(false)}
+          onConfirm={(ids) => {
+            setForm((f) => ({ ...f, outputIngredientId: ids[0] ?? "" }));
+            setOutputPickerOpen(false);
+          }}
+        />
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">

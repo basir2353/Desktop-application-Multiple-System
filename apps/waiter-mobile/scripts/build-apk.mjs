@@ -29,21 +29,25 @@ const VARIANTS = {
     apkName: "pops-staff-release.apk",
     packageId: "com.platform.pops.staff",
     envVariant: "staff",
+    displayName: "POPS Staff",
   },
   admin: {
     apkName: "pops-admin-release.apk",
     packageId: "com.platform.pops.admin",
     envVariant: "admin",
+    displayName: "POPS Admin",
   },
   waiter: {
     apkName: "pops-waiter-release.apk",
     packageId: "com.platform.pops.waiter",
     envVariant: "waiter",
+    displayName: "POPS Waiter",
   },
   rider: {
     apkName: "pops-rider-release.apk",
     packageId: "com.platform.pops.rider",
     envVariant: "rider",
+    displayName: "POPS Rider",
   },
 };
 
@@ -279,7 +283,7 @@ function ensureAndroidProject(apiUrl, buildPaths) {
   const fastBuild = process.env.POPS_FAST_BUILD !== "0";
   const forcePrebuild = process.env.POPS_FORCE_PREBUILD === "1";
 
-  // Fast path: reuse existing android/ (Gradle + native caches). Only patch applicationId.
+  // Fast path: reuse existing android/ (Gradle + native caches). Patch id + launcher name.
   if (androidExists && !forcePrebuild && (fastBuild || !packageMismatch)) {
     if (packageMismatch) {
       console.log(
@@ -289,6 +293,7 @@ function ensureAndroidProject(apiUrl, buildPaths) {
     } else {
       console.log("[build-apk] Fast: reusing existing android/ (skip prebuild)");
     }
+    forceAppDisplayName(buildPaths.androidDir, variant.displayName);
     return;
   }
 
@@ -329,6 +334,7 @@ function ensureAndroidProject(apiUrl, buildPaths) {
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
   forceApplicationId(buildGradle, variant.packageId);
+  forceAppDisplayName(buildPaths.androidDir, variant.displayName);
 }
 
 function forceApplicationId(buildGradlePath, packageId) {
@@ -338,6 +344,25 @@ function forceApplicationId(buildGradlePath, packageId) {
   if (next !== text) {
     writeFileSync(buildGradlePath, next);
     console.log(`[build-apk] Forced applicationId → ${packageId}`);
+  }
+}
+
+/** Keep launcher label in sync when android/ is reused across variants (Staff vs Admin). */
+function forceAppDisplayName(androidDirPath, displayName) {
+  const stringsPath = join(androidDirPath, "app", "src", "main", "res", "values", "strings.xml");
+  if (!existsSync(stringsPath)) return;
+  let text = readFileSync(stringsPath, "utf8");
+  const next = text.replace(
+    /<string name="app_name">[^<]*<\/string>/,
+    `<string name="app_name">${displayName}</string>`,
+  );
+  if (next !== text) {
+    writeFileSync(stringsPath, next);
+    console.log(`[build-apk] Forced app_name → ${displayName}`);
+  } else if (!text.includes(`>${displayName}<`)) {
+    console.warn(`[build-apk] Could not patch app_name to ${displayName}`);
+  } else {
+    console.log(`[build-apk] app_name already ${displayName}`);
   }
 }
 
@@ -432,6 +457,7 @@ function applyAndroidPatches(buildPaths) {
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
   forceApplicationId(buildGradle, variant.packageId);
+  forceAppDisplayName(buildPaths.androidDir, variant.displayName);
   patchExpoModulesCoreReactNativeDir(buildPaths);
   writeLocalProperties(buildPaths.androidDir);
   patchAndroidCleartextTraffic(buildPaths.androidDir);

@@ -2,17 +2,15 @@ import QRCode from "qrcode";
 import type { PraInvoiceMode } from "@platform/contracts";
 import { RAILWAY_API_URL } from "../../lib/apiBase";
 
-/**
- * Dead https host (RFC `.invalid`) — FPRA only.
- * Real PRA QR opens our public verify page (auto-searches e-IMS).
- */
-const PRA_PHONE_BLOCK_PREFIX = "https://pra-inv.invalid/v1/";
-
 /** Official PRA public invoice lookup (manual search — ignores query params). */
 export const PRA_EIMS_VERIFY_URL = "https://e.pra.punjab.gov.pk/public/eims.xhtml";
 
 /** Public host for phone QR scans (never localhost). */
-const PRA_PUBLIC_VERIFY_BASE = `${RAILWAY_API_URL.replace(/\/$/, "")}/v1/pra/public-verify`;
+const PRA_API_BASE = RAILWAY_API_URL.replace(/\/$/, "");
+const PRA_PUBLIC_VERIFY_BASE = `${PRA_API_BASE}/v1/pra/public-verify`;
+
+/** FPRA slip QR — real https site that only shows "Not Found" (no invoice / PRA verify). */
+const FPRA_NOT_FOUND_URL = `${PRA_API_BASE}/v1/pra/not-found`;
 
 /** e-IMS fiscal # pattern e.g. 197476FGYI38421035 */
 export function looksLikeRealPraInvoiceNumber(value: string): boolean {
@@ -29,13 +27,21 @@ export function realPraVerifyUrl(invoiceNumber: string): string {
   return `${PRA_PUBLIC_VERIFY_BASE}?InvoiceNo=${encodeURIComponent(inv)}`;
 }
 
+/** FPRA slip QR → site page with only "Not Found". */
+export function fpraNotFoundUrl(): string {
+  return FPRA_NOT_FOUND_URL;
+}
+
 /**
- * Real PRA QR = public auto-verify link. FPRA = phone-block wrapper.
+ * Real PRA QR = public auto-verify link.
+ * FPRA slip QR = https site that shows only "Not Found" (opens in browser, not Google search).
  */
 export function sanitizePraQrPayload(
   payload: string,
   mode?: PraInvoiceMode | null,
 ): string {
+  if (mode === "fake") return fpraNotFoundUrl();
+
   let cleaned = payload
     .split("|")
     .map((p) => p.trim())
@@ -45,7 +51,14 @@ export function sanitizePraQrPayload(
 
   if (!cleaned) cleaned = "PRA";
 
-  // Already our public verify link — keep.
+  // Already FPRA not-found site — keep.
+  if (/\/v1\/pra\/not-found/i.test(cleaned)) return fpraNotFoundUrl();
+
+  // Legacy data:/plain text markers → real Not Found site (phones search those).
+  if (/^data:text\/html/i.test(cleaned)) return fpraNotFoundUrl();
+  if (/^invalid qr code$/i.test(cleaned)) return fpraNotFoundUrl();
+
+  // Already our public verify link — keep (Real PRA).
   if (/\/v1\/pra\/public-verify/i.test(cleaned)) return cleaned;
 
   // Official PRA / e-IMS link — rewrite so scan auto-searches.
@@ -75,15 +88,8 @@ export function sanitizePraQrPayload(
     return realPraVerifyUrl(cleaned);
   }
 
-  if (/^https:\/\/pra-inv\.invalid\//i.test(cleaned)) return cleaned;
-  if (/^pra-inv:\/\//i.test(cleaned)) {
-    try {
-      const inner = decodeURIComponent(cleaned.replace(/^pra-inv:\/\/v1\//i, ""));
-      return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(inner || "PRA")}`;
-    } catch {
-      return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(cleaned)}`;
-    }
-  }
+  if (/^https:\/\/pra-inv\.invalid\//i.test(cleaned)) return fpraNotFoundUrl();
+  if (/^pra-inv:\/\//i.test(cleaned)) return fpraNotFoundUrl();
 
   if (
     /^https:\/\//i.test(cleaned) &&
@@ -92,12 +98,14 @@ export function sanitizePraQrPayload(
     return cleaned;
   }
 
-  return `${PRA_PHONE_BLOCK_PREFIX}${encodeURIComponent(cleaned)}`;
+  return fpraNotFoundUrl();
 }
 
 /** Decode scanned QR back to fiscal Invoice #. */
 export function decodePraQrPayload(scanned: string): string {
   const raw = scanned.trim();
+  if (/^data:text\/html/i.test(raw)) return "";
+  if (/^invalid qr code$/i.test(raw)) return "";
   try {
     const u = new URL(raw);
     if (
@@ -107,6 +115,7 @@ export function decodePraQrPayload(scanned: string): string {
       const inv = u.searchParams.get("InvoiceNo") || u.searchParams.get("invoiceNo");
       if (inv) return inv;
     }
+    if (/\/v1\/pra\/not-found/i.test(u.pathname)) return "";
   } catch {
     /* not a URL */
   }

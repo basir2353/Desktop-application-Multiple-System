@@ -1,4 +1,5 @@
-import type { Bill, KitchenTicket } from "@platform/contracts";
+import type { Bill, BillPayment, KitchenTicket, PaymentMethod } from "@platform/contracts";
+import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
 import { computeTicketTotals } from "./posDiscount";
 import { loadPosSettings, effectiveTaxPct } from "./posSettings";
@@ -76,6 +77,8 @@ export type PrintTicketInput = {
   servicePct: number;
   taxPct?: number;
   discountPct: number;
+  /** Settled payment lines (cash / card / …) for simple invoice footer. */
+  payments?: BillPayment[];
   kotSettings?: KotPrintSettings;
   billPrintSettings?: BillPrintSettings;
   /**
@@ -853,6 +856,68 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalsBlock =
     isReceipt && totalsRows.length > 0 ? `<div class="totals">${totalsRows.join("")}</div>` : "";
 
+  // Simple invoice (no PRA): Cash vs Card GST comparison + settled payment lines.
+  const paymentSectionsHtml = (() => {
+    if (!isReceipt || !fields) return "";
+    const parts: string[] = [];
+
+    if (!input.praFiscal) {
+      const cashGstPct = Math.max(0, Number(input.taxPct ?? 0));
+      const cardGstPct = cashGstPct >= 15 ? 5 : cashGstPct;
+      const taxable = Math.max(0, (input.subtotal ?? 0) - (input.discount ?? 0));
+      const delivery = Math.max(0, input.deliveryCharge ?? 0);
+      const service = Math.max(0, input.service ?? 0);
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      const cardGst = round2((taxable * cardGstPct) / 100);
+      const cashGst = round2((taxable * cashGstPct) / 100);
+      const cardNet = round2(taxable + service + delivery + cardGst);
+      const cashNet = round2(taxable + service + delivery + cashGst);
+      const money = (n: number) => formatMoney(n, moneyCompact);
+      parts.push(`
+      <div class="pay-compare">
+        <div class="pay-compare-col">
+          <div class="pay-compare-title">On Card Payment</div>
+          <div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>
+          ${
+            input.discount > 0
+              ? `<div class="row"><span class="label">Discount</span><span class="value discount">− ${money(input.discount)}</span></div>`
+              : ""
+          }
+          <div class="row"><span class="label">GST (${cardGstPct}%)</span><span class="value">${money(cardGst)}</span></div>
+          <div class="row grand"><span class="label">Net Total</span><span class="value">${money(cardNet)}</span></div>
+        </div>
+        <div class="pay-compare-col">
+          <div class="pay-compare-title">On Cash Payment</div>
+          <div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>
+          ${
+            input.discount > 0
+              ? `<div class="row"><span class="label">Discount</span><span class="value discount">− ${money(input.discount)}</span></div>`
+              : ""
+          }
+          <div class="row"><span class="label">GST (${cashGstPct}%)</span><span class="value">${money(cashGst)}</span></div>
+          <div class="row grand"><span class="label">Net Total</span><span class="value">${money(cashNet)}</span></div>
+        </div>
+      </div>`);
+    }
+
+    const payments = (input.payments ?? []).filter((p) => p.amount > 0);
+    if (payments.length > 0) {
+      const byMethod = new Map<PaymentMethod, number>();
+      for (const p of payments) {
+        byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + p.amount);
+      }
+      const rows = [...byMethod.entries()]
+        .map(
+          ([method, amount]) =>
+            `<div class="row"><span class="label">${escapeHtml(PAYMENT_METHOD_LABELS[method] ?? method)}</span><span class="value">${formatMoney(amount, moneyCompact)}</span></div>`,
+        )
+        .join("");
+      parts.push(`<div class="totals pay-settled"><div class="pay-settled-title">Payment</div>${rows}</div>`);
+    }
+
+    return parts.join("");
+  })();
+
   const metaRow = (label: string, value: string, emphasize = false, extraClass = "") =>
     `<div class="meta-row${emphasize ? " meta-row-strong" : ""}${extraClass ? ` ${extraClass}` : ""}"><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${escapeHtml(value)}</span></div>`;
 
@@ -996,10 +1061,14 @@ export function buildTicketHtml(input: PrintTicketInput): string {
               return itemsHtml
                 ? `<div class="items-wrap${blockInkClass(billSettings, "items")}" style="${blockStyleInline(billSettings, "items", receiptFonts.itemName)}">${itemsHtml}</div>`
                 : "";
-            case "totals":
-              return totalsBlock
-                ? `<div class="totals-wrap${blockInkClass(billSettings, "totals")}" style="${blockStyleInline(billSettings, "totals", receiptFonts.rowLabel)}">${totalsBlock}</div>`
+            case "totals": {
+              const body = input.praFiscal
+                ? `${totalsBlock}${paymentSectionsHtml}`
+                : paymentSectionsHtml || totalsBlock;
+              return body
+                ? `<div class="totals-wrap${blockInkClass(billSettings, "totals")}" style="${blockStyleInline(billSettings, "totals", receiptFonts.rowLabel)}">${body}</div>`
                 : "";
+            }
             case "footer":
               return showFooterPrimary
                 ? `<div class="footer${blockInkClass(billSettings, "footer")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "footer", receiptFonts.footer)}">${
@@ -1568,6 +1637,37 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-top: 1.5px solid #000;
       padding-top: 8px;
       margin-top: 4px;
+    }
+    .pay-compare {
+      display: flex;
+      gap: 6px;
+      border-top: 1.5px dashed #000;
+      margin-top: 6px;
+      padding-top: 6px;
+    }
+    .pay-compare-col {
+      flex: 1 1 50%;
+      min-width: 0;
+      border: 1px solid #000;
+      padding: 4px;
+    }
+    .pay-compare-title {
+      font-size: ${Math.max(9, (isReceipt ? receiptFonts.rowLabel : kotBase) - 1)}px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #000;
+      padding-bottom: 2px;
+    }
+    .pay-settled {
+      margin-top: 6px;
+      border-top: 1.5px dashed #000;
+      padding-top: 6px;
+    }
+    .pay-settled-title {
+      font-weight: 700;
+      margin-bottom: 2px;
+      text-align: center;
     }
     .row {
       display: flex;
@@ -2484,6 +2584,7 @@ export function billToPrintInput(
     servicePct: bill.servicePct,
     taxPct: bill.taxPct,
     discountPct: bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0,
+    payments: bill.payments?.length ? bill.payments : undefined,
   };
 }
 
@@ -2548,13 +2649,23 @@ export function kitchenTicketToKotPrint(
   ticket: KitchenTicket,
   branchName: string,
   branchCode: string,
-  options?: { printedByName?: string },
+  options?: { printedByName?: string; isOrderUpdate?: boolean },
 ): Omit<PrintTicketInput, "kind"> {
-  const lines = parseItemsSummary(ticket.itemsSummary).map((line) => ({
+  // Prefer structured lines so Update / reprint KOT always includes latest item changes.
+  const fromTicketLines =
+    ticket.lines && ticket.lines.length > 0
+      ? ticket.lines.map((line) => ({
+          label: line.label,
+          qty: line.qty,
+          unitPrice: 0,
+        }))
+      : [];
+  const fromSummary = parseItemsSummary(ticket.itemsSummary).map((line) => ({
     label: line.label,
     qty: line.qty,
-    unitPrice: line.unitPrice ?? 0,
+    unitPrice: 0,
   }));
+  const lines = fromTicketLines.length > 0 ? fromTicketLines : fromSummary;
   const by = resolveSessionPrintName(
     options?.printedByName?.trim() || ticket.createdByName?.trim() || undefined,
   );
@@ -2566,6 +2677,7 @@ export function kitchenTicketToKotPrint(
     modeLabel: billChannelLabel(ticket.stationLabel),
     tableLabel: ticket.stationLabel,
     waiterName: by || undefined,
+    notes: ticket.notes ?? undefined,
     lines: lines.length > 0 ? lines : [{ label: ticket.itemsSummary || "Items", qty: 1, unitPrice: 0 }],
     subtotal: 0,
     discount: 0,
@@ -2574,6 +2686,7 @@ export function kitchenTicketToKotPrint(
     total: 0,
     servicePct: 0,
     discountPct: 0,
+    isOrderUpdate: options?.isOrderUpdate,
   };
 }
 
@@ -2645,7 +2758,7 @@ export function printPosRecentOrder(
   return true;
 }
 
-/** Latest-orders Print/Close: always the customer receipt (not kitchen KOT). */
+/** Latest-orders Close / paid reprint: customer receipt (not kitchen KOT). */
 export async function printPosRecentOrderAsync(
   branchName: string,
   branchCode: string,

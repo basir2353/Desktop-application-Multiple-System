@@ -27,6 +27,7 @@ import { PlatformModule } from "./platform/platform.module";
 import { OrgAlertsModule } from "./org-alerts/org-alerts.module";
 import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
 import { PrintingModule } from "./printing/printing.module";
+import { ReportsModule } from "./reports/reports.module";
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { PrintingModule } from "./printing/printing.module";
     StoreModule,
     TaxAuthorityModule,
     PrintingModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

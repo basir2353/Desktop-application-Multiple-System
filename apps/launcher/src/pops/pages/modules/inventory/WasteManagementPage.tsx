@@ -2,6 +2,7 @@ import { WASTE_TYPES, type WasteRecord } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { createWasteRecord, fetchBranchInventory, updateWasteStatus } from "../../../api/inventory";
+import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { accentValueClass, linkDangerClass, linkSuccessClass } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
@@ -13,6 +14,7 @@ export function WasteManagementPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
   const [error, setError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [form, setForm] = useState({ ingredientId: "", qty: "1", wasteType: "Kitchen Waste" as (typeof WASTE_TYPES)[number], reason: "" });
 
   const query = useQuery({
@@ -45,6 +47,7 @@ export function WasteManagementPage(): JSX.Element {
 
   const ingredients = query.data?.ingredients ?? [];
   const wasteRecords = query.data?.wasteRecords ?? [];
+  const selectedIng = ingredients.find((i) => i.id === form.ingredientId);
   const today = new Date().toISOString().slice(0, 10);
   const todayWaste = wasteRecords.filter((w) => w.date === today && w.status === "Approved").reduce((s, w) => s + w.costImpact, 0);
   const totalWaste = wasteRecords.filter((w) => w.status === "Approved").reduce((s, w) => s + w.costImpact, 0);
@@ -72,10 +75,16 @@ export function WasteManagementPage(): JSX.Element {
       {canManage ? (
         <InventoryFormPanel title="Record waste" submitLabel="Save waste record" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || createMutation.isPending}>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <select className={selectClass} value={form.ingredientId} onChange={(e) => setForm({ ...form, ingredientId: e.target.value })}>
-              <option value="">Ingredient</option>
-              {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-            </select>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className={`${inputClass} flex items-center justify-between text-left`}
+            >
+              <span className={selectedIng ? "truncate text-white" : "text-slate-500"}>
+                {selectedIng ? selectedIng.name : "Select ingredient…"}
+              </span>
+              <span className="text-slate-500" aria-hidden>▾</span>
+            </button>
             <input className={inputClass} type="number" placeholder="Qty" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
             <select className={selectClass} value={form.wasteType} onChange={(e) => setForm({ ...form, wasteType: e.target.value as typeof form.wasteType })}>
               {WASTE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -83,6 +92,20 @@ export function WasteManagementPage(): JSX.Element {
             <input className={inputClass} placeholder="Reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
           </div>
         </InventoryFormPanel>
+      ) : null}
+
+      {pickerOpen ? (
+        <IngredientPickerModal
+          ingredients={ingredients}
+          single
+          title="Select ingredient"
+          subtitle="Search and pick one ingredient for this waste record."
+          onClose={() => setPickerOpen(false)}
+          onConfirm={(ids) => {
+            setForm((f) => ({ ...f, ingredientId: ids[0] ?? "" }));
+            setPickerOpen(false);
+          }}
+        />
       ) : null}
 
       <SimpleTable<WasteRecord>

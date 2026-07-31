@@ -8,7 +8,7 @@ import { TaxAuthorityService } from "./tax-authority.service";
 
 /**
  * After Super Admin unlocks FBR/PRA for the business, org Admin / Accountant / Owner
- * may toggle FPRA ↔ Real and FBR in Settings. Platform Super Admin always can.
+ * may toggle Fake ↔ Real and FBR in Settings. Platform Super Admin always can.
  */
 function assertCanManageTaxFeatures(user: AccessJwtPayload): void {
   if (isSuperAdmin(user) || user.permissions?.includes("platform.businesses.manage")) return;

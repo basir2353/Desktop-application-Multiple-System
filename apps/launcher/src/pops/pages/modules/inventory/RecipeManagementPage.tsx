@@ -3,7 +3,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { createRecipe, deleteRecipe, fetchBranchInventory, updateRecipe } from "../../../api/inventory";
 import { fetchBranchMenuAdmin } from "../../../api/menu";
-import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
+import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
+import { inputClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { linkDangerClass, linkWarningClass, noticeSuccessClass } from "../../../lib/themeClasses";
 import {
   exportRecipesExcel,
@@ -13,6 +14,7 @@ import {
 } from "../../../lib/recipeImportExport";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
+import { SearchableSelect } from "../../../ui/SearchableSelect";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { InventoryError, InventoryFormPanel, InventoryLoading } from "./InventoryUi";
 
@@ -22,23 +24,20 @@ type IngredientLineRow = {
   unit: string;
 };
 
-function emptyIngredientLine(): IngredientLineRow {
-  return { ingredientId: "", qty: "", unit: "" };
-}
-
 export function RecipeManagementPage(): JSX.Element {
   const { branch, canManage } = useInventoryAccess();
   const invalidate = useInvalidateInventory();
   const [error, setError] = useState<string | null>(null);
   const [transferNotice, setTransferNotice] = useState<string | null>(null);
   const [transferBusy, setTransferBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     name: "",
     menuItemId: "",
     portionSize: "1 portion",
     version: "v1.0",
-    lines: [emptyIngredientLine()] as IngredientLineRow[],
+    lines: [] as IngredientLineRow[],
   });
 
   const query = useQuery({
@@ -100,7 +99,7 @@ export function RecipeManagementPage(): JSX.Element {
         menuItemId: "",
         portionSize: "1 portion",
         version: "v1.0",
-        lines: [emptyIngredientLine()],
+        lines: [],
       });
       setError(null);
     },
@@ -277,18 +276,18 @@ export function RecipeManagementPage(): JSX.Element {
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               <label className="block text-xs text-slate-400">
                 Menu dish
-                <select
-                  className={`${selectClass} mt-1`}
+                <SearchableSelect
+                  className="mt-1"
+                  options={menuItems.map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                    searchText: item.secondaryName ?? "",
+                  }))}
                   value={form.menuItemId}
-                  onChange={(e) => onMenuItemChange(e.target.value)}
-                >
-                  <option value="">Select dish</option>
-                  {menuItems.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={onMenuItemChange}
+                  placeholder="Select dish"
+                  searchPlaceholder="Search dish…"
+                />
               </label>
               <label className="block text-xs text-slate-400">
                 Recipe name
@@ -325,89 +324,104 @@ export function RecipeManagementPage(): JSX.Element {
                 Select each ingredient and the quantity used for one sale of this dish.
               </p>
               <ul className="mt-2 space-y-2">
-                {form.lines.map((row, index) => {
-                  const ing = row.ingredientId ? ingredientById.get(row.ingredientId) : null;
-                  return (
-                    <li
-                      key={index}
-                      className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
-                    >
-                      <label className="block text-[10px] text-slate-500 sm:col-span-5">
-                        Ingredient
-                        <select
-                          className={`${selectClass} mt-1 text-xs`}
-                          value={row.ingredientId}
-                          onChange={(e) => updateLine(index, { ingredientId: e.target.value })}
-                        >
-                          <option value="">Select ingredient</option>
-                          {ingredients.map((i) => (
-                            <option key={i.id} value={i.id}>
-                              {i.name} ({i.unit})
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block text-[10px] text-slate-500 sm:col-span-3">
-                        Quantity
-                        <input
-                          className={`${inputClass} mt-1 text-xs`}
-                          type="number"
-                          min={1}
-                          step={1}
-                          placeholder="e.g. 500"
-                          value={row.qty}
-                          onChange={(e) => updateLine(index, { qty: e.target.value })}
-                        />
-                      </label>
-                      <label className="block text-[10px] text-slate-500 sm:col-span-3">
-                        Unit
-                        <input
-                          className={`${inputClass} mt-1 text-xs`}
-                          placeholder="g, Kg, Piece…"
-                          value={row.unit}
-                          onChange={(e) => updateLine(index, { unit: e.target.value })}
-                        />
-                      </label>
-                      <div className="flex items-end sm:col-span-1">
-                        {form.lines.length > 1 ? (
+                {form.lines
+                  .filter((row) => row.ingredientId)
+                  .map((row) => {
+                    const ing = ingredientById.get(row.ingredientId);
+                    const index = form.lines.findIndex((l) => l.ingredientId === row.ingredientId);
+                    return (
+                      <li
+                        key={row.ingredientId}
+                        className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
+                      >
+                        <div className="sm:col-span-5">
+                          <div className="text-[10px] text-slate-500">Ingredient</div>
+                          <div className="mt-1 text-xs font-medium text-white">{ing?.name ?? "—"}</div>
+                          {ing ? (
+                            <div className="text-[10px] text-slate-500">
+                              {ing.sku}
+                              {ing.categoryName ? ` · ${ing.categoryName}` : ""}
+                              {` · stock ${ing.currentStock} ${ing.unit}`}
+                            </div>
+                          ) : null}
+                        </div>
+                        <label className="block text-[10px] text-slate-500 sm:col-span-3">
+                          Quantity
+                          <input
+                            className={`${inputClass} mt-1 text-xs`}
+                            type="number"
+                            min={1}
+                            step={1}
+                            placeholder="e.g. 500"
+                            value={row.qty}
+                            onChange={(e) => updateLine(index, { qty: e.target.value })}
+                          />
+                        </label>
+                        <label className="block text-[10px] text-slate-500 sm:col-span-3">
+                          Unit
+                          <input
+                            className={`${inputClass} mt-1 text-xs`}
+                            placeholder="g, Kg, Piece…"
+                            value={row.unit}
+                            onChange={(e) => updateLine(index, { unit: e.target.value })}
+                          />
+                        </label>
+                        <div className="flex items-end sm:col-span-1">
                           <button
                             type="button"
                             className={`pb-1.5 text-[10px] ${linkDangerClass}`}
                             onClick={() =>
                               setForm((prev) => ({
                                 ...prev,
-                                lines: prev.lines.filter((_, i) => i !== index),
+                                lines: prev.lines.filter((l) => l.ingredientId !== row.ingredientId),
                               }))
                             }
                           >
                             Remove
                           </button>
-                        ) : null}
-                      </div>
-                      {ing ? (
-                        <p className="text-[10px] text-slate-600 sm:col-span-12">
-                          In stock: {ing.currentStock.toLocaleString()} {ing.unit}
-                        </p>
-                      ) : null}
-                    </li>
-                  );
-                })}
+                        </div>
+                      </li>
+                    );
+                  })}
               </ul>
               <button
                 type="button"
                 className={`mt-2 text-xs ${linkWarningClass}`}
-                onClick={() =>
-                  setForm((prev) => ({
-                    ...prev,
-                    lines: [...prev.lines, emptyIngredientLine()],
-                  }))
-                }
+                onClick={() => setPickerOpen(true)}
               >
-                + Add ingredient
+                + Select ingredients…
               </button>
             </div>
           </div>
         </InventoryFormPanel>
+      ) : null}
+
+      {pickerOpen ? (
+        <IngredientPickerModal
+          ingredients={ingredients}
+          excludedIds={new Set(form.lines.map((l) => l.ingredientId).filter(Boolean))}
+          title="Select ingredients"
+          subtitle="Choose one or more items for this recipe."
+          onClose={() => setPickerOpen(false)}
+          onConfirm={(ids) => {
+            setForm((prev) => {
+              const existing = new Set(prev.lines.map((l) => l.ingredientId));
+              const added = ids
+                .filter((id) => !existing.has(id))
+                .map((id) => {
+                  const ing = ingredientById.get(id);
+                  return {
+                    ingredientId: id,
+                    qty: "1",
+                    unit: ing?.unit ?? "g",
+                  };
+                });
+              const kept = prev.lines.filter((l) => l.ingredientId);
+              return { ...prev, lines: [...kept, ...added] };
+            });
+            setPickerOpen(false);
+          }}
+        />
       ) : null}
 
       {recipes.map((recipe) => (

@@ -13,6 +13,7 @@ import { mbInputClass, useMultiBranchAccess } from "../../../hooks/useMultiBranc
 import { accentValueClass, mutedClass, panelClass } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
+import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { MbError, MbLoading } from "./MultiBranchUi";
 
@@ -39,6 +40,7 @@ export function BranchReceivePage(): JSX.Element {
   const [itemUnit, setItemUnit] = useState("Kg");
   const [qty, setQty] = useState("");
   const [notes, setNotes] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const branchesQuery = useQuery({
     queryKey: ["operations", "branches"],
@@ -201,18 +203,18 @@ export function BranchReceivePage(): JSX.Element {
                 </select>
 
                 {itemMode === "inventory" ? (
-                  <select
-                    className={`${mbInputClass} sm:col-span-2`}
-                    value={ingredientId}
-                    onChange={(e) => setIngredientId(e.target.value)}
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(true)}
+                    className={`${mbInputClass} flex items-center justify-between text-left sm:col-span-2`}
                   >
-                    <option value="">Select item *</option>
-                    {ingredients.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.name} ({i.sku}) · {i.currentStock} {i.unit}
-                      </option>
-                    ))}
-                  </select>
+                    <span className={ingredientId ? "truncate text-white" : "text-slate-500"}>
+                      {selectedIngredient
+                        ? `${selectedIngredient.name} (${selectedIngredient.sku}) · ${selectedIngredient.currentStock} ${selectedIngredient.unit}`
+                        : "Select item *"}
+                    </span>
+                    <span className="text-slate-500" aria-hidden>▾</span>
+                  </button>
                 ) : (
                   <>
                     <input
@@ -446,6 +448,20 @@ export function BranchReceivePage(): JSX.Element {
           ) : null}
         </>
       )}
+
+      {pickerOpen ? (
+        <IngredientPickerModal
+          ingredients={ingredients}
+          single
+          title="Select item"
+          subtitle="Search and pick an inventory item to receive."
+          onClose={() => setPickerOpen(false)}
+          onConfirm={(ids) => {
+            setIngredientId(ids[0] ?? "");
+            setPickerOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

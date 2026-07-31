@@ -78,12 +78,24 @@ function matchMenuItem(menuItems: ApiMenuItem[], line: StoredOrderLine): ApiMenu
     const byId = menuItems.find((item) => item.id === line.menuItemId);
     if (byId) return byId;
   }
-  const normalized = line.label.toLowerCase();
-  return menuItems.find((item) => {
+  const normalized = line.label.toLowerCase().trim();
+  if (!normalized) return undefined;
+
+  const exact = menuItems.find((item) => {
     const full = formatMenuItemLabel(item).toLowerCase();
     if (full === normalized) return true;
     if (item.name.toLowerCase() === normalized) return true;
-    return normalized.startsWith(item.name.toLowerCase());
+    return false;
+  });
+  if (exact) return exact;
+
+  return menuItems.find((item) => {
+    const name = item.name.toLowerCase();
+    if (!name) return false;
+    if (normalized.startsWith(name)) return true;
+    if (normalized.includes(name)) return true;
+    const secondary = (item.secondaryName ?? "").toLowerCase().trim();
+    return Boolean(secondary) && (normalized === secondary || normalized.includes(secondary));
   });
 }
 
@@ -95,6 +107,34 @@ function matchVariant(item: ApiMenuItem, lineLabel: string): MenuItemVariant | n
   return exact ?? pickDefaultVariant(item);
 }
 
+/** Keep unmatched ticket/bill lines editable when menu catalog cannot resolve them. */
+function buildOrphanMenuItem(label: string, unitPrice: number, index: number): ApiMenuItem {
+  const safeLabel = label.trim() || "Item";
+  return {
+    // Non-UUID so bill/KOT save omits menuItemId (see cartToBillLines / kitchenLines).
+    id: `orphan:${index}:${safeLabel}`,
+    categoryId: "00000000-0000-4000-8000-000000000000",
+    name: safeLabel,
+    secondaryName: null,
+    imageUrl: null,
+    portion: null,
+    price: Math.max(0, Math.round(unitPrice)),
+    barcode: null,
+    happyHour: false,
+    featured: false,
+    isActive: true,
+    sortOrder: 0,
+    variants: [],
+    discountable: true,
+    nonDiscountable: false,
+    nonTaxable: false,
+    askForPrice: false,
+    askForQty: false,
+    allowManualDiscount: false,
+    defaultDiscountPct: 0,
+  };
+}
+
 export function cartFromStoredLines(
   menuItems: ApiMenuItem[],
   lines: StoredOrderLine[],
@@ -103,11 +143,23 @@ export function cartFromStoredLines(
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     const item = matchMenuItem(menuItems, line);
-    if (!item) continue;
+    if (!item) {
+      const unitPrice = line.unitPrice ?? 0;
+      const orphan = buildOrphanMenuItem(line.label, unitPrice, index);
+      const orphanLine = buildCartLine(orphan, null, line.qty, index, unitPrice);
+      orphanLine.lineLabel = line.label.trim() || orphan.name;
+      orphanLine.key = orphan.id;
+      cart.push(orphanLine);
+      continue;
+    }
     const variant = matchVariant(item, line.label);
     const cartLine = buildCartLine(item, variant, line.qty, index);
     if (line.unitPrice != null && line.unitPrice > 0) {
       cartLine.unitPrice = line.unitPrice;
+    }
+    // Preserve printed label when it differs from current catalog formatting.
+    if (line.label.trim()) {
+      cartLine.lineLabel = line.label.trim();
     }
     cart.push(cartLine);
   }

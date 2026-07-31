@@ -1464,8 +1464,8 @@ export class TaxAuthorityService {
   }
 
   /**
-   * Issue a FPRA or Real PRA fiscal invoice for a sale/bill.
-   * FPRA: local unique numbers + QR (not sent to PRA). Real: e-IMS via sendInvoice.
+   * Issue a Fake or Real PRA fiscal invoice for a sale/bill.
+   * Fake: local unique numbers + QR (not sent to PRA). Real: e-IMS via sendInvoice.
    */
   async issuePraInvoice(
     organizationId: string,
@@ -1529,8 +1529,8 @@ export class TaxAuthorityService {
       };
     }
 
-        const now = new Date();
-    // Sequential FPRA invoice # (no slashes): 00000001, 00000002, …
+    const now = new Date();
+    // Sequential FPRA invoice # — natural digits (e.g. 35929), no leading zeros.
     const invoiceNumber = await this.allocateFakePraInvoiceNumber(organizationId);
     const orderKey =
       source.ref.replace(/[^A-Za-z0-9-]/g, "").slice(0, 24) || String(Date.now()).slice(-8);
@@ -1872,7 +1872,7 @@ const responsePayload = {
   }
 
   /**
-   * Return FPRA/Real PRA fiscal details for a source from bill columns or latest invoice.
+   * Return Fake/Real PRA fiscal details for a source from bill columns or latest invoice.
    */
   async getFiscalForSource(
     organizationId: string,
@@ -1952,7 +1952,7 @@ const responsePayload = {
    * Fire-and-forget enqueue after a sale is completed.
    * Never throws to the caller — failures are logged and queued as failed/queued rows.
    *
-   * PRA auto-enqueue only when Real is enabled and FPRA is not (both → client chooses).
+   * PRA auto-enqueue only when Real is enabled and Fake is not (both → client chooses).
    */
   async enqueueFromSale(params: {
     organizationId: string;
@@ -2573,8 +2573,8 @@ const responsePayload = {
   }
 
   /**
-   * Next FPRA invoice number for this org: sequential, no slashes
-   * (00000001, 00000002, …). Atomic UPDATE so concurrent Pays don't collide.
+   * Next FPRA invoice number for this org: sequential natural number
+   * (e.g. 35929, 35930, …) — no leading zeros. Atomic UPDATE so concurrent Pays don't collide.
    */
   private async allocateFakePraInvoiceNumber(organizationId: string): Promise<string> {
     const [row] = await this.db
@@ -2586,7 +2586,9 @@ const responsePayload = {
       .where(eq(organizations.id, organizationId))
       .returning({ seq: organizations.praFakeInvoiceSeq });
     const seq = Math.max(1, Number(row?.seq ?? 1));
-    return String(seq).padStart(8, "0");
+    // Base so slips look like real-world invoice #s (first org invoice → 35929).
+    const FAKE_PRA_INVOICE_BASE = 35928;
+    return String(FAKE_PRA_INVOICE_BASE + seq);
   }
 
   /** PRA PostData USIN — unique per source UUID so billRef collisions across orgs/branches don't clash. */
@@ -2859,7 +2861,7 @@ const responsePayload = {
       }
       return;
     }
-    // FPRA OR Real grant allows Real PRA connect / upload (FPRA shops use RPRA manually).
+    // Fake OR Real grant allows Real PRA connect / upload (Fake shops use RPRA manually).
     if (!features.praRealEnabled && !features.praFakeEnabled && !features.praEnabled) {
       throw new ForbiddenException(
         "PRA is not enabled for this business. Contact the platform Super Admin.",
@@ -2880,7 +2882,7 @@ const responsePayload = {
       }
       return;
     }
-    // Real fiscal: allow when Real is ON, or FPRA is ON (manual RPRA while FPRA is default).
+    // Real fiscal: allow when Real is ON, or Fake is ON (manual RPRA while Fake is default).
     if (!features.praRealEnabled && !features.praFakeEnabled && !features.praEnabled) {
       throw new ForbiddenException(
         "PRA is not enabled for this business. Contact the platform Super Admin.",

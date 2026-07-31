@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   EmptyState,
+  Input,
   Notice,
   Screen,
   SectionHeader,
@@ -51,6 +52,7 @@ export default function TableTransferScreen() {
 
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(ticketIdParam ?? null);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [tableSearch, setTableSearch] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +110,12 @@ export default function TableTransferScreen() {
   const sectionTables = selectedSectionId
     ? tables.filter((t) => t.sectionId === selectedSectionId)
     : tables;
+
+  const visibleTables = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q) return sectionTables;
+    return sectionTables.filter((t) => t.tableNumber.toLowerCase().includes(q));
+  }, [sectionTables, tableSearch]);
 
   const currentTableNumber = selectedTicket
     ? tableNumberFromStation(selectedTicket.stationLabel)
@@ -273,7 +281,10 @@ export default function TableTransferScreen() {
                     <Pressable
                       key={section.id}
                       disabled={empty || transferMutation.isPending}
-                      onPress={() => setSelectedSectionId(section.id)}
+                      onPress={() => {
+                        setSelectedSectionId(section.id);
+                        setTableSearch("");
+                      }}
                       style={({ pressed }) => [
                         styles.sectionCard,
                         empty && styles.sectionCardDisabled,
@@ -300,7 +311,10 @@ export default function TableTransferScreen() {
               onAction={
                 sections.length > 0
                   ? () => {
-                      if (!transferMutation.isPending) setSelectedSectionId(null);
+                      if (!transferMutation.isPending) {
+                        setSelectedSectionId(null);
+                        setTableSearch("");
+                      }
                     }
                   : undefined
               }
@@ -310,45 +324,65 @@ export default function TableTransferScreen() {
             ) : sectionTables.length === 0 ? (
               <EmptyState title="No tables" message="No tables available in this section." />
             ) : (
-              <View style={styles.tableGrid}>
-                {sectionTables.map((table) => {
-                  const isCurrent =
-                    currentTableNumber != null && table.tableNumber === currentTableNumber;
-                  const booked = table.bookingStatus === "booked" && !isCurrent;
-                  const disabled = transferMutation.isPending || booked;
-                  return (
-                    <Pressable
-                      key={table.id}
-                      disabled={disabled}
-                      onPress={() => pickTable(table.tableNumber)}
-                      style={({ pressed }) => [
-                        styles.tableBtn,
-                        isCurrent && styles.tableBtnCurrent,
-                        booked && styles.tableBtnBooked,
-                        pressed && !disabled && styles.pressed,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.tableLabel,
-                          booked && styles.tableLabelMuted,
-                          isCurrent && styles.tableLabelCurrent,
-                        ]}
-                      >
-                        {table.tableNumber}
-                      </Text>
-                      <Text style={styles.tableMeta}>
-                        {isCurrent
-                          ? "Current"
-                          : booked
-                            ? table.bookedOrderRef
-                              ? `Booked · ${table.bookedOrderRef}`
-                              : "Booked"
-                            : `${table.seats} seats`}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+              <View style={{ gap: 10 }}>
+                <Input
+                  placeholder="Search table number…"
+                  value={tableSearch}
+                  onChangeText={setTableSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {visibleTables.length === 0 ? (
+                  <EmptyState
+                    title="No matches"
+                    message={
+                      tableSearch.trim()
+                        ? `No tables match “${tableSearch.trim()}”.`
+                        : "No tables available."
+                    }
+                  />
+                ) : (
+                  <View style={styles.tableGrid}>
+                    {visibleTables.map((table) => {
+                      const isCurrent =
+                        currentTableNumber != null && table.tableNumber === currentTableNumber;
+                      const booked = table.bookingStatus === "booked" && !isCurrent;
+                      const disabled = transferMutation.isPending || booked;
+                      return (
+                        <Pressable
+                          key={table.id}
+                          disabled={disabled}
+                          onPress={() => pickTable(table.tableNumber)}
+                          style={({ pressed }) => [
+                            styles.tableBtn,
+                            isCurrent && styles.tableBtnCurrent,
+                            booked && styles.tableBtnBooked,
+                            pressed && !disabled && styles.pressed,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.tableLabel,
+                              booked && styles.tableLabelMuted,
+                              isCurrent && styles.tableLabelCurrent,
+                            ]}
+                          >
+                            {table.tableNumber}
+                          </Text>
+                          <Text style={styles.tableMeta}>
+                            {isCurrent
+                              ? "Current"
+                              : booked
+                                ? table.bookedOrderRef
+                                  ? `Booked · ${table.bookedOrderRef}`
+                                  : "Booked"
+                                : `${table.seats} seats`}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
             )}
             {transferMutation.isPending ? (

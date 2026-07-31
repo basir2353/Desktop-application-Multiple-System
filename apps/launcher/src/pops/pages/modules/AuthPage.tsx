@@ -29,6 +29,7 @@ import {
   resetOrgUserPassword,
   updateOrgUser,
 } from "../../api/users";
+import { DayToDayDeleteSalesPanel } from "../../components/DayToDayDeleteSalesPanel";
 import { Badge } from "../../ui/Badge";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
@@ -811,7 +812,7 @@ export function AuthPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Users & access"
-        subtitle="Roles, branch scope, PIN policy, device allow list, and session control."
+        subtitle="Roles, branch scope, PIN policy, device allow list, session control, and day-to-day sale delete."
         actions={
           <>
             <Button
@@ -849,6 +850,8 @@ export function AuthPage(): JSX.Element {
           </>
         }
       />
+
+      <DayToDayDeleteSalesPanel />
 
       {usersQuery.isLoading ? <p className="text-sm text-slate-400">Loading users…</p> : null}
       {usersQuery.isError ? (

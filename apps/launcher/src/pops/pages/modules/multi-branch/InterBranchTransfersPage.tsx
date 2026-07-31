@@ -11,6 +11,7 @@ import {
 import { mbInputClass, useMultiBranchAccess } from "../../../hooks/useMultiBranch";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
+import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { MbError, MbLoading } from "./MultiBranchUi";
 
@@ -22,6 +23,7 @@ export function InterBranchTransfersPage(): JSX.Element {
   const [ingredientId, setIngredientId] = useState("");
   const [qty, setQty] = useState("");
   const [notes, setNotes] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const branchesQuery = useQuery({
     queryKey: ["operations", "branches"],
@@ -89,12 +91,19 @@ export function InterBranchTransfersPage(): JSX.Element {
                 <option key={b.id} value={b.code}>{b.code} — {b.name}</option>
               ))}
             </select>
-            <select className={mbInputClass} value={ingredientId} onChange={(e) => setIngredientId(e.target.value)} disabled={!fromCode}>
-              <option value="">Ingredient</option>
-              {ingredients.map((i) => (
-                <option key={i.id} value={i.id}>{i.name} ({i.currentStock} {i.unit})</option>
-              ))}
-            </select>
+            <button
+              type="button"
+              disabled={!fromCode}
+              onClick={() => setPickerOpen(true)}
+              className={`${mbInputClass} flex items-center justify-between text-left disabled:opacity-50`}
+            >
+              <span className={ingredientId ? "truncate text-white" : "text-slate-500"}>
+                {ingredients.find((i) => i.id === ingredientId)
+                  ? `${ingredients.find((i) => i.id === ingredientId)!.name} (${ingredients.find((i) => i.id === ingredientId)!.currentStock} ${ingredients.find((i) => i.id === ingredientId)!.unit})`
+                  : "Select ingredient…"}
+              </span>
+              <span className="text-slate-500" aria-hidden>▾</span>
+            </button>
             <input className={mbInputClass} type="number" min={1} placeholder="Qty" value={qty} onChange={(e) => setQty(e.target.value)} />
           </div>
           <input className={mbInputClass} placeholder="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -115,6 +124,20 @@ export function InterBranchTransfersPage(): JSX.Element {
             Create transfer
           </button>
         </div>
+      ) : null}
+
+      {pickerOpen ? (
+        <IngredientPickerModal
+          ingredients={ingredients}
+          single
+          title="Select ingredient"
+          subtitle="Search and pick an ingredient to transfer."
+          onClose={() => setPickerOpen(false)}
+          onConfirm={(ids) => {
+            setIngredientId(ids[0] ?? "");
+            setPickerOpen(false);
+          }}
+        />
       ) : null}
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">

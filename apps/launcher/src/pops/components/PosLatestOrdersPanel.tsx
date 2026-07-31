@@ -41,7 +41,10 @@ import {
   isPraRealEnabled,
   useTaxAuthorityFeatures,
 } from "../hooks/useTaxAuthorityFeatures";
-import { resolveReceiptPrinter, resolvePrintUserId } from "../lib/printerRouting";
+import {
+  resolveReceiptPrinter,
+  resolvePrintUserId,
+} from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { loadBillPrintSettings } from "../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
@@ -278,9 +281,11 @@ export function PosLatestOrdersPanel({
     },
   });
 
-  /** Latest orders: always customer/order receipt — never kitchen KOT.
-   * Paid / PRA orders reprint the same Invoice # + QR as on Pay (All + Paid tabs). */
-  async function buildPaidReceiptInput(order: PosRecentOrder): Promise<{
+  /** Paid / held / open → customer receipt. Pass embedPra on Close only (Print stays simple). */
+  async function buildPaidReceiptInput(
+    order: PosRecentOrder,
+    options?: { embedPra?: boolean },
+  ): Promise<{
     input: Omit<PrintTicketInput, "kind">;
     printerName?: string;
     systemPrinterName?: string;
@@ -321,7 +326,8 @@ export function PosLatestOrdersPanel({
     let praFiscal = base.praFiscal ?? null;
     let notice: string | undefined;
 
-    if (bill) {
+    // Print = always simple (no PRA). Close = issue/embed PRA when Tax Active.
+    if (bill && options?.embedPra) {
       const resolved = await resolvePraFooterForPaidBill({
         branchCode: branch.code,
         bill,
@@ -334,6 +340,8 @@ export function PosLatestOrdersPanel({
       } else if (!praFiscal && resolved.notice) {
         window.alert(resolved.notice);
       }
+    } else {
+      praFiscal = null;
     }
 
     return {
@@ -354,7 +362,7 @@ export function PosLatestOrdersPanel({
 
   function openPrintPreview(order: PosRecentOrder): void {
     void (async () => {
-      const built = await buildPaidReceiptInput(order);
+      const built = await buildPaidReceiptInput(order, { embedPra: false });
       if (!built) return;
       setPrintPreview({
         input: built.input,
@@ -364,20 +372,19 @@ export function PosLatestOrdersPanel({
     })();
   }
 
-  /** Unpaid New/held → open Pay (payment first). Paid → reprint with Real PRA footer. */
+  /**
+   * Print = always simple customer order slip (no kitchen KOT, no PRA).
+   * Kitchen KOT still goes out from POS Order / Pay.
+   */
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    if (canPayPosRecentOrder(order)) {
-      onPayOrder?.(order);
-      return;
-    }
     openPrintPreview(order);
   }
 
-  /** Close: unpaid → Pay first; paid → print receipt + dismiss from list. */
+  /** Close (paid): final receipt — PRA footer only when Tax Active / already issued. */
   function printOrderDirect(order: PosRecentOrder): void {
     void (async () => {
-      const built = await buildPaidReceiptInput(order);
+      const built = await buildPaidReceiptInput(order, { embedPra: true });
       if (!built) return;
       void printReceiptAsync({
         ...built.input,
@@ -391,6 +398,11 @@ export function PosLatestOrdersPanel({
     setSelectedId((current) => (current === order.id ? null : order.id));
   }
 
+  /**
+   * Close:
+   * - Unpaid / held → Pay first (select cash/card), then simple invoice.
+   * - Paid → finalize: print with PRA only if Tax Active, dismiss from list.
+   */
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
     if (canPayPosRecentOrder(order)) {
@@ -422,7 +434,7 @@ export function PosLatestOrdersPanel({
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
               <div className="mt-0.5 text-[10px] text-slate-500">
-                Tap for actions · Close hides from All; Paid shows Closed
+                Edit = items · Print = simple invoice · Close = finalize (+ PRA if active)
               </div>
             </div>
             <Link
@@ -543,11 +555,24 @@ export function PosLatestOrdersPanel({
                     <div
                       role="button"
                       tabIndex={0}
-                      onClick={() => toggleSelected(order)}
+                      onClick={() => {
+                        // Editable open orders: one tap loads them into the ticket for changes.
+                        if (showEdit && onEdit) {
+                          setSelectedId(order.id);
+                          onEdit(order);
+                          return;
+                        }
+                        toggleSelected(order);
+                      }}
                       onDoubleClick={(e) => handleOrderDoubleClick(order, e)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
+                          if (showEdit && onEdit) {
+                            setSelectedId(order.id);
+                            onEdit(order);
+                            return;
+                          }
                           toggleSelected(order);
                         }
                       }}
@@ -607,10 +632,29 @@ export function PosLatestOrdersPanel({
 
                       <div className="mt-1.5 border-t border-slate-800/80 pt-1">
                         <div className="flex gap-1">
+                          {showEdit ? (
+                            <button
+                              type="button"
+                              className="flex-1 rounded border border-sky-700/60 py-0.5 text-[9px] font-medium text-sky-300 transition hover:border-sky-500/50 hover:bg-sky-500/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEdit?.(order);
+                                setSelectedId(order.id);
+                              }}
+                              title="Open order in ticket panel to add/remove items"
+                            >
+                              Edit
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-amber-400 transition hover:border-amber-500/40 hover:bg-amber-500/10"
                             onClick={(e) => printOrder(order, e)}
+                            title={
+                              order.kind === "pending" && order.kitchenTicket?.status !== "done"
+                                ? "Print kitchen order ticket (order stays editable)"
+                                : "Print / reprint final receipt"
+                            }
                           >
                             Print
                           </button>
@@ -635,6 +679,11 @@ export function PosLatestOrdersPanel({
                             className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-slate-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
                             onClick={(e) => closeOrder(order, e)}
                             disabled={closeOrderMutation.isPending}
+                            title={
+                              canPayPosRecentOrder(order)
+                                ? "Finalize: pay, print final bill, lock order"
+                                : "Print final receipt and close"
+                            }
                           >
                             Close
                           </button>
@@ -652,18 +701,6 @@ export function PosLatestOrdersPanel({
                             >
                               View
                             </button>
-                            {showEdit ? (
-                              <button
-                                type="button"
-                                className="flex-1 rounded border border-slate-700 py-1 text-[9px] font-medium text-slate-300 transition hover:border-slate-600 hover:text-white"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onEdit?.(order);
-                                }}
-                              >
-                                Edit
-                              </button>
-                            ) : null}
                             {showChangeTable ? (
                               <button
                                 type="button"

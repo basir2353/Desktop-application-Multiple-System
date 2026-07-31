@@ -1,27 +1,49 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchAccountingReport } from "../../../api/accounting";
+import { fetchAccountingDashboard, fetchAccountingReport } from "../../../api/accounting";
 import { formatPkr, useAccountingAccess } from "../../../hooks/useAccounting";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { AccountingError, AccountingLoading } from "./AccountingUi";
 
-const REPORTS = [
-  { id: "profit-loss", label: "Profit & Loss" },
-  { id: "balance-sheet", label: "Balance Sheet" },
-  { id: "cash-flow", label: "Cash Flow" },
-  { id: "trial-balance", label: "Trial Balance" },
-  { id: "general-ledger", label: "General Ledger" },
+const ALL_REPORTS = [
+  { id: "profit-loss", label: "Profit & Loss", requiresActivity: true as const },
+  { id: "balance-sheet", label: "Balance Sheet", requiresActivity: false as const },
+  { id: "cash-flow", label: "Cash Flow", requiresActivity: true as const },
+  { id: "trial-balance", label: "Trial Balance", requiresActivity: false as const },
+  { id: "general-ledger", label: "General Ledger", requiresActivity: false as const },
 ];
 
 export function AccountingReportsPage(): JSX.Element {
   const { branch } = useAccountingAccess();
-  const [reportId, setReportId] = useState("profit-loss");
+  const [reportId, setReportId] = useState("trial-balance");
+
+  const dashboardQuery = useQuery({
+    queryKey: ["accounting", "dashboard", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchAccountingDashboard(branch!.code),
+  });
+
+  const hasFinanceActivity = Boolean(
+    dashboardQuery.data &&
+      (dashboardQuery.data.monthlyRevenue > 0 ||
+        dashboardQuery.data.totalExpenses > 0 ||
+        Math.abs(dashboardQuery.data.profitLoss) > 0 ||
+        dashboardQuery.data.cashInHand > 0 ||
+        dashboardQuery.data.bankBalance > 0),
+  );
+
+  const REPORTS = useMemo(
+    () => ALL_REPORTS.filter((r) => !r.requiresActivity || hasFinanceActivity),
+    [hasFinanceActivity],
+  );
+
+  const activeReportId = REPORTS.some((r) => r.id === reportId) ? reportId : (REPORTS[0]?.id ?? "trial-balance");
 
   const reportQuery = useQuery({
-    queryKey: ["accounting", "report", branch?.code, reportId],
-    enabled: Boolean(branch?.code),
-    queryFn: () => fetchAccountingReport(branch!.code, reportId),
+    queryKey: ["accounting", "report", branch?.code, activeReportId],
+    enabled: Boolean(branch?.code && activeReportId),
+    queryFn: () => fetchAccountingReport(branch!.code, activeReportId),
   });
 
   return (
@@ -35,7 +57,7 @@ export function AccountingReportsPage(): JSX.Element {
             type="button"
             onClick={() => setReportId(r.id)}
             className={`rounded-md px-3 py-2 text-xs font-medium transition ${
-              reportId === r.id
+              activeReportId === r.id
                 ? "bg-emerald-600 text-white"
                 : "bg-slate-800 text-slate-300 hover:bg-slate-700"
             }`}
@@ -44,6 +66,12 @@ export function AccountingReportsPage(): JSX.Element {
           </button>
         ))}
       </div>
+
+      {!hasFinanceActivity ? (
+        <p className="rounded-lg border border-dashed border-slate-700 px-3 py-2 text-xs text-slate-500">
+          Profit &amp; Loss and Cash Flow stay hidden until the company has revenue, expenses, or cash activity.
+        </p>
+      ) : null}
 
       {reportQuery.isLoading ? <AccountingLoading label="Generating report…" /> : null}
       {reportQuery.isError ? <AccountingError message={(reportQuery.error as Error).message} /> : null}

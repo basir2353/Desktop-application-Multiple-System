@@ -23,6 +23,10 @@ export function AccountingDashboardPage(): JSX.Element {
   }
 
   const m = dashboardQuery.data!;
+  const hasMonthlyRevenue = m.monthlyRevenue > 0;
+  const hasMonthExpenses = m.totalExpenses > 0;
+  const hasProfitLoss = Math.abs(m.profitLoss) > 0;
+  const hasCashFlow = m.cashInHand > 0 || m.bankBalance > 0;
 
   return (
     <div className="space-y-4">
@@ -46,13 +50,13 @@ export function AccountingDashboardPage(): JSX.Element {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Today's sales" value={formatPkr(m.todaySales)} />
         <StatCard label="Weekly sales" value={formatPkr(m.weeklySales)} />
-        <StatCard label="Monthly revenue" value={formatPkr(m.monthlyRevenue)} />
-        <StatCard label="Total expenses" value={formatPkr(m.totalExpenses)} hint="This month" />
-        <StatCard label="Profit / loss" value={formatPkr(m.profitLoss)} hint="This month" />
+        {hasMonthlyRevenue ? <StatCard label="Monthly revenue" value={formatPkr(m.monthlyRevenue)} /> : null}
+        {hasMonthExpenses ? <StatCard label="Total expenses" value={formatPkr(m.totalExpenses)} hint="This month" /> : null}
+        {hasProfitLoss ? <StatCard label="Profit / loss" value={formatPkr(m.profitLoss)} hint="This month" /> : null}
         <StatCard label="Outstanding receivable" value={formatPkr(m.outstandingReceivable)} />
         <StatCard label="Outstanding payable" value={formatPkr(m.outstandingPayable)} />
-        <StatCard label="Cash in hand" value={formatPkr(m.cashInHand)} />
-        <StatCard label="Bank balance" value={formatPkr(m.bankBalance)} />
+        {hasCashFlow ? <StatCard label="Cash in hand" value={formatPkr(m.cashInHand)} /> : null}
+        {hasCashFlow ? <StatCard label="Bank balance" value={formatPkr(m.bankBalance)} /> : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
