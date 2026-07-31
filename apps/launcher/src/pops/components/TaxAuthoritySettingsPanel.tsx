@@ -9,7 +9,7 @@ import {
 import { mutedClass, panelClass } from "../lib/themeClasses";
 
 /**
- * Org Admin / Accountant: activate FBR, Fake PRA, or Real PRA.
+ * Org Admin / Accountant: activate FBR, FPRA, or Real PRA.
  * Fake and Real are mutually exclusive.
  */
 export function TaxAuthoritySettingsPanel({
@@ -36,7 +36,7 @@ export function TaxAuthoritySettingsPanel({
       const mode = saved.praRealEnabled
         ? "Real PRA ON"
         : saved.praFakeEnabled
-          ? "Fake PRA ON"
+          ? "FPRA ON"
           : "PRA off";
       onNotice?.(
         `Saved — FBR ${saved.fbrEnabled ? "ON" : "OFF"} · ${mode}. New sales use the active PRA mode.`,
@@ -76,9 +76,9 @@ export function TaxAuthoritySettingsPanel({
           FBR &amp; PRA integration
         </div>
         <p className={`mt-1 text-xs ${mutedClass}`}>
-          Super Admin unlocked tax for this business. You can switch FBR / Fake PRA / Real PRA
-          here. Only one PRA mode can be active. After Real PRA is ON, connect credentials under
-          Tax → Real PRA Integration.
+          Super Admin unlocked tax for this business. You can switch FBR / FPRA / Real PRA
+          here. Only one PRA mode can be active. After Real PRA is ON, open Tax → PRA Integration
+          to connect credentials, choose Sandbox/Production, and configure auto-submit.
         </p>
       </div>
 
@@ -107,7 +107,7 @@ export function TaxAuthoritySettingsPanel({
             disabled={saveMut.isPending || taxFeatures.isLoading}
             onChange={(e) => setFakePra(e.target.checked)}
           />
-          <span className="font-medium">Fake PRA</span>
+          <span className="font-medium">FPRA</span>
           <span className={`text-xs ${mutedClass}`}>
             Local fiscal Invoice # + QR (no PRA login)
           </span>
@@ -131,7 +131,7 @@ export function TaxAuthoritySettingsPanel({
       <p className={`text-xs ${mutedClass}`}>
         Active now:{" "}
         <strong className="text-slate-800 dark:text-slate-100">
-          {praRealEnabled ? "Real PRA" : praFakeEnabled ? "Fake PRA" : "None"}
+          {praRealEnabled ? "Real PRA" : praFakeEnabled ? "FPRA" : "None"}
         </strong>
         {fbrEnabled ? " · FBR ON" : " · FBR OFF"}
         {saveMut.isPending ? " · Saving…" : ""}

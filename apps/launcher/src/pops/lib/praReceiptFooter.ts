@@ -1,6 +1,7 @@
-/** PRA footer for POS receipts: centered QR only (invoice # lives in receipt meta). */
+/** PRA footer for POS receipts: Invoice # + QR + PRA logo. */
 
 import type { PraInvoiceMode } from "@platform/contracts";
+import { praLogoDataUrl } from "./praLogo";
 import { praQrDataUrl, sanitizePraQrPayload } from "./praQr";
 
 export type PraReceiptFooter = {
@@ -19,11 +20,13 @@ export async function preparePraReceiptFooter(input: {
   orderRef: string;
   qrPayload: string;
 }): Promise<PraReceiptFooter> {
-  const qrPayload = sanitizePraQrPayload(input.qrPayload);
-  const qrDataUrl = await praQrDataUrl(qrPayload, 160);
+  // Real: QR = exact e-IMS InvoiceNumber. Fake: sanitized / phone-block payload.
+  const raw = (input.qrPayload?.trim() || input.invoiceNumber).trim();
+  const qrPayload = sanitizePraQrPayload(raw, input.mode);
+  const qrDataUrl = await praQrDataUrl(qrPayload, 160, input.mode);
   return {
     mode: input.mode,
-    invoiceNumber: input.invoiceNumber,
+    invoiceNumber: input.invoiceNumber.trim(),
     orderRef: input.orderRef,
     qrPayload,
     qrDataUrl,
@@ -31,25 +34,37 @@ export async function preparePraReceiptFooter(input: {
 }
 
 /**
- * Bottom of receipt: centered QR only (no invoice text / logo).
- * Uses a full-width table — most reliable centering for thermal PNG print.
+ * Bottom of receipt: PRA Invoice # + centered QR + PRA logo (thermal-safe table layout).
  */
 export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
   const qr = pra.qrDataUrl
     ? `<img class="pra-qr" src="${pra.qrDataUrl}" alt="PRA QR" width="130" height="130" style="display:block;margin:0 auto;width:130px;height:130px;" />`
     : `<div class="pra-qr-fallback">${escapeHtml((pra.qrPayload || "").slice(0, 48))}</div>`;
+  const invoiceNo = escapeHtml(pra.invoiceNumber || "");
+  const logoSrc = praLogoDataUrl();
 
   return `
   <div class="pra-fbr-block">
     <div class="pra-rule"></div>
+    <div class="pra-invoice-line"><strong>PRA Invoice #</strong> ${invoiceNo}</div>
     <table class="pra-qr-table" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;border-collapse:collapse;">
       <tr>
         <td align="center" valign="middle" style="text-align:center;width:100%;">
           ${qr}
         </td>
       </tr>
+      <tr>
+        <td align="center" valign="middle" style="text-align:center;width:100%;padding-top:6px;">
+          <img class="pra-logo" src="${logoSrc}" alt="PRA" width="56" height="56" style="display:block;margin:0 auto;width:56px;height:56px;" />
+        </td>
+      </tr>
     </table>
-    <div class="pra-qr-caption">This invoice generated on the PRA</div>
+    <div class="pra-logo-label">Punjab Revenue Authority</div>
+    <div class="pra-qr-caption">${
+      pra.mode === "real"
+        ? "Scan QR → invoice details open automatically"
+        : "This invoice generated on the PRA"
+    }</div>
   </div>`;
 }
 
@@ -85,10 +100,40 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       border: 0 !important;
       image-rendering: pixelated;
     }
+    .pra-logo {
+      display: block !important;
+      width: 56px !important;
+      height: 56px !important;
+      margin: 0 auto !important;
+      padding: 0 !important;
+      border: 0 !important;
+    }
+    .pra-logo-label {
+      display: block;
+      width: 100%;
+      margin-top: 4px;
+      text-align: center !important;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1.2;
+      color: #000;
+    }
+    .pra-invoice-line {
+      display: block;
+      width: 100%;
+      margin: 0 0 8px;
+      text-align: center !important;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #000;
+      word-break: break-all;
+    }
     .pra-qr-caption {
       display: block;
       width: 100%;
-      margin-top: 6px;
+      margin-top: 4px;
       text-align: center !important;
       font-size: 10px;
       font-weight: 600;

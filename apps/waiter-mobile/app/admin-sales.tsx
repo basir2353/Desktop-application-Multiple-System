@@ -3,6 +3,7 @@ import { Redirect } from "expo-router";
 import { useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { fetchOrders } from "../src/api/billing";
+import { AdminShell } from "../src/components/AdminBottomNav";
 import { DateRangeFilter, defaultDateRange, type DateRangeValue } from "../src/components/DateRangeFilter";
 import { Card, Notice, Screen, StatCard, Subtitle, colors } from "../src/components/ui";
 import {
@@ -54,13 +55,16 @@ export default function AdminSalesScreen() {
 
   if (!branchCode) {
     return (
-      <Screen>
-        <Notice>Select a branch on the Admin Dashboard first.</Notice>
-      </Screen>
+      <AdminShell tab="more" noPadding>
+        <Screen>
+          <Notice>Select a branch on the Admin Dashboard first.</Notice>
+        </Screen>
+      </AdminShell>
     );
   }
 
   return (
+    <AdminShell tab="more" noPadding>
     <Screen>
       <ScrollView contentContainerStyle={{ gap: 14, paddingBottom: 40 }}>
         <Subtitle>
@@ -171,5 +175,6 @@ export default function AdminSalesScreen() {
         {ordersQuery.isError ? <Notice>{(ordersQuery.error as Error).message}</Notice> : null}
       </ScrollView>
     </Screen>
+    </AdminShell>
   );
 }

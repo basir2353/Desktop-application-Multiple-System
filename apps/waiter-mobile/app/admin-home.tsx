@@ -1,24 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useMemo } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchAccountingDashboard } from "../src/api/accounting";
-import { fetchOrgUsers, fetchSecurityOverview, fetchTaxFeatures, roleLabel } from "../src/api/admin";
+import { fetchOrgUsers, fetchSecurityOverview, roleLabel } from "../src/api/admin";
 import { fetchOrders } from "../src/api/billing";
 import { fetchDashboard, fetchPopsBranches } from "../src/api/operations";
+import { fetchTaxFeaturesNormalized } from "../src/api/pra";
+import { AdminShell } from "../src/components/AdminBottomNav";
 import {
   ActionTile,
   Card,
   Notice,
-  Screen,
   StatCard,
   Subtitle,
   Title,
   colors,
 } from "../src/components/ui";
-import { getApiBaseUrl } from "../src/lib/apiBase";
 import { formatPkr, salesMetricsFromOrders } from "../src/lib/orderSales";
-import { canTogglePra, isAdminOrIncharge } from "../src/lib/roles";
+import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -30,6 +31,7 @@ export default function AdminHomeScreen() {
   const branch = useBranchStore((s) => s.branch);
   const setBranch = useBranchStore((s) => s.setBranch);
   const allowed = isAdminOrIncharge(claims);
+  const insets = useSafeAreaInsets();
 
   const branchesQuery = useQuery({
     queryKey: ["admin", "branches"],
@@ -63,7 +65,7 @@ export default function AdminHomeScreen() {
   });
   const taxQuery = useQuery({
     queryKey: ["admin", "tax-features"],
-    queryFn: fetchTaxFeatures,
+    queryFn: fetchTaxFeaturesNormalized,
     enabled: allowed,
   });
   const dashboardQuery = useQuery({
@@ -96,8 +98,9 @@ export default function AdminHomeScreen() {
   const users = usersQuery.data ?? [];
   const activeUsers = users.filter((u) => u.active).length;
   const failed = activityQuery.data?.failedLogins24h ?? 0;
-  const devices = activityQuery.data?.activeDevices ?? 0;
-  const praOn = taxQuery.data?.praEnabled ?? false;
+  const praFakeOn = Boolean(taxQuery.data?.praFakeEnabled);
+  const praRealOn = Boolean(taxQuery.data?.praRealEnabled);
+  const praOn = praFakeOn || praRealOn || Boolean(taxQuery.data?.praEnabled);
   const roleName = roleLabel(claims?.role ?? "admin");
   const metrics = dashboardQuery.data?.metrics;
   const salesToday =
@@ -110,15 +113,34 @@ export default function AdminHomeScreen() {
       : metrics?.liveSales.changePercent ?? 0;
 
   return (
-    <Screen safeTop>
-      <ScrollView contentContainerStyle={{ gap: 14, paddingBottom: 32 }}>
+    <AdminShell tab="home" noPadding>
+      <ScrollView
+        contentContainerStyle={{
+          gap: 14,
+          paddingHorizontal: 16,
+          paddingTop: insets.top + 12,
+          paddingBottom: 24,
+        }}
+        refreshControl={
+          <RefreshControl
+            refreshing={
+              ordersQuery.isFetching || dashboardQuery.isFetching || taxQuery.isFetching
+            }
+            onRefresh={() => {
+              void ordersQuery.refetch();
+              void dashboardQuery.refetch();
+              void taxQuery.refetch();
+              void accountingQuery.refetch();
+            }}
+            tintColor={colors.accent}
+          />
+        }
+      >
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <View style={{ flex: 1, paddingRight: 8 }}>
-            <Title>Admin Dashboard</Title>
+            <Title>POPS Admin</Title>
             <Subtitle>
               {waiterEmail ?? claims?.sub ?? "Incharge"} · {roleName}
-              {"\n"}
-              Sales · reports · payout · users · PRA
             </Subtitle>
           </View>
           <Pressable
@@ -151,7 +173,7 @@ export default function AdminHomeScreen() {
                     style={{
                       paddingHorizontal: 12,
                       paddingVertical: 8,
-                      borderRadius: 8,
+                      borderRadius: 10,
                       borderWidth: 1,
                       borderColor: active ? colors.accent : colors.border,
                       backgroundColor: active ? colors.accent : "transparent",
@@ -181,42 +203,33 @@ export default function AdminHomeScreen() {
           </Card>
         ) : null}
 
-        <Subtitle>Live sales & operations{branchCode ? ` · ${branchCode}` : ""}</Subtitle>
+        <Subtitle>Live pulse{branchCode ? ` · ${branchCode}` : ""}</Subtitle>
         <View style={{ flexDirection: "row", gap: 10 }}>
           <StatCard
             label="Sales (today)"
             value={ordersQuery.isLoading && !orderSales.todayAmountPkr ? "…" : formatPkr(salesToday)}
             hint={
               salesChange !== 0
-                ? `${salesChange >= 0 ? "+" : ""}${salesChange}% vs yesterday · ${orderSales.todayOrderCount} orders`
+                ? `${salesChange >= 0 ? "+" : ""}${salesChange}% · ${orderSales.todayOrderCount} orders`
                 : `${orderSales.todayOrderCount} orders today`
             }
             accent={colors.success}
           />
           <StatCard
-            label="All sales"
-            value={ordersQuery.isLoading ? "…" : formatPkr(orderSales.allCompletedAmountPkr)}
-            hint={`${orderSales.orderCount} completed`}
-          />
-        </View>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <StatCard
             label="Active orders"
             value={dashboardQuery.isLoading ? "…" : String(metrics?.activeOrders.total ?? 0)}
             hint={
               metrics
-                ? `DI ${metrics.activeOrders.dineIn} · TW ${metrics.activeOrders.takeaway} · DL ${metrics.activeOrders.delivery}`
-                : "Live pulse"
+                ? `DI ${metrics.activeOrders.dineIn} · TW ${metrics.activeOrders.takeaway}`
+                : "Live"
             }
           />
+        </View>
+        <View style={{ flexDirection: "row", gap: 10 }}>
           <StatCard
             label="Kitchen"
             value={dashboardQuery.isLoading ? "…" : String(metrics?.kitchenQueue.total ?? 0)}
-            hint={
-              metrics
-                ? `${metrics.kitchenQueue.priority} priority · ${metrics.kitchenQueue.slaStatus}`
-                : "Queue"
-            }
+            hint={metrics ? `${metrics.kitchenQueue.priority} priority` : "Queue"}
             accent={
               metrics?.kitchenQueue.slaStatus === "red"
                 ? colors.danger
@@ -224,6 +237,14 @@ export default function AdminHomeScreen() {
                   ? colors.warning
                   : undefined
             }
+          />
+          <StatCard
+            label="PRA"
+            value={praRealOn ? "Real" : praFakeOn ? "FPRA" : praOn ? "ON" : "OFF"}
+            hint={
+              praFakeOn ? "FPRA Active" : praRealOn ? "Real Active" : "Inactive"
+            }
+            accent={praOn ? colors.success : colors.muted}
           />
         </View>
 
@@ -241,6 +262,16 @@ export default function AdminHomeScreen() {
             />
           </View>
         ) : null}
+
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <StatCard label="Users" value={users.length} hint={`${activeUsers} active`} />
+          <StatCard
+            label="Failed logins"
+            value={failed}
+            hint="Last 24h"
+            accent={failed > 0 ? colors.danger : undefined}
+          />
+        </View>
 
         {orderSales.recentSales.length > 0 ? (
           <Card>
@@ -275,75 +306,33 @@ export default function AdminHomeScreen() {
           </Card>
         ) : null}
 
-        <Subtitle>Access & compliance</Subtitle>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <StatCard label="Users" value={users.length} hint={`${activeUsers} active`} />
-          <StatCard
-            label="Failed logins"
-            value={failed}
-            hint="Last 24h"
-            accent={failed > 0 ? colors.danger : undefined}
-          />
-        </View>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <StatCard label="Devices" value={devices} hint="Active sessions" />
-          <StatCard
-            label="PRA"
-            value={praOn ? "ON" : "OFF"}
-            hint={canTogglePra(claims) ? "You can toggle" : "Admin/Incharge only"}
-            accent={praOn ? colors.success : colors.muted}
-          />
-        </View>
-
+        <Subtitle>Quick actions</Subtitle>
         <ActionTile
-          icon="💰"
-          title="Sales"
-          subtitle="Date filter · channels · top items"
-          onPress={() => router.push("/admin-sales")}
+          icon="≡"
+          title="Live orders"
+          subtitle="Bills · kitchen queue · advance tickets"
+          onPress={() => router.push("/admin-orders")}
           variant="primary"
         />
         <ActionTile
-          icon="📊"
-          title="Reports"
-          subtitle="Charges · discount · party · salary · expense"
-          onPress={() => router.push("/admin-reports")}
+          icon="₨"
+          title="Tax & PRA"
+          subtitle="FPRA / Real Active · today · reports"
+          onPress={() => router.push("/admin-tax")}
           variant="primary"
         />
         <ActionTile
-          icon="💸"
-          title="Payout"
-          subtitle="RPF-style: salary, vendor & party pay out"
-          onPress={() => router.push("/admin-payout")}
-          variant="primary"
+          icon="☰"
+          title="Menu control"
+          subtitle="Turn items on or off for this branch"
+          onPress={() => router.push("/admin-menu")}
         />
         <ActionTile
-          icon="👥"
-          title="User management & access"
-          subtitle="Create users, roles, enable / disable access"
-          onPress={() => router.push("/admin-users")}
+          icon="···"
+          title="All tools"
+          subtitle="Sales · reports · users · stock · tables"
+          onPress={() => router.push("/admin-more")}
         />
-        <ActionTile
-          icon="📋"
-          title="Activity & reports"
-          subtitle="Which user performed which action"
-          onPress={() => router.push("/admin-activity")}
-        />
-        <ActionTile
-          icon="🧾"
-          title="PRA on / off"
-          subtitle={
-            canTogglePra(claims)
-              ? "Enable or disable PRA for this organization"
-              : "Only Admin / Incharge can change this"
-          }
-          onPress={() => router.push("/admin-pra")}
-          variant={canTogglePra(claims) ? "primary" : "default"}
-        />
-
-        <Card>
-          <Subtitle>API</Subtitle>
-          <Text style={{ color: colors.muted, fontSize: 11 }}>{getApiBaseUrl()}</Text>
-        </Card>
 
         {usersQuery.isError ||
         activityQuery.isError ||
@@ -360,6 +349,6 @@ export default function AdminHomeScreen() {
           </Notice>
         ) : null}
       </ScrollView>
-    </Screen>
+    </AdminShell>
   );
 }

@@ -56,3 +56,15 @@ app/           Expo Router screens (waiter + rider + admin flows)
 src/           API clients, stores, shared UI
 scripts/       APK build helpers
 ```
+
+## Admin APK navigation
+
+Bottom tabs: **Home · Orders · Menu · Tax · More**
+
+| Tab | Controls |
+| --- | --- |
+| Home | Live sales, kitchen, PRA status, branch switcher |
+| Orders | Open bills + kitchen queue (advance tickets) |
+| Menu | Search / filter · turn items ON/OFF |
+| Tax | Fake/Real/FBR Active · today dashboard · period reports |
+| More | Sales, reports, payout, users, tables, kitchen, inventory, printers |

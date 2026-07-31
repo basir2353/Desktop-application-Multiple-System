@@ -1,5 +1,7 @@
 import { Button } from "@platform/ui";
 import {
+  canCreateMenuCatalog,
+  canManageMenuCatalog,
   formatMenuItemLabel,
   menuItemDisplayPrice,
   type MenuCategory,
@@ -39,8 +41,9 @@ import { isHappyHourActive } from "../../lib/posHappyHour";
 import {
   exportMenuExcel,
   importMenuRows,
-  downloadMenuImportTemplateExcel,
+  parseMenuCategorySheet,
   parseMenuImportFile,
+  downloadMenuImportTemplateExcel,
 } from "../../lib/menuImportExport";
 import {
   DEFAULT_PRINTER_SECTIONS,
@@ -503,9 +506,9 @@ export function MenuPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
-  const canManage =
-    claims?.permissions.includes("*") ||
-    claims?.permissions.includes("pops.menu.manage");
+  const perms = claims?.permissions ?? [];
+  const canEdit = canManageMenuCatalog(perms);
+  const canCreate = canCreateMenuCatalog(perms);
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -574,7 +577,7 @@ export function MenuPage(): JSX.Element {
 
   const menuQuery = useQuery({
     queryKey: ["menu", "admin", branch?.code],
-    enabled: Boolean(branch?.code && canManage),
+    enabled: Boolean(branch?.code && canCreate),
     queryFn: () => fetchBranchMenuAdmin(branch!.code),
   });
 
@@ -910,33 +913,55 @@ export function MenuPage(): JSX.Element {
     setError(null);
     try {
       const buffer = await file.arrayBuffer();
-      const rows = parseMenuImportFile(buffer, file.name);
-      if (rows.length === 0) {
-        throw new Error("No menu rows found. Use the Menu Items sheet from export.");
+      const categoryMeta = parseMenuCategorySheet(buffer, file.name);
+      const parsed = parseMenuImportFile(buffer, file.name);
+      if (parsed.rows.length === 0 && categoryMeta.length === 0) {
+        throw new Error(
+          "No menu rows found. Use our Download template (Menu Items + Categories sheets).",
+        );
       }
 
-      const summary = await importMenuRows(rows, {
+      const summary = await importMenuRows(parsed.rows, {
         branchCode: branch.code,
         categories,
         items,
+        allowUpdate: canEdit,
+        categoryMeta,
         createCategory: ({ name, sortOrder }) =>
           createMenuCategory({ branchCode: branch.code, name, sortOrder }),
-        createItem: ({ categoryId, name, featured, sortOrder, variants }) =>
+        updateCategory: canEdit
+          ? (categoryId, input) => updateMenuCategory(categoryId, input)
+          : undefined,
+        createItem: ({ categoryId, name, secondaryName, featured, sortOrder, variants }) =>
           createMenuItem({
             branchCode: branch.code,
             categoryId,
             name,
+            secondaryName: secondaryName ?? null,
             featured,
             sortOrder,
             variants,
           }),
-        updateItem: (itemId, input) => updateMenuItem(itemId, input),
+        updateItem: (itemId, input) =>
+          updateMenuItem(itemId, {
+            ...input,
+            secondaryName: input.secondaryName ?? null,
+          }),
       });
+
+      const totalSkipped = summary.skipped + parsed.skipped;
+      const reasons = [...parsed.skipReasons, ...summary.skipReasons].slice(0, 5);
 
       invalidate();
       setMenuTransferNotice(
-        `Import complete — ${summary.itemsCreated} new item${summary.itemsCreated === 1 ? "" : "s"}, ${summary.itemsUpdated} updated, ${summary.categoriesCreated} new categor${summary.categoriesCreated === 1 ? "y" : "ies"}.`,
+        `Import complete — ${summary.itemsCreated} new item${summary.itemsCreated === 1 ? "" : "s"}, ${summary.itemsUpdated} updated, ${summary.categoriesCreated} new categor${summary.categoriesCreated === 1 ? "y" : "ies"}` +
+          (summary.categoriesUpdated ? `, ${summary.categoriesUpdated} categories updated` : "") +
+          (totalSkipped ? `, ${totalSkipped} skipped` : "") +
+          ".",
       );
+      if (reasons.length) {
+        setError(reasons.join(" · "));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Menu import failed");
     } finally {
@@ -945,11 +970,11 @@ export function MenuPage(): JSX.Element {
     }
   }
 
-  if (!canManage) {
+  if (!canCreate) {
     return (
       <PageHeader
         title="Menu"
-        subtitle="You need pops.menu.manage permission to edit the menu. Sign out and sign in again if you were just granted access."
+        subtitle="You need menu add or manage permission to edit the menu. Sign out and sign in again if you were just granted access."
       />
     );
   }
@@ -973,13 +998,15 @@ export function MenuPage(): JSX.Element {
 
       <PageHeader
         title="Menu"
-        subtitle={`Categories and items for ${branch.name} (${branch.code}). Changes appear immediately on POS.`}
+        subtitle={`Categories and items for ${branch.name} (${branch.code}). Changes appear immediately on POS.${
+          !canEdit ? " Add only — edit and delete are locked for your role." : ""
+        }`}
         actions={
           <>
             <Button
               variant="ghost"
               className="text-xs"
-              disabled={menuTransferBusy || menuQuery.isLoading || items.length === 0}
+              disabled={menuTransferBusy || menuQuery.isLoading}
               onClick={handleExportMenuExcel}
             >
               Export Excel
@@ -999,6 +1026,11 @@ export function MenuPage(): JSX.Element {
             >
               {menuTransferBusy ? "Importing…" : "Import Excel"}
             </Button>
+            {!canEdit ? (
+              <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-200">
+                Add only — import creates new items
+              </span>
+            ) : null}
           </>
         }
       />
@@ -1068,7 +1100,7 @@ export function MenuPage(): JSX.Element {
                 </li>
               ))}
             </ul>
-            {selectedCategory && categories.length > 1 ? (
+            {selectedCategory && categories.length > 1 && canEdit ? (
               <div className="mt-2 flex items-center gap-2">
                 <Button
                   type="button"
@@ -1091,7 +1123,7 @@ export function MenuPage(): JSX.Element {
                 <span className="text-[10px] text-slate-500">or use ↑ ↓ keys</span>
               </div>
             ) : null}
-            {selectedCategory ? (
+            {selectedCategory && canEdit ? (
               <div className="mt-4 space-y-3 border-t border-slate-800 pt-3">
                 <MenuImagePicker
                   label="Category photo"
@@ -1134,6 +1166,7 @@ export function MenuPage(): JSX.Element {
                     Items in this category print to the selected sections unless overridden per item.
                   </p>
                 </div>
+                {canEdit ? (
                 <div className="flex gap-2">
                 <Button
                   variant="ghost"
@@ -1158,12 +1191,14 @@ export function MenuPage(): JSX.Element {
                   Delete
                 </Button>
                 </div>
+                ) : null}
               </div>
             ) : null}
           </div>
         </div>
 
         <div className="lg:col-span-8 space-y-4">
+          {canEdit ? (
           <div className="rounded-lg border border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-slate-900/40 p-4 ring-1 ring-amber-500/10">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -1356,6 +1391,7 @@ export function MenuPage(): JSX.Element {
               <p className="mt-2 text-xs text-emerald-400">{happyHourNotice}</p>
             ) : null}
           </div>
+          ) : null}
 
           <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
             <div className="text-sm font-semibold text-white">
@@ -1507,7 +1543,8 @@ export function MenuPage(): JSX.Element {
                           key: "actions",
                           header: "",
                           id: "actions",
-                          render: (r: MenuItem) => (
+                          render: (r: MenuItem) =>
+                            canEdit ? (
                             <span className="flex items-center gap-2">
                               <button
                                 type="button"
@@ -1552,7 +1589,9 @@ export function MenuPage(): JSX.Element {
                                 Delete
                               </button>
                             </span>
-                          ),
+                            ) : (
+                              <span className="text-[10px] text-slate-500">View only</span>
+                            ),
                         },
                       ]}
                       rows={categoryItems}

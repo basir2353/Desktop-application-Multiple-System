@@ -682,6 +682,22 @@ try {{
     ))
 }
 
+#[tauri::command]
+fn pra_http_post(url: String, token: String, body: String) -> Result<String, String> {
+    if !(url.starts_with("https://ims.pral.com.pk/") || url.starts_with("https://ims.pral.com.pk")) {
+        return Err("PRA URL host is not allowed".into());
+    }
+    let resp = ureq::post(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(25))
+        .send_string(&body)
+        .map_err(|e| format!("PRA network error: {e}"))?;
+    resp.into_string()
+        .map_err(|e| format!("PRA response read failed: {e}"))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -690,6 +706,7 @@ pub fn run() {
             list_system_printers,
             print_to_printer,
             print_image_to_printer,
+            pra_http_post,
             printing::start_branch_print_server,
             printing::stop_branch_print_server,
             printing::get_branch_print_server_status,

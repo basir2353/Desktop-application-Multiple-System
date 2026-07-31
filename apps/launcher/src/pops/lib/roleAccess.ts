@@ -53,7 +53,7 @@ const NAV_PATH_ANY_OF: Record<string, readonly string[]> = {
   "pharmacy/dashboard": ["pops.users.manage"],
   "store/dashboard": ["pops.users.manage"],
   auth: ["pops.users.manage"],
-  menu: ["pops.menu.manage"],
+  menu: ["pops.menu.manage", "pops.menu.create"],
   purchase: ["pops.inventory.manage"],
   inventory: ["pops.inventory.manage"],
   tax: ["pops.accounting.manage"],
@@ -92,6 +92,8 @@ export function canAccessNavPath(path: string, permissions: readonly string[]): 
 /** Primary permission to grant when enabling a nav path from the admin UI. */
 export function primaryPermissionForNavPath(path: string): string {
   const required = requiredForPath(path);
+  // Prefer create-only for menu/tables so enabling the page does not escalate to full manage.
+  if (required.includes("pops.menu.create")) return "pops.menu.create";
   return required[0] ?? "pops.read";
 }
 
@@ -191,7 +193,15 @@ export function filterBranchesByScope<T extends { code: string }>(
   branches: readonly T[],
   branchScope: string | undefined,
 ): T[] {
-  if (!branchScope || branchScope === "all") return [...branches];
-  const code = branchScope.toUpperCase();
+  if (!branchScope) return [...branches];
+  const scope = branchScope.trim().toLowerCase();
+  if (scope === "all") return [...branches];
+  const code = branchScope.trim().toUpperCase();
   return branches.filter((b) => b.code.toUpperCase() === code);
+}
+
+/** True when the membership may use every branch (not locked to one code). */
+export function isAllBranchScope(branchScope: string | undefined | null): boolean {
+  if (!branchScope) return true;
+  return branchScope.trim().toLowerCase() === "all";
 }

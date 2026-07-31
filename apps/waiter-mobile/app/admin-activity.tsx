@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { fetchSecurityOverview } from "../src/api/admin";
 import { Card, Chip, Input, Screen, Subtitle, Title, colors } from "../src/components/ui";
+import { AdminShell } from "../src/components/AdminBottomNav";
 import { isAdminOrIncharge } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -47,6 +48,7 @@ export default function AdminActivityScreen() {
   }
 
   return (
+    <AdminShell tab="more" noPadding>
     <Screen>
       <ScrollView contentContainerStyle={{ gap: 12, padding: 16, paddingBottom: 40 }}>
         <Title>Activity & reports</Title>
@@ -112,5 +114,6 @@ export default function AdminActivityScreen() {
         ))}
       </ScrollView>
     </Screen>
+    </AdminShell>
   );
 }

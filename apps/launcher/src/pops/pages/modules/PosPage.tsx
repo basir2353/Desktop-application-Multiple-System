@@ -13,7 +13,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { fetchTaxAuthorityStatus } from "../../../lib/taxAuthorityApi";
-import { fetchTaxFeaturesNormalized } from "../../../lib/praApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { useThemeStore } from "../../../stores/themeStore";
@@ -26,14 +25,10 @@ import {
   useTaxAuthorityFeatures,
 } from "../../hooks/useTaxAuthorityFeatures";
 import {
+  autoIssuePraForCompletedBill,
   canEmbedPraOnSlip,
-  checkRealPraConnected,
-  isRealPraConnectedStatus,
-  issuePraForBill,
-  praIssuedNotice,
   printIssuedPraSlip,
   REAL_PRA_NOT_CONNECTED_MSG,
-  resolveAutoPraMode,
 } from "../../lib/praIssueFlow";
 import { preparePraReceiptFooter } from "../../lib/praReceiptFooter";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
@@ -181,12 +176,10 @@ const POS_PRIMARY_PAY_BTN = `${POS_ACTION_BTN} h-10 border-0 bg-emerald-600 text
 const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-9 border border-slate-200 bg-white font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white`;
 const POS_TOOLBAR_BTN =
   "inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
-const POS_ZOOM_BTN =
-  "inline-flex shrink-0 items-center justify-center rounded-md border border-slate-600/80 bg-transparent px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
+const POS_KEYS_BTN =
+  "inline-flex shrink-0 items-center justify-center rounded-md border border-slate-600/80 bg-transparent px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
 const POS_HEADER_TOGGLE_BTN =
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-600/80 bg-transparent text-slate-300 transition hover:bg-slate-800 hover:text-white";
-const POS_ZOOM_LEVELS = [0.6, 0.75, 0.85, 1, 1.15, 1.3, 1.5] as const;
-const POS_ZOOM_STORAGE_KEY = "pops-pos-font-zoom-index";
 const POS_MODE_BAR =
   "no-scrollbar flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
 const POS_MODE_BTN = (active: boolean) =>
@@ -196,7 +189,6 @@ const POS_MODE_BTN = (active: boolean) =>
       : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
   }`;
 
-const POS_ZOOM_DEFAULT_INDEX = 3; // 100%
 /** Ticket cart: 3 cols × 2 rows (6 items) visible; scroll when more. */
 const POS_CART_COLS = 3;
 const POS_CART_VISIBLE_ROWS = 2;
@@ -210,19 +202,6 @@ function posCartListHeightPx(itemCount: number): number {
   if (itemCount <= 0) return 0;
   const rows = Math.min(POS_CART_VISIBLE_ROWS, Math.ceil(itemCount / POS_CART_COLS));
   return POS_CART_CARD_ROW_PX * rows + POS_CART_GRID_GAP_PX * Math.max(0, rows - 1);
-}
-
-function loadPosZoomIndex(): number {
-  try {
-    const raw = localStorage.getItem(POS_ZOOM_STORAGE_KEY);
-    const parsed = raw == null ? POS_ZOOM_DEFAULT_INDEX : Number(raw);
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= POS_ZOOM_LEVELS.length) {
-      return POS_ZOOM_DEFAULT_INDEX;
-    }
-    return parsed;
-  } catch {
-    return POS_ZOOM_DEFAULT_INDEX;
-  }
 }
 
 type PosEditingOrder =
@@ -292,11 +271,13 @@ export function PosPage(): JSX.Element {
     skipPra: () => Promise<void>;
   } | null>(null);
   const taxFeatures = useTaxAuthorityFeatures();
-  const praFeatureActive =
-    isPraFakeEnabled(taxFeatures.data) || isPraRealEnabled(taxFeatures.data);
+  const organizationId = useSessionStore((s) => s.claims?.organizationId);
+  const praFakeEnabled = isPraFakeEnabled(taxFeatures.data);
+  const praRealEnabled = isPraRealEnabled(taxFeatures.data);
+  const praFeatureActive = praFakeEnabled || praRealEnabled;
   const taxStatusQuery = useQuery({
-    queryKey: ["tax-authority", "status", branch?.code],
-    enabled: Boolean(branch?.code && praFeatureActive),
+    queryKey: ["tax-authority", "status", organizationId, branch?.code],
+    enabled: Boolean(organizationId && branch?.code && praFeatureActive),
     queryFn: () => fetchTaxAuthorityStatus(branch!.code),
     staleTime: 30_000,
   });
@@ -343,7 +324,6 @@ export function PosPage(): JSX.Element {
   const [payOutModalOpen, setPayOutModalOpen] = useState(false);
   const [myPrintersOpen, setMyPrintersOpen] = useState(false);
   const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
-  const [zoomIndex, setZoomIndex] = useState(loadPosZoomIndex);
   const [headerVisible, setHeaderVisible] = useState(loadPosHeaderVisible);
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
@@ -1541,28 +1521,45 @@ export function PosPage(): JSX.Element {
       const needsKotOnPay =
         status === "completed" && editingOrder?.kind !== "ticket" && cart.length > 0;
 
-      let sharedOrderRef: string | undefined;
+      let sharedOrderRef: string | undefined =
+        editingOrder?.kind === "ticket" || editingOrder?.kind === "held-bill"
+          ? orderRef || undefined
+          : undefined;
       const kotPrintErrors: string[] = [];
       let kotSent = false;
 
       if (needsKotOnPay) {
-        sharedOrderRef =
-          editingOrder?.kind === "held-bill"
-            ? orderRef || nextOrderRef(branch!.code)
-            : nextOrderRef(branch!.code);
+        sharedOrderRef = sharedOrderRef || nextOrderRef(branch!.code);
 
-        await createKitchenTicket({
-          branchCode: branch!.code,
-          orderRef: sharedOrderRef,
-          stationLabel,
-          lines: kitchenLines(),
-          notes: orderNotes,
-          ...deliveryExtras(),
-        });
-        kotSent = true;
+        try {
+          await createKitchenTicket({
+            branchCode: branch!.code,
+            orderRef: sharedOrderRef,
+            stationLabel,
+            lines: kitchenLines(),
+            notes: orderNotes,
+            ...deliveryExtras(),
+          });
+          kotSent = true;
+        } catch (kotErr) {
+          const kotMsg = kotErr instanceof Error ? kotErr.message : String(kotErr);
+          const bookedMatch = kotMsg.match(/booked by order\s+([A-Za-z0-9._-]+)/i);
+          if (bookedMatch?.[1]) {
+            // Table already has a kitchen ticket — settle that order instead of blocking Pay.
+            sharedOrderRef = bookedMatch[1];
+            kotSent = false;
+          } else if (/is booked/i.test(kotMsg)) {
+            // Booked without parsable ref — still allow bill close; kitchen KOT already exists.
+            kotSent = false;
+          } else {
+            throw kotErr instanceof Error ? kotErr : new Error(kotMsg);
+          }
+        }
 
-        const printed = await printKitchenKotsOnPay(sharedOrderRef);
-        kotPrintErrors.push(...printed.errors);
+        if (kotSent) {
+          const printed = await printKitchenKotsOnPay(sharedOrderRef);
+          kotPrintErrors.push(...printed.errors);
+        }
       }
 
       if (editingOrder?.kind === "held-bill") {
@@ -1601,7 +1598,10 @@ export function PosPage(): JSX.Element {
 
       const bill = await createBill({
         branchCode: branch!.code,
-        orderRef: sharedOrderRef ?? nextOrderRef(branch!.code),
+        orderRef:
+          sharedOrderRef ||
+          (orderRef && orderRef.trim() ? orderRef.trim() : undefined) ||
+          nextOrderRef(branch!.code),
         tableLabel: billTableLabel,
         waiterName:
           mode === "staff-food" && staffFoodPersonName
@@ -1735,16 +1735,6 @@ export function PosPage(): JSX.Element {
         };
       };
 
-      const features =
-        taxFeatures.data ??
-        (await fetchTaxFeaturesNormalized().catch(() => ({
-          fbrEnabled: false,
-          praEnabled: false,
-          praFakeEnabled: false,
-          praRealEnabled: false,
-        })));
-      const praMode = resolveAutoPraMode(features);
-
       const applyPayNotices = (
         receipt: Awaited<ReturnType<typeof finishReceipts>>,
         praExtra: string,
@@ -1778,86 +1768,41 @@ export function PosPage(): JSX.Element {
         }
       };
 
-      const runPraThenReceipt = async (modeChoice: PraInvoiceMode) => {
-        let praExtra = "";
-        let praFailed = false;
-        let fiscal: PraFiscalInvoice | null = null;
-
-        // Real PRA: Invoice # + QR only when account is properly connected / integrated.
-        if (modeChoice === "real") {
-          if (!branch?.code) {
-            praFailed = true;
-            praExtra = ` ${REAL_PRA_NOT_CONNECTED_MSG}`;
-            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-            const receipt = await finishReceipts(null);
-            applyPayNotices(receipt, praExtra, praFailed);
-            return;
-          }
-          try {
-            const cachedOk =
-              taxStatusQuery.data &&
-              isRealPraConnectedStatus(taxStatusQuery.data.pra.status);
-            const gate = cachedOk
-              ? { connected: true as const }
-              : await checkRealPraConnected(branch.code);
-            if (!gate.connected) {
-              praFailed = true;
-              praExtra = ` ${REAL_PRA_NOT_CONNECTED_MSG}`;
-              window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-              const receipt = await finishReceipts(null);
-              applyPayNotices(receipt, praExtra, praFailed);
-              return;
-            }
-          } catch {
-            praFailed = true;
-            praExtra = ` ${REAL_PRA_NOT_CONNECTED_MSG}`;
-            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-            const receipt = await finishReceipts(null);
-            applyPayNotices(receipt, praExtra, praFailed);
-            return;
-          }
-        }
-
-        try {
-          if (!branch?.code) throw new Error("Branch required for PRA.");
-          const issued = await issuePraForBill({
-            branchCode: branch.code,
-            billId: bill.id,
-            mode: modeChoice,
-          });
-          fiscal = canEmbedPraOnSlip(issued.fiscal) ? issued.fiscal : null;
-          if (fiscal) {
-            praExtra = ` ${praIssuedNotice(modeChoice, fiscal.invoiceNumber)}`;
-          } else {
-            praFailed = true;
-            praExtra =
-              modeChoice === "real"
-                ? " Real PRA did not return invoice number/QR yet."
-                : " PRA issued but invoice number/QR missing.";
-          }
-        } catch (err) {
-          praFailed = true;
-          praExtra = ` PRA failed: ${err instanceof Error ? err.message : "Could not issue PRA."}`;
-        }
-        // Same POS slip — Invoice # + QR only after successful issue.
-        const receipt = await finishReceipts(fiscal);
-        if (fiscal) {
-          setPraFiscal(fiscal);
-          // Refresh Latest orders so Print uses bill.pra* (same slip as Pay).
-          invalidateOrderFeeds();
-        }
-        applyPayNotices(receipt, praExtra, praFailed);
-      };
-
       resetAfterBill();
 
-      if (praMode === "fake" || praMode === "real") {
-        await runPraThenReceipt(praMode);
+      // Real/FPRA ON → always auto-issue before receipt (no RPRA click needed).
+      if (!branch?.code) {
+        const receipt = await finishReceipts(null);
+        applyPayNotices(receipt, "", false);
         return;
       }
 
-      const receipt = await finishReceipts();
-      applyPayNotices(receipt, "", false);
+      const autoPra = await autoIssuePraForCompletedBill({
+        branchCode: branch.code,
+        billId: bill.id,
+      });
+
+      if (!autoPra.mode) {
+        const receipt = await finishReceipts(null);
+        applyPayNotices(receipt, "", false);
+        return;
+      }
+
+      if (autoPra.blockedReal) {
+        window.alert(autoPra.notice || REAL_PRA_NOT_CONNECTED_MSG);
+        const receipt = await finishReceipts(null);
+        applyPayNotices(receipt, ` ${autoPra.notice}`, true);
+        return;
+      }
+
+      const fiscal = canEmbedPraOnSlip(autoPra.fiscal) ? autoPra.fiscal : null;
+      const praExtra = autoPra.notice ? ` ${autoPra.notice}` : "";
+      const receipt = await finishReceipts(fiscal);
+      if (fiscal) {
+        setPraFiscal(fiscal);
+        invalidateOrderFeeds();
+      }
+      applyPayNotices(receipt, praExtra, autoPra.failed);
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
@@ -1928,16 +1873,6 @@ export function PosPage(): JSX.Element {
         sessionUserLabel;
       const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
 
-      const features =
-        taxFeatures.data ??
-        (await fetchTaxFeaturesNormalized().catch(() => ({
-          fbrEnabled: false,
-          praEnabled: false,
-          praFakeEnabled: false,
-          praRealEnabled: false,
-        })));
-      const praMode = resolveAutoPraMode(features);
-
       const printAllReceipts = async (fiscalByBillId: Record<string, PraFiscalInvoice> = {}) => {
         let printOk = true;
         let systemPrinterName: string | null | undefined;
@@ -2004,91 +1939,56 @@ export function PosPage(): JSX.Element {
         return { printOk, systemPrinterName };
       };
 
-      const runPraThenReceipts = async (modeChoice: PraInvoiceMode) => {
-        const praNotices: string[] = [];
-        const fiscals: PraFiscalInvoice[] = [];
-        const fiscalByBillId: Record<string, PraFiscalInvoice> = {};
+      resetAfterBill();
 
-        if (modeChoice === "real") {
-          if (!branch?.code) {
-            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-            const { printOk } = await printAllReceipts();
-            setPrintNotice({
-              tone: "error",
-              message: `${bills.length} split bills created — ${REAL_PRA_NOT_CONNECTED_MSG}`,
-            });
-            void printOk;
-            return;
-          }
-          try {
-            const gate = await checkRealPraConnected(branch.code);
-            if (!gate.connected) {
-              window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-              const { printOk } = await printAllReceipts();
-              setPrintNotice({
-                tone: "error",
-                message: `${bills.length} split bills created — ${REAL_PRA_NOT_CONNECTED_MSG}`,
-              });
-              void printOk;
-              return;
-            }
-          } catch {
-            window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-            await printAllReceipts();
-            setPrintNotice({
-              tone: "error",
-              message: `${bills.length} split bills created — ${REAL_PRA_NOT_CONNECTED_MSG}`,
-            });
-            return;
-          }
-        }
-
-        for (const bill of bills) {
-          try {
-            if (!branch?.code) throw new Error("Branch required for PRA.");
-            const issued = await issuePraForBill({
-              branchCode: branch.code,
-              billId: bill.id,
-              mode: modeChoice,
-            });
-            if (canEmbedPraOnSlip(issued.fiscal)) {
-              fiscals.push(issued.fiscal);
-              fiscalByBillId[bill.id] = issued.fiscal;
-              praNotices.push(praIssuedNotice(modeChoice, issued.fiscal.invoiceNumber));
-            } else {
-              praNotices.push(`PRA missing invoice/QR for ${bill.billRef}`);
-            }
-          } catch (err) {
-            praNotices.push(
-              `PRA failed for ${bill.billRef}: ${err instanceof Error ? err.message : "error"}`,
-            );
-          }
-        }
-        const { printOk } = await printAllReceipts(fiscalByBillId);
-        if (fiscals.length > 0) {
-          setPraFiscal(fiscals[fiscals.length - 1] ?? null);
-        }
-        const praExtra = praNotices.length > 0 ? ` ${praNotices.join(" · ")}` : "";
+      if (!branch?.code) {
+        const { printOk } = await printAllReceipts();
         setPrintNotice(
           noticeFromPrintResult(
             printOk,
-            `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}${praExtra}`,
+            `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
           ),
         );
-      };
-
-      resetAfterBill();
-
-      if (praMode === "fake" || praMode === "real") {
-        await runPraThenReceipts(praMode);
         return;
       }
 
-      const { printOk } = await printAllReceipts();
+      const praNotices: string[] = [];
+      const fiscals: PraFiscalInvoice[] = [];
+      const fiscalByBillId: Record<string, PraFiscalInvoice> = {};
+      let anyBlocked = false;
+
+      for (const bill of bills) {
+        const autoPra = await autoIssuePraForCompletedBill({
+          branchCode: branch.code,
+          billId: bill.id,
+        });
+        if (!autoPra.mode) break;
+        if (autoPra.blockedReal) {
+          anyBlocked = true;
+          praNotices.push(autoPra.notice);
+          break;
+        }
+        if (autoPra.fiscal && canEmbedPraOnSlip(autoPra.fiscal)) {
+          fiscals.push(autoPra.fiscal);
+          fiscalByBillId[bill.id] = autoPra.fiscal;
+        }
+        if (autoPra.notice) praNotices.push(`${bill.billRef}: ${autoPra.notice}`);
+      }
+
+      if (anyBlocked) {
+        window.alert(praNotices[0] || REAL_PRA_NOT_CONNECTED_MSG);
+      }
+
+      const { printOk } = await printAllReceipts(fiscalByBillId);
+      if (fiscals.length > 0) {
+        setPraFiscal(fiscals[fiscals.length - 1] ?? null);
+        invalidateOrderFeeds();
+      }
+      const praExtra = praNotices.length > 0 ? ` ${praNotices.join(" · ")}` : "";
       setPrintNotice(
         noticeFromPrintResult(
-          printOk,
-          `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
+          printOk && !anyBlocked,
+          `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}${praExtra}`,
         ),
       );
     },
@@ -2243,55 +2143,6 @@ export function PosPage(): JSX.Element {
     setCheckoutModal("invoice");
   }
 
-  async function runRpra(): Promise<void> {
-    setPrintNotice(null);
-    if (cart.length === 0 || checkoutMutation.isPending) return;
-
-    const features =
-      taxFeatures.data ??
-      (await fetchTaxFeaturesNormalized().catch(() => ({
-        fbrEnabled: false,
-        praEnabled: false,
-        praFakeEnabled: false,
-        praRealEnabled: false,
-      })));
-    const mode = resolveAutoPraMode(features);
-
-    if (mode === "fake") {
-      setCheckoutModal("pay");
-      return;
-    }
-
-    if (mode === "real") {
-      if (!branch?.code) {
-        setPrintNotice({ message: "Select a branch before uploading to PRA.", tone: "error" });
-        return;
-      }
-      try {
-        const gate =
-          taxStatusQuery.data && isRealPraConnectedStatus(taxStatusQuery.data.pra.status)
-            ? { connected: true }
-            : await checkRealPraConnected(branch.code);
-        if (!gate.connected) {
-          window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-          setPrintNotice({ message: REAL_PRA_NOT_CONNECTED_MSG, tone: "error" });
-          return;
-        }
-      } catch {
-        window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-        setPrintNotice({ message: REAL_PRA_NOT_CONNECTED_MSG, tone: "error" });
-        return;
-      }
-      setCheckoutModal("pay");
-      return;
-    }
-
-    setPrintNotice({
-      message: "PRA is not enabled. Ask Super Admin to enable Fake PRA or Real PRA.",
-      tone: "error",
-    });
-  }
-
   function openHoldBill(): void {
     setCheckoutModal("hold");
   }
@@ -2394,18 +2245,6 @@ export function PosPage(): JSX.Element {
       : mode === "dine-in"
         ? "Select table"
         : null;
-
-  const zoom = POS_ZOOM_LEVELS[zoomIndex] ?? 1;
-
-  function setPosZoomIndex(next: number): void {
-    const clamped = Math.max(0, Math.min(POS_ZOOM_LEVELS.length - 1, next));
-    setZoomIndex(clamped);
-    try {
-      localStorage.setItem(POS_ZOOM_STORAGE_KEY, String(clamped));
-    } catch {
-      // ignore storage errors
-    }
-  }
 
   function toggleHeaderVisible(): void {
     const next = !headerVisible;
@@ -2527,28 +2366,9 @@ export function PosPage(): JSX.Element {
             My printers
           </button>
           <div className="ml-1 flex items-center gap-1.5 border-l border-slate-700/80 pl-2">
-            <button
-              type="button"
-              className={POS_ZOOM_BTN}
-              onClick={() => setPosZoomIndex(zoomIndex - 1)}
-              disabled={zoomIndex === 0}
-            >
-              Zoom out
-            </button>
-            <span className="min-w-[2.5rem] text-center text-[10px] font-medium tabular-nums text-slate-400">
-              {Math.round(zoom * 100)}%
-            </span>
-            <button
-              type="button"
-              className={POS_ZOOM_BTN}
-              onClick={() => setPosZoomIndex(zoomIndex + 1)}
-              disabled={zoomIndex === POS_ZOOM_LEVELS.length - 1}
-            >
-              Zoom in
-            </button>
             <details className="relative">
               <summary
-                className={`${POS_ZOOM_BTN} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}
+                className={`${POS_KEYS_BTN} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}
                 title="Keyboard shortcuts"
               >
                 Keys
@@ -2631,11 +2451,8 @@ export function PosPage(): JSX.Element {
         />
       ) : null}
 
-      {/* Main POS grid */}
-      <div
-        className="grid flex-1 grid-cols-12 gap-3 lg:items-start"
-        style={{ zoom }}
-      >
+      {/* Main POS grid — UI zoom is applied globally from the top nav */}
+      <div className="grid flex-1 grid-cols-12 gap-3 lg:items-start">
         {/* Menu column */}
         <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           {/* Category pills — bar background only; amber on selected */}
@@ -3406,7 +3223,7 @@ export function PosPage(): JSX.Element {
                 {checkoutMutation.isPending ? "…" : "Pay"}
               </button>
             </div>
-            <div className={`mt-2 grid gap-2 ${praFeatureActive ? "grid-cols-3" : "grid-cols-2"}`}>
+            <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 type="button"
                 className={POS_SECONDARY_BTN}
@@ -3424,17 +3241,6 @@ export function PosPage(): JSX.Element {
               >
                 Print invoice
               </button>
-              {praFeatureActive ? (
-                <button
-                  type="button"
-                  className={`${POS_ACTION_BTN} h-9 border border-emerald-600/40 bg-emerald-600/10 font-semibold text-emerald-800 hover:bg-emerald-600/20 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20`}
-                  title="Upload invoice to active PRA (Fake or Real)"
-                  disabled={cart.length === 0 || checkoutMutation.isPending || !branch?.code}
-                  onClick={() => void runRpra()}
-                >
-                  RPRA
-                </button>
-              ) : null}
             </div>
           </div>
         </div>
@@ -3447,6 +3253,7 @@ export function PosPage(): JSX.Element {
             isError={kitchenQuery.isError || ordersQuery.isError}
             onEdit={loadRecentOrderForEdit}
             onPayOrder={loadRecentOrderForPayment}
+            onNotice={(message, tone = "success") => setPrintNotice({ message, tone })}
           />
         </div>
       </div>

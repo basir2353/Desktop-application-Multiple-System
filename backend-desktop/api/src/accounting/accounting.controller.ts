@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  NotFoundException,
   Param,
   Patch,
   Post,
@@ -186,9 +185,10 @@ export class AccountingController {
   @Get("cash-sessions/open")
   @RequirePermissions("pops.read")
   async getOpenCashSession(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
-    const session = await this.accounting.getOpenCashSession(user.organizationId, branchCode?.trim() ?? "");
-    if (!session) throw new NotFoundException("No open cash session");
-    return session;
+    // Return null (200) when none — avoids noisy browser 404 for a normal "no session" state.
+    return (
+      (await this.accounting.getOpenCashSession(user.organizationId, branchCode?.trim() ?? "")) ?? null
+    );
   }
 
   @Post("cash-sessions/open")

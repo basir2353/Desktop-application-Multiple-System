@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { completeBill, fetchOrders } from "../src/api/billing";
+import { fetchTaxFeatures } from "../src/api/admin";
 import { fetchKitchenTickets } from "../src/api/kitchen";
 import { fetchBranchMenu } from "../src/api/menu";
 import {
@@ -27,6 +28,13 @@ import {
 } from "../src/components/ui";
 import { CloseOrderModal } from "../src/components/CloseOrderModal";
 import { formatPkr, formatTimeAgo, formatWhen, isToday } from "../src/lib/orderDisplay";
+import {
+  canEmbedPraOnSlip,
+  checkRealPraConnected,
+  issuePraForBill,
+  praIssuedNotice,
+  REAL_PRA_NOT_CONNECTED_MSG,
+} from "../src/lib/praIssueFlow";
 import { printBillReceipt, printCartBill, printKitchenOrder } from "../src/lib/printBill";
 import { canCloseOrders, isWaiterRole } from "../src/lib/roles";
 import {
@@ -66,6 +74,7 @@ export default function HistoryScreen() {
   const [search, setSearch] = useState("");
   const [closeBill, setCloseBill] = useState<Bill | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [rpraBusyId, setRpraBusyId] = useState<string | null>(null);
   const cashierCanClose = canCloseOrders(claims) && !isWaiterRole(claims);
 
   const ordersQuery = useQuery({
@@ -74,6 +83,13 @@ export default function HistoryScreen() {
     queryFn: () => fetchOrders(branchCode),
     refetchInterval: 15_000,
   });
+
+  const taxQuery = useQuery({
+    queryKey: ["tax-features"],
+    queryFn: fetchTaxFeatures,
+    staleTime: 60_000,
+  });
+  const praFakeEnabled = Boolean(taxQuery.data?.praFakeEnabled);
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
@@ -159,6 +175,41 @@ export default function HistoryScreen() {
     if (!branch) return;
     const ok = await printBillReceipt(branch.name, branch.code, bill);
     setNotice(ok ? `Bill for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
+  }
+
+  async function handleRpra(bill: Bill): Promise<void> {
+    if (!branch) return;
+    setRpraBusyId(bill.id);
+    try {
+      const gate = await checkRealPraConnected(branch.code);
+      if (!gate.connected) throw new Error(REAL_PRA_NOT_CONNECTED_MSG);
+      const issued = await issuePraForBill({
+        branchCode: branch.code,
+        billId: bill.id,
+        mode: "real",
+      });
+      if (!canEmbedPraOnSlip(issued.fiscal)) {
+        setNotice("Real PRA did not return invoice number/QR.");
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: ["orders", branchCode] });
+      const printed = await printBillReceipt(branch.name, branch.code, {
+        ...bill,
+        praMode: "real",
+        praInvoiceNumber: issued.fiscal.invoiceNumber,
+        praQrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
+        praInvoiceId: issued.fiscal.invoiceId,
+      });
+      setNotice(
+        printed
+          ? `${praIssuedNotice("real", issued.fiscal.invoiceNumber)}. Receipt printed.`
+          : praIssuedNotice("real", issued.fiscal.invoiceNumber),
+      );
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not upload to Real PRA.");
+    } finally {
+      setRpraBusyId(null);
+    }
   }
 
   async function handlePrintKitchen(ticket: KitchenTicket): Promise<void> {
@@ -248,7 +299,16 @@ export default function HistoryScreen() {
           </Notice>
         ) : null}
         {notice ? (
-          <Notice tone={notice.includes("success") || notice.includes("closed") || notice.includes("printed") ? "success" : "warning"}>
+          <Notice
+            tone={
+              notice.includes("success") ||
+              notice.includes("closed") ||
+              notice.includes("printed") ||
+              notice.includes("issued")
+                ? "success"
+                : "warning"
+            }
+          >
             {notice}
           </Notice>
         ) : null}
@@ -333,6 +393,15 @@ export default function HistoryScreen() {
                     ? () => void handlePrintKitchenBill(order.ticket)
                     : undefined
                 }
+                onRpra={
+                  praFakeEnabled &&
+                  order.source === "bill" &&
+                  order.bill.status === "completed" &&
+                  order.bill.praMode !== "real"
+                    ? () => void handleRpra(order.bill)
+                    : undefined
+                }
+                rpraBusy={order.source === "bill" && rpraBusyId === order.bill.id}
               />
             ))}
           </View>
@@ -362,6 +431,8 @@ function OrderHistoryCard({
   onClose,
   onPrint,
   onPrintBill,
+  onRpra,
+  rpraBusy,
 }: {
   order: UnifiedOrder;
   menuItems: MenuItem[];
@@ -370,6 +441,8 @@ function OrderHistoryCard({
   onClose?: () => void;
   onPrint?: () => void;
   onPrintBill?: () => void;
+  onRpra?: () => void;
+  rpraBusy?: boolean;
 }) {
   const total = unifiedOrderTotal(order, menuItems);
   const accent = orderStatusAccent(order);
@@ -381,6 +454,10 @@ function OrderHistoryCard({
   const editable = canEditUnifiedOrder(order, userId);
   const ownerLabel = unifiedOrderOwnerLabel(order, userId);
   const sourceLabel = order.source === "kitchen" ? "Kitchen ticket" : "Bill";
+  const praInvoice =
+    order.source === "bill" && order.bill.praInvoiceNumber?.trim()
+      ? order.bill.praInvoiceNumber.trim()
+      : null;
 
   return (
     <View style={[styles.orderCard, { borderLeftColor: accent }]}>
@@ -403,6 +480,13 @@ function OrderHistoryCard({
       <Text style={styles.itemsSummary} numberOfLines={3}>
         {unifiedOrderSummary(order)}
       </Text>
+      {praInvoice ? (
+        <Text style={styles.praInvoiceLine} numberOfLines={2}>
+          PRA Invoice # {praInvoice}
+          {order.source === "bill" && order.bill.praMode === "real" ? " · Real" : ""}
+          {order.source === "bill" && order.bill.praMode === "fake" ? " · FPRA" : ""}
+        </Text>
+      ) : null}
 
       <View style={styles.orderFooter}>
         <View style={styles.orderFooterLeft}>
@@ -427,6 +511,15 @@ function OrderHistoryCard({
         {onPrintBill ? (
           <Pressable onPress={onPrintBill} style={styles.printBtn}>
             <Text style={styles.printBtnText}>Print bill</Text>
+          </Pressable>
+        ) : null}
+        {onRpra ? (
+          <Pressable
+            onPress={onRpra}
+            disabled={rpraBusy}
+            style={[styles.rpraBtn, rpraBusy ? { opacity: 0.55 } : null]}
+          >
+            <Text style={styles.rpraBtnText}>{rpraBusy ? "…" : "RPRA"}</Text>
           </Pressable>
         ) : null}
         {onClose ? (
@@ -575,6 +668,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  praInvoiceLine: {
+    color: "#86efac",
+    fontSize: 12,
+    fontWeight: "700",
+    fontFamily: "monospace",
+  },
   orderFooter: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -649,6 +748,21 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
     fontWeight: "600",
+  },
+  rpraBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.55)",
+    backgroundColor: "rgba(16, 185, 129, 0.18)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minWidth: 72,
+    alignItems: "center",
+  },
+  rpraBtnText: {
+    color: "#6ee7b7",
+    fontSize: 14,
+    fontWeight: "800",
   },
   closeBtn: {
     borderRadius: 10,

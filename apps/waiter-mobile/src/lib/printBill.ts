@@ -468,7 +468,7 @@ function buildReceiptHtml(
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>${formatPkr(bill.subtotal)}</span></div>
     <div class="row"><span>Service (${bill.servicePct}%)</span><span>${formatPkr(bill.service)}</span></div>
-    <div class="row"><span>Tax (${bill.taxPct}%)</span><span>${formatPkr(bill.tax)}</span></div>
+    <div class="row"><span>${pra ? `Sales Tax (${bill.taxPct}%)` : `Tax (${bill.taxPct}%)`}</span><span>${formatPkr(bill.tax)}</span></div>
     ${bill.deliveryChargePkr > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(bill.deliveryChargePkr)}</span></div>` : ""}
     <div class="row grand"><span>Total</span><span>${formatPkr(bill.total)}</span></div>
   </div>

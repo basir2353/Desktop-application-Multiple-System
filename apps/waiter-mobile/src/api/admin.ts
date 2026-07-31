@@ -1,4 +1,10 @@
+import type { TaxAuthorityFeatures } from "@platform/contracts";
 import { authFetch } from "../lib/authFetch";
+import {
+  fetchTaxFeaturesNormalized,
+  normalizeTaxFeatures,
+  updateTaxFeaturesNormalized,
+} from "./pra";
 
 export type OrgUser = {
   id: string;
@@ -10,7 +16,7 @@ export type OrgUser = {
   lastActivityAt?: string | null;
 };
 
-export type TaxFeatures = { fbrEnabled: boolean; praEnabled: boolean };
+export type TaxFeatures = TaxAuthorityFeatures;
 
 export type SecurityOverview = {
   failedLogins24h: number;
@@ -152,41 +158,19 @@ export async function fetchSecurityOverview(branchCode?: string): Promise<Securi
 }
 
 export async function fetchTaxFeatures(): Promise<TaxFeatures> {
-  const res = await authFetch("/v1/tax-authority/features");
-  if (res.status === 404) {
-    // Older Railway builds may not expose this route yet.
-    return { fbrEnabled: false, praEnabled: false };
-  }
-  if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(err?.message ?? `Failed to load tax features (${res.status})`);
-  }
-  return (await res.json()) as TaxFeatures;
+  return fetchTaxFeaturesNormalized();
 }
 
 export async function updateTaxFeatures(patch: {
   praEnabled?: boolean;
   fbrEnabled?: boolean;
+  praFakeEnabled?: boolean;
+  praRealEnabled?: boolean;
 }): Promise<TaxFeatures> {
-  const res = await authFetch("/v1/tax-authority/features", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    if (res.status === 404) {
-      throw new Error(
-        "PRA toggle API is not deployed on this server yet. Redeploy backend-desktop to enable it.",
-      );
-    }
-    if (res.status === 403) {
-      throw new Error(err?.message ?? "Only Admin / Incharge can change PRA settings.");
-    }
-    throw new Error(err?.message ?? `Could not update tax features (${res.status})`);
-  }
-  return (await res.json()) as TaxFeatures;
+  return updateTaxFeaturesNormalized(patch);
 }
+
+export { normalizeTaxFeatures };
 
 export async function updateOrgUser(
   userId: string,

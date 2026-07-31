@@ -6,11 +6,13 @@ import { useSessionStore } from "../../stores/sessionStore";
 /** Super Admin FBR/PRA flags for the signed-in business. */
 export function useTaxAuthorityFeatures() {
   const accessToken = useSessionStore((s) => s.accessToken);
+  const organizationId = useSessionStore((s) => s.claims?.organizationId);
   return useQuery({
-    queryKey: ["tax-authority", "features", accessToken],
-    enabled: Boolean(accessToken),
+    queryKey: ["tax-authority", "features", organizationId, accessToken],
+    enabled: Boolean(accessToken && organizationId),
     queryFn: fetchTaxFeaturesNormalized,
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -22,10 +24,14 @@ export function isPraRealEnabled(f: TaxAuthorityFeatures | undefined): boolean {
   return Boolean(f?.praRealEnabled);
 }
 
+/** Tax module / page available when Super Admin showed at least one section. */
 export function isTaxAuthorityEnabled(
   features:
     | {
-        fbrEnabled: boolean;
+        fbrAllowed?: boolean;
+        praFakeAllowed?: boolean;
+        praRealAllowed?: boolean;
+        fbrEnabled?: boolean;
         praEnabled?: boolean;
         praFakeEnabled?: boolean;
         praRealEnabled?: boolean;
@@ -33,9 +39,24 @@ export function isTaxAuthorityEnabled(
     | undefined,
 ): boolean {
   return Boolean(
-    features?.fbrEnabled ||
+    features?.fbrAllowed ||
+      features?.praFakeAllowed ||
+      features?.praRealAllowed ||
+      features?.fbrEnabled ||
       features?.praEnabled ||
       features?.praFakeEnabled ||
       features?.praRealEnabled,
   );
+}
+
+export function isFbrSectionAllowed(f: TaxAuthorityFeatures | undefined): boolean {
+  return Boolean(f?.fbrAllowed || f?.fbrEnabled);
+}
+
+export function isPraFakeSectionAllowed(f: TaxAuthorityFeatures | undefined): boolean {
+  return Boolean(f?.praFakeAllowed || f?.praFakeEnabled);
+}
+
+export function isPraRealSectionAllowed(f: TaxAuthorityFeatures | undefined): boolean {
+  return Boolean(f?.praRealAllowed || f?.praRealEnabled);
 }

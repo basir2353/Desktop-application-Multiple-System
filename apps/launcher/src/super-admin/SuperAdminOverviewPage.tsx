@@ -128,10 +128,10 @@ export function SuperAdminOverviewPage(): JSX.Element {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
         <h2 className={`text-base font-semibold ${headingClass}`}>Tax summary</h2>
-        <p className={`mt-1 text-sm ${mutedClass}`}>FBR / Fake PRA / Real PRA across all businesses.</p>
+        <p className={`mt-1 text-sm ${mutedClass}`}>FBR / FPRA / Real PRA across all businesses.</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Stat label="FBR on" value={taxCounts.fbr} />
-          <Stat label="Fake PRA on" value={taxCounts.praFake} />
+          <Stat label="FPRA on" value={taxCounts.praFake} />
           <Stat label="Real PRA on" value={taxCounts.praReal} />
           <Stat label="Both PRA" value={taxCounts.praBoth} />
           <Stat label="Neither" value={taxCounts.neither} />

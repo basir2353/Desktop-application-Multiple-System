@@ -7,6 +7,8 @@ export type PosSettings = {
   cashTaxPct: number;
   /** Tax % applied when payment is card (default 8%). */
   cardTaxPct: number;
+  /** Tax % for online / wallet / bank payments (default 8%). */
+  onlineTaxPct: number;
   /** Master toggle — when off, no tax is added to tickets. */
   taxEnabled: boolean;
   /**
@@ -21,9 +23,10 @@ export type PosSettings = {
 export const DEFAULT_POS_SETTINGS: PosSettings = {
   servicePct: 10,
   taxPct: 15,
-  taxByPaymentMethod: false,
+  taxByPaymentMethod: true,
   cashTaxPct: 16,
   cardTaxPct: 8,
+  onlineTaxPct: 8,
   taxEnabled: true,
   autoDiscountEnabled: false,
   autoDiscountPct: 10,
@@ -45,6 +48,7 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     taxByPaymentMethod: input.taxByPaymentMethod ?? DEFAULT_POS_SETTINGS.taxByPaymentMethod,
     cashTaxPct: clampPct(input.cashTaxPct ?? DEFAULT_POS_SETTINGS.cashTaxPct),
     cardTaxPct: clampPct(input.cardTaxPct ?? DEFAULT_POS_SETTINGS.cardTaxPct),
+    onlineTaxPct: clampPct(input.onlineTaxPct ?? DEFAULT_POS_SETTINGS.onlineTaxPct),
     taxEnabled: input.taxEnabled ?? DEFAULT_POS_SETTINGS.taxEnabled,
     autoDiscountEnabled: input.autoDiscountEnabled ?? DEFAULT_POS_SETTINGS.autoDiscountEnabled,
     autoDiscountPct: clampPct(input.autoDiscountPct ?? DEFAULT_POS_SETTINGS.autoDiscountPct, 50),
@@ -87,6 +91,8 @@ export function effectiveTaxPct(
   if (settings.taxByPaymentMethod && paymentMethod) {
     if (paymentMethod === "cash") return settings.cashTaxPct;
     if (paymentMethod === "card") return settings.cardTaxPct;
+    // wallet + bank = online
+    return settings.onlineTaxPct;
   }
   return settings.taxPct;
 }

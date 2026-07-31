@@ -1,18 +1,43 @@
 import { Button } from "@platform/ui";
 import { Link } from "react-router-dom";
+import { instructionsRows, isoDateStamp, writeWorkbookDownload } from "../../../lib/excelTransfer";
 import { PageHeader } from "../../ui/PageHeader";
 
 const reportTypes = [
-  { label: "Kitchen cancellations", to: "/pops/reports/kitchen-cancellations" },
-  { label: "Daily sales", to: null },
-  { label: "Inventory valuation", to: null },
-  { label: "Tax (PRA/FBR)", to: null },
-  { label: "Cashier X-report", to: null },
-  { label: "Payroll summary", to: null },
-  { label: "Rider settlements", to: null },
-  { label: "Peak hours", to: null },
-  { label: "Top sellers", to: null },
+  { label: "Kitchen cancellations", to: "/pops/reports/kitchen-cancellations", status: "Ready" },
+  { label: "Daily sales", to: null, status: "Coming soon" },
+  { label: "Inventory valuation", to: null, status: "Coming soon" },
+  { label: "Tax (PRA/FBR)", to: "/pops/tax", status: "Open in Tax" },
+  { label: "Cashier X-report", to: null, status: "Coming soon" },
+  { label: "Payroll summary", to: null, status: "Coming soon" },
+  { label: "Rider settlements", to: null, status: "Coming soon" },
+  { label: "Peak hours", to: null, status: "Coming soon" },
+  { label: "Top sellers", to: null, status: "Coming soon" },
 ];
+
+function exportReportsIndexExcel(): void {
+  writeWorkbookDownload(
+    [
+      {
+        name: "Instructions",
+        rows: instructionsRows([
+          "This workbook lists available restaurant reports and where to open them in the app.",
+          "Reports marked Ready have a dedicated screen. Use the Path column inside the app.",
+          "Detailed dataset exports are available from each ready report screen.",
+        ]),
+      },
+      {
+        name: "Reports",
+        rows: reportTypes.map((r) => ({
+          Report: r.label,
+          Status: r.status,
+          Path: r.to ?? "",
+        })),
+      },
+    ],
+    `restaurant-reports-index-${isoDateStamp()}.xlsx`,
+  );
+}
 
 export function ReportsPage(): JSX.Element {
   return (
@@ -22,10 +47,18 @@ export function ReportsPage(): JSX.Element {
         subtitle="Saved layouts, comparisons, and scheduled exports."
         actions={
           <>
-            <Button variant="ghost" className="text-xs">
+            <Button
+              variant="ghost"
+              className="text-xs"
+              onClick={() =>
+                window.alert("Scheduled email exports will be available in a later update.")
+              }
+            >
               Schedule email
             </Button>
-            <Button className="text-xs">Export Excel</Button>
+            <Button className="text-xs" onClick={exportReportsIndexExcel}>
+              Export Excel
+            </Button>
           </>
         }
       />
@@ -57,8 +90,12 @@ export function ReportsPage(): JSX.Element {
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4 lg:col-span-3">
           <div className="text-sm text-slate-300">
-            Open <Link className="text-emerald-400 underline" to="/pops/reports/kitchen-cancellations">Kitchen cancellations</Link>{" "}
-            for items sent to kitchen and later canceled.
+            Open{" "}
+            <Link className="text-emerald-400 underline" to="/pops/reports/kitchen-cancellations">
+              Kitchen cancellations
+            </Link>{" "}
+            for items sent to kitchen and later canceled. Use Export Excel for our reports index
+            template.
           </div>
           <div className="mt-6 h-48 rounded border border-dashed border-slate-700 bg-slate-950/40 p-4 text-sm text-slate-500">
             Chart / pivot preview area — wire to reporting engine.

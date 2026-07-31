@@ -192,9 +192,9 @@ export function SuperAdminBusinessesPage(): JSX.Element {
             for full control.
           </p>
           <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-            <strong>FBR / Fake PRA / Real PRA:</strong> toggle in the table below, open{" "}
+            <strong>FBR / FPRA / Real PRA:</strong> toggle in the table below, open{" "}
             <Link to="/super-admin/tax" className="font-semibold underline">
-              FBR / Fake · Real PRA
+              FBR / FPRA · Real PRA
             </Link>
             , or click <strong>Manage</strong> → Tax authority section.
           </p>
@@ -417,31 +417,29 @@ export function SuperAdminBusinessesPage(): JSX.Element {
               <div className="grid gap-2 sm:grid-cols-3">
                 <TaxChip
                   checked={Boolean(form.fbrEnabled)}
-                  title="Enable FBR"
-                  description="Federal Board of Revenue e-invoicing"
+                  title="Show FBR"
+                  description="Admin sees FBR section (they choose Active)"
                   onChange={(checked) => setForm((f) => ({ ...f, fbrEnabled: checked }))}
                 />
                 <TaxChip
                   checked={Boolean(form.praFakeEnabled)}
-                  title="Enable Fake PRA"
-                  description="Simulated PRA invoices (testing)"
+                  title="Show FPRA"
+                  description="Admin sees FPRA section (they choose Active)"
                   onChange={(checked) =>
                     setForm((f) => ({
                       ...f,
                       praFakeEnabled: checked,
-                      ...(checked ? { praRealEnabled: false } : {}),
                     }))
                   }
                 />
                 <TaxChip
                   checked={Boolean(form.praRealEnabled)}
-                  title="Enable Real PRA"
-                  description="Live Punjab Revenue Authority e-invoicing"
+                  title="Show Real PRA"
+                  description="Admin sees Real PRA section (they choose Active)"
                   onChange={(checked) =>
                     setForm((f) => ({
                       ...f,
                       praRealEnabled: checked,
-                      ...(checked ? { praFakeEnabled: false } : {}),
                     }))
                   }
                 />
@@ -507,7 +505,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                 <th className="px-4 py-3 font-medium">System</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Licence</th>
-                <th className="px-4 py-3 font-medium">FBR / Fake PRA / Real PRA</th>
+                <th className="px-4 py-3 font-medium">FBR / FPRA / Real PRA</th>
                 <th className="px-4 py-3 font-medium">Admin</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
@@ -584,12 +582,12 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                                   id: b.id,
                                   fbrEnabled: Boolean(b.fbrEnabled),
                                   praFakeEnabled: checked,
-                                  praRealEnabled: checked ? false : pra.praRealEnabled,
+                                  praRealEnabled: pra.praRealEnabled,
                                 });
                               }}
                             />
                             <span className="font-medium text-amber-800 dark:text-amber-300">
-                              Fake PRA
+                              FPRA
                             </span>
                           </label>
                           <label className="flex items-center gap-2">
@@ -603,7 +601,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                                 taxMut.mutate({
                                   id: b.id,
                                   fbrEnabled: Boolean(b.fbrEnabled),
-                                  praFakeEnabled: checked ? false : pra.praFakeEnabled,
+                                  praFakeEnabled: pra.praFakeEnabled,
                                   praRealEnabled: checked,
                                 });
                               }}

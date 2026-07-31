@@ -1,12 +1,9 @@
 import type { Bill, PraFiscalInvoice, PraInvoiceMode } from "@platform/contracts";
-import { fetchPraFiscalForSource, fetchTaxFeaturesNormalized } from "../../lib/praApi";
+import { fetchPraFiscalForSource } from "../../lib/praApi";
 import { preparePraReceiptFooter, type PraReceiptFooter } from "./praReceiptFooter";
 import {
+  autoIssuePraForCompletedBill,
   canEmbedPraOnSlip,
-  checkRealPraConnected,
-  issuePraForSource,
-  REAL_PRA_NOT_CONNECTED_MSG,
-  resolveAutoPraMode,
 } from "./praIssueFlow";
 
 type PraSourceType = "bill" | "store_sale" | "pharmacy_sale";
@@ -51,60 +48,38 @@ export async function resolvePraFooterForSource(input: {
     return { footer: null, fiscal: null };
   }
 
-  const features = await fetchTaxFeaturesNormalized().catch(() => ({
-    fbrEnabled: false,
-    praEnabled: false,
-    praFakeEnabled: false,
-    praRealEnabled: false,
-  }));
-  const mode = resolveAutoPraMode(features);
-  if (!mode) return { footer: null, fiscal: null };
+  const autoPra = await autoIssuePraForCompletedBill({
+    branchCode: input.branchCode,
+    billId: input.sourceId,
+    sourceType: input.sourceType,
+  });
 
-  if (mode === "real") {
-    try {
-      const gate = await checkRealPraConnected(input.branchCode);
-      if (!gate.connected) {
-        return {
-          footer: null,
-          fiscal: null,
-          notice: REAL_PRA_NOT_CONNECTED_MSG,
-          blockedReal: true,
-        };
-      }
-    } catch {
-      return {
-        footer: null,
-        fiscal: null,
-        notice: REAL_PRA_NOT_CONNECTED_MSG,
-        blockedReal: true,
-      };
-    }
-  }
+  if (!autoPra.mode) return { footer: null, fiscal: null };
 
-  try {
-    const issued = await issuePraForSource({
-      branchCode: input.branchCode,
-      sourceType: input.sourceType,
-      sourceId: input.sourceId,
-      mode: mode as PraInvoiceMode,
-    });
-    if (!canEmbedPraOnSlip(issued.fiscal)) {
-      return { footer: null, fiscal: null, notice: "PRA did not return invoice number/QR." };
-    }
-    const footer = await preparePraReceiptFooter({
-      mode: issued.fiscal.mode,
-      invoiceNumber: issued.fiscal.invoiceNumber,
-      orderRef: input.orderRef,
-      qrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
-    });
-    return { footer, fiscal: issued.fiscal };
-  } catch (err) {
+  if (autoPra.blockedReal) {
     return {
       footer: null,
       fiscal: null,
-      notice: err instanceof Error ? err.message : "PRA issue failed.",
+      notice: autoPra.notice,
+      blockedReal: true,
     };
   }
+
+  if (!canEmbedPraOnSlip(autoPra.fiscal)) {
+    return {
+      footer: null,
+      fiscal: null,
+      notice: autoPra.notice || "PRA did not return invoice number/QR.",
+    };
+  }
+
+  const footer = await preparePraReceiptFooter({
+    mode: autoPra.fiscal!.mode,
+    invoiceNumber: autoPra.fiscal!.invoiceNumber,
+    orderRef: input.orderRef,
+    qrPayload: autoPra.fiscal!.qrPayload?.trim() || autoPra.fiscal!.invoiceNumber,
+  });
+  return { footer, fiscal: autoPra.fiscal, notice: autoPra.failed ? autoPra.notice : undefined };
 }
 
 /**

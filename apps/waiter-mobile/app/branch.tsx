@@ -35,17 +35,19 @@ export default function BranchScreen() {
   const visibleBranches = useMemo(() => {
     const all = branchesQuery.data ?? [];
     const scope = claims?.branchScope;
-    if (!scope || scope === "all") return all;
-    return all.filter((b) => b.code === scope);
+    if (!scope || scope.trim().toLowerCase() === "all") return all;
+    const code = scope.trim().toUpperCase();
+    return all.filter((b) => b.code.toUpperCase() === code);
   }, [branchesQuery.data, claims?.branchScope]);
 
   // Auto-pick when the account is scoped to one branch (waiter/cashier/rider).
   useEffect(() => {
     if (branch || branchesQuery.isLoading || branchesQuery.isError) return;
-    const scope = claims?.branchScope;
+    const scope = claims?.branchScope?.trim() ?? "";
+    const scopeAll = !scope || scope.toLowerCase() === "all";
     const match =
-      scope && scope !== "all"
-        ? branchesQuery.data?.find((b) => b.code === scope)
+      !scopeAll
+        ? branchesQuery.data?.find((b) => b.code.toUpperCase() === scope.toUpperCase())
         : visibleBranches.length === 1
           ? visibleBranches[0]
           : role === "rider"

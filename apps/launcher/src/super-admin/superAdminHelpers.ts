@@ -22,6 +22,7 @@ export const MODULE_TEMPLATES: {
     description: "ERP, menu, POS discount/void, kitchen, closing",
     modules: [
       "pops.read",
+      "pops.menu.create",
       "pops.menu.manage",
       "pops.pos.discount",
       "pops.pos.void",
@@ -36,6 +37,7 @@ export const MODULE_TEMPLATES: {
     description: "POS pack plus stock and purchases",
     modules: [
       "pops.read",
+      "pops.menu.create",
       "pops.menu.manage",
       "pops.pos.discount",
       "pops.pos.void",
@@ -52,6 +54,7 @@ export const MODULE_TEMPLATES: {
     description: "POS + inventory + accounting + HR",
     modules: [
       "pops.read",
+      "pops.menu.create",
       "pops.menu.manage",
       "pops.pos.discount",
       "pops.pos.void",
@@ -76,7 +79,7 @@ export function businessNotesKey(businessId: string): string {
   return `business_notes_${businessId}`;
 }
 
-/** Resolve Fake/Real PRA flags; legacy praEnabled alone → Real PRA. Mutual exclusive (prefer Real). */
+/** Resolve Fake/Real PRA section flags from Business (Super Admin = Allowed). Both may be on. */
 export function resolvePraFlags(b: {
   praEnabled?: boolean | null;
   praFakeEnabled?: boolean | null;
@@ -86,9 +89,6 @@ export function resolvePraFlags(b: {
   let praRealEnabled = Boolean(b.praRealEnabled);
   if (Boolean(b.praEnabled) && !praFakeEnabled && !praRealEnabled) {
     praRealEnabled = true;
-  }
-  if (praFakeEnabled && praRealEnabled) {
-    praFakeEnabled = false;
   }
   return {
     praFakeEnabled,
@@ -149,7 +149,7 @@ export const SUPER_ADMIN_PAGE_TITLES: Record<string, string> = {
   "/super-admin/businesses": "Businesses",
   "/super-admin/users": "Users",
   "/super-admin/licences": "Licences & modules",
-  "/super-admin/tax": "FBR / Fake PRA / Real PRA",
+  "/super-admin/tax": "FBR / FPRA / Real PRA",
   "/super-admin/payments": "Payments",
   "/super-admin/health": "Health & API",
   "/super-admin/security": "Security",

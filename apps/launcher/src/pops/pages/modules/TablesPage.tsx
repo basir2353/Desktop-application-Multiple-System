@@ -1,5 +1,10 @@
 import { Button } from "@platform/ui";
-import type { RestaurantTable, SeatingSection } from "@platform/contracts";
+import {
+  canCreateMenuCatalog,
+  canManageMenuCatalog,
+  type RestaurantTable,
+  type SeatingSection,
+} from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "../../../stores/sessionStore";
@@ -20,9 +25,9 @@ export function TablesPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
-  const canManage =
-    claims?.permissions.includes("*") ||
-    claims?.permissions.includes("pops.menu.manage");
+  const perms = claims?.permissions ?? [];
+  const canCreate = canCreateMenuCatalog(perms);
+  const canEdit = canManageMenuCatalog(perms);
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [newSectionName, setNewSectionName] = useState("");
@@ -31,7 +36,7 @@ export function TablesPage(): JSX.Element {
 
   const floorQuery = useQuery({
     queryKey: ["tables", "admin", branch?.code],
-    enabled: Boolean(branch?.code && canManage),
+    enabled: Boolean(branch?.code && canCreate),
     queryFn: () => fetchBranchFloorAdmin(branch!.code),
   });
 
@@ -110,8 +115,12 @@ export function TablesPage(): JSX.Element {
     return <p className="text-sm text-slate-500">Select a branch to manage tables.</p>;
   }
 
-  if (!canManage) {
-    return <p className="text-sm text-slate-500">You need menu management permission to configure tables.</p>;
+  if (!canCreate) {
+    return (
+      <p className="text-sm text-slate-500">
+        You need menu add or manage permission to configure tables.
+      </p>
+    );
   }
 
   return (
@@ -119,9 +128,16 @@ export function TablesPage(): JSX.Element {
       <ModuleToolbar
         title="Tables"
         trailing={
-          <Button type="button" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => void floorQuery.refetch()}>
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            {!canEdit ? (
+              <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-200">
+                Add only — edit/delete locked
+              </span>
+            ) : null}
+            <Button type="button" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => void floorQuery.refetch()}>
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -180,7 +196,7 @@ export function TablesPage(): JSX.Element {
             ))}
           </ul>
 
-          {selectedSection ? (
+          {selectedSection && canEdit ? (
             <Button
               type="button"
               variant="ghost"
@@ -264,24 +280,28 @@ export function TablesPage(): JSX.Element {
                         </Badge>
                       ),
                     },
-                    {
-                      key: "actions",
-                      header: "",
-                      id: "actions",
-                      render: (r: RestaurantTable) => (
-                        <button
-                          type="button"
-                          className={`text-xs ${linkDangerClass}`}
-                          onClick={() => {
-                            if (window.confirm(`Remove table ${r.tableNumber}?`)) {
-                              deleteTableMutation.mutate(r.id);
-                            }
-                          }}
-                        >
-                          Remove
-                        </button>
-                      ),
-                    },
+                    ...(canEdit
+                      ? [
+                          {
+                            key: "actions" as const,
+                            header: "",
+                            id: "actions",
+                            render: (r: RestaurantTable) => (
+                              <button
+                                type="button"
+                                className={`text-xs ${linkDangerClass}`}
+                                onClick={() => {
+                                  if (window.confirm(`Remove table ${r.tableNumber}?`)) {
+                                    deleteTableMutation.mutate(r.id);
+                                  }
+                                }}
+                              >
+                                Remove
+                              </button>
+                            ),
+                          },
+                        ]
+                      : []),
                   ]}
                 />
               )}

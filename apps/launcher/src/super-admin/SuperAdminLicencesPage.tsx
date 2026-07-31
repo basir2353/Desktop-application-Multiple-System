@@ -366,7 +366,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                     active={Boolean(b.fbrEnabled || pra.praEnabled)}
                     lines={[
                       `FBR ${b.fbrEnabled ? "ON" : "OFF"}`,
-                      `Fake PRA ${pra.praFakeEnabled ? "ON" : "OFF"}`,
+                      `FPRA ${pra.praFakeEnabled ? "ON" : "OFF"}`,
                       `Real PRA ${pra.praRealEnabled ? "ON" : "OFF"}`,
                     ]}
                     onClick={() => openBusiness(b, "tax")}
@@ -616,8 +616,8 @@ export function SuperAdminLicencesPage(): JSX.Element {
                           <div>
                             <h3 className="text-sm font-semibold">Tax authorities</h3>
                             <p className={`mt-1 text-xs ${mutedClass}`}>
-                              When on, business admins see Tax &amp; compliance and can connect FBR /
-                              PRA credentials.
+                              When on, business admins <strong>see</strong> that Tax section. They
+                              control Active / Inactive and credentials themselves.
                             </p>
                           </div>
                           <div className="grid gap-3 sm:grid-cols-3">
@@ -635,9 +635,9 @@ export function SuperAdminLicencesPage(): JSX.Element {
                                 onChange={(e) => setFbrEnabled(e.target.checked)}
                               />
                               <span>
-                                <span className="font-semibold">FBR</span>
+                                <span className="font-semibold">Show FBR</span>
                                 <span className={`mt-1 block text-xs ${mutedClass}`}>
-                                  Federal Board of Revenue e-invoicing
+                                  Admin sees FBR section (they choose Active)
                                 </span>
                               </span>
                             </label>
@@ -655,13 +655,12 @@ export function SuperAdminLicencesPage(): JSX.Element {
                                 onChange={(e) => {
                                   const checked = e.target.checked;
                                   setPraFakeEnabled(checked);
-                                  if (checked) setPraRealEnabled(false);
                                 }}
                               />
                               <span>
-                                <span className="font-semibold">Fake PRA</span>
+                                <span className="font-semibold">Show FPRA</span>
                                 <span className={`mt-1 block text-xs ${mutedClass}`}>
-                                  Simulated PRA invoices (testing)
+                                  Admin sees FPRA section (they choose Active)
                                 </span>
                               </span>
                             </label>
@@ -679,13 +678,12 @@ export function SuperAdminLicencesPage(): JSX.Element {
                                 onChange={(e) => {
                                   const checked = e.target.checked;
                                   setPraRealEnabled(checked);
-                                  if (checked) setPraFakeEnabled(false);
                                 }}
                               />
                               <span>
-                                <span className="font-semibold">Real PRA</span>
+                                <span className="font-semibold">Show Real PRA</span>
                                 <span className={`mt-1 block text-xs ${mutedClass}`}>
-                                  Live Punjab Revenue Authority e-invoicing
+                                  Admin sees Real PRA section (they choose Active)
                                 </span>
                               </span>
                             </label>

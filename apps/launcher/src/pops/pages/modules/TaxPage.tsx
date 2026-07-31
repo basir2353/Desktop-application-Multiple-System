@@ -2,27 +2,31 @@ import type { PraFiscalInvoice, TaxInvoice } from "@platform/contracts";
 import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchPraFiscalForSource, updateTaxFeaturesNormalized } from "../../../lib/praApi";
 import {
   connectFbr,
-  connectPra,
   fetchTaxAuthorityStatus,
   fetchTaxInvoices,
   refreshFbrToken,
-  refreshPraToken,
 } from "../../../lib/taxAuthorityApi";
 import { useActiveSystemId } from "../../../hooks/useActiveSystemId";
 import { usePopsStore } from "../../../stores/popsStore";
 import { fetchCompletedOrders } from "../../api/billing";
 import {
+  isFbrSectionAllowed,
   isPraFakeEnabled,
+  isPraFakeSectionAllowed,
   isPraRealEnabled,
+  isPraRealSectionAllowed,
   isTaxAuthorityEnabled,
   useTaxAuthorityFeatures,
 } from "../../hooks/useTaxAuthorityFeatures";
 import { printIssuedPraSlip } from "../../lib/praIssueFlow";
 import { preparePraReceiptFooter } from "../../lib/praReceiptFooter";
+import { PraPeriodReportsPanel } from "../../components/PraPeriodReportsPanel";
+import { PraRealIntegrationPanel } from "../../components/PraRealIntegrationPanel";
+import { PraTodayDashboard } from "../../components/PraTodayDashboard";
 import {
   billToPrintInput,
   printHtmlDocumentAndWait,
@@ -42,7 +46,7 @@ import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
 import { useSessionStore } from "../../../stores/sessionStore";
 
-/** On/Off switch for FBR / Fake PRA / Real PRA on Tax pages. */
+/** On/Off switch for FBR / FPRA / Real PRA on Tax pages. */
 function FeatureActiveToggle({
   checked,
   disabled,
@@ -119,6 +123,9 @@ type FbrForm = {
 };
 
 type PraForm = {
+  posId: string;
+  accessCode: string;
+  token: string;
   registrationNumber: string;
   username: string;
   password: string;
@@ -141,21 +148,31 @@ const emptyFbr = (): FbrForm => ({
   clientSecret: "",
   posId: "",
   terminalId: "",
-  environment: "sandbox",
+  environment: "production",
 });
 
 const emptyPra = (branchCode = ""): PraForm => ({
+  posId: "",
+  accessCode: "",
+  token: "",
   registrationNumber: "",
   username: "",
   password: "",
   praBranchCode: branchCode,
-  environment: "sandbox",
+  environment: "production",
 });
 
 function statusTone(status: string): "success" | "warning" | "danger" | "neutral" {
   if (status === "connected" || status === "verified" || status === "submitted") return "success";
-  if (status === "queued" || status === "submitting" || status === "expired") return "warning";
-  if (status === "failed" || status === "error") return "danger";
+  if (
+    status === "queued" ||
+    status === "pending" ||
+    status === "submitting" ||
+    status === "expired"
+  ) {
+    return "warning";
+  }
+  if (status === "failed" || status === "error" || status === "cancelled") return "danger";
   return "neutral";
 }
 
@@ -193,10 +210,13 @@ export function TaxPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const claims = useSessionStore((s) => s.claims);
+  const organizationId = claims?.organizationId;
   const systemId = useActiveSystemId();
   const { pathname } = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const section = useMemo(() => taxSectionFromPath(pathname), [pathname]);
+  const praViewParam = searchParams.get("view");
   const qc = useQueryClient();
   const branchCode = branch?.code || MAIN_SYSTEM_BRANCH_CODE;
   const branchLabel = branch?.name || MAIN_SYSTEM_BRANCH_NAME;
@@ -217,17 +237,31 @@ export function TaxPage(): JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [invoiceModeFilter, setInvoiceModeFilter] = useState("all");
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("all");
 
   const statusQuery = useQuery({
-    queryKey: ["tax-authority", "status", branchCode],
-    enabled: taxEnabled,
+    queryKey: ["tax-authority", "status", organizationId, branchCode],
+    enabled: taxEnabled && Boolean(organizationId),
     queryFn: () => fetchTaxAuthorityStatus(branchCode),
   });
 
   const invoicesQuery = useQuery({
-    queryKey: ["tax-authority", "invoices", branchCode],
-    enabled: taxEnabled,
-    queryFn: () => fetchTaxInvoices(branchCode),
+    queryKey: [
+      "tax-authority",
+      "invoices",
+      organizationId,
+      branchCode,
+      invoiceModeFilter,
+      invoiceStatusFilter,
+    ],
+    enabled: taxEnabled && Boolean(organizationId) && section === "invoices",
+    queryFn: () =>
+      fetchTaxInvoices(branchCode, {
+        invoiceMode: invoiceModeFilter === "all" ? undefined : invoiceModeFilter,
+        status: invoiceStatusFilter === "all" ? undefined : invoiceStatusFilter,
+        limit: 200,
+      }),
     refetchInterval: 30_000,
   });
 
@@ -266,6 +300,9 @@ export function TaxPage(): JSX.Element {
       ...(prev.clientSecret ? { clientSecret: prev.clientSecret } : {}),
     }));
     setPra((prev) => ({
+      posId: data.pra.posId || data.pra.registrationNumber || prev.posId || "",
+      accessCode: prev.accessCode || "",
+      token: prev.token || "",
       registrationNumber: data.pra.registrationNumber ?? "",
       username: data.pra.username ?? "",
       password: prev.password || "",
@@ -331,7 +368,7 @@ export function TaxPage(): JSX.Element {
       const mode = saved.praRealEnabled
         ? "Real PRA ON"
         : saved.praFakeEnabled
-          ? "Fake PRA ON"
+          ? "FPRA ON"
           : "PRA off";
       setMessage(
         `Saved — FBR ${saved.fbrEnabled ? "ON" : "OFF"} · ${mode}. New sales use the active mode.`,
@@ -344,80 +381,8 @@ export function TaxPage(): JSX.Element {
     },
   });
 
-  const connectPraMut = useMutation({
-    mutationFn: () =>
-      connectPra({
-        branchCode,
-        company,
-        registrationNumber: pra.registrationNumber,
-        username: pra.username,
-        password: pra.password,
-        praBranchCode: pra.praBranchCode,
-        environment: pra.environment,
-      }),
-    onSuccess: async (res) => {
-      setError(null);
-      setPra((prev) => ({ ...prev, password: "" }));
-      // Once Real PRA connects, switch active mode to Real (turn Fake off).
-      try {
-        await updateTaxFeaturesNormalized({
-          praRealEnabled: true,
-          praFakeEnabled: false,
-        });
-        setMessage(`${res.message} · Real PRA is now Active (Fake PRA off).`);
-      } catch {
-        setMessage(res.message);
-      }
-      await qc.invalidateQueries({ queryKey: ["tax-authority"] });
-    },
-    onError: (err) => {
-      setMessage(null);
-      setError(err instanceof Error ? err.message : "Connect failed");
-    },
-  });
-
-  const connectPraSmart = () => {
-    setError(null);
-    setMessage(null);
-    if (
-      !company.companyName ||
-      !company.ntn ||
-      !company.strn ||
-      !company.businessType ||
-      !company.province ||
-      !company.branchCode ||
-      !pra.registrationNumber ||
-      !pra.praBranchCode
-    ) {
-      setError("Please complete all required fields.");
-      return;
-    }
-    if (!pra.password.trim()) {
-      if (statusQuery.data?.pra.passwordMasked) {
-        refreshPraMut.mutate();
-        return;
-      }
-      setError("Please complete all required fields.");
-      return;
-    }
-    connectPraMut.mutate();
-  };
-
   const refreshFbrMut = useMutation({
     mutationFn: () => refreshFbrToken(branchCode),
-    onSuccess: async (res) => {
-      setError(null);
-      setMessage(res.message);
-      await qc.invalidateQueries({ queryKey: ["tax-authority"] });
-    },
-    onError: (err) => {
-      setMessage(null);
-      setError(err instanceof Error ? err.message : "Refresh failed");
-    },
-  });
-
-  const refreshPraMut = useMutation({
-    mutationFn: () => refreshPraToken(branchCode),
     onSuccess: async (res) => {
       setError(null);
       setMessage(res.message);
@@ -459,27 +424,43 @@ export function TaxPage(): JSX.Element {
 
   const fbrStatus = statusQuery.data?.fbr.status ?? "disconnected";
   const praStatus = statusQuery.data?.pra.status ?? "disconnected";
+  const fbrAllowed =
+    statusQuery.data?.fbrAllowed ?? isFbrSectionAllowed(taxFeatures.data);
+  const praFakeAllowed =
+    statusQuery.data?.praFakeAllowed ?? isPraFakeSectionAllowed(taxFeatures.data);
+  const praRealAllowed =
+    statusQuery.data?.praRealAllowed ?? isPraRealSectionAllowed(taxFeatures.data);
+  // Active flags (Org Admin control). Mutual exclusive — prefer Real if both somehow true.
   const fbrEnabled = statusQuery.data?.fbrEnabled ?? taxFeatures.data?.fbrEnabled ?? false;
-  // Mutual exclusive at runtime — prefer Real if both somehow true.
   let praFakeEnabled =
     statusQuery.data?.praFakeEnabled ?? isPraFakeEnabled(taxFeatures.data);
   let praRealEnabled =
     statusQuery.data?.praRealEnabled ?? isPraRealEnabled(taxFeatures.data);
   if (praFakeEnabled && praRealEnabled) {
-    praFakeEnabled = false;
+    praRealEnabled = false;
   }
   const invoices = invoicesQuery.data ?? [];
-  // Dedicated tabs always show (with Active toggle). Overview only lists currently Active panels.
-  const showCompany = section === "overview";
-  const showFbr = section === "fbr" || (section === "overview" && fbrEnabled);
-  const showPraReal =
-    section === "pra-real" || (section === "overview" && praRealEnabled);
-  const showPraFake =
-    section === "pra-fake" || (section === "overview" && praFakeEnabled);
-  const showInvoices = section === "overview" || section === "invoices";
+  // Separate tabs: setup forms only on their section (not Overview).
+  const showOverview = section === "overview";
+  const showFbr = section === "fbr" && fbrAllowed;
+  const showPraReal = section === "pra-real" && praRealAllowed;
+  const showPraFake = section === "pra-fake" && praFakeAllowed;
+  const showInvoices = section === "invoices";
+  const defaultPraView =
+    (section === "pra-fake" && praFakeEnabled) || (section === "pra-real" && praRealEnabled)
+      ? "dashboard"
+      : "setup";
+  const activePraView =
+    praViewParam === "setup" || praViewParam === "dashboard" || praViewParam === "reports"
+      ? praViewParam
+      : defaultPraView;
   const statusCols =
-    [fbrEnabled, praRealEnabled, praFakeEnabled].filter(Boolean).length || 1;
+    [fbrAllowed, praRealAllowed, praFakeAllowed].filter(Boolean).length || 1;
   const toggleBusy = featuresMut.isPending;
+
+  function setPraSubView(view: "setup" | "dashboard" | "reports"): void {
+    setSearchParams({ view }, { replace: true });
+  }
 
   function setFbrActive(on: boolean): void {
     featuresMut.mutate({ fbrEnabled: on });
@@ -656,31 +637,31 @@ export function TaxPage(): JSX.Element {
         }
       />
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3 dark:border-slate-700">
         {(
           [
             { to: "/pops/tax", label: "Overview", id: "overview" as const, show: true },
             {
               to: "/pops/tax/fbr",
-              label: "FBR Integration",
+              label: "FBR",
               id: "fbr" as const,
-              show: true,
-            },
-            {
-              to: "/pops/tax/pra-real",
-              label: "Real PRA Integration",
-              id: "pra-real" as const,
-              show: true,
+              show: fbrAllowed,
             },
             {
               to: "/pops/tax/pra-fake",
-              label: "Fake PRA Integration",
+              label: "FPRA",
               id: "pra-fake" as const,
-              show: true,
+              show: praFakeAllowed,
+            },
+            {
+              to: "/pops/tax/pra-real",
+              label: "Real PRA",
+              id: "pra-real" as const,
+              show: praRealAllowed,
             },
             {
               to: "/pops/tax/invoices",
-              label: "Invoice queue",
+              label: "Invoices",
               id: "invoices" as const,
               show: true,
             },
@@ -692,9 +673,9 @@ export function TaxPage(): JSX.Element {
               key={tab.id}
               to={tab.to}
               className={[
-                "rounded-lg px-3 py-1.5 text-sm font-semibold transition",
+                "rounded-lg px-3.5 py-2 text-sm font-semibold transition",
                 section === tab.id
-                  ? "bg-amber-500 text-slate-950"
+                  ? "bg-slate-900 text-white shadow-sm dark:bg-amber-500 dark:text-slate-950"
                   : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
               ].join(" ")}
             >
@@ -707,55 +688,10 @@ export function TaxPage(): JSX.Element {
         <div
           className={`${panelClass} border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100`}
         >
-          FBR / PRA is not enabled yet for this business. After Super Admin turns on FBR and/or PRA, return
-          here to connect credentials. Sales will then submit fiscal invoices automatically.
+          No FBR / PRA sections are available yet. Ask the platform Super Admin to show FBR and/or PRA
+          for this business, then use Active here to turn them on.
         </div>
       ) : null}
-
-      <div
-        id="tax-section-overview"
-        className={`grid gap-3 ${statusCols >= 2 ? "sm:grid-cols-2" : ""} ${statusCols >= 3 ? "lg:grid-cols-3" : ""} ${panelClass} p-4`}
-      >
-        {fbrEnabled ? (
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-500">FBR status</p>
-            <div className="mt-1 flex items-center gap-2">
-              <Badge tone={statusTone(fbrStatus)}>
-                {fbrStatus === "connected" ? "Connected" : fbrStatus}
-              </Badge>
-              <span className={`text-sm ${mutedClass}`}>
-                Last: {formatWhen(statusQuery.data?.fbr.connectedAt)}
-              </span>
-            </div>
-          </div>
-        ) : null}
-        {praRealEnabled ? (
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-500">Real PRA status</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <Badge tone="success">Real PRA assigned</Badge>
-              <Badge tone={statusTone(praStatus)}>
-                {praStatus === "connected" ? "Connected" : praStatus}
-              </Badge>
-              <span className={`text-sm ${mutedClass}`}>
-                Last: {formatWhen(statusQuery.data?.pra.connectedAt)}
-              </span>
-            </div>
-          </div>
-        ) : null}
-        {praFakeEnabled ? (
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-500">Fake PRA status</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <Badge tone="success">Active</Badge>
-              <Badge tone="success">PRA ready</Badge>
-              <span className={`text-sm ${mutedClass}`}>
-                Invoices generate like PRA on sales
-              </span>
-            </div>
-          </div>
-        ) : null}
-      </div>
 
       {message ? (
         <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
@@ -768,9 +704,87 @@ export function TaxPage(): JSX.Element {
         </p>
       ) : null}
 
-      {showCompany ? (
-        <section className={`${panelClass} space-y-4 p-4`}>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Company Information</h3>
+      {showOverview ? (
+        <div
+          id="tax-section-overview"
+          className={`grid gap-3 ${statusCols >= 2 ? "sm:grid-cols-2" : ""} ${statusCols >= 3 ? "lg:grid-cols-3" : ""} ${panelClass} p-4`}
+        >
+          {fbrAllowed ? (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">FBR</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Badge tone={fbrEnabled ? "success" : "neutral"}>
+                  {fbrEnabled ? "Active" : "Off"}
+                </Badge>
+                {fbrEnabled ? (
+                  <Badge tone={statusTone(fbrStatus)}>
+                    {fbrStatus === "connected" ? "Connected" : fbrStatus}
+                  </Badge>
+                ) : null}
+              </div>
+              <Link to="/pops/tax/fbr" className={`mt-2 inline-block text-sm font-medium text-amber-700 hover:underline dark:text-amber-400`}>
+                Open FBR →
+              </Link>
+            </div>
+          ) : null}
+          {praFakeAllowed ? (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">FPRA</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Badge tone={praFakeEnabled ? "success" : "neutral"}>
+                  {praFakeEnabled ? "Active" : "Off"}
+                </Badge>
+              </div>
+              <Link
+                to="/pops/tax/pra-fake"
+                className="mt-2 inline-block text-sm font-medium text-amber-700 hover:underline dark:text-amber-400"
+              >
+                Open FPRA →
+              </Link>
+            </div>
+          ) : null}
+          {praRealAllowed ? (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Real PRA</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Badge tone={praRealEnabled ? "success" : "neutral"}>
+                  {praRealEnabled ? "Active" : "Off"}
+                </Badge>
+                {praRealEnabled ? (
+                  <Badge tone={statusTone(praStatus)}>
+                    {praStatus === "connected" ? "Connected" : praStatus}
+                  </Badge>
+                ) : null}
+              </div>
+              <Link
+                to="/pops/tax/pra-real"
+                className="mt-2 inline-block text-sm font-medium text-amber-700 hover:underline dark:text-amber-400"
+              >
+                Open Real PRA →
+              </Link>
+            </div>
+          ) : null}
+          {!fbrAllowed && !praFakeAllowed && !praRealAllowed ? (
+            <p className={`text-sm ${mutedClass}`}>No tax sections granted yet.</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showFbr ? (
+        <section id="tax-section-fbr" className={`${panelClass} space-y-4 p-4`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+              FBR Integration
+            </h3>
+            {canToggleFeatures ? (
+              <FeatureActiveToggle
+                checked={fbrEnabled}
+                disabled={toggleBusy}
+                onChange={setFbrActive}
+                label={fbrEnabled ? "Active" : "Off"}
+              />
+            ) : null}
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {(
               [
@@ -792,24 +806,6 @@ export function TaxPage(): JSX.Element {
                 />
               </label>
             ))}
-          </div>
-        </section>
-      ) : null}
-
-      {showFbr ? (
-        <section id="tax-section-fbr" className={`${panelClass} space-y-4 p-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-              FBR Integration
-            </h3>
-            {canToggleFeatures ? (
-              <FeatureActiveToggle
-                checked={fbrEnabled}
-                disabled={toggleBusy}
-                onChange={setFbrActive}
-                label={fbrEnabled ? "Active" : "Off"}
-              />
-            ) : null}
           </div>
           {fbrEnabled ? (
             <>
@@ -895,151 +891,184 @@ export function TaxPage(): JSX.Element {
         </section>
       ) : null}
 
-      {showPraReal ? (
-        <section id="tax-section-pra-real" className={`${panelClass} space-y-4 p-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-              Real PRA Integration
-            </h3>
-            {canToggleFeatures ? (
-              <FeatureActiveToggle
-                checked={praRealEnabled}
-                disabled={toggleBusy}
-                onChange={setRealPraActive}
-                label={praRealEnabled ? "Active" : "Off"}
-              />
-            ) : null}
-          </div>
+      {showPraFake ? (
+        <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            {praRealEnabled ? <Badge tone="success">Real PRA Active</Badge> : (
-              <Badge tone="neutral">Not active — Fake PRA can stay on</Badge>
-            )}
-            <Badge tone={statusTone(praStatus)}>
-              {praStatus === "connected" ? "Connected" : praStatus}
-            </Badge>
-          </div>
-          <p className={`text-sm ${mutedClass}`}>
-            Connect Real PRA credentials below. After a successful Connect, Real becomes Active and
-            Fake turns off automatically. You can also flip Active here anytime (Fake ↔ Real are
-            mutually exclusive).
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm">
-              <span className="mb-1 block text-slate-600 dark:text-slate-300">
-                Registration Number
-              </span>
-              <input
-                className={fieldInputClass}
-                value={pra.registrationNumber}
-                onChange={(e) =>
-                  setPra((prev) => ({ ...prev, registrationNumber: e.target.value }))
-                }
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-slate-600 dark:text-slate-300">Username</span>
-              <input
-                className={fieldInputClass}
-                value={pra.username}
-                onChange={(e) => setPra((prev) => ({ ...prev, username: e.target.value }))}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-slate-600 dark:text-slate-300">
-                Password / API Key
-              </span>
-              <input
-                type="password"
-                className={fieldInputClass}
-                placeholder={statusQuery.data?.pra.passwordMasked ?? "••••••••"}
-                value={pra.password}
-                onChange={(e) => setPra((prev) => ({ ...prev, password: e.target.value }))}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-slate-600 dark:text-slate-300">Branch Code</span>
-              <input
-                className={fieldInputClass}
-                value={pra.praBranchCode}
-                onChange={(e) =>
-                  setPra((prev) => ({ ...prev, praBranchCode: e.target.value }))
-                }
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-slate-600 dark:text-slate-300">Environment</span>
-              <select
-                className={fieldSelectClass}
-                value={pra.environment}
-                onChange={(e) =>
-                  setPra((prev) => ({
-                    ...prev,
-                    environment: e.target.value === "production" ? "production" : "sandbox",
-                  }))
-                }
+            {(
+              [
+                ["setup", "Setup"],
+                ["dashboard", "Dashboard"],
+                ["reports", "Reports"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setPraSubView(id)}
+                className={[
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                  activePraView === id
+                    ? "bg-amber-500/90 text-slate-950"
+                    : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+                ].join(" ")}
               >
-                <option value="sandbox">Sandbox</option>
-                <option value="production">Production</option>
-              </select>
-            </label>
+                {label}
+              </button>
+            ))}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              disabled={connectPraMut.isPending || refreshPraMut.isPending}
-              onClick={connectPraSmart}
-            >
-              {connectPraMut.isPending || refreshPraMut.isPending
-                ? "Connecting…"
-                : "Connect PRA"}
-            </Button>
-          </div>
-        </section>
+          {activePraView === "setup" ? (
+            <section id="tax-section-pra-fake" className={`${panelClass} space-y-3 p-4`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                  FPRA Setup
+                </h3>
+                {canToggleFeatures ? (
+                  <FeatureActiveToggle
+                    checked={praFakeEnabled}
+                    disabled={toggleBusy}
+                    onChange={setFakePraActive}
+                    label={praFakeEnabled ? "Active" : "Off"}
+                  />
+                ) : null}
+              </div>
+              {praFakeEnabled ? (
+                <p className={`text-sm ${mutedClass}`}>
+                  Sales auto-issue FPRA fiscal on Pay. Use <strong>RPRA</strong> on a paid ticket to
+                  upload that invoice to Real PRA and print the Real slip (connect Real credentials
+                  first).
+                </p>
+              ) : (
+                <p className={`text-sm ${mutedClass}`}>
+                  FPRA is off. Turn Active on to use local fiscal Invoice # + QR (this turns Real
+                  PRA off).
+                </p>
+              )}
+            </section>
+          ) : null}
+          {activePraView === "dashboard" ? (
+            <PraTodayDashboard
+              branchCode={branchCode}
+              mode="fake"
+              showActivityLogs={false}
+              showRetry={false}
+              onMessage={setMessage}
+              onError={setError}
+            />
+          ) : null}
+          {activePraView === "reports" ? (
+            <PraPeriodReportsPanel branchCode={branchCode} mode="fake" />
+          ) : null}
+        </div>
       ) : null}
 
-      {showPraFake ? (
-        <section id="tax-section-pra-fake" className={`${panelClass} space-y-3 p-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-              Fake PRA Integration
-            </h3>
-            {canToggleFeatures ? (
-              <FeatureActiveToggle
-                checked={praFakeEnabled}
-                disabled={toggleBusy}
-                onChange={setFakePraActive}
-                label={praFakeEnabled ? "Active" : "Off"}
-              />
-            ) : null}
+      {showPraReal ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["setup", "Setup"],
+                ["dashboard", "Dashboard"],
+                ["reports", "Reports"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setPraSubView(id)}
+                className={[
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                  activePraView === id
+                    ? "bg-amber-500/90 text-slate-950"
+                    : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+                ].join(" ")}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          {praFakeEnabled ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <Badge tone="success">Enabled</Badge>
-                <Badge tone="success">PRA ready</Badge>
-              </div>
-              <p className={`text-sm ${mutedClass}`}>
-                Invoices generate like PRA on sales. Fiscal invoices auto-generate when you take
-                payment. Receipts match Real PRA (no demo labels). No PRA credentials needed. Fake
-                stays Active until Real PRA is connected — or turn Real Active yourself. Only one
-                PRA mode can be Active.
-              </p>
-            </>
-          ) : (
-            <p className={`text-sm ${mutedClass}`}>
-              Fake PRA is off. Turn Active on to use local fiscal Invoice # + QR (this turns Real PRA
-              off).
-            </p>
-          )}
-        </section>
+          {activePraView === "setup" ? (
+            <PraRealIntegrationPanel
+              branchCode={branchCode}
+              branchLabel={branchLabel}
+              praRealEnabled={praRealEnabled}
+              credentialsUnlocked={Boolean(praFakeEnabled)}
+              setupOnly
+              canToggleFeatures={canToggleFeatures && praRealAllowed}
+              toggleBusy={toggleBusy}
+              onToggleEnabled={setRealPraActive}
+              status={statusQuery.data}
+              company={{
+                companyName: company.companyName,
+                ntn: company.ntn,
+                strn: company.strn,
+                province: company.province || "Punjab",
+                branchName: company.branchName,
+                branchCode: company.branchCode,
+              }}
+              onCompanyChange={(next) =>
+                setCompany((prev) => ({
+                  ...prev,
+                  companyName: next.companyName,
+                  ntn: next.ntn,
+                  strn: next.strn,
+                  province: next.province,
+                  branchName: next.branchName,
+                  branchCode: next.branchCode,
+                }))
+              }
+              pra={pra}
+              onPraChange={setPra}
+              onMessage={setMessage}
+              onError={setError}
+            />
+          ) : null}
+          {activePraView === "dashboard" ? (
+            <PraTodayDashboard
+              branchCode={branchCode}
+              mode="real"
+              onMessage={setMessage}
+              onError={setError}
+            />
+          ) : null}
+          {activePraView === "reports" ? (
+            <PraPeriodReportsPanel branchCode={branchCode} mode="real" />
+          ) : null}
+        </div>
       ) : null}
 
       {showInvoices ? (
         <section id="tax-section-invoices" className="space-y-3">
           <PageHeader
             title="Invoice queue"
-            subtitle="Submitted and pending FBR / PRA invoices for this branch."
+            subtitle="Pending, queued, submitted, verified, and failed FBR / PRA invoices for this branch."
           />
+          <div className="flex flex-wrap gap-3">
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600 dark:text-slate-300">Mode</span>
+              <select
+                className={fieldSelectClass}
+                value={invoiceModeFilter}
+                onChange={(e) => setInvoiceModeFilter(e.target.value)}
+              >
+                <option value="all">All</option>
+                <option value="fake">FPRA</option>
+                <option value="real">Real PRA</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600 dark:text-slate-300">Status</span>
+              <select
+                className={fieldSelectClass}
+                value={invoiceStatusFilter}
+                onChange={(e) => setInvoiceStatusFilter(e.target.value)}
+              >
+                <option value="all">All</option>
+                <option value="submitted">Submitted</option>
+                <option value="failed">Failed</option>
+                <option value="pending">Pending</option>
+              </select>
+            </label>
+          </div>
           <SimpleTable
             rowKey={(r) => String(r.id)}
             columns={[
@@ -1048,6 +1077,18 @@ export function TaxPage(): JSX.Element {
                 key: "authority",
                 header: "Authority",
                 render: (r) => String(r.authority).toUpperCase(),
+              },
+              {
+                key: "invoiceMode",
+                header: "Mode",
+                render: (r) => {
+                  const mode = String(r.invoiceMode ?? "real");
+                  return (
+                    <Badge tone={mode === "fake" ? "warning" : "neutral"}>
+                      {mode === "fake" ? "FPRA" : "Real"}
+                    </Badge>
+                  );
+                },
               },
               {
                 key: "taxableAmountPkr",
@@ -1067,9 +1108,19 @@ export function TaxPage(): JSX.Element {
                 ),
               },
               {
+                key: "attemptCount",
+                header: "Retries",
+                render: (r) => String(r.attemptCount ?? 0),
+              },
+              {
                 key: "authorityInvoiceNumber",
                 header: "Reference / QR",
                 render: (r) => String(r.authorityInvoiceNumber ?? r.qrPayload ?? "—"),
+              },
+              {
+                key: "lastError",
+                header: "Error",
+                render: (r) => String(r.lastError ?? "—"),
               },
               {
                 key: "id",

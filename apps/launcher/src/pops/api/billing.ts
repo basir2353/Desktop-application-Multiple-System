@@ -33,8 +33,11 @@ async function createBillRemote(input: CreateBill): Promise<Bill> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(err?.message ?? `Create bill failed: ${res.status}`);
+    const err = (await res.json().catch(() => null)) as { message?: string | string[] } | null;
+    const msg = Array.isArray(err?.message)
+      ? err.message.join(", ")
+      : err?.message;
+    throw new Error(msg ?? `Create bill failed: ${res.status}`);
   }
   return billSchema.parse(await res.json());
 }

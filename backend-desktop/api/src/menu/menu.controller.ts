@@ -33,13 +33,13 @@ export class MenuController {
   }
 
   @Get("admin")
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   getMenuAdmin(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.menu.getBranchMenuAdmin(user.organizationId, branchCode?.trim() ?? "");
   }
 
   @Post("categories")
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   createCategory(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.menu.createCategory(user.organizationId, createMenuCategorySchema.parse(body));
   }
@@ -65,7 +65,7 @@ export class MenuController {
   }
 
   @Post("items")
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   createItem(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.menu.createItem(user.organizationId, createMenuItemSchema.parse(body));
   }
@@ -87,7 +87,7 @@ export class MenuController {
   }
 
   @Post("upload-image")
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   @UseInterceptors(
     FileInterceptor("image", {
       limits: { fileSize: 5 * 1024 * 1024 },

@@ -165,14 +165,9 @@ export async function assertDineInTableAvailable(
   if (orderRefsMatch(opts?.allowOrderRef, booking.orderRef)) return;
 
   if (opts?.intent === "close") {
+    // Settling payment / completing a bill: open kitchen KOTs on this table are OK
+    // (same or other ORD-#). Only a held bill on the table still blocks a new close.
     if (booking.source === "kitchen") {
-      if (
-        booking.orderRef &&
-        opts.allowOrderRef?.trim() &&
-        !orderRefsMatch(opts.allowOrderRef, booking.orderRef)
-      ) {
-        throw bookedTableError(tableLabel, booking.orderRef);
-      }
       return;
     }
     throw bookedTableError(tableLabel, booking.orderRef);

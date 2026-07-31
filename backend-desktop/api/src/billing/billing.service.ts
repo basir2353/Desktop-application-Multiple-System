@@ -624,7 +624,8 @@ export class BillingService implements OnApplicationBootstrap {
     total: number,
   ): void {
     const paid = payments.reduce((s, p) => s + p.amount, 0);
-    if (paid < total) {
+    // Allow 1 PKR rounding drift between client/server tax math.
+    if (paid + 1 < total) {
       throw new BadRequestException(`Payments (Rs ${paid}) do not cover bill total (Rs ${total})`);
     }
   }

@@ -14,6 +14,7 @@ import {
 import { formatPkr, useInvalidateStore, useStoreAccess } from "../hooks/useStore";
 import {
   downloadStoreProductImportTemplate,
+  exportStoreProductsExcel,
   importRowToCreatePayload,
   parseStoreProductImportFile,
 } from "../lib/productImportExport";
@@ -295,11 +296,16 @@ export function StoreProductsPage(): JSX.Element {
     setError(null);
     try {
       const buffer = await file.arrayBuffer();
-      const rows = parseStoreProductImportFile(buffer);
-      if (rows.length === 0) throw new Error("No valid item rows found in the file");
+      const parsed = parseStoreProductImportFile(buffer, file.name);
+      if (parsed.rows.length === 0) {
+        throw new Error(
+          "No valid item rows found. Use Download import template (Items sheet)." +
+            (parsed.skipReasons[0] ? ` ${parsed.skipReasons[0]}` : ""),
+        );
+      }
       let created = 0;
-      const errors: string[] = [];
-      for (const row of rows) {
+      const errors: string[] = [...parsed.skipReasons];
+      for (const row of parsed.rows) {
         try {
           await createStoreProduct(importRowToCreatePayload(row, branch.code));
           created += 1;
@@ -310,7 +316,7 @@ export function StoreProductsPage(): JSX.Element {
       invalidate();
       setNotice(
         `Import finished: ${created} created` +
-          (errors.length ? `, ${errors.length} failed` : ""),
+          (errors.length ? `, ${errors.length} failed/skipped` : ""),
       );
       if (errors.length) setError(errors.slice(0, 5).join("; "));
     } catch (e) {
@@ -328,10 +334,22 @@ export function StoreProductsPage(): JSX.Element {
     <div className="space-y-5">
       <PageHeader
         title="Product master"
-        subtitle="Item creation with departments, multi-barcode (UPC + ALU), vendors, and price levels. Import supports name, qty, serial, barcodes (3–10), cost, sale price, description, color, and size."
+        subtitle="Item creation with departments, multi-barcode (UPC + ALU), vendors, and price levels. Excel import/export uses our custom Items template (name, qty, serial, barcodes, cost, sale price, description, color, size)."
         actions={
           canManage ? (
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={productsQuery.isLoading}
+                onClick={() => {
+                  if (!branch?.code) return;
+                  exportStoreProductsExcel(productsQuery.data ?? [], branch.code);
+                  setNotice("Products exported to Excel.");
+                }}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"
+              >
+                Export Excel
+              </button>
               <button
                 type="button"
                 onClick={() => downloadStoreProductImportTemplate(branch?.code)}

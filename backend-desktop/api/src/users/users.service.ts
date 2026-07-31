@@ -11,6 +11,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import {
   POPS_CAPABILITIES,
   POPS_ROLE_TEMPLATES,
+  navAllowlistForPopsRole,
   permissionsForPopsRole,
   type AcceptInvite,
   type CreateOrgUser,
@@ -233,6 +234,7 @@ export class UsersService implements OnApplicationBootstrap {
         userId,
         role: seed.role,
         permissions: permissionsForPopsRole(seed.role),
+        navAllowlist: navAllowlistForPopsRole(seed.role),
         branchScope: seed.branchScope,
         pinRequired: seed.pinRequired,
         staffPinHash,
@@ -339,7 +341,7 @@ export class UsersService implements OnApplicationBootstrap {
         email: row.email,
         name: staffDisplayName(row.email),
         role: formatRoleLabel(row.role),
-        branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+        branchScope: formatBranchScopeLabel(row.branchScope),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -397,7 +399,7 @@ export class UsersService implements OnApplicationBootstrap {
       id: row.id,
       email: row.email,
       role: formatRoleLabel(row.role),
-      branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+      branchScope: formatBranchScopeLabel(row.branchScope),
       pinRequired: row.pinRequired,
       permissions: Array.isArray(row.permissions) ? row.permissions : [],
       active: row.active !== false,
@@ -415,7 +417,7 @@ export class UsersService implements OnApplicationBootstrap {
     const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
     if (!user) throw new BadRequestException("Failed to create user");
 
-    const branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+    const branchScope = normalizeBranchScope(input.branchScope);
     const staffPinHash = input.staffPin ? await hashStaffPin(input.staffPin) : null;
 
     await this.db.insert(organizationMemberships).values({
@@ -423,6 +425,7 @@ export class UsersService implements OnApplicationBootstrap {
       userId: user.id,
       role: input.role,
       permissions: permissionsForPopsRole(input.role),
+      navAllowlist: navAllowlistForPopsRole(input.role),
       branchScope,
       pinRequired: input.pinRequired,
       staffPinHash,
@@ -451,13 +454,16 @@ export class UsersService implements OnApplicationBootstrap {
     if (input.role !== undefined) {
       patch.role = input.role;
       patch.permissions = permissionsForPopsRole(input.role);
+      if (input.navAllowlist === undefined) {
+        patch.navAllowlist = navAllowlistForPopsRole(input.role);
+      }
     }
     if (input.permissions !== undefined) {
       const cleaned = [...new Set(input.permissions.map((p) => p.trim()).filter(Boolean))];
       patch.permissions = cleaned.length > 0 ? cleaned : ["pops.read"];
     }
     if (input.branchScope !== undefined) {
-      patch.branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+      patch.branchScope = normalizeBranchScope(input.branchScope);
     }
     if (input.pinRequired !== undefined) patch.pinRequired = input.pinRequired;
     if (input.active !== undefined) patch.active = input.active;
@@ -521,7 +527,7 @@ export class UsersService implements OnApplicationBootstrap {
         id: row.id,
         email: row.email,
         role: formatRoleLabel(row.role),
-        branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+        branchScope: formatBranchScopeLabel(row.branchScope),
         pinRequired: row.pinRequired,
         expiresAt: row.expiresAt.toISOString(),
         createdAt: row.createdAt.toISOString(),
@@ -550,7 +556,7 @@ export class UsersService implements OnApplicationBootstrap {
     const token = randomBytes(32).toString("base64url");
     const tokenHash = sha256Hex(token);
     const expiresAt = new Date(Date.now() + 7 * 86_400_000);
-    const branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
+    const branchScope = normalizeBranchScope(input.branchScope);
 
     const [org] = await this.db
       .select({ name: organizations.name })
@@ -593,7 +599,7 @@ export class UsersService implements OnApplicationBootstrap {
     return {
       email: invite.email,
       role: formatRoleLabel(invite.role),
-      branchScope: invite.branchScope === "all" ? "All" : invite.branchScope,
+      branchScope: formatBranchScopeLabel(invite.branchScope),
       organizationName: org?.name ?? "Organization",
       expiresAt: invite.expiresAt.toISOString(),
     };
@@ -615,6 +621,7 @@ export class UsersService implements OnApplicationBootstrap {
       userId: user.id,
       role: invite.role,
       permissions: permissionsForPopsRole(invite.role),
+      navAllowlist: navAllowlistForPopsRole(invite.role),
       branchScope: invite.branchScope,
       pinRequired: invite.pinRequired,
       lastActivityAt: new Date(),
@@ -693,6 +700,17 @@ function formatRoleLabel(role: string): string {
   if (role === "owner") return "Admin";
   const template = POPS_ROLE_TEMPLATES.find((r) => r.id === role);
   return template?.label ?? role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+/** Persist as lowercase `all`, otherwise uppercase branch code. */
+function normalizeBranchScope(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.toLowerCase() === "all") return "all";
+  return trimmed.toUpperCase();
+}
+
+function formatBranchScopeLabel(scope: string): string {
+  return normalizeBranchScope(scope) === "all" ? "All" : normalizeBranchScope(scope);
 }
 
 function staffDisplayName(email: string): string {

@@ -160,8 +160,11 @@ See [deployment/README.md](./deployment/README.md).
 | `EXPO_PUBLIC_API_BASE_URL` | API URL for mobile |
 | `CORS_ORIGINS` | Allowed web origins (production) |
 | `FBR_TOKEN_URL` | Optional OAuth token URL for FBR (otherwise Client Secret is used as Bearer token) |
-| `PRA_TOKEN_URL` | Optional PRA auth URL |
+| `PRA_TOKEN_URL` | Optional PRA auth URL (fallback for both environments) |
 | `PRA_INVOICE_URL` | Optional PRA invoice submit URL (sandbox can work without it) |
+| `PRA_SANDBOX_TOKEN_URL` / `PRA_SANDBOX_INVOICE_URL` | Sandbox-specific PRA endpoints |
+| `PRA_PRODUCTION_TOKEN_URL` / `PRA_PRODUCTION_INVOICE_URL` | Production-specific PRA endpoints |
+| `PRA_CREDENTIALS_SECRET` | Optional key for encrypting stored PRA passwords |
 
 ## License
 

@@ -1,5 +1,16 @@
-import * as XLSX from "xlsx";
 import type { Ingredient, MenuItem, Recipe } from "@platform/contracts";
+import {
+  cellNumber,
+  cellString,
+  instructionsRows,
+  isoDateStamp,
+  moneyNumber,
+  pickSheet,
+  readWorkbook,
+  sheetRows,
+  writeWorkbookDownload,
+  yesNo,
+} from "../../lib/excelTransfer";
 
 export type RecipeImportRow = {
   recipeName: string;
@@ -16,57 +27,12 @@ export type RecipeImportSummary = {
   recipesCreated: number;
   recipesUpdated: number;
   skipped: number;
+  skipReasons: string[];
 };
 
+const RECIPES_SHEET = "Recipes";
 const RECIPE_LINES_SHEET = "Recipe Lines";
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function yesNo(value: unknown, fallback = false): boolean {
-  if (typeof value === "boolean") return value;
-  const text = String(value ?? "")
-    .trim()
-    .toLowerCase();
-  if (!text) return fallback;
-  return text === "yes" || text === "y" || text === "true" || text === "1";
-}
-
-function cellString(row: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const direct = row[key];
-    if (direct != null && String(direct).trim()) return String(direct).trim();
-    const match = Object.entries(row).find(([k]) => k.trim().toLowerCase() === key.toLowerCase());
-    if (match && String(match[1] ?? "").trim()) return String(match[1]).trim();
-  }
-  return "";
-}
-
-function cellNumber(row: Record<string, unknown>, ...keys: string[]): number {
-  for (const key of keys) {
-    const direct = row[key];
-    if (direct != null && direct !== "") {
-      const n = Number(direct);
-      if (Number.isFinite(n)) return n;
-    }
-    const match = Object.entries(row).find(([k]) => k.trim().toLowerCase() === key.toLowerCase());
-    if (match && match[1] != null && match[1] !== "") {
-      const n = Number(match[1]);
-      if (Number.isFinite(n)) return n;
-    }
-  }
-  return 0;
-}
-
-function normalizeName(value: string): string {
-  return value.trim().toLowerCase();
-}
+const INSTRUCTIONS_SHEET = "Instructions";
 
 function recipeLineRows(recipes: Recipe[]): Record<string, string | number>[] {
   const rows: Record<string, string | number>[] = [];
@@ -103,6 +69,17 @@ function recipeLineRows(recipes: Recipe[]): Record<string, string | number>[] {
   return rows;
 }
 
+const RECIPE_TEMPLATE_INSTRUCTIONS = [
+  "Fill the Recipe Lines sheet — one row per ingredient line for each recipe.",
+  "Required: Recipe Name, Menu Dish (exact menu item name), Ingredient (exact ingredient name), Qty.",
+  "Menu dishes and ingredients must already exist in the system before import.",
+  "Optional: Version (default v1.0), Portion Size, Active (Yes/No), Unit (defaults to ingredient unit).",
+  "The Recipes summary sheet is for reference/export only — import reads Recipe Lines.",
+  "Re-importing the same Recipe Name + Menu Dish updates that recipe.",
+  "Save as .xlsx (recommended) or .csv. Keep sheet name: Recipe Lines.",
+  "Qty supports decimals (e.g. 0.5). Unknown dish/ingredient rows are skipped with a reason.",
+];
+
 export function exportRecipesExcel(recipes: Recipe[], branchCode: string): void {
   const summaryRows = recipes.map((recipe) => ({
     "Recipe Name": recipe.name,
@@ -114,87 +91,131 @@ export function exportRecipesExcel(recipes: Recipe[], branchCode: string): void 
     "Ingredient Count": recipe.ingredients.length,
   }));
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), "Recipes");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recipeLineRows(recipes)), RECIPE_LINES_SHEET);
-
-  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  const date = new Date().toISOString().slice(0, 10);
-  downloadBlob(
-    new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    `recipes-${branchCode}-${date}.xlsx`,
+  writeWorkbookDownload(
+    [
+      { name: INSTRUCTIONS_SHEET, rows: instructionsRows(RECIPE_TEMPLATE_INSTRUCTIONS) },
+      {
+        name: RECIPES_SHEET,
+        rows:
+          summaryRows.length > 0
+            ? summaryRows
+            : [
+                {
+                  "Recipe Name": "",
+                  "Menu Dish": "",
+                  Version: "",
+                  "Portion Size": "",
+                  Active: "",
+                  "Total Cost": 0,
+                  "Ingredient Count": 0,
+                },
+              ],
+      },
+      {
+        name: RECIPE_LINES_SHEET,
+        rows:
+          recipeLineRows(recipes).length > 0
+            ? recipeLineRows(recipes)
+            : [
+                {
+                  "Recipe Name": "",
+                  "Menu Dish": "",
+                  Version: "",
+                  "Portion Size": "",
+                  Active: "",
+                  Ingredient: "",
+                  Qty: 0,
+                  Unit: "g",
+                },
+              ],
+      },
+    ],
+    `recipes-${branchCode}-${isoDateStamp()}.xlsx`,
   );
 }
 
-/**
- * Download a blank XLSX file so users can fill the correct sheet/column names.
- * Import parser reads mainly the "Recipe Lines" sheet.
- */
 export function downloadRecipeImportTemplateExcel(branchCode?: string): void {
-  const recipeSummaryTemplateRows = [
-    {
-      "Recipe Name": "",
-      "Menu Dish": "",
-      Version: "",
-      "Portion Size": "",
-      Active: "",
-      "Total Cost": 0,
-      "Ingredient Count": 0,
-    },
-  ];
-
-  const recipeLinesTemplateRows = [
-    {
-      "Recipe Name": "",
-      "Menu Dish": "",
-      Version: "",
-      "Portion Size": "",
-      Active: "",
-      Ingredient: "",
-      Qty: 0,
-      Unit: "g",
-    },
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recipeSummaryTemplateRows), "Recipes");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recipeLinesTemplateRows), RECIPE_LINES_SHEET);
-
-  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  const date = new Date().toISOString().slice(0, 10);
   const code = branchCode ? `-${branchCode}` : "";
-  downloadBlob(
-    new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    `recipes-import-template${code}-${date}.xlsx`,
+  writeWorkbookDownload(
+    [
+      { name: INSTRUCTIONS_SHEET, rows: instructionsRows(RECIPE_TEMPLATE_INSTRUCTIONS) },
+      {
+        name: RECIPES_SHEET,
+        rows: [
+          {
+            "Recipe Name": "Chicken Karahi",
+            "Menu Dish": "Chicken Karahi",
+            Version: "v1.0",
+            "Portion Size": "1 portion",
+            Active: "Yes",
+            "Total Cost": 0,
+            "Ingredient Count": 2,
+          },
+        ],
+      },
+      {
+        name: RECIPE_LINES_SHEET,
+        rows: [
+          {
+            "Recipe Name": "Chicken Karahi",
+            "Menu Dish": "Chicken Karahi",
+            Version: "v1.0",
+            "Portion Size": "1 portion",
+            Active: "Yes",
+            Ingredient: "Chicken",
+            Qty: 500,
+            Unit: "g",
+          },
+          {
+            "Recipe Name": "Chicken Karahi",
+            "Menu Dish": "Chicken Karahi",
+            Version: "v1.0",
+            "Portion Size": "1 portion",
+            Active: "Yes",
+            Ingredient: "Tomato",
+            Qty: 200,
+            Unit: "g",
+          },
+        ],
+      },
+    ],
+    `recipes-import-template${code}-${isoDateStamp()}.xlsx`,
   );
 }
 
-export function parseRecipeImportFile(buffer: ArrayBuffer, filename: string): RecipeImportRow[] {
-  const lower = filename.toLowerCase();
-  const wb = lower.endsWith(".csv")
-    ? XLSX.read(new TextDecoder().decode(buffer), { type: "string" })
-    : XLSX.read(buffer, { type: "array" });
+export function parseRecipeImportFile(
+  buffer: ArrayBuffer,
+  filename: string,
+): { rows: RecipeImportRow[]; skipped: number; skipReasons: string[] } {
+  const wb = readWorkbook(buffer, filename);
+  const sheet = pickSheet(wb, [RECIPE_LINES_SHEET], ["recipe", "line"]);
+  if (!sheet) {
+    return { rows: [], skipped: 0, skipReasons: ["Recipe Lines sheet not found"] };
+  }
 
-  const sheetName =
-    wb.SheetNames.find((name) => name.toLowerCase() === RECIPE_LINES_SHEET.toLowerCase()) ??
-    wb.SheetNames.find((name) => name.toLowerCase().includes("recipe")) ??
-    wb.SheetNames[0];
-  const sheet = wb.Sheets[sheetName];
-  if (!sheet) return [];
-
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+  const rawRows = sheetRows(sheet);
   const parsed: RecipeImportRow[] = [];
+  let skipped = 0;
+  const skipReasons: string[] = [];
 
-  for (const row of rawRows) {
+  for (let i = 0; i < rawRows.length; i++) {
+    const row = rawRows[i]!;
     const recipeName = cellString(row, "Recipe Name", "recipe name", "name");
     const menuDish = cellString(row, "Menu Dish", "menu dish", "menu item", "dish");
     const ingredient = cellString(row, "Ingredient", "ingredient");
-    const qty = cellNumber(row, "Qty", "qty", "quantity");
-    if (!recipeName || !menuDish || !ingredient || qty <= 0) continue;
+    const qty = moneyNumber(cellNumber(row, "Qty", "qty", "quantity"));
+    const line = i + 2;
+
+    if (!recipeName && !menuDish && !ingredient && qty <= 0) continue;
+    if (!recipeName || !menuDish || !ingredient || qty <= 0) {
+      skipped += 1;
+      if (skipReasons.length < 8) {
+        skipReasons.push(
+          `Row ${line}: Recipe Name, Menu Dish, Ingredient, and Qty > 0 are required`,
+        );
+      }
+      continue;
+    }
 
     parsed.push({
       recipeName,
@@ -203,12 +224,16 @@ export function parseRecipeImportFile(buffer: ArrayBuffer, filename: string): Re
       portionSize: cellString(row, "Portion Size", "portion size", "portion") || "1 portion",
       active: yesNo(cellString(row, "Active", "active"), true),
       ingredient,
-      qty: Math.round(qty),
+      qty,
       unit: cellString(row, "Unit", "unit") || "g",
     });
   }
 
-  return parsed;
+  return { rows: parsed, skipped, skipReasons };
+}
+
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function findMenuItem(menuItems: MenuItem[], name: string): MenuItem | undefined {
@@ -272,6 +297,7 @@ export async function importRecipeRows(
     recipesCreated: 0,
     recipesUpdated: 0,
     skipped: 0,
+    skipReasons: [],
   };
 
   if (rows.length === 0) return summary;
@@ -286,23 +312,44 @@ export async function importRecipeRows(
     const menuItem = findMenuItem(deps.menuItems, first.menuDish);
     if (!menuItem) {
       summary.skipped += 1;
+      if (summary.skipReasons.length < 8) {
+        summary.skipReasons.push(`Menu dish not found: "${first.menuDish}"`);
+      }
       continue;
     }
 
     const lines: { ingredientId: string; qty: number; unit: string }[] = [];
+    const missingIngredients: string[] = [];
     for (const row of recipeRows) {
       const ingredient = findIngredient(deps.ingredients, row.ingredient);
-      if (!ingredient) continue;
+      if (!ingredient) {
+        missingIngredients.push(row.ingredient);
+        continue;
+      }
       lines.push({
         ingredientId: ingredient.id,
-        qty: row.qty,
+        qty: moneyNumber(row.qty),
         unit: row.unit.trim() || ingredient.unit,
       });
     }
 
     if (lines.length === 0) {
       summary.skipped += 1;
+      if (summary.skipReasons.length < 8) {
+        summary.skipReasons.push(
+          `Recipe "${first.recipeName}": no matching ingredients` +
+            (missingIngredients.length ? ` (${missingIngredients.slice(0, 3).join(", ")})` : ""),
+        );
+      }
       continue;
+    }
+
+    if (missingIngredients.length > 0 && summary.skipReasons.length < 8) {
+      summary.skipReasons.push(
+        `Recipe "${first.recipeName}": skipped unknown ingredients: ${missingIngredients
+          .slice(0, 3)
+          .join(", ")}`,
+      );
     }
 
     const payload = {

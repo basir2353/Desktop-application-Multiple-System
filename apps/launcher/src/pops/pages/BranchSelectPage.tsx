@@ -113,6 +113,29 @@ export function BranchSelectPage(): JSX.Element {
     }
   }, [allBranches, selected]);
 
+  // Single-branch accounts (e.g. cashier locked to one store): auto-enter ERP.
+  useEffect(() => {
+    if (!branchesQuery.isSuccess || allBranches.length !== 1) return;
+    const only = allBranches[0];
+    if (!only || isMonitoringBranch(only.code)) return;
+    if (persistedBranch?.code === only.code) {
+      navigate(erpEntryPathForRole(systemId, assignedRole), { replace: true });
+      return;
+    }
+    setBranch(only);
+    setDisplayRole(assignedRole);
+    navigate(erpEntryPathForRole(systemId, assignedRole), { replace: true });
+  }, [
+    branchesQuery.isSuccess,
+    allBranches,
+    persistedBranch?.code,
+    assignedRole,
+    systemId,
+    setBranch,
+    setDisplayRole,
+    navigate,
+  ]);
+
   // No branches yet: admins enter the main system to create/manage the first branch.
   useEffect(() => {
     if (!noBranchesYet || !canSetupWithoutBranch) return;
@@ -203,6 +226,15 @@ export function BranchSelectPage(): JSX.Element {
                   </label>
                 ))}
               </div>
+              {claims?.branchScope && claims.branchScope.toLowerCase() !== "all" ? (
+                <p className="mt-3 text-[11px] text-amber-200/90">
+                  Your account is limited to branch <span className="font-semibold">{claims.branchScope}</span>.
+                </p>
+              ) : claims?.branchScope?.toLowerCase() === "all" ? (
+                <p className="mt-3 text-[11px] text-slate-500">
+                  Your account can access all branches — pick one to continue.
+                </p>
+              ) : null}
             </div>
           </div>
 

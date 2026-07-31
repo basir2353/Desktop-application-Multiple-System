@@ -34,6 +34,21 @@ export default defineConfig(({ mode }) => {
       host: "127.0.0.1",
       port: 1420,
       strictPort: true,
+      // Shop IP is PRA-whitelisted; proxy PostData so the browser can reach e-IMS without CORS.
+      proxy: {
+        "/pra-ims": {
+          target: "https://ims.pral.com.pk",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/pra-ims/, ""),
+        },
+      },
+    },
+    // Ensure .wasm is not treated as a text module / SPA fallback incorrectly.
+    assetsInclude: ["**/*.wasm"],
+    // Pre-bundle sql.js so Vite applies CJS↔ESM interop (raw exclude breaks `default` import).
+    optimizeDeps: {
+      include: ["sql.js"],
     },
     envDir: monorepoRoot,
     resolve: {
@@ -50,6 +65,19 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [
+      {
+        name: "fix-sql-wasm-spa-fallback",
+        configureServer(server) {
+          // Any mistaken /pos/sql-wasm.wasm (or nested) request → real public wasm.
+          server.middlewares.use((req, _res, next) => {
+            const url = req.url ?? "";
+            if (url.includes("sql-wasm.wasm") && !url.startsWith("/sql-wasm.wasm")) {
+              req.url = "/sql-wasm.wasm";
+            }
+            next();
+          });
+        },
+      },
       editionExcludePlugin(edition),
       react(),
       federation({

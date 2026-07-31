@@ -1,4 +1,15 @@
-import * as XLSX from "xlsx";
+import type { StoreProduct } from "@platform/contracts";
+import {
+  cellNumber,
+  cellString,
+  instructionsRows,
+  isoDateStamp,
+  moneyNumber,
+  pickSheet,
+  readWorkbook,
+  sheetRows,
+  writeWorkbookDownload,
+} from "../../lib/excelTransfer";
 
 export type StoreProductImportRow = {
   name: string;
@@ -20,40 +31,38 @@ export type StoreProductImportSummary = {
 };
 
 const SHEET_NAME = "Items";
+const INSTRUCTIONS_SHEET = "Instructions";
 
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
+const STORE_TEMPLATE_INSTRUCTIONS = [
+  "Fill the Items sheet — one row per product.",
+  "Required: Item Name. Recommended: Qty, Barcode, Cost, Sale Price.",
+  "Alternative barcodes: put comma-separated codes in Alternative Barcode, or use Barcode 2 / Barcode 3 columns.",
+  "Serial Number is optional (enables serial tracking when set).",
+  "Optional: Item Description, Color, Size.",
+  "Export downloads your current catalog in the same template format for editing and re-import.",
+  "Import creates new items only (it does not update existing products by barcode).",
+  "Save as .xlsx (recommended) or .csv. Keep sheet name: Items.",
+];
 
-function cellString(row: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const direct = row[key];
-    if (direct != null && String(direct).trim()) return String(direct).trim();
-    const match = Object.entries(row).find(([k]) => k.trim().toLowerCase() === key.toLowerCase());
-    if (match && String(match[1] ?? "").trim()) return String(match[1]).trim();
-  }
-  return "";
-}
-
-function cellNumber(row: Record<string, unknown>, ...keys: string[]): number {
-  for (const key of keys) {
-    const direct = row[key];
-    if (direct != null && direct !== "") {
-      const n = Number(direct);
-      if (Number.isFinite(n)) return n;
-    }
-    const match = Object.entries(row).find(([k]) => k.trim().toLowerCase() === key.toLowerCase());
-    if (match && match[1] != null && match[1] !== "") {
-      const n = Number(match[1]);
-      if (Number.isFinite(n)) return n;
-    }
-  }
-  return 0;
+function productToRow(p: StoreProduct): Record<string, string | number> {
+  const barcodes = (p.barcodes?.length ? p.barcodes : p.barcode ? [p.barcode] : []).filter(Boolean);
+  const primary = barcodes[0] ?? "";
+  const alts = barcodes.slice(1);
+  return {
+    "Item Name": p.name,
+    Qty: p.availableStock ?? 0,
+    "Serial Number": p.serialNumbers?.[0] ?? "",
+    Barcode: primary,
+    "Alternative Barcode": alts.join(","),
+    "Barcode 2": alts[0] ?? "",
+    "Barcode 3": alts[1] ?? "",
+    "Barcode 4": alts[2] ?? "",
+    Cost: p.purchasePrice ?? p.orderCost ?? 0,
+    "Sale Price": p.sellingPrice ?? p.salePrice ?? 0,
+    "Item Description": p.description ?? "",
+    Color: p.color ?? "",
+    Size: p.size ?? "",
+  };
 }
 
 function collectAltBarcodes(row: Record<string, unknown>): string[] {
@@ -79,48 +88,94 @@ function collectAltBarcodes(row: Record<string, unknown>): string[] {
   return codes.slice(0, 11);
 }
 
-export function downloadStoreProductImportTemplate(branchCode?: string): void {
-  const templateRows = [
-    {
-      "Item Name": "Example Shirt",
-      Qty: 10,
-      "Serial Number": "SN-001",
-      Barcode: "628100000001",
-      "Alternative Barcode": "628100000002,628100000003",
-      "Barcode 2": "",
-      "Barcode 3": "",
-      "Barcode 4": "",
-      Cost: 3500,
-      "Sale Price": 3600,
-      "Item Description": "Cotton shirt",
-      Color: "Blue",
-      Size: "L",
-    },
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(templateRows), SHEET_NAME);
-  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  const date = new Date().toISOString().slice(0, 10);
-  downloadBlob(
-    new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    `store-items-template-${branchCode ?? "branch"}-${date}.xlsx`,
+export function exportStoreProductsExcel(products: StoreProduct[], branchCode: string): void {
+  writeWorkbookDownload(
+    [
+      { name: INSTRUCTIONS_SHEET, rows: instructionsRows(STORE_TEMPLATE_INSTRUCTIONS) },
+      {
+        name: SHEET_NAME,
+        rows:
+          products.length > 0
+            ? products.map(productToRow)
+            : [
+                {
+                  "Item Name": "",
+                  Qty: 0,
+                  "Serial Number": "",
+                  Barcode: "",
+                  "Alternative Barcode": "",
+                  "Barcode 2": "",
+                  "Barcode 3": "",
+                  "Barcode 4": "",
+                  Cost: 0,
+                  "Sale Price": 0,
+                  "Item Description": "",
+                  Color: "",
+                  Size: "",
+                },
+              ],
+      },
+    ],
+    `store-items-${branchCode}-${isoDateStamp()}.xlsx`,
   );
 }
 
-export function parseStoreProductImportFile(file: ArrayBuffer): StoreProductImportRow[] {
-  const wb = XLSX.read(file, { type: "array" });
-  const sheet =
-    wb.Sheets[SHEET_NAME] ??
-    wb.Sheets[wb.SheetNames.find((n) => n.toLowerCase().includes("item")) ?? ""] ??
-    wb.Sheets[wb.SheetNames[0]];
-  if (!sheet) return [];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+export function downloadStoreProductImportTemplate(branchCode?: string): void {
+  writeWorkbookDownload(
+    [
+      { name: INSTRUCTIONS_SHEET, rows: instructionsRows(STORE_TEMPLATE_INSTRUCTIONS) },
+      {
+        name: SHEET_NAME,
+        rows: [
+          {
+            "Item Name": "Example Shirt",
+            Qty: 10,
+            "Serial Number": "SN-001",
+            Barcode: "628100000001",
+            "Alternative Barcode": "628100000002,628100000003",
+            "Barcode 2": "",
+            "Barcode 3": "",
+            "Barcode 4": "",
+            Cost: 3500,
+            "Sale Price": 3600,
+            "Item Description": "Cotton shirt",
+            Color: "Blue",
+            Size: "L",
+          },
+        ],
+      },
+    ],
+    `store-items-template-${branchCode ?? "branch"}-${isoDateStamp()}.xlsx`,
+  );
+}
+
+export function parseStoreProductImportFile(
+  buffer: ArrayBuffer,
+  filename = "import.xlsx",
+): { rows: StoreProductImportRow[]; skipped: number; skipReasons: string[] } {
+  const wb = readWorkbook(buffer, filename);
+  const sheet = pickSheet(wb, [SHEET_NAME], ["item", "product"]);
+  if (!sheet) {
+    return { rows: [], skipped: 0, skipReasons: ["Items sheet not found"] };
+  }
+
+  const raw = sheetRows(sheet);
   const out: StoreProductImportRow[] = [];
-  for (const row of rows) {
+  let skipped = 0;
+  const skipReasons: string[] = [];
+
+  for (let i = 0; i < raw.length; i++) {
+    const row = raw[i]!;
     const name = cellString(row, "Item Name", "Name", "Product Name");
-    if (!name) continue;
+    const line = i + 2;
+    if (!name) {
+      const maybeEmpty =
+        !cellString(row, "Barcode") && cellNumber(row, "Qty", "Cost", "Sale Price") === 0;
+      if (maybeEmpty) continue;
+      skipped += 1;
+      if (skipReasons.length < 8) skipReasons.push(`Row ${line}: Item Name is required`);
+      continue;
+    }
     const barcode = cellString(row, "Barcode", "UPC", "Primary Barcode");
     const alts = collectAltBarcodes(row).filter((c) => c !== barcode);
     out.push({
@@ -129,14 +184,18 @@ export function parseStoreProductImportFile(file: ArrayBuffer): StoreProductImpo
       serialNumber: cellString(row, "Serial Number", "Serial", "Serial No"),
       barcode,
       alternativeBarcodes: alts.slice(0, 9),
-      cost: Math.max(0, Math.round(cellNumber(row, "Cost", "Purchase Price", "Original Price"))),
-      salePrice: Math.max(0, Math.round(cellNumber(row, "Sale Price", "Selling Price", "Regular Price", "Price"))),
+      cost: Math.max(0, Math.round(moneyNumber(cellNumber(row, "Cost", "Purchase Price", "Original Price")))),
+      salePrice: Math.max(
+        0,
+        Math.round(moneyNumber(cellNumber(row, "Sale Price", "Selling Price", "Regular Price", "Price"))),
+      ),
       description: cellString(row, "Item Description", "Description"),
       color: cellString(row, "Color", "Colour"),
       size: cellString(row, "Size"),
     });
   }
-  return out;
+
+  return { rows: out, skipped, skipReasons };
 }
 
 export function importRowToCreatePayload(row: StoreProductImportRow, branchCode: string) {

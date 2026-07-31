@@ -63,10 +63,11 @@ export async function buildPraFiscalHtml(
   fiscal: PraFiscalInvoice,
   options?: { branchName?: string; branchCode?: string },
 ): Promise<string> {
-  const cleanQr = sanitizePraQrPayload(fiscal.qrPayload || fiscal.invoiceNumber);
-  const qrDataUrl = await praQrDataUrl(cleanQr, 160);
+  const mode = fiscal.mode === "real" ? "real" : "fake";
+  const cleanQr = sanitizePraQrPayload(fiscal.qrPayload || fiscal.invoiceNumber, mode);
+  const qrDataUrl = await praQrDataUrl(cleanQr, 160, mode);
   const praFiscal: PraReceiptFooter = {
-    mode: fiscal.mode === "real" ? "real" : "fake",
+    mode,
     invoiceNumber: fiscal.invoiceNumber,
     orderRef: fiscal.sourceRef || fiscal.invoiceNumber,
     qrPayload: cleanQr,

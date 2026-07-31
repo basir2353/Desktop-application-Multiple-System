@@ -297,7 +297,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
       <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
         <h3 className={`text-base font-semibold ${headingClass}`}>Tax authority (FBR / PRA)</h3>
         <p className={`text-sm ${mutedClass}`}>
-          Enable integrations for this business. Branch admins can only connect credentials when enabled here.
+          Show Tax sections for this business. Admins control Active / Inactive and credentials.
         </p>
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
@@ -308,9 +308,9 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
               onChange={(e) => setFbrEnabled(e.target.checked)}
             />
             <span>
-              <span className="block text-sm font-medium">Enable FBR</span>
+              <span className="block text-sm font-medium">Show FBR</span>
               <span className={`text-xs ${mutedClass}`}>
-                Federal Board of Revenue e-invoicing for this business
+                Admin sees FBR section (they choose Active)
               </span>
             </span>
           </label>
@@ -319,16 +319,12 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
               type="checkbox"
               className="mt-1 h-4 w-4"
               checked={praFakeEnabled}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setPraFakeEnabled(checked);
-                if (checked) setPraRealEnabled(false);
-              }}
+              onChange={(e) => setPraFakeEnabled(e.target.checked)}
             />
             <span>
-              <span className="block text-sm font-medium">Enable Fake PRA</span>
+              <span className="block text-sm font-medium">Show FPRA</span>
               <span className={`text-xs ${mutedClass}`}>
-                Simulated Punjab Revenue Authority invoices (testing)
+                Admin sees FPRA section (they choose Active)
               </span>
             </span>
           </label>
@@ -337,16 +333,12 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
               type="checkbox"
               className="mt-1 h-4 w-4"
               checked={praRealEnabled}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setPraRealEnabled(checked);
-                if (checked) setPraFakeEnabled(false);
-              }}
+              onChange={(e) => setPraRealEnabled(e.target.checked)}
             />
             <span>
-              <span className="block text-sm font-medium">Enable Real PRA</span>
+              <span className="block text-sm font-medium">Show Real PRA</span>
               <span className={`text-xs ${mutedClass}`}>
-                Live Punjab Revenue Authority e-invoicing for this business
+                Admin sees Real PRA section (they choose Active)
               </span>
             </span>
           </label>

@@ -10,15 +10,27 @@ export type CheckoutTotals = ReturnType<typeof computeTicketTotals> & {
 
 export type CheckoutMode = "full" | "partial" | "hold";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export function cartToBillLines(cart: PosCartLine[]): BillLine[] {
   return cart.map((line) => {
-    const net = cartLineNet(line);
-    const unitPrice = line.qty > 0 ? Math.round(net / line.qty) : line.unitPrice;
+    const net = Math.round(cartLineNet(line));
+    const qty = Math.max(1, Math.round(Number(line.qty) || 1));
+    // Keep qty×unitPrice === net so server totals match checkout payments.
+    let unitPrice = Math.round(net / qty);
+    let billQty = qty;
+    if (unitPrice * qty !== net) {
+      billQty = 1;
+      unitPrice = net;
+    }
+    const id = String(line.item.id ?? "").trim();
     return {
       label: line.lineLabel,
-      qty: line.qty,
+      qty: billQty,
       unitPrice,
-      menuItemId: line.item.id,
+      // Omit non-UUID ids — Zod rejects them even when the field is optional.
+      ...(UUID_RE.test(id) ? { menuItemId: id } : {}),
     };
   });
 }

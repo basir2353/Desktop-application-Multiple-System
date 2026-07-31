@@ -696,7 +696,10 @@ export function buildThermalPlainText(
       pushTotal(`Service (${input.servicePct}%)`, formatMoney(input.service, compact));
     }
     if (fields.tax && input.tax > 0) {
-      pushTotal(`Tax (${input.taxPct ?? 0}%)`, formatMoney(input.tax, compact));
+      const taxLabel = input.praFiscal
+        ? `Sales Tax (${input.taxPct ?? 0}%)`
+        : `Tax (${input.taxPct ?? 0}%)`;
+      pushTotal(taxLabel, formatMoney(input.tax, compact));
     }
     if (fields.delivery && (input.deliveryCharge ?? 0) > 0) {
       pushTotal("Delivery", formatMoney(input.deliveryCharge!, compact));
@@ -836,7 +839,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
           ? `<div class="row"><span class="label">Service (${input.servicePct}%)</span><span class="value">${formatMoney(input.service, moneyCompact)}</span></div>`
           : "",
         fields.tax && input.tax > 0
-          ? `<div class="row"><span class="label">Tax (${input.taxPct ?? 0}%)</span><span class="value">${formatMoney(input.tax, moneyCompact)}</span></div>`
+          ? `<div class="row"><span class="label">${input.praFiscal ? "Sales Tax" : "Tax"} (${input.taxPct ?? 0}%)</span><span class="value">${formatMoney(input.tax, moneyCompact)}</span></div>`
           : "",
         fields.delivery && (input.deliveryCharge ?? 0) > 0
           ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatMoney(input.deliveryCharge!, moneyCompact)}</span></div>`

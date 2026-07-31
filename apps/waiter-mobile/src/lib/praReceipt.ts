@@ -1,31 +1,22 @@
 import type { Bill, PraFiscalInvoice, PraInvoiceMode } from "@platform/contracts";
+import { fetchPraFiscalForSource, fetchTaxFeaturesNormalized } from "../api/pra";
 import {
-  fetchPraFiscalForSource,
-  fetchTaxFeaturesNormalized,
-  issuePraInvoice,
-} from "../api/pra";
-import {
-  preparePraReceiptFooter,
-  type PraReceiptFooter,
-} from "./praQr";
+  autoIssuePraForCompletedBill,
+  canEmbedPraOnSlip,
+  resolveAutoPraMode,
+} from "./praIssueFlow";
+import { preparePraReceiptFooter, type PraReceiptFooter } from "./praQr";
 
-function canEmbedPraOnSlip(fiscal: PraFiscalInvoice | null | undefined): boolean {
-  if (!fiscal) return false;
-  const num = String(fiscal.invoiceNumber ?? "").trim();
-  const qr = String(fiscal.qrPayload ?? "").trim();
-  return Boolean(num) && Boolean(qr || num);
-}
-
-function resolveAutoPraMode(features: {
-  praFakeEnabled?: boolean;
-  praRealEnabled?: boolean;
-}): PraInvoiceMode | null {
-  const fake = Boolean(features.praFakeEnabled);
-  const real = Boolean(features.praRealEnabled);
-  if (real) return "real";
-  if (fake) return "fake";
-  // Legacy: praEnabled alone is normalized to real in API helper; still allow fake via praEnabled.
-  return null;
+function footerFromFiscal(
+  fiscal: PraFiscalInvoice,
+  orderRef: string,
+): PraReceiptFooter {
+  return preparePraReceiptFooter({
+    mode: fiscal.mode,
+    invoiceNumber: fiscal.invoiceNumber,
+    orderRef,
+    qrPayload: fiscal.qrPayload?.trim() || fiscal.invoiceNumber,
+  });
 }
 
 function footerFromBillFields(bill: Bill, mode: PraInvoiceMode): PraReceiptFooter {
@@ -50,10 +41,13 @@ export async function resolvePraFooterForBillPrint(input: {
   const bill = input.bill;
   const orderRef = bill.orderRef ?? bill.billRef;
 
-  if (bill.praInvoiceNumber?.trim() && (bill.praMode === "fake" || bill.praMode === "real")) {
-    return footerFromBillFields(bill, bill.praMode);
+  // Prefer Real fiscal already on the bill.
+  if (bill.praInvoiceNumber?.trim() && bill.praMode === "real") {
+    return footerFromBillFields(bill, "real");
   }
-
+  if (bill.praInvoiceNumber?.trim() && bill.praMode === "fake") {
+    return footerFromBillFields(bill, "fake");
+  }
   if (bill.praInvoiceNumber?.trim()) {
     return footerFromBillFields(bill, "fake");
   }
@@ -69,15 +63,15 @@ export async function resolvePraFooterForBillPrint(input: {
       sourceId: bill.id,
     });
     if (existing && canEmbedPraOnSlip(existing)) {
-      return preparePraReceiptFooter({
-        mode: existing.mode,
-        invoiceNumber: existing.invoiceNumber,
-        orderRef,
-        qrPayload: existing.qrPayload?.trim() || existing.invoiceNumber,
-      });
+      return footerFromFiscal(existing, orderRef);
     }
   } catch {
     /* try issue below */
+  }
+
+  // Only auto-issue for completed (paid) bills — held slips stay without PRA footer.
+  if (bill.status !== "completed") {
+    return null;
   }
 
   const features = await fetchTaxFeaturesNormalized().catch(() => ({
@@ -87,51 +81,15 @@ export async function resolvePraFooterForBillPrint(input: {
     praRealEnabled: false,
   }));
 
-  // Prefer Fake when both somehow true for staff reprint (safer offline path).
-  let mode = resolveAutoPraMode(features);
-  if (features.praFakeEnabled) mode = "fake";
-  else if (features.praRealEnabled) mode = "real";
-  else if (features.praEnabled) mode = "fake";
-
+  const mode = resolveAutoPraMode(features);
   if (!mode) return null;
 
-  // Real PRA needs credentials — skip quietly on mobile if not connected.
-  if (mode === "real") {
-    try {
-      const statusRes = await fetchPraFiscalForSource({
-        branchCode: input.branchCode,
-        sourceType: "bill",
-        sourceId: bill.id,
-      });
-      if (statusRes && canEmbedPraOnSlip(statusRes)) {
-        return preparePraReceiptFooter({
-          mode: statusRes.mode,
-          invoiceNumber: statusRes.invoiceNumber,
-          orderRef,
-          qrPayload: statusRes.qrPayload?.trim() || statusRes.invoiceNumber,
-        });
-      }
-    } catch {
-      /* fall through to issue attempt */
-    }
+  const auto = await autoIssuePraForCompletedBill({
+    branchCode: input.branchCode,
+    billId: bill.id,
+  });
+  if (auto.fiscal && canEmbedPraOnSlip(auto.fiscal)) {
+    return footerFromFiscal(auto.fiscal, orderRef);
   }
-
-  try {
-    const issued = await issuePraInvoice({
-      branchCode: input.branchCode,
-      sourceType: "bill",
-      sourceId: bill.id,
-      mode,
-      force: false,
-    });
-    if (!canEmbedPraOnSlip(issued.fiscal)) return null;
-    return preparePraReceiptFooter({
-      mode: issued.fiscal.mode,
-      invoiceNumber: issued.fiscal.invoiceNumber,
-      orderRef,
-      qrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
-    });
-  } catch {
-    return null;
-  }
+  return null;
 }

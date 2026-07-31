@@ -12,6 +12,7 @@ import {
   type OrgUser,
 } from "../src/api/admin";
 import { Button, Card, Chip, Input, Notice, Screen, Subtitle, Title, colors } from "../src/components/ui";
+import { AdminShell } from "../src/components/AdminBottomNav";
 import { isAdminOrIncharge } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -96,6 +97,7 @@ export default function AdminUsersScreen() {
   }
 
   return (
+    <AdminShell tab="more" noPadding>
     <Screen>
       <ScrollView contentContainerStyle={{ gap: 12, padding: 16, paddingBottom: 40 }}>
         <Title>User management</Title>
@@ -256,5 +258,6 @@ export default function AdminUsersScreen() {
         })}
       </ScrollView>
     </Screen>
+    </AdminShell>
   );
 }

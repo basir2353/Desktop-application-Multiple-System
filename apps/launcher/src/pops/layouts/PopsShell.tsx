@@ -4,8 +4,15 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { getBusinessSystem } from "../../lib/businessSystems";
 import { getEffectiveSystemLock } from "../../lib/deviceInstall";
 import { roleSelectPath } from "../../lib/loginRoles";
+import {
+  loadUiZoomIndex,
+  UI_ZOOM_CHANGED_EVENT,
+  uiZoomScale,
+  type UiZoomChangedDetail,
+} from "../../lib/uiZoom";
 import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { SystemRouteGuard } from "../../components/SystemRouteGuard";
+import { UiZoomControls } from "../../components/UiZoomControls";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
 import { ThemeToggle } from "../../components/ThemeToggle";
@@ -72,8 +79,10 @@ export function PopsShell(): JSX.Element {
   const systemLocked = Boolean(getEffectiveSystemLock()) || Boolean(claims?.systemType);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarVisible);
   const [posHeaderVisible, setPosHeaderVisibleState] = useState(loadPosHeaderVisible);
+  const [uiZoomIndex, setUiZoomIndexState] = useState(loadUiZoomIndex);
   const isPosRoute = /\/pos(?:\/|$)/.test(location.pathname);
   const showHeader = !isPosRoute || posHeaderVisible;
+  const uiZoom = uiZoomScale(uiZoomIndex);
 
   useEffect(() => {
     try {
@@ -92,6 +101,16 @@ export function PopsShell(): JSX.Element {
     return () => window.removeEventListener(POS_HEADER_VISIBLE_EVENT, onHeaderVisible);
   }, []);
 
+  useEffect(() => {
+    function onZoomChanged(event: Event): void {
+      const detail = (event as CustomEvent<UiZoomChangedDetail>).detail;
+      if (typeof detail?.index === "number") setUiZoomIndexState(detail.index);
+      else setUiZoomIndexState(loadUiZoomIndex());
+    }
+    window.addEventListener(UI_ZOOM_CHANGED_EVENT, onZoomChanged);
+    return () => window.removeEventListener(UI_ZOOM_CHANGED_EVENT, onZoomChanged);
+  }, []);
+
   function signOut(): void {
     // The device stays bound to its installed system, so sign-out returns to
     // this system's role/login screen — never the picker or Super Admin login.
@@ -102,7 +121,10 @@ export function PopsShell(): JSX.Element {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div
+      className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100"
+      style={{ zoom: uiZoom }}
+    >
       <BranchAutoConnect />
       <BranchPrintBootstrap />
       {sidebarOpen ? (
@@ -174,6 +196,7 @@ export function PopsShell(): JSX.Element {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <UiZoomControls compact />
               <ThemeToggle compact />
               {systemId === "restaurant" ? <PopsAlertCenter /> : null}
               <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
@@ -192,6 +215,11 @@ export function PopsShell(): JSX.Element {
               </Button>
             </div>
           </header>
+        ) : isPosRoute ? (
+          /* POS can hide the full header — keep zoom reachable in a slim strip. */
+          <div className="flex items-center justify-end gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900/30">
+            <UiZoomControls compact />
+          </div>
         ) : null}
 
         <LicencePaymentAlertBanner />

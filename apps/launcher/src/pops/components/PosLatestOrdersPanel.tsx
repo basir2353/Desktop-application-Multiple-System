@@ -4,12 +4,15 @@ import { Link } from "react-router-dom";
 import {
   canChangePosRecentOrderTable,
   canEditPosRecentOrder,
+  canPayPosRecentOrder,
   dismissPosOrder,
   filterDismissedPosOrders,
   filterPosRecentOrders,
   formatRecentOrderTime,
+  isPaidPosRecentOrder,
   posRecentOrderTotal,
   POS_RECENT_ORDERS_PREVIEW_LIMIT,
+  withClosedPosOrderStatus,
   type PosRecentOrder,
   type PosRecentOrderModeFilter,
 } from "../lib/recentOrders";
@@ -24,6 +27,20 @@ import {
 } from "../lib/printTicket";
 import { asPrinterName } from "../lib/asPrinterName";
 import { resolvePraFooterForPaidBill } from "../lib/praPaidPrint";
+import {
+  canEmbedPraOnSlip,
+  canShowRpraForBill,
+  checkRealPraConnected,
+  issuePraForBill,
+  praIssuedNotice,
+  REAL_PRA_NOT_CONNECTED_MSG,
+} from "../lib/praIssueFlow";
+import { preparePraReceiptFooter } from "../lib/praReceiptFooter";
+import {
+  isPraFakeEnabled,
+  isPraRealEnabled,
+  useTaxAuthorityFeatures,
+} from "../hooks/useTaxAuthorityFeatures";
 import { resolveReceiptPrinter, resolvePrintUserId } from "../lib/printerRouting";
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { loadBillPrintSettings } from "../lib/billPrintSettings";
@@ -48,6 +65,7 @@ type Props = {
   isError: boolean;
   onEdit?: (order: PosRecentOrder) => void;
   onPayOrder?: (order: PosRecentOrder) => void;
+  onNotice?: (message: string, tone?: "success" | "error") => void;
 };
 
 function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
@@ -57,12 +75,22 @@ function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
   return "bg-slate-500";
 }
 
-export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPayOrder }: Props): JSX.Element {
+export function PosLatestOrdersPanel({
+  orders,
+  isLoading,
+  isError,
+  onEdit,
+  onPayOrder,
+  onNotice,
+}: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
   const canManageTables = sessionCanManageFloor(claims);
+  const taxFeatures = useTaxAuthorityFeatures();
+  const praFakeEnabled = isPraFakeEnabled(taxFeatures.data);
+  const praRealEnabled = isPraRealEnabled(taxFeatures.data);
 
   const [orderModeVisibility, setOrderModeVisibility] = useState(() =>
     loadPosOrderModeVisibility(branch?.code),
@@ -126,8 +154,10 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
   const visibleOrders = useMemo(() => {
     if (!branch?.code) return orders;
     void dismissedRevision;
+    // Paid tab: keep closed bills visible with status "Closed".
+    if (modeFilter === "Paid") return withClosedPosOrderStatus(orders, branch.code);
     return filterDismissedPosOrders(orders, branch.code);
-  }, [orders, branch?.code, dismissedRevision]);
+  }, [orders, branch?.code, dismissedRevision, modeFilter]);
 
   const isSearching = search.trim().length > 0;
   const isModeFiltered = modeFilter !== "all";
@@ -169,6 +199,82 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
       // Dismiss already applied — refresh UI filter.
       setDismissedRevision((n) => n + 1);
       setSelectedId(null);
+    },
+  });
+
+  /** Fake Active → RPRA uploads this paid ticket to Real PRA and reprints Real slip. */
+  const rpraMutation = useMutation({
+    mutationFn: async (order: PosRecentOrder) => {
+      if (!branch?.code) throw new Error("Select a branch before uploading to Real PRA.");
+      const bill = order.bill;
+      if (!bill || bill.status !== "completed") {
+        throw new Error("Pay the order first, then use RPRA.");
+      }
+      if (String(bill.praMode ?? "").toLowerCase() === "real") {
+        throw new Error("This ticket already has a Real PRA invoice.");
+      }
+      if (!canShowRpraForBill({
+        praFakeEnabled: isPraFakeEnabled(taxFeatures.data),
+        praRealEnabled: isPraRealEnabled(taxFeatures.data),
+        praMode: bill.praMode,
+      })) {
+        throw new Error("RPRA is only while FPRA is Active. Real PRA runs automatically on Pay.");
+      }
+      const gate = await checkRealPraConnected(branch.code);
+      if (!gate.connected) throw new Error(REAL_PRA_NOT_CONNECTED_MSG);
+      const issued = await issuePraForBill({
+        branchCode: branch.code,
+        billId: bill.id,
+        mode: "real",
+      });
+      return { order, bill, issued };
+    },
+    onSuccess: async ({ order, bill, issued }) => {
+      void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
+      if (!canEmbedPraOnSlip(issued.fiscal)) {
+        onNotice?.("Real PRA did not return invoice number/QR.", "error");
+        return;
+      }
+      onNotice?.(praIssuedNotice("real", issued.fiscal.invoiceNumber), "success");
+
+      try {
+        const sessionUserId = useSessionStore.getState().claims?.sub;
+        const printUserId = resolvePrintUserId(sessionUserId, bill.waiterId);
+        const profile = resolveReceiptPrinter(branch!.code, printUserId);
+        const assigned = printUserId ? getWaiterPrinter(branch!.code, printUserId) : null;
+        const praFiscal = await preparePraReceiptFooter({
+          mode: "real",
+          invoiceNumber: issued.fiscal.invoiceNumber,
+          orderRef: bill.orderRef ?? bill.billRef ?? order.ref,
+          qrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
+        });
+        const base = billToPrintInput(branch!.name, branch!.code, {
+          ...bill,
+          praMode: "real",
+          praInvoiceNumber: issued.fiscal.invoiceNumber,
+          praQrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
+          praInvoiceId: issued.fiscal.invoiceId,
+        });
+        void printReceiptAsync({
+          ...base,
+          praFiscal,
+          billPrintSettings:
+            resolveBillPrintSettingsForReceipt(branch!.code) ??
+            loadBillPrintSettings(branch!.code),
+          printerName: profile?.name ?? assigned?.printerName,
+          systemPrinterName: asPrinterName(
+            profile?.systemPrinterName ?? assigned?.systemPrinterName,
+          ),
+        });
+      } catch {
+        onNotice?.(
+          `Real PRA saved (${issued.fiscal.invoiceNumber}) but print failed — use Print to reprint.`,
+          "error",
+        );
+      }
+    },
+    onError: (err: Error) => {
+      onNotice?.(err.message || "Real PRA upload failed.", "error");
     },
   });
 
@@ -258,12 +364,17 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
     })();
   }
 
+  /** Unpaid New/held → open Pay (payment first). Paid → reprint with Real PRA footer. */
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
+    if (canPayPosRecentOrder(order)) {
+      onPayOrder?.(order);
+      return;
+    }
     openPrintPreview(order);
   }
 
-  /** Close: same receipt print as Print, but skip preview popup. */
+  /** Close: unpaid → Pay first; paid → print receipt + dismiss from list. */
   function printOrderDirect(order: PosRecentOrder): void {
     void (async () => {
       const built = await buildPaidReceiptInput(order);
@@ -282,6 +393,10 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
 
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
+    if (canPayPosRecentOrder(order)) {
+      onPayOrder?.(order);
+      return;
+    }
     printOrderDirect(order);
     if (branch?.code) dismissPosOrder(branch.code, order.id);
     setDismissedRevision((n) => n + 1);
@@ -306,7 +421,9 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
           <div className="flex items-center justify-between gap-2">
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
-              <div className="mt-0.5 text-[10px] text-slate-500">Tap for actions · double-click to pay</div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                Tap for actions · Close hides from All; Paid shows Closed
+              </div>
             </div>
             <Link
               to="../orders"
@@ -410,6 +527,16 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                 const showChangeTable =
                   canManageTables && canChangePosRecentOrderTable(order) && Boolean(branch?.code);
                 const showEdit = Boolean(onEdit) && canEditPosRecentOrder(order);
+                // Fake Active only — never on Real Active / Real invoice tickets.
+                const showRpra =
+                  canShowRpraForBill({
+                    praFakeEnabled,
+                    praRealEnabled,
+                    praMode: order.bill?.praMode,
+                  }) &&
+                  isPaidPosRecentOrder(order) &&
+                  Boolean(order.bill) &&
+                  order.bill?.status === "completed";
 
                 return (
                   <li key={order.id}>
@@ -487,6 +614,22 @@ export function PosLatestOrdersPanel({ orders, isLoading, isError, onEdit, onPay
                           >
                             Print
                           </button>
+                          {showRpra ? (
+                            <button
+                              type="button"
+                              className="shrink-0 rounded border border-emerald-600/50 bg-emerald-600/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/30 hover:text-white disabled:opacity-50"
+                              title="Upload this paid ticket to Real PRA and print Real fiscal slip"
+                              disabled={rpraMutation.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                rpraMutation.mutate(order);
+                              }}
+                            >
+                              {rpraMutation.isPending && rpraMutation.variables?.id === order.id
+                                ? "…"
+                                : "RPRA"}
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-slate-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"

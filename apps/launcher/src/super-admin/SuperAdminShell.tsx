@@ -29,7 +29,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     title: "Compliance",
-    items: [{ to: "/super-admin/tax", label: "FBR / Fake · Real PRA" }],
+    items: [{ to: "/super-admin/tax", label: "FBR / FPRA · Real PRA" }],
   },
   {
     title: "System",

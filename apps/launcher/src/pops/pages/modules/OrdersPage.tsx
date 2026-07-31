@@ -40,13 +40,14 @@ import {
   useTaxAuthorityFeatures,
 } from "../../hooks/useTaxAuthorityFeatures";
 import {
+  autoIssuePraForCompletedBill,
   canEmbedPraOnSlip,
+  canShowRpraForBill,
   checkRealPraConnected,
   issuePraForBill,
   praIssuedNotice,
   printIssuedPraSlip,
   REAL_PRA_NOT_CONNECTED_MSG,
-  resolveAutoPraMode,
 } from "../../lib/praIssueFlow";
 import { billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
 import { resolvePraFooterForPaidBill } from "../../lib/praPaidPrint";
@@ -146,11 +147,8 @@ export function OrdersPage(): JSX.Element {
   const [praBusy, setPraBusy] = useState(false);
   const [praModePromptBill, setPraModePromptBill] = useState<Bill | null>(null);
   const taxFeatures = useTaxAuthorityFeatures();
-  const praFakeEnabled = isPraFakeEnabled(taxFeatures.data);
   const praRealEnabled = isPraRealEnabled(taxFeatures.data);
-  const praFeatureActive = praFakeEnabled || praRealEnabled;
-  const REAL_PRA_NOT_CONNECTED_MSG =
-    "Real PRA is not connected. Please connect your PRA account before uploading invoices.";
+  const praFakeEnabled = isPraFakeEnabled(taxFeatures.data);
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code],
@@ -178,10 +176,49 @@ export function OrdersPage(): JSX.Element {
       taxPct: number;
       payments: Bill["payments"];
     }) => completeBill(billId, { servicePct, taxPct, payments }),
-    onSuccess: (bill) => {
+    onSuccess: async (bill) => {
       setHeldBillToPay(null);
       void ordersQuery.refetch();
-      setNotice(`Payment completed — ${bill.billRef}`);
+
+      // Real/FPRA ON → auto-issue on Orders Pay (same as POS Pay).
+      if (!branch?.code) {
+        setNotice(`Payment completed — ${bill.billRef}`);
+        return;
+      }
+
+      const autoPra = await autoIssuePraForCompletedBill({
+        branchCode: branch.code,
+        billId: bill.id,
+      });
+
+      if (!autoPra.mode) {
+        setNotice(`Payment completed — ${bill.billRef}`);
+        return;
+      }
+
+      if (autoPra.blockedReal) {
+        window.alert(autoPra.notice || REAL_PRA_NOT_CONNECTED_MSG);
+        setNotice(`Payment completed — ${bill.billRef}. ${autoPra.notice}`);
+        return;
+      }
+
+      if (autoPra.fiscal && canEmbedPraOnSlip(autoPra.fiscal)) {
+        setPraFiscal(autoPra.fiscal);
+        setNotice(`Payment completed — ${bill.billRef}. ${autoPra.notice}`);
+        await ordersQuery.refetch();
+        reprint({
+          ...bill,
+          praMode: autoPra.fiscal.mode,
+          praInvoiceNumber: autoPra.fiscal.invoiceNumber,
+          praQrPayload: autoPra.fiscal.qrPayload?.trim() || autoPra.fiscal.invoiceNumber,
+          praInvoiceId: autoPra.fiscal.invoiceId,
+        });
+        return;
+      }
+
+      setNotice(
+        `Payment completed — ${bill.billRef}${autoPra.notice ? `. ${autoPra.notice}` : ""}`,
+      );
     },
     onError: (err: Error) => setNotice(err.message),
   });
@@ -332,35 +369,37 @@ export function OrdersPage(): JSX.Element {
   }
 
   async function requestRpra(bill: Bill): Promise<void> {
-    const mode = resolveAutoPraMode({
-      praFakeEnabled,
-      praRealEnabled,
-    });
-    if (mode === "fake") {
-      await issuePraForOrder(bill, "fake");
+    if (String(bill.praMode ?? "").toLowerCase() === "real") {
+      setNotice("This ticket already has a Real PRA invoice.");
       return;
     }
-    if (mode === "real") {
-      if (!branch?.code) {
-        setNotice("Select a branch before uploading to PRA.");
-        return;
-      }
-      try {
-        const gate = await checkRealPraConnected(branch.code);
-        if (!gate.connected) {
-          window.alert(REAL_PRA_NOT_CONNECTED_MSG);
-          setNotice(REAL_PRA_NOT_CONNECTED_MSG);
-          return;
-        }
-      } catch {
+    if (
+      !canShowRpraForBill({
+        praFakeEnabled: isPraFakeEnabled(taxFeatures.data),
+        praRealEnabled: isPraRealEnabled(taxFeatures.data),
+        praMode: bill.praMode,
+      })
+    ) {
+      setNotice("RPRA is only while FPRA is Active. Real PRA runs automatically on Pay.");
+      return;
+    }
+    if (!branch?.code) {
+      setNotice("Select a branch before uploading to Real PRA.");
+      return;
+    }
+    try {
+      const gate = await checkRealPraConnected(branch.code);
+      if (!gate.connected) {
         window.alert(REAL_PRA_NOT_CONNECTED_MSG);
         setNotice(REAL_PRA_NOT_CONNECTED_MSG);
         return;
       }
-      await issuePraForOrder(bill, "real");
+    } catch {
+      window.alert(REAL_PRA_NOT_CONNECTED_MSG);
+      setNotice(REAL_PRA_NOT_CONNECTED_MSG);
       return;
     }
-    setNotice("PRA is not enabled. Ask Super Admin to enable Fake PRA or Real PRA.");
+    await issuePraForOrder(bill, "real");
   }
 
   async function viewPraForBill(bill: Bill): Promise<void> {
@@ -725,11 +764,18 @@ export function OrdersPage(): JSX.Element {
                       View PRA
                     </button>
                   ) : null}
-                  {r.source === "bill" && r.bill.status === "completed" && praFeatureActive ? (
+                  {r.source === "bill" &&
+                  r.bill.status === "completed" &&
+                  canShowRpraForBill({
+                    praFakeEnabled,
+                    praRealEnabled,
+                    praMode: r.bill.praMode,
+                  }) ? (
                     <button
                       type="button"
-                      className={`text-xs ${linkSuccessClass}`}
+                      className={`text-xs font-semibold text-emerald-600 hover:text-emerald-500 dark:text-emerald-400`}
                       disabled={praBusy}
+                      title="Upload to Real PRA and print Real fiscal slip"
                       onClick={() => void requestRpra(r.bill)}
                     >
                       RPRA
@@ -791,7 +837,11 @@ export function OrdersPage(): JSX.Element {
           onRealPra={
             selectedOrder.source === "bill" &&
             selectedOrder.bill.status === "completed" &&
-            praFeatureActive
+            canShowRpraForBill({
+              praFakeEnabled,
+              praRealEnabled,
+              praMode: selectedOrder.bill.praMode,
+            })
               ? (bill) => void requestRpra(bill)
               : undefined
           }

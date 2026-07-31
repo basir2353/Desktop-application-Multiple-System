@@ -22,7 +22,26 @@ const STATEMENTS = [
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_real_enabled boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fbr_allowed boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_allowed boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_real_allowed boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_invoice_seq integer NOT NULL DEFAULT 0`,
+  // Continue FPRA sequence after existing fake invoices (avoid restarting at 00000001).
+  `UPDATE organizations o
+   SET pra_fake_invoice_seq = sub.cnt
+   FROM (
+     SELECT organization_id, COUNT(*)::int AS cnt
+     FROM tax_authority_invoices
+     WHERE authority = 'pra' AND invoice_mode = 'fake'
+     GROUP BY organization_id
+   ) sub
+   WHERE o.id = sub.organization_id AND o.pra_fake_invoice_seq < sub.cnt`,
   `UPDATE organizations SET pra_real_enabled = true WHERE pra_enabled = true AND pra_fake_enabled = false AND pra_real_enabled = false`,
+  // Existing Active flags also unlock the matching sections for Super Admin grant backfill.
+  `UPDATE organizations SET fbr_allowed = true WHERE fbr_enabled = true AND fbr_allowed = false`,
+  `UPDATE organizations SET pra_fake_allowed = true WHERE pra_fake_enabled = true AND pra_fake_allowed = false`,
+  `UPDATE organizations SET pra_real_allowed = true WHERE pra_real_enabled = true AND pra_real_allowed = false`,
+  `UPDATE organizations SET pra_real_allowed = true WHERE pra_enabled = true AND pra_fake_enabled = false AND pra_real_allowed = false`,
   `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_mode text`,
   `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_invoice_number text`,
   `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_invoice_id text`,
@@ -32,6 +51,8 @@ const STATEMENTS = [
   `DROP INDEX IF EXISTS tax_authority_invoices_source_uidx`,
   `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_invoices_source_uidx
     ON tax_authority_invoices (organization_id, authority, invoice_mode, source_type, source_id)`,
+  `CREATE INDEX IF NOT EXISTS tax_authority_invoices_report_idx
+    ON tax_authority_invoices (organization_id, branch_id, authority, invoice_mode, created_at)`,
   // General Store core tables (create if drizzle push skipped them on Railway).
   `CREATE TABLE IF NOT EXISTS store_categories (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -284,11 +305,25 @@ const STATEMENTS = [
     pra_token_expires_at timestamptz,
     pra_connected_at timestamptz,
     pra_last_error text,
+    pra_last_token_refresh_at timestamptz,
+    pra_last_invoice_sent_at timestamptz,
+    pra_auto_submit boolean NOT NULL DEFAULT true,
+    pra_offline_queue boolean NOT NULL DEFAULT true,
+    pra_retry_failed boolean NOT NULL DEFAULT true,
+    pra_max_retry_attempts integer NOT NULL DEFAULT 3,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_profiles_org_branch_uidx
     ON tax_authority_profiles (organization_id, branch_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS pops_branches_org_code_uidx
+    ON pops_branches (organization_id, code)`,
+  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_last_token_refresh_at timestamptz`,
+  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_last_invoice_sent_at timestamptz`,
+  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_auto_submit boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_offline_queue boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_retry_failed boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_max_retry_attempts integer NOT NULL DEFAULT 3`,
   `CREATE TABLE IF NOT EXISTS tax_authority_invoices (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -313,6 +348,20 @@ const STATEMENTS = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_invoices_source_uidx
     ON tax_authority_invoices (organization_id, authority, invoice_mode, source_type, source_id)`,
+  `CREATE TABLE IF NOT EXISTS tax_authority_activity_logs (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    branch_id uuid REFERENCES pops_branches(id) ON DELETE SET NULL,
+    authority text NOT NULL DEFAULT 'pra',
+    event text NOT NULL,
+    invoice_number text,
+    pra_invoice_number text,
+    status text NOT NULL DEFAULT '',
+    error_message text,
+    retry_count integer NOT NULL DEFAULT 0,
+    meta_json text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
   // Enterprise printing control plane
   `CREATE TABLE IF NOT EXISTS print_branch_servers (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

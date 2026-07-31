@@ -27,13 +27,13 @@ export class TablesController {
   }
 
   @Get("admin")
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   getFloorAdmin(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.tables.getBranchFloorAdmin(user.organizationId, branchCode?.trim() ?? "");
   }
 
   @Post("sections")
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   createSection(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.tables.createSection(user.organizationId, createSeatingSectionSchema.parse(body));
   }
@@ -59,7 +59,7 @@ export class TablesController {
   }
 
   @Post()
-  @RequirePermissions("pops.menu.manage")
+  @RequirePermissions("pops.menu.manage", "pops.menu.create")
   createTable(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.tables.createTable(user.organizationId, createRestaurantTableSchema.parse(body));
   }

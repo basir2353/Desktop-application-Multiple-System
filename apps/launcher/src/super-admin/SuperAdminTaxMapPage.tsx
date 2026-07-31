@@ -41,7 +41,7 @@ export function SuperAdminTaxMapPage(): JSX.Element {
     onSuccess: async (saved) => {
       const pra = resolvePraFlags(saved);
       setMessage(
-        `${saved.name}: FBR ${saved.fbrEnabled ? "ON" : "OFF"} · Fake PRA ${pra.praFakeEnabled ? "ON" : "OFF"} · Real PRA ${pra.praRealEnabled ? "ON" : "OFF"}`,
+        `${saved.name}: FBR ${saved.fbrEnabled ? "ON" : "OFF"} · FPRA ${pra.praFakeEnabled ? "ON" : "OFF"} · Real PRA ${pra.praRealEnabled ? "ON" : "OFF"}`,
       );
       await qc.invalidateQueries({ queryKey: ["platform", "businesses"] });
     },
@@ -56,17 +56,17 @@ export function SuperAdminTaxMapPage(): JSX.Element {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className={`text-lg font-semibold ${headingClass}`}>FBR / Fake PRA / Real PRA</h2>
+        <h2 className={`text-lg font-semibold ${headingClass}`}>FBR / FPRA / Real PRA</h2>
         <p className={`mt-1 text-sm ${mutedClass}`}>
-          Enable FBR / Fake PRA / Real PRA per business. Admins see Tax &amp; compliance after
-          refresh / re-login. Fake PRA = demo fiscal slip; Real PRA = live e-IMS.
+          Enable FBR / FPRA / Real PRA per business. Admins see Tax &amp; compliance after
+          refresh / re-login. FPRA = demo fiscal slip; Real PRA = live e-IMS.
         </p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Businesses" value={list.length} />
         <Stat label="FBR on" value={fbrOn} />
-        <Stat label="Fake PRA on" value={praFakeOn} />
+        <Stat label="FPRA on" value={praFakeOn} />
         <Stat label="Real PRA on" value={praRealOn} />
       </div>
 
@@ -89,7 +89,7 @@ export function SuperAdminTaxMapPage(): JSX.Element {
             <tr>
               <th className="px-4 py-3 font-medium">Business</th>
               <th className="px-4 py-3 font-medium">FBR</th>
-              <th className="px-4 py-3 font-medium">Fake PRA</th>
+              <th className="px-4 py-3 font-medium">FPRA</th>
               <th className="px-4 py-3 font-medium">Real PRA</th>
               <th className="px-4 py-3 font-medium">Save</th>
             </tr>
@@ -182,9 +182,7 @@ function TaxRow({
           type="checkbox"
           checked={praFakeEnabled}
           onChange={(e) => {
-            const checked = e.target.checked;
-            setPraFake(checked);
-            if (checked) setPraReal(false);
+            setPraFake(e.target.checked);
           }}
         />
       </td>
@@ -193,9 +191,7 @@ function TaxRow({
           type="checkbox"
           checked={praRealEnabled}
           onChange={(e) => {
-            const checked = e.target.checked;
-            setPraReal(checked);
-            if (checked) setPraFake(false);
+            setPraReal(e.target.checked);
           }}
         />
       </td>

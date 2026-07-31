@@ -132,12 +132,11 @@ export function SettingsPage(): JSX.Element {
           />
         ) : canManageTaxFeatures ? (
           <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
-            FBR / PRA Settings appear here only after the platform Super Admin enables FBR, Fake
-            PRA, or Real PRA for this business.
+            FBR / PRA Settings appear here only after the platform Super Admin enables FBR, FPRA, or Real PRA for this business.
           </p>
         ) : (
           <p className="text-sm text-slate-500">
-            Ask an Admin to manage FBR / Fake PRA / Real PRA in Settings (after Super Admin unlocks
+            Ask an Admin to manage FBR / FPRA / Real PRA in Settings (after Super Admin unlocks
             tax for this business).
           </p>
         )}
@@ -176,7 +175,7 @@ export function SettingsPage(): JSX.Element {
         />
       ) : canManageTaxFeatures ? (
         <p className="max-w-xl rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
-          FBR / PRA Settings appear here only after the platform Super Admin enables FBR, Fake PRA,
+          FBR / PRA Settings appear here only after the platform Super Admin enables FBR, FPRA,
           or Real PRA for this business.
         </p>
       ) : null}
@@ -214,7 +213,7 @@ export function SettingsPage(): JSX.Element {
             disabled={!draft.taxEnabled}
             onChange={(e) => setDraft((prev) => ({ ...prev, taxByPaymentMethod: e.target.checked }))}
           />
-          Different tax rates by payment method (cash 16%, card 8%)
+          Different tax rates by payment method (cash / card / online)
         </label>
 
         <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
@@ -294,6 +293,20 @@ export function SettingsPage(): JSX.Element {
               max={30}
               value={draft.cardTaxPct}
               onChange={(e) => setDraft((prev) => ({ ...prev, cardTaxPct: Number(e.target.value) || 0 }))}
+              disabled={!draft.taxByPaymentMethod || !draft.taxEnabled}
+              className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
+            />
+          </label>
+          <label className="block text-xs text-slate-400">
+            Online payment tax (%)
+            <input
+              type="number"
+              min={0}
+              max={30}
+              value={draft.onlineTaxPct}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, onlineTaxPct: Number(e.target.value) || 0 }))
+              }
               disabled={!draft.taxByPaymentMethod || !draft.taxEnabled}
               className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
             />

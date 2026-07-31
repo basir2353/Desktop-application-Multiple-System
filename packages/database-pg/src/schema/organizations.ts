@@ -1,4 +1,4 @@
-import { boolean, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * A business / client installation.
@@ -20,17 +20,24 @@ export const organizations = pgTable("organizations", {
    * null = all modules allowed; [] = lock down to basic ERP only.
    */
   enabledModules: jsonb("enabled_modules").$type<string[] | null>(),
-  /** Super Admin grants FBR tax-authority integration for this business. */
+  /** Super Admin: show FBR section to this business (Admin controls Active). */
+  fbrAllowed: boolean("fbr_allowed").notNull().default(false),
+  /** Super Admin: show FPRA section (Admin controls Active). */
+  praFakeAllowed: boolean("pra_fake_allowed").notNull().default(false),
+  /** Super Admin: show Real PRA section (Admin controls Active). */
+  praRealAllowed: boolean("pra_real_allowed").notNull().default(false),
+  /** Org Admin Active: FBR integration on/off. */
   fbrEnabled: boolean("fbr_enabled").notNull().default(false),
   /**
-   * Legacy “any PRA” flag. Kept in sync as (praFakeEnabled || praRealEnabled).
-   * Prefer praFakeEnabled / praRealEnabled for new code.
+   * Legacy “any PRA” Active flag. Kept in sync as (praFakeEnabled || praRealEnabled).
    */
   praEnabled: boolean("pra_enabled").notNull().default(false),
-  /** Super Admin grants Fake PRA (local fiscal slip + QR, not sent to PRA). */
+  /** Org Admin Active: FPRA (local fiscal slip + QR). */
   praFakeEnabled: boolean("pra_fake_enabled").notNull().default(false),
-  /** Super Admin grants Real PRA (e-IMS / live submit). */
+  /** Org Admin Active: Real PRA (e-IMS / live submit). */
   praRealEnabled: boolean("pra_real_enabled").notNull().default(false),
+  /** Monotonic FPRA invoice sequence (no slashes; padded 8 digits). */
+  praFakeInvoiceSeq: integer("pra_fake_invoice_seq").notNull().default(0),
   createdBy: uuid("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

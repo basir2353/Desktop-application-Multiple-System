@@ -221,17 +221,18 @@ export function buildPosRecentOrders(
   const settings = options?.settings ?? DEFAULT_POS_SETTINGS;
   const paidBills = bills.filter((b) => !b.billRef.endsWith("-SEED"));
   const paid = paidBills.map(mapBill);
-  // Once paid, hide open kitchen tickets for the same ORD-# so All/Print use the PRA bill slip.
-  const paidOrderRefs = new Set(
+  // Hide open KOTs only when a held/completed bill already covers the same ORD-#.
+  const settledOrderRefs = new Set(
     paidBills
-      .map((b) => (b.orderRef ?? b.billRef).trim().toLowerCase())
+      .filter((b) => b.status === "completed" || b.status === "held")
+      .map((b) => (b.orderRef ?? "").trim().toLowerCase())
       .filter(Boolean),
   );
   const pending = tickets
     .filter((t) => t.status !== "done")
     .filter((t) => {
-      const ref = (t.orderRef ?? t.ticketRef).trim().toLowerCase();
-      return !ref || !paidOrderRefs.has(ref);
+      const ref = (t.orderRef ?? "").trim().toLowerCase();
+      return !ref || !settledOrderRefs.has(ref);
     })
     .map((t) => mapTicket(t, settings));
 
@@ -244,8 +245,13 @@ export function buildPosRecentOrders(
 
 export type PosRecentOrderModeFilter = "all" | "Paid" | PosOrderModeLabel;
 
+/** Completed (cashed) bills only — shown under the Paid tab (incl. Closed). */
 export function isPaidPosRecentOrder(order: PosRecentOrder): boolean {
-  return order.kind === "paid" && order.statusLabel === "Paid";
+  if (order.bill?.status === "completed") return true;
+  return (
+    order.kind === "paid" &&
+    (order.statusLabel === "Paid" || order.statusLabel === "Closed")
+  );
 }
 
 export function filterPosRecentOrdersByMode(
@@ -314,10 +320,28 @@ export function dismissPosOrder(branchCode: string, orderId: string): void {
   localStorage.setItem(dismissedOrdersKey(branchCode), JSON.stringify([...ids]));
 }
 
+/** Hide Closed orders from All; Paid tab keeps them with a Closed label. */
 export function filterDismissedPosOrders(orders: PosRecentOrder[], branchCode: string): PosRecentOrder[] {
   const dismissed = loadDismissedPosOrderIds(branchCode);
   if (dismissed.size === 0) return orders;
   return orders.filter((order) => !dismissed.has(order.id));
+}
+
+/** Mark locally closed (Dismiss/Close) orders so Paid tab can show status "Closed". */
+export function withClosedPosOrderStatus(
+  orders: PosRecentOrder[],
+  branchCode: string,
+): PosRecentOrder[] {
+  const dismissed = loadDismissedPosOrderIds(branchCode);
+  if (dismissed.size === 0) return orders;
+  return orders.map((order) => {
+    if (!dismissed.has(order.id)) return order;
+    return {
+      ...order,
+      statusLabel: "Closed",
+      statusTone: "neutral" as const,
+    };
+  });
 }
 
 export function formatRecentOrderTime(iso: string): string {

@@ -1,5 +1,6 @@
 import { Button } from "@platform/ui";
 import {
+  accessDefaultsForPopsRole,
   canManageOrgUsers,
   hasModuleAccess,
   permissionsForPopsRole,
@@ -15,7 +16,7 @@ import {
   type UpdateOrgUser,
 } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { fetchPopsBranches } from "../../api/operations";
 import { useOrgModuleCeiling } from "../../hooks/useOrgModuleCeiling";
@@ -67,17 +68,20 @@ type UserFormState = {
   navAllowlist: string[] | null;
 };
 
-const defaultForm = (): UserFormState => ({
-  email: "",
-  password: "",
-  role: "cashier",
-  branchScope: "all",
-  pinRequired: true,
-  staffPin: "",
-  active: true,
-  permissions: permissionsForPopsRole("cashier"),
-  navAllowlist: null,
-});
+const defaultForm = (): UserFormState => {
+  const defaults = accessDefaultsForPopsRole("cashier");
+  return {
+    email: "",
+    password: "",
+    role: "cashier",
+    branchScope: "all",
+    pinRequired: true,
+    staffPin: "",
+    active: true,
+    permissions: defaults.permissions,
+    navAllowlist: defaults.navAllowlist,
+  };
+};
 
 function pathIsOn(allowlist: string[] | null, path: string): boolean {
   if (allowlist == null) return true;
@@ -132,6 +136,172 @@ function toggleNavGroup(
   return { navAllowlist: next, permissions };
 }
 
+/** Optional Cashier extras — admin can turn these on without opening full admin access. */
+const CASHIER_EXTRA_PAGES: { path: string; label: string; hint: string }[] = [
+  { path: "pos/cash-drawer", label: "Cash drawer", hint: "Cashier in / out" },
+  { path: "orders", label: "Orders", hint: "View recent / held orders" },
+  { path: "bills", label: "Bill management", hint: "Search and reprint bills" },
+  { path: "waiter", label: "Waiter floor", hint: "Table service screen" },
+];
+
+const CASHIER_EXTRA_MODULES: { id: string; label: string; hint: string }[] = [
+  { id: "pops.pos.void", label: "Void lines", hint: "Allow void on POS" },
+  { id: "pops.pos.discount", label: "Discounts", hint: "Allow discount overrides" },
+  { id: "pops.closing.report", label: "Day closing", hint: "Z-report / closing" },
+];
+
+function applyRoleDefaults(role: PopsRole): Pick<UserFormState, "role" | "permissions" | "navAllowlist"> {
+  const defaults = accessDefaultsForPopsRole(role);
+  return {
+    role,
+    permissions: defaults.permissions,
+    navAllowlist: defaults.navAllowlist,
+  };
+}
+
+function CashierPresetPanel({
+  form,
+  setForm,
+}: {
+  form: UserFormState;
+  setForm: Dispatch<SetStateAction<UserFormState>>;
+}): JSX.Element {
+  const coreOn =
+    pathIsOn(form.navAllowlist, "pos") &&
+    pathIsOn(form.navAllowlist, "tables") &&
+    pathIsOn(form.navAllowlist, "menu") &&
+    hasModuleAccess(form.permissions, "pops.menu.create");
+
+  return (
+    <div className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium text-emerald-100">Cashier preset</div>
+          <p className="mt-0.5 text-[11px] text-slate-400">
+            Locked-down by default: POS, add tables, add menu only. Reports, settings, and admin stay hidden.
+            Turn extras on below if this cashier needs them.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
+          onClick={() => setForm((f) => ({ ...f, ...applyRoleDefaults("cashier") }))}
+        >
+          Reset to Cashier defaults
+        </button>
+      </div>
+
+      <div className="grid gap-1.5 sm:grid-cols-3">
+        {[
+          { path: "pos", label: "POS window" },
+          { path: "tables", label: "Tables (add only)" },
+          { path: "menu", label: "Menu (add only)" },
+        ].map((item) => {
+          const on = pathIsOn(form.navAllowlist, item.path);
+          return (
+            <label
+              key={item.path}
+              className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs ${
+                on
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-50"
+                  : "border-slate-800 bg-slate-900/60 text-slate-500"
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="accent-emerald-500"
+                checked={on}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ...toggleNavPath(f, item.path, e.target.checked) }))
+                }
+              />
+              <span>
+                <span className="block font-medium">{item.label}</span>
+                <span className="block text-[10px] text-slate-500">Core · recommended on</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      {!coreOn ? (
+        <p className="text-[11px] text-amber-300/90">
+          One or more core Cashier pages are off. This user may not be able to take orders or add items.
+        </p>
+      ) : null}
+
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Optional pages</div>
+        <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+          {CASHIER_EXTRA_PAGES.map((item) => {
+            const on = pathIsOn(form.navAllowlist, item.path);
+            return (
+              <label
+                key={item.path}
+                className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs ${
+                  on
+                    ? "border-sky-500/40 bg-sky-500/10 text-slate-100"
+                    : "border-slate-800 bg-slate-900/60 text-slate-400"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-sky-500"
+                  checked={on}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, ...toggleNavPath(f, item.path, e.target.checked) }))
+                  }
+                />
+                <span>
+                  <span className="block font-medium">{item.label}</span>
+                  <span className="mt-0.5 block text-[10px] text-slate-500">{item.hint}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+          Optional POS powers
+        </div>
+        <div className="mt-1.5 grid gap-1.5 sm:grid-cols-3">
+          {CASHIER_EXTRA_MODULES.map((mod) => {
+            const on = hasModuleAccess(form.permissions, mod.id);
+            return (
+              <label
+                key={mod.id}
+                className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs ${
+                  on
+                    ? "border-amber-500/40 bg-amber-500/10 text-slate-100"
+                    : "border-slate-800 bg-slate-900/60 text-slate-400"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-amber-500"
+                  checked={on}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      permissions: toggleModulePermission(f.permissions, mod.id, e.target.checked),
+                    }))
+                  }
+                />
+                <span>
+                  <span className="block font-medium">{mod.label}</span>
+                  <span className="mt-0.5 block text-[10px] text-slate-500">{mod.hint}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UserFormModal({
   title,
   initial,
@@ -179,19 +349,48 @@ function UserFormModal({
     return POPS_MODULE_ACCESS.filter((m) => allowed.has(m.id));
   }, [orgPerms, orgCeiling]);
 
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === "Escape" && !loading) onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [loading, onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/60"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !loading) onClose();
+      }}
+    >
       <div
-        className={`w-full rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl ${
+        className={`relative w-full rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl ${
           showAccessControls ? "max-w-2xl max-h-[90vh] overflow-y-auto" : "max-w-md"
         }`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="user-form-title"
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        <h2 id="user-form-title" className="text-lg font-semibold text-white">
-          {title}
-        </h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 id="user-form-title" className="text-lg font-semibold text-white">
+            {title}
+          </h2>
+          <button
+            type="button"
+            className="shrink-0 rounded-md p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-40"
+            aria-label="Close"
+            title="Close"
+            disabled={loading}
+            onClick={onClose}
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
         <form
           className="mt-4 space-y-3"
           onSubmit={(e) => {
@@ -234,9 +433,7 @@ function UserFormModal({
                 const role = e.target.value as PopsRole;
                 setForm((f) => ({
                   ...f,
-                  role,
-                  permissions: permissionsForPopsRole(role),
-                  navAllowlist: null,
+                  ...applyRoleDefaults(role),
                 }));
               }}
             >
@@ -260,6 +457,11 @@ function UserFormModal({
                 </option>
               ))}
             </select>
+            <span className="mt-1 block text-[11px] text-slate-500">
+              {form.branchScope === "all"
+                ? "Can open and switch between every branch."
+                : `Locked to ${form.branchScope} only — other branches stay hidden.`}
+            </span>
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-300">
             <input
@@ -308,6 +510,8 @@ function UserFormModal({
                 </label>
               </div>
 
+              {form.role === "cashier" ? <CashierPresetPanel form={form} setForm={setForm} /> : null}
+
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Modules</div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -349,13 +553,24 @@ function UserFormModal({
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Menu pages</div>
-                  <button
-                    type="button"
-                    className="text-[11px] text-sky-400 hover:text-sky-300"
-                    onClick={() => setForm((f) => ({ ...f, navAllowlist: null }))}
-                  >
-                    Allow all pages for modules
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    {form.role === "cashier" ? (
+                      <button
+                        type="button"
+                        className="text-[11px] text-emerald-400 hover:text-emerald-300"
+                        onClick={() => setForm((f) => ({ ...f, ...applyRoleDefaults("cashier") }))}
+                      >
+                        Cashier pages only
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="text-[11px] text-sky-400 hover:text-sky-300"
+                      onClick={() => setForm((f) => ({ ...f, navAllowlist: null }))}
+                    >
+                      Allow all pages for modules
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-2 space-y-2">
                   {popsNavItems.map((item) => {
@@ -681,7 +896,9 @@ export function AuthPage(): JSX.Element {
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
         <div className="text-sm font-medium text-white">Permission matrix</div>
-        <p className="mt-1 text-xs text-slate-500">Capabilities by role template (stored permissions sync on save).</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Capabilities by role template. Cashier defaults to POS + add-only menu/tables (no void/discount/closing).
+        </p>
         <div className="mt-3 overflow-x-auto text-xs">
           <table className="w-full border-collapse text-left">
             <thead className="text-slate-500">

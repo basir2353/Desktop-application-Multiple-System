@@ -12,7 +12,9 @@ let singleton: RuntimeDb | null = null;
 export async function getRuntimeDb(): Promise<RuntimeDb> {
   if (singleton) return singleton;
 
-  const wasmBaseUrl = import.meta.env.BASE_URL.replace(/\/$/, "");
+  // Force origin-root wasm URL (never /pos/sql-wasm.wasm → SPA HTML).
+  const wasmBaseUrl =
+    typeof window !== "undefined" ? `${window.location.origin}/` : "/";
   const persisted = loadPersistedSqliteBytes();
   const next = await createSqlJsDb({ wasmBaseUrl, persisted });
 

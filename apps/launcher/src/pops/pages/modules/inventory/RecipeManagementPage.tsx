@@ -159,12 +159,15 @@ export function RecipeManagementPage(): JSX.Element {
     setError(null);
     try {
       const buffer = await file.arrayBuffer();
-      const rows = parseRecipeImportFile(buffer, file.name);
-      if (rows.length === 0) {
-        throw new Error("No recipe rows found. Use the Recipe Lines sheet from export.");
+      const parsed = parseRecipeImportFile(buffer, file.name);
+      if (parsed.rows.length === 0) {
+        throw new Error(
+          "No recipe rows found. Use our Download template (Recipe Lines sheet)." +
+            (parsed.skipReasons[0] ? ` ${parsed.skipReasons[0]}` : ""),
+        );
       }
 
-      const summary = await importRecipeRows(rows, {
+      const summary = await importRecipeRows(parsed.rows, {
         branchCode: branch.code,
         recipes,
         menuItems,
@@ -191,9 +194,12 @@ export function RecipeManagementPage(): JSX.Element {
       });
 
       invalidate();
+      const totalSkipped = summary.skipped + parsed.skipped;
+      const reasons = [...parsed.skipReasons, ...summary.skipReasons].slice(0, 5);
       setTransferNotice(
-        `Import complete — ${summary.recipesCreated} new recipe${summary.recipesCreated === 1 ? "" : "s"}, ${summary.recipesUpdated} updated${summary.skipped > 0 ? `, ${summary.skipped} skipped` : ""}.`,
+        `Import complete — ${summary.recipesCreated} new recipe${summary.recipesCreated === 1 ? "" : "s"}, ${summary.recipesUpdated} updated${totalSkipped > 0 ? `, ${totalSkipped} skipped` : ""}.`,
       );
+      if (reasons.length) setError(reasons.join(" · "));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Recipe import failed");
     } finally {

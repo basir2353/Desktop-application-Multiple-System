@@ -1,14 +1,26 @@
-import * as XLSX from "xlsx";
 import {
   activeMenuVariants,
   type BranchMenu,
   type MenuCategory,
   type MenuItem,
 } from "@platform/contracts";
+import {
+  cellNumber,
+  cellString,
+  instructionsRows,
+  isoDateStamp,
+  moneyNumber,
+  pickSheet,
+  readWorkbook,
+  sheetRows,
+  writeWorkbookDownload,
+  yesNo,
+} from "../../lib/excelTransfer";
 
 export type MenuImportRow = {
   category: string;
   itemName: string;
+  secondaryName: string;
   featured: boolean;
   active: boolean;
   sortOrder: number;
@@ -17,58 +29,24 @@ export type MenuImportRow = {
   barcode: string;
 };
 
+export type MenuCategoryImportRow = {
+  name: string;
+  sortOrder: number;
+  active: boolean;
+};
+
 export type MenuImportSummary = {
   categoriesCreated: number;
+  categoriesUpdated: number;
   itemsCreated: number;
   itemsUpdated: number;
   skipped: number;
+  skipReasons: string[];
 };
 
+const CATEGORIES_SHEET = "Categories";
 const MENU_ITEMS_SHEET = "Menu Items";
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function yesNo(value: unknown, fallback = false): boolean {
-  if (typeof value === "boolean") return value;
-  const text = String(value ?? "")
-    .trim()
-    .toLowerCase();
-  if (!text) return fallback;
-  return text === "yes" || text === "y" || text === "true" || text === "1";
-}
-
-function cellString(row: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const direct = row[key];
-    if (direct != null && String(direct).trim()) return String(direct).trim();
-    const match = Object.entries(row).find(([k]) => k.trim().toLowerCase() === key.toLowerCase());
-    if (match && String(match[1] ?? "").trim()) return String(match[1]).trim();
-  }
-  return "";
-}
-
-function cellNumber(row: Record<string, unknown>, ...keys: string[]): number {
-  for (const key of keys) {
-    const direct = row[key];
-    if (direct != null && direct !== "") {
-      const n = Number(direct);
-      if (Number.isFinite(n)) return n;
-    }
-    const match = Object.entries(row).find(([k]) => k.trim().toLowerCase() === key.toLowerCase());
-    if (match && match[1] != null && match[1] !== "") {
-      const n = Number(match[1]);
-      if (Number.isFinite(n)) return n;
-    }
-  }
-  return 0;
-}
+const INSTRUCTIONS_SHEET = "Instructions";
 
 function menuItemRows(menu: BranchMenu): Record<string, string | number>[] {
   const categoryById = new Map(menu.categories.map((c) => [c.id, c]));
@@ -92,11 +70,11 @@ function menuItemRows(menu: BranchMenu): Record<string, string | number>[] {
       rows.push({
         Category: categoryName,
         "Item Name": item.name,
+        "Secondary Name": item.secondaryName ?? "",
         Featured: item.featured ? "Yes" : "No",
         Active: item.isActive ? "Yes" : "No",
         "Sort Order": item.sortOrder,
         "Variant Label": variant.label,
-        Size: variant.label,
         Price: variant.price,
         Barcode: variant.barcode ?? "",
       });
@@ -106,104 +84,181 @@ function menuItemRows(menu: BranchMenu): Record<string, string | number>[] {
   return rows;
 }
 
-export function exportMenuExcel(menu: BranchMenu, branchCode: string): void {
-  const categoryRows = menu.categories.map((c) => ({
+function categoryExportRows(menu: BranchMenu): Record<string, string | number>[] {
+  return menu.categories.map((c) => ({
     Name: c.name,
     "Sort Order": c.sortOrder,
     Active: c.isActive ? "Yes" : "No",
   }));
+}
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(categoryRows), "Categories");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(menuItemRows(menu)), MENU_ITEMS_SHEET);
+const MENU_TEMPLATE_INSTRUCTIONS = [
+  "Fill the Menu Items sheet — one row per item variant (Small/Medium/Large = separate rows with the same Item Name).",
+  "Required columns on Menu Items: Category, Item Name, Price. Variant Label defaults to Standard if blank.",
+  "Optional: Secondary Name, Featured (Yes/No), Active (Yes/No), Sort Order, Barcode.",
+  "Categories sheet is optional but recommended — Name, Sort Order, Active. Missing categories are created from Menu Items.",
+  "Featured/Active accept: Yes, No, Y, N, true, false, 1, 0.",
+  "Re-importing the same Item Name + Category updates that item (when you have full menu permission).",
+  "Save as .xlsx (recommended) or .csv. Keep sheet names: Categories, Menu Items.",
+  "Do not change column header spelling. Extra columns are ignored.",
+];
 
-  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  const date = new Date().toISOString().slice(0, 10);
-  downloadBlob(
-    new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    `menu-${branchCode}-${date}.xlsx`,
+export function exportMenuExcel(menu: BranchMenu, branchCode: string): void {
+  writeWorkbookDownload(
+    [
+      { name: INSTRUCTIONS_SHEET, rows: instructionsRows(MENU_TEMPLATE_INSTRUCTIONS) },
+      { name: CATEGORIES_SHEET, rows: categoryExportRows(menu) },
+      {
+        name: MENU_ITEMS_SHEET,
+        rows:
+          menuItemRows(menu).length > 0
+            ? menuItemRows(menu)
+            : [
+                {
+                  Category: "",
+                  "Item Name": "",
+                  "Secondary Name": "",
+                  Featured: "",
+                  Active: "",
+                  "Sort Order": 0,
+                  "Variant Label": "",
+                  Price: 0,
+                  Barcode: "",
+                },
+              ],
+      },
+    ],
+    `menu-${branchCode}-${isoDateStamp()}.xlsx`,
   );
 }
 
-/**
- * Download a blank XLSX file so users can fill the correct sheet/column names.
- * Import parser reads mainly the "Menu Items" sheet.
- */
 export function downloadMenuImportTemplateExcel(branchCode?: string): void {
-  const categoryTemplateRows = [
-    {
-      Name: "",
-      "Sort Order": 0,
-      Active: "",
-    },
-  ];
-
-  const menuTemplateRows = [
-    {
-      Category: "",
-      "Item Name": "",
-      Featured: "",
-      Active: "",
-      "Sort Order": 0,
-      "Variant Label": "",
-      Size: "",
-      Price: 0,
-      Barcode: "",
-    },
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(categoryTemplateRows), "Categories");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(menuTemplateRows), MENU_ITEMS_SHEET);
-
-  const buffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  const date = new Date().toISOString().slice(0, 10);
   const code = branchCode ? `-${branchCode}` : "";
-  downloadBlob(
-    new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    `menu-import-template${code}-${date}.xlsx`,
+  writeWorkbookDownload(
+    [
+      { name: INSTRUCTIONS_SHEET, rows: instructionsRows(MENU_TEMPLATE_INSTRUCTIONS) },
+      {
+        name: CATEGORIES_SHEET,
+        rows: [
+          { Name: "Mains", "Sort Order": 1, Active: "Yes" },
+          { Name: "Drinks", "Sort Order": 2, Active: "Yes" },
+        ],
+      },
+      {
+        name: MENU_ITEMS_SHEET,
+        rows: [
+          {
+            Category: "Mains",
+            "Item Name": "Chicken Karahi",
+            "Secondary Name": "",
+            Featured: "Yes",
+            Active: "Yes",
+            "Sort Order": 1,
+            "Variant Label": "Full",
+            Price: 1200,
+            Barcode: "",
+          },
+          {
+            Category: "Mains",
+            "Item Name": "Chicken Karahi",
+            "Secondary Name": "",
+            Featured: "Yes",
+            Active: "Yes",
+            "Sort Order": 1,
+            "Variant Label": "Half",
+            Price: 700,
+            Barcode: "",
+          },
+          {
+            Category: "Drinks",
+            "Item Name": "Fresh Lime",
+            "Secondary Name": "",
+            Featured: "No",
+            Active: "Yes",
+            "Sort Order": 1,
+            "Variant Label": "Standard",
+            Price: 150,
+            Barcode: "",
+          },
+        ],
+      },
+    ],
+    `menu-import-template${code}-${isoDateStamp()}.xlsx`,
   );
 }
 
-export function parseMenuImportFile(buffer: ArrayBuffer, filename: string): MenuImportRow[] {
-  const lower = filename.toLowerCase();
-  const wb = lower.endsWith(".csv")
-    ? XLSX.read(new TextDecoder().decode(buffer), { type: "string" })
-    : XLSX.read(buffer, { type: "array" });
-  const sheetName =
-    wb.SheetNames.find((name) => name.toLowerCase() === MENU_ITEMS_SHEET.toLowerCase()) ??
-    wb.SheetNames.find((name) => name.toLowerCase().includes("menu")) ??
-    wb.SheetNames[0];
-  const sheet = wb.Sheets[sheetName];
+export function parseMenuCategorySheet(
+  buffer: ArrayBuffer,
+  filename: string,
+): MenuCategoryImportRow[] {
+  const wb = readWorkbook(buffer, filename);
+  const sheet = pickSheet(wb, [CATEGORIES_SHEET], ["categor"]);
   if (!sheet) return [];
+  const out: MenuCategoryImportRow[] = [];
+  for (const row of sheetRows(sheet)) {
+    const name = cellString(row, "Name", "Category", "category name");
+    if (!name) continue;
+    out.push({
+      name,
+      sortOrder: cellNumber(row, "Sort Order", "sort order"),
+      active: yesNo(cellString(row, "Active", "active"), true),
+    });
+  }
+  return out;
+}
 
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+export function parseMenuImportFile(
+  buffer: ArrayBuffer,
+  filename: string,
+): { rows: MenuImportRow[]; skipped: number; skipReasons: string[] } {
+  const wb = readWorkbook(buffer, filename);
+  const sheet = pickSheet(wb, [MENU_ITEMS_SHEET], ["menu", "item"]);
+  if (!sheet) return { rows: [], skipped: 0, skipReasons: ["Menu Items sheet not found"] };
+
+  const rawRows = sheetRows(sheet);
   const parsed: MenuImportRow[] = [];
+  let skipped = 0;
+  const skipReasons: string[] = [];
 
-  for (const row of rawRows) {
+  for (let i = 0; i < rawRows.length; i++) {
+    const row = rawRows[i]!;
     const category = cellString(row, "Category", "category");
     const itemName = cellString(row, "Item Name", "Item", "item name", "name");
-    const variantLabel = cellString(row, "Variant Label", "Variant", "variant label", "Size") || "Standard";
-    const price = cellNumber(row, "Price", "price");
-    if (!category || !itemName || price <= 0) continue;
+    const variantLabel =
+      cellString(row, "Variant Label", "Variant", "variant label", "Size") || "Standard";
+    const price = moneyNumber(cellNumber(row, "Price", "price"));
+    const line = i + 2; // header is row 1
+
+    if (!category && !itemName && price <= 0) continue; // blank template row
+    if (!category || !itemName) {
+      skipped += 1;
+      if (skipReasons.length < 8) {
+        skipReasons.push(`Row ${line}: Category and Item Name are required`);
+      }
+      continue;
+    }
+    if (price <= 0) {
+      skipped += 1;
+      if (skipReasons.length < 8) {
+        skipReasons.push(`Row ${line} (${itemName}): Price must be greater than 0`);
+      }
+      continue;
+    }
 
     parsed.push({
       category,
       itemName,
+      secondaryName: cellString(row, "Secondary Name", "secondary name"),
       featured: yesNo(cellString(row, "Featured", "featured")),
       active: yesNo(cellString(row, "Active", "active"), true),
       sortOrder: cellNumber(row, "Sort Order", "sort order"),
       variantLabel,
-      price: Math.round(price),
+      price,
       barcode: cellString(row, "Barcode", "barcode"),
     });
   }
 
-  return parsed;
+  return { rows: parsed, skipped, skipReasons };
 }
 
 function normalizeName(value: string): string {
@@ -237,10 +292,21 @@ export type MenuImportDeps = {
   branchCode: string;
   categories: MenuCategory[];
   items: MenuItem[];
-  createCategory: (input: { name: string; sortOrder: number }) => Promise<MenuCategory>;
+  /** When false, existing items are skipped instead of updated. */
+  allowUpdate?: boolean;
+  categoryMeta?: MenuCategoryImportRow[];
+  createCategory: (input: {
+    name: string;
+    sortOrder: number;
+  }) => Promise<MenuCategory>;
+  updateCategory?: (
+    categoryId: string,
+    input: { sortOrder?: number; isActive?: boolean },
+  ) => Promise<MenuCategory>;
   createItem: (input: {
     categoryId: string;
     name: string;
+    secondaryName?: string;
     featured: boolean;
     sortOrder: number;
     variants: { label: string; price: number; barcode?: string }[];
@@ -248,6 +314,7 @@ export type MenuImportDeps = {
   updateItem: (
     itemId: string,
     input: {
+      secondaryName?: string;
       featured: boolean;
       isActive: boolean;
       sortOrder: number;
@@ -256,29 +323,65 @@ export type MenuImportDeps = {
   ) => Promise<MenuItem>;
 };
 
+function toApiPrice(price: number): number {
+  return Math.max(1, Math.round(moneyNumber(price)));
+}
+
 export async function importMenuRows(rows: MenuImportRow[], deps: MenuImportDeps): Promise<MenuImportSummary> {
   const summary: MenuImportSummary = {
     categoriesCreated: 0,
+    categoriesUpdated: 0,
     itemsCreated: 0,
     itemsUpdated: 0,
     skipped: 0,
+    skipReasons: [],
   };
+
+  const allowUpdate = deps.allowUpdate !== false;
+  const categories = [...deps.categories];
+  const items = [...deps.items];
+
+  // Apply Categories sheet first (create / update metadata).
+  for (const meta of deps.categoryMeta ?? []) {
+    const existing = findCategory(categories, meta.name);
+    if (!existing) {
+      const created = await deps.createCategory({
+        name: meta.name.trim(),
+        sortOrder: meta.sortOrder || categories.length,
+      });
+      categories.push(created);
+      summary.categoriesCreated += 1;
+      if (deps.updateCategory && meta.active === false) {
+        await deps.updateCategory(created.id, { isActive: false });
+      }
+    } else if (allowUpdate && deps.updateCategory) {
+      await deps.updateCategory(existing.id, {
+        sortOrder: meta.sortOrder || existing.sortOrder,
+        isActive: meta.active,
+      });
+      summary.categoriesUpdated += 1;
+    }
+  }
 
   if (rows.length === 0) return summary;
 
-  const categories = [...deps.categories];
-  const items = [...deps.items];
   const grouped = groupMenuImportRows(rows);
 
   for (const [categoryName, itemMap] of grouped) {
     let category = findCategory(categories, categoryName);
     if (!category) {
+      const meta = (deps.categoryMeta ?? []).find(
+        (c) => normalizeName(c.name) === normalizeName(categoryName),
+      );
       category = await deps.createCategory({
         name: categoryName.trim(),
-        sortOrder: categories.length,
+        sortOrder: meta?.sortOrder || categories.length,
       });
       categories.push(category);
       summary.categoriesCreated += 1;
+      if (deps.updateCategory && meta && meta.active === false) {
+        await deps.updateCategory(category.id, { isActive: false });
+      }
     }
 
     for (const [itemName, variantRows] of itemMap) {
@@ -287,13 +390,21 @@ export async function importMenuRows(rows: MenuImportRow[], deps: MenuImportDeps
 
       const variants = variantRows.map((row) => ({
         label: row.variantLabel.trim() || "Standard",
-        price: row.price,
+        price: toApiPrice(row.price),
         barcode: row.barcode.trim() || undefined,
       }));
 
       const existing = findItem(items, category.id, itemName);
       if (existing) {
+        if (!allowUpdate) {
+          summary.skipped += 1;
+          if (summary.skipReasons.length < 8) {
+            summary.skipReasons.push(`"${itemName}" already exists (add-only role cannot update)`);
+          }
+          continue;
+        }
         await deps.updateItem(existing.id, {
+          secondaryName: first.secondaryName || undefined,
           featured: first.featured,
           isActive: first.active,
           sortOrder: first.sortOrder || existing.sortOrder,
@@ -304,6 +415,7 @@ export async function importMenuRows(rows: MenuImportRow[], deps: MenuImportDeps
         const created = await deps.createItem({
           categoryId: category.id,
           name: itemName.trim(),
+          secondaryName: first.secondaryName || undefined,
           featured: first.featured,
           sortOrder: first.sortOrder || items.filter((i) => i.categoryId === category!.id).length,
           variants,

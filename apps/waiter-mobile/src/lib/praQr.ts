@@ -1,10 +1,24 @@
 import type { PraInvoiceMode } from "@platform/contracts";
+import { getApiBaseUrl } from "./apiBase";
 
 /**
- * Dead https host so phone camera opens browser → "site not found"
- * instead of Google-searching the plain invoice text.
+ * Dead https host (RFC `.invalid`) — FPRA only.
+ * Real PRA QR opens our public verify page (auto-searches e-IMS).
  */
 const PRA_PHONE_BLOCK_PREFIX = "https://pra-inv.invalid/v1/";
+
+/** Public host for phone QR scans (never localhost). */
+function praPublicVerifyBase(): string {
+  return `${getApiBaseUrl().replace(/\/$/, "")}/v1/pra/public-verify`;
+}
+
+/** Compact PRA mark for thermal receipts (inline SVG). */
+const PRA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 72 72" role="img" aria-label="PRA">
+  <circle cx="36" cy="36" r="34" fill="#ffffff" stroke="#0a5c2e" stroke-width="2.5"/>
+  <circle cx="36" cy="36" r="28" fill="none" stroke="#0a5c2e" stroke-width="1.2"/>
+  <path d="M36 12c-2.2 6.5-7.5 11.2-14 13.5 4.2 1.2 7.6 4.2 9.5 8.2-1.8 5.8-1.2 11.5 2.2 16.2 4.8-3.5 8.2-8.8 9.2-15 4.5 2.8 7.8 7.2 9.2 12.5 3.5-6.2 3.8-13.5.8-19.8C48.5 21.2 42.8 15.5 36 12z" fill="#0a5c2e"/>
+  <text x="36" y="58" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" fill="#0a5c2e">PRA</text>
+</svg>`;
 
 // Vendored qrcode core + dijkstrajs (Metro resolves via vendor/).
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -15,8 +29,26 @@ const QRCode = require("../../vendor/qrcode/lib/core/qrcode.js") as {
   ) => { modules: { size: number; get: (row: number, col: number) => boolean } };
 };
 
-/** Strip Fake/Demo markers so QR / payload never advertise demo mode. */
-export function sanitizePraQrPayload(payload: string): string {
+/** e-IMS fiscal # pattern e.g. 197476FGYI38421035 */
+export function looksLikeRealPraInvoiceNumber(value: string): boolean {
+  return /^\d{4,8}[A-Za-z]{2,8}\d{6,}$/.test(value.trim());
+}
+
+/** Phone-scan URL → public verify page which auto-searches PRA e-IMS. */
+export function realPraVerifyUrl(invoiceNumber: string): string {
+  const base = praPublicVerifyBase();
+  const inv = invoiceNumber.trim();
+  if (!inv) return base;
+  return `${base}?InvoiceNo=${encodeURIComponent(inv)}`;
+}
+
+/**
+ * Real PRA QR = public auto-verify link. Fake = phone-block wrapper.
+ */
+export function sanitizePraQrPayload(
+  payload: string,
+  mode?: PraInvoiceMode | null,
+): string {
   let cleaned = payload
     .split("|")
     .map((p) => p.trim())
@@ -25,6 +57,33 @@ export function sanitizePraQrPayload(payload: string): string {
     .trim();
 
   if (!cleaned) cleaned = "PRA";
+
+  if (/\/v1\/pra\/public-verify/i.test(cleaned)) return cleaned;
+
+  if (
+    /^https:\/\//i.test(cleaned) &&
+    /e\.pra\.punjab\.gov\.pk|pra\.gov|punjab\.gov|eims/i.test(cleaned)
+  ) {
+    try {
+      const u = new URL(cleaned);
+      const inv = u.searchParams.get("InvoiceNo") || u.searchParams.get("invoiceNo");
+      if (inv) return realPraVerifyUrl(inv);
+    } catch {
+      /* keep original below */
+    }
+    return cleaned;
+  }
+
+  if (mode === "real" || looksLikeRealPraInvoiceNumber(cleaned)) {
+    if (/^https:\/\/pra-inv\.invalid\/v1\//i.test(cleaned)) {
+      try {
+        cleaned = decodeURIComponent(cleaned.replace(/^https:\/\/pra-inv\.invalid\/v1\//i, ""));
+      } catch {
+        cleaned = cleaned.replace(/^https:\/\/pra-inv\.invalid\/v1\//i, "");
+      }
+    }
+    return realPraVerifyUrl(cleaned);
+  }
 
   if (/^https:\/\/pra-inv\.invalid\//i.test(cleaned)) return cleaned;
   if (/^pra-inv:\/\//i.test(cleaned)) {
@@ -36,10 +95,7 @@ export function sanitizePraQrPayload(payload: string): string {
     }
   }
 
-  if (
-    /^https:\/\//i.test(cleaned) &&
-    /pra\.gov|punjab\.gov|eims|fbr\.gov|fbr\.gov\.pk/i.test(cleaned)
-  ) {
+  if (/^https:\/\//i.test(cleaned) && /fbr\.gov|fbr\.gov\.pk/i.test(cleaned)) {
     return cleaned;
   }
 
@@ -47,8 +103,8 @@ export function sanitizePraQrPayload(payload: string): string {
 }
 
 /** Inline SVG QR — works in silent HTML→PNG without network (no remote img). */
-export function buildPraQrSvg(payload: string, size = 130): string {
-  const text = sanitizePraQrPayload(payload.trim() || "PRA");
+export function buildPraQrSvg(payload: string, size = 130, mode?: PraInvoiceMode | null): string {
+  const text = sanitizePraQrPayload(payload.trim() || "PRA", mode);
   const qr = QRCode.create(text, { errorCorrectionLevel: "M" });
   const n = qr.modules.size;
   const cell = size / n;
@@ -83,17 +139,22 @@ export function preparePraReceiptFooter(input: {
   orderRef: string;
   qrPayload: string;
 }): PraReceiptFooter {
-  const qrPayload = sanitizePraQrPayload(input.qrPayload);
+  const raw = (input.qrPayload?.trim() || input.invoiceNumber).trim();
+  const qrPayload = sanitizePraQrPayload(raw, input.mode);
   return {
     mode: input.mode,
     invoiceNumber: input.invoiceNumber.trim(),
     orderRef: input.orderRef,
     qrPayload,
-    qrSvg: buildPraQrSvg(qrPayload, 130),
+    qrSvg: buildPraQrSvg(qrPayload, 130, input.mode),
   };
 }
 
 export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
+  const caption =
+    pra.mode === "real"
+      ? "Scan QR → invoice details open automatically"
+      : "This invoice generated on the PRA";
   return `
   <div class="pra-fbr-block">
     <div class="pra-rule"></div>
@@ -104,8 +165,14 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
           <div class="pra-qr-wrap">${pra.qrSvg}</div>
         </td>
       </tr>
+      <tr>
+        <td align="center" valign="middle" style="text-align:center;width:100%;padding-top:6px;">
+          <div class="pra-logo-wrap">${PRA_LOGO_SVG}</div>
+        </td>
+      </tr>
     </table>
-    <div class="pra-qr-caption">This invoice generated on the PRA</div>
+    <div class="pra-logo-label">Punjab Revenue Authority</div>
+    <div class="pra-qr-caption">${caption}</div>
   </div>`;
 }
 
@@ -157,6 +224,27 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       display: block;
       width: 130px;
       height: 130px;
+    }
+    .pra-logo-wrap {
+      display: inline-block;
+      width: 56px;
+      height: 56px;
+      margin: 0 auto;
+    }
+    .pra-logo-wrap svg {
+      display: block;
+      width: 56px;
+      height: 56px;
+    }
+    .pra-logo-label {
+      display: block;
+      width: 100%;
+      margin-top: 4px;
+      text-align: center !important;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.2;
+      color: #000;
     }
     .pra-qr-caption {
       display: block;

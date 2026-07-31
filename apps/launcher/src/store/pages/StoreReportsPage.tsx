@@ -16,6 +16,7 @@ import { PageHeader } from "../../pops/ui/PageHeader";
 import { StoreDataTable } from "../ui/StoreUi";
 import { Badge } from "../../pops/ui/Badge";
 import { noticeErrorClass } from "../../pops/lib/themeClasses";
+import { instructionsRows, isoDateStamp, writeWorkbookDownload } from "../../lib/excelTransfer";
 
 const storeReportTypes = [
   { label: "Stock reports", to: "/pops/store/reports/stock", hint: "Current stock, movement, dead stock, fast/slow movers" },
@@ -27,6 +28,51 @@ const storeReportTypes = [
   { label: "Tax (PRA/FBR)", to: "/pops/tax", hint: "Fiscal invoice status and authority connection" },
   { label: "Consolidated multi-branch", to: "/pops/multi-branch/reports", hint: "Cross-branch consolidated view" },
 ];
+
+function exportStoreReportsExcel(input: {
+  branchCode: string;
+  periodLabel: string;
+  revenue?: number;
+  netProfit?: number;
+  itemsSold?: number;
+  fastMovers?: number;
+}): void {
+  writeWorkbookDownload(
+    [
+      {
+        name: "Instructions",
+        rows: instructionsRows([
+          "Summary sheet shows the current date-filter totals from the Reports hub.",
+          "Reports sheet lists every store report screen and its path in the app.",
+          "Open each report page for full detail exports when available.",
+        ]),
+      },
+      {
+        name: "Summary",
+        rows: [
+          {
+            Branch: input.branchCode,
+            Period: input.periodLabel,
+            Revenue: input.revenue ?? "",
+            "Net Profit": input.netProfit ?? "",
+            "Items Sold": input.itemsSold ?? "",
+            "Fast Movers": input.fastMovers ?? "",
+            Exported: isoDateStamp(),
+          },
+        ],
+      },
+      {
+        name: "Reports",
+        rows: storeReportTypes.map((r) => ({
+          Report: r.label,
+          Path: r.to,
+          Hint: r.hint,
+        })),
+      },
+    ],
+    `store-reports-${input.branchCode}-${isoDateStamp()}.xlsx`,
+  );
+}
 
 export function StoreReportsPage(): JSX.Element {
   const { branch } = useStoreAccess();
@@ -54,10 +100,31 @@ export function StoreReportsPage(): JSX.Element {
         subtitle="General Store — saved layouts, comparisons, and exports (same workflow as Restaurant Reports)."
         actions={
           <>
-            <Button variant="ghost" className="text-xs">
+            <Button
+              variant="ghost"
+              className="text-xs"
+              onClick={() =>
+                window.alert("Scheduled email exports will be available in a later update.")
+              }
+            >
               Schedule email
             </Button>
-            <Button className="text-xs">Export Excel</Button>
+            <Button
+              className="text-xs"
+              disabled={!branch?.code}
+              onClick={() =>
+                exportStoreReportsExcel({
+                  branchCode: branch!.code,
+                  periodLabel: filter.periodLabel,
+                  revenue: profit?.revenue,
+                  netProfit: profit?.netProfit,
+                  itemsSold: profit?.itemsSold,
+                  fastMovers: stock?.fastMoving.length,
+                })
+              }
+            >
+              Export Excel
+            </Button>
           </>
         }
       />

@@ -21,6 +21,7 @@ import {
   Title,
   colors,
 } from "../src/components/ui";
+import { AdminShell } from "../src/components/AdminBottomNav";
 import { formatPkr } from "../src/lib/orderSales";
 import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
@@ -212,15 +213,18 @@ export default function AdminPayoutScreen() {
   if (!allowed) return <Redirect href="/" />;
   if (!branchCode) {
     return (
-      <Screen>
-        <Notice>Select a branch on the Admin Dashboard first.</Notice>
-      </Screen>
+      <AdminShell tab="more" noPadding>
+        <Screen>
+          <Notice>Select a branch on the Admin Dashboard first.</Notice>
+        </Screen>
+      </AdminShell>
     );
   }
 
   const session = sessionQuery.data;
 
   return (
+    <AdminShell tab="more" noPadding>
     <Screen>
       <ScrollView contentContainerStyle={{ gap: 14, paddingBottom: 48 }}>
         <Title>Payout</Title>
@@ -361,5 +365,6 @@ export default function AdminPayoutScreen() {
         {error ? <Notice>{error}</Notice> : null}
       </ScrollView>
     </Screen>
+    </AdminShell>
   );
 }

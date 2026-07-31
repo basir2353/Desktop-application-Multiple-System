@@ -782,7 +782,7 @@ export function StorePosPage(): JSX.Element {
     },
   });
 
-  /** Same post-pay path as restaurant: Real/Fake PRA → optional receipt with Invoice # + QR. */
+  /** Same post-pay path as restaurant: Real/FPRA → optional receipt with Invoice # + QR. */
   async function finalizePaidStoreSale(
     sale: StoreSale,
     shouldPrint: boolean,
@@ -816,7 +816,7 @@ export function StorePosPage(): JSX.Element {
       return;
     }
 
-    // Save Only — still issue Real/Fake PRA (no receipt), matching restaurant tax flow.
+    // Save Only — still issue Real/FPRA (no receipt), matching restaurant tax flow.
     try {
       const resolved = await resolvePraFooterForSource({
         branchCode,

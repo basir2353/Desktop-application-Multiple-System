@@ -219,7 +219,7 @@ export function OrderDetailModal({
 
         {order.source === "bill" && onRealPra ? (
           <div className="border-t border-slate-800 px-4 py-3">
-            <Button type="button" className="h-8 w-full text-xs" onClick={() => onRealPra(order.bill)}>
+            <Button type="button" className="h-8 w-full text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => onRealPra(order.bill)}>
               RPRA
             </Button>
           </div>

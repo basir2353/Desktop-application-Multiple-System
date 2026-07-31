@@ -10,6 +10,7 @@ import {
 import { fetchOrders } from "../src/api/billing";
 import { fetchEmployeeAdvances } from "../src/api/hr";
 import { DateRangeFilter, defaultDateRange, type DateRangeValue } from "../src/components/DateRangeFilter";
+import { AdminShell } from "../src/components/AdminBottomNav";
 import { Card, Notice, Screen, StatCard, Subtitle, colors } from "../src/components/ui";
 import { inDateRange } from "../src/lib/dateRange";
 import {
@@ -123,13 +124,16 @@ export default function AdminReportsScreen() {
   if (!allowed) return <Redirect href="/" />;
   if (!branchCode) {
     return (
-      <Screen>
-        <Notice>Select a branch on the Admin Dashboard first.</Notice>
-      </Screen>
+      <AdminShell tab="more" noPadding>
+        <Screen>
+          <Notice>Select a branch on the Admin Dashboard first.</Notice>
+        </Screen>
+      </AdminShell>
     );
   }
 
   return (
+    <AdminShell tab="more" noPadding>
     <Screen>
       <ScrollView contentContainerStyle={{ gap: 14, paddingBottom: 40 }}>
         <Subtitle>
@@ -343,5 +347,6 @@ export default function AdminReportsScreen() {
         {ordersQuery.isError ? <Notice>{(ordersQuery.error as Error).message}</Notice> : null}
       </ScrollView>
     </Screen>
+    </AdminShell>
   );
 }
