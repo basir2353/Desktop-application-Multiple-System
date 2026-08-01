@@ -1,7 +1,7 @@
 /** PRA footer for POS receipts: Invoice # + QR + PRA logo. */
 
 import type { PraInvoiceMode } from "@platform/contracts";
-import { praLogoDataUrl } from "./praLogo";
+import { praLogoDataUrl, resolvePraLogoSrc } from "./praLogo";
 import { praQrDataUrl, sanitizePraQrPayload } from "./praQr";
 
 export type PraReceiptFooter = {
@@ -12,13 +12,47 @@ export type PraReceiptFooter = {
   qrPayload: string;
   /** Pre-rendered PNG data URL (preferred for thermal print). */
   qrDataUrl?: string;
+  /** Custom or default PRA mark (data URL preferred). */
+  logoDataUrl?: string;
 };
 
-/** Drop leading zeros on numeric FPRA #s so slips show 35929 not 00000006. */
-export function formatPraInvoiceNumberForSlip(invoiceNumber: string): string {
+/** Keep FPRA / Real invoice ids as stored (e.g. 197476FGYI32391068). */
+export function formatPraInvoiceNumberForSlip(
+  invoiceNumber: string,
+  mode?: PraInvoiceMode,
+): string {
   const t = invoiceNumber.trim();
-  if (/^\d+$/.test(t)) return String(Number(t));
+  if (!t) return t;
+  // Already real-looking alphanumeric (from updated API).
+  if (/[A-Za-z]/.test(t)) return t.toUpperCase();
+  // Legacy FPRA short numeric (35929…) → expand for slip so it looks like real PRA.
+  if (mode !== "real" && /^\d+$/.test(t)) {
+    return expandLegacyFakePraInvoiceNumber(t);
+  }
   return t;
+}
+
+/** Old API used base 35928 + seq. Map that (or plain seq) into 6+4+8 style. */
+export function expandLegacyFakePraInvoiceNumber(raw: string): string {
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num <= 0) return raw.trim();
+  const FAKE_PRA_INVOICE_BASE = 35928;
+  const seq = Math.max(1, Math.floor(num > FAKE_PRA_INVOICE_BASE ? num - FAKE_PRA_INVOICE_BASE : num));
+  const prefix = String(197475 + seq).padStart(6, "0").slice(-6);
+  const letters = fakePraLetterBlockFromSeq(seq);
+  const suffix = String(10_000_000 + ((seq * 7919 + 3_239_106) % 89_999_999)).slice(-8);
+  return `${prefix}${letters}${suffix}`;
+}
+
+function fakePraLetterBlockFromSeq(seq: number): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let h = Math.imul(seq, 2654435761) >>> 0;
+  let out = "";
+  for (let i = 0; i < 4; i++) {
+    out += alphabet[(h + i * 17) % alphabet.length]!;
+    h = (Math.imul(h, 33) + i) >>> 0;
+  }
+  return out;
 }
 
 export async function preparePraReceiptFooter(input: {
@@ -26,34 +60,43 @@ export async function preparePraReceiptFooter(input: {
   invoiceNumber: string;
   orderRef: string;
   qrPayload: string;
+  /** Branch whose Content Updation PRA logo should print. */
+  branchCode?: string;
 }): Promise<PraReceiptFooter> {
   // Real: public verify URL. FPRA: https site that only shows "Not Found".
   const raw = (input.qrPayload?.trim() || input.invoiceNumber).trim();
   const qrPayload = sanitizePraQrPayload(raw, input.mode);
-  const qrDataUrl = await praQrDataUrl(qrPayload, 160, input.mode);
+  const [qrDataUrl, logoDataUrl] = await Promise.all([
+    praQrDataUrl(qrPayload, 160, input.mode),
+    resolvePraLogoSrc(input.branchCode),
+  ]);
   return {
     mode: input.mode,
-    invoiceNumber: formatPraInvoiceNumberForSlip(input.invoiceNumber),
+    invoiceNumber: formatPraInvoiceNumberForSlip(input.invoiceNumber, input.mode),
     orderRef: input.orderRef,
     qrPayload,
     qrDataUrl,
+    logoDataUrl,
   };
 }
 
 /**
- * Bottom of receipt: PRA Invoice # + centered QR + PRA logo (thermal-safe table layout).
+ * Bottom of receipt: large PRA Invoice # (real-slip style) + centered QR + PRA logo.
  */
 export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
   const qr = pra.qrDataUrl
     ? `<img class="pra-qr" src="${pra.qrDataUrl}" alt="PRA QR" width="130" height="130" style="display:block;margin:0 auto;width:130px;height:130px;" />`
     : `<div class="pra-qr-fallback">${escapeHtml((pra.qrPayload || "").slice(0, 48))}</div>`;
   const invoiceNo = escapeHtml(pra.invoiceNumber || "");
-  const logoSrc = praLogoDataUrl();
+  const logoSrc = pra.logoDataUrl || praLogoDataUrl();
 
   return `
   <div class="pra-fbr-block">
     <div class="pra-rule"></div>
-    <div class="pra-invoice-line"><strong>PRA Invoice #</strong> ${invoiceNo}</div>
+    <div class="pra-invoice-block">
+      <div class="pra-invoice-label">PRA Invoice #</div>
+      <div class="pra-invoice-number">${invoiceNo}</div>
+    </div>
     <table class="pra-qr-table" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;border-collapse:collapse;">
       <tr>
         <td align="center" valign="middle" style="text-align:center;width:100%;">
@@ -62,7 +105,7 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
       </tr>
       <tr>
         <td align="center" valign="middle" style="text-align:center;width:100%;padding-top:6px;">
-          <img class="pra-logo" src="${logoSrc}" alt="PRA" width="56" height="56" style="display:block;margin:0 auto;width:56px;height:56px;" />
+          <img class="pra-logo" src="${logoSrc}" alt="PRA" width="56" height="56" style="display:block;margin:0 auto;width:56px;height:56px;object-fit:contain;" />
         </td>
       </tr>
     </table>
@@ -109,6 +152,7 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       margin: 0 auto !important;
       padding: 0 !important;
       border: 0 !important;
+      object-fit: contain;
     }
     .pra-logo-label {
       display: block;
@@ -121,14 +165,48 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       line-height: 1.2;
       color: #000;
     }
+    .pra-invoice-block {
+      display: block;
+      width: 100%;
+      margin: 0 0 10px;
+      text-align: center !important;
+      color: #000;
+    }
+    .pra-invoice-label {
+      display: block;
+      width: 100%;
+      margin: 0 0 3px;
+      text-align: center !important;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1.2;
+      color: #000;
+    }
+    .pra-invoice-number {
+      display: block;
+      width: 100%;
+      text-align: center !important;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      line-height: 1.25;
+      color: #000;
+      font-variant-numeric: tabular-nums;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+    /* Legacy single-line class (if any old HTML still references it). */
     .pra-invoice-line {
       display: block;
       width: 100%;
       margin: 0 0 8px;
       text-align: center !important;
       font-size: 11px;
-      font-weight: 700;
-      line-height: 1.35;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      line-height: 1.25;
       color: #000;
       word-break: break-all;
     }
@@ -143,8 +221,9 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       text-align: center;
     }
     .meta-pra-invoice .meta-value {
-      font-weight: 700;
-      letter-spacing: 0.01em;
+      font-size: 11px !important;
+      font-weight: 800;
+      letter-spacing: 0.02em;
       word-break: break-all;
       overflow-wrap: anywhere;
       white-space: normal !important;

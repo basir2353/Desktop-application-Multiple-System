@@ -30,6 +30,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { MailService } from "../mail/mail.service";
+import { findLiveLoginUserByEmail } from "../lib/login-email";
 
 const STAFF_SEEDS = [
   {
@@ -410,8 +411,12 @@ export class UsersService implements OnApplicationBootstrap {
 
   async createUser(organizationId: string, input: CreateOrgUser) {
     const email = normalizeEmail(input.email);
-    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existing.length > 0) throw new ConflictException(`User already exists: ${email}`);
+    const existing = await findLiveLoginUserByEmail(this.db, email);
+    if (existing) {
+      throw new ConflictException(
+        `Login email already in use: ${email}. Customer emails are separate — use a different login email.`,
+      );
+    }
 
     const passwordHash = await bcrypt.hash(input.password, 12);
     const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
@@ -536,8 +541,12 @@ export class UsersService implements OnApplicationBootstrap {
 
   async inviteUser(organizationId: string, input: InviteOrgUser) {
     const email = normalizeEmail(input.email);
-    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existing.length > 0) throw new ConflictException(`User already exists: ${email}`);
+    const existing = await findLiveLoginUserByEmail(this.db, email);
+    if (existing) {
+      throw new ConflictException(
+        `Login email already in use: ${email}. Customer emails are separate — use a different login email.`,
+      );
+    }
 
     const pending = await this.db
       .select({ id: userInvites.id })
@@ -609,8 +618,8 @@ export class UsersService implements OnApplicationBootstrap {
     const invite = await this.findValidInvite(input.token);
     const email = invite.email;
 
-    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existing.length > 0) throw new ConflictException("An account with this email already exists");
+    const existing = await findLiveLoginUserByEmail(this.db, email);
+    if (existing) throw new ConflictException("An account with this login email already exists");
 
     const passwordHash = await bcrypt.hash(input.password, 12);
     const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();

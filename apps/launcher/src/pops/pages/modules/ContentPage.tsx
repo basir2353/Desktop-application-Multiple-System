@@ -31,7 +31,9 @@ export function ContentPage(): JSX.Element {
 
   const [profile, setProfile] = useState<BusinessProfile>(() => loadBusinessProfile(branch?.code));
   const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [praLogoFile, setPraLogoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadingPraLogo, setUploadingPraLogo] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,6 +49,7 @@ export function ContentPage(): JSX.Element {
     setBillPrintSettings(loadBillPrintSettings(branch?.code));
     setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
     setLogoFile(null);
+    setPraLogoFile(null);
   }, [branch?.code]);
 
   const menuQuery = useQuery({
@@ -72,6 +75,22 @@ export function ContentPage(): JSX.Element {
       setLogoFile(null);
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handlePraLogoSelect(file: File | null): Promise<void> {
+    if (!file) return;
+    setPraLogoFile(file);
+    setUploadingPraLogo(true);
+    setError(null);
+    try {
+      const imageUrl = await uploadMenuImage(file);
+      setProfile((prev) => ({ ...prev, praLogoUrl: imageUrl }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PRA logo upload failed");
+      setPraLogoFile(null);
+    } finally {
+      setUploadingPraLogo(false);
     }
   }
 
@@ -114,19 +133,36 @@ export function ContentPage(): JSX.Element {
       <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">Business profile</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Logo, address, phone, and tax ID shown across the app and on printed receipts.
+          Business logo prints at the top of receipts under the company name. PRA logo replaces the
+          Punjab Revenue Authority mark under the QR on fiscal slips.
         </p>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
+          <div>
             <MenuImagePicker
               label="Business logo"
               value={profile.logoUrl}
               previewFile={logoFile}
               onFileSelect={handleLogoSelect}
               onClear={() => setProfile((prev) => ({ ...prev, logoUrl: null }))}
-              disabled={uploading}
+              disabled={uploading || uploadingPraLogo}
             />
+            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+              Shown at the top of the bill — company name above, logo below.
+            </p>
+          </div>
+          <div>
+            <MenuImagePicker
+              label="PRA receipt logo"
+              value={profile.praLogoUrl}
+              previewFile={praLogoFile}
+              onFileSelect={handlePraLogoSelect}
+              onClear={() => setProfile((prev) => ({ ...prev, praLogoUrl: null }))}
+              disabled={uploading || uploadingPraLogo}
+            />
+            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+              Printed below the PRA QR. Clear to restore the default PRA mark.
+            </p>
           </div>
           <label className="block text-xs text-slate-500 dark:text-slate-400">
             Phone
@@ -158,7 +194,7 @@ export function ContentPage(): JSX.Element {
         </div>
 
         <div className="mt-4">
-          <Button onClick={handleSaveProfile} disabled={uploading}>
+          <Button onClick={handleSaveProfile} disabled={uploading || uploadingPraLogo}>
             Save business profile
           </Button>
         </div>

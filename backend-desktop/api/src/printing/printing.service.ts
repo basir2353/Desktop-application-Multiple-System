@@ -453,9 +453,9 @@ export class PrintingService {
 
     return {
       branchCode,
-      serversOnline: servers.filter((s: { status: string }) => s.status === "online").length,
-      printersOnline: printers.filter((p: { online: boolean }) => p.online).length,
-      printersOffline: printers.filter((p: { online: boolean }) => !p.online).length,
+      serversOnline: servers.filter((s) => s.status === "online").length,
+      printersOnline: printers.filter((p) => p.online).length,
+      printersOffline: printers.filter((p) => !p.online).length,
       queuePending: pending,
       queuePrinting: printing,
       queueFailed: failed,

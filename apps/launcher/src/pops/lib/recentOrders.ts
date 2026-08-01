@@ -261,11 +261,12 @@ export function filterPosRecentOrdersByMode(
   if (mode === "Paid") {
     return orders.filter(isPaidPosRecentOrder);
   }
-  // "All" must include paid bills (PRA reprints) — not only open tickets.
+  // Paid / Closed bills only appear under the Paid tab — never All or mode tabs.
+  const unpaid = orders.filter((order) => !isPaidPosRecentOrder(order));
   if (mode === "all") {
-    return orders;
+    return unpaid;
   }
-  return orders.filter((order) => order.orderMode === mode);
+  return unpaid.filter((order) => order.orderMode === mode);
 }
 
 export function filterPosRecentOrders(

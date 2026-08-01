@@ -24,6 +24,7 @@ import * as bcrypt from "bcryptjs";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { NotificationsService } from "../notifications/notifications.service";
 import type { AccessJwtPayload } from "../auth/jwt.types";
+import { findLiveLoginUserByEmail } from "../lib/login-email";
 
 const RIDER_SEED_EMAIL = "rider1@platform.local";
 
@@ -201,8 +202,8 @@ export class DeliveryService implements OnApplicationBootstrap {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     const email = input.email.trim().toLowerCase();
 
-    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existing.length > 0) {
+    const existing = await findLiveLoginUserByEmail(this.db, email);
+    if (existing) {
       throw new ConflictException(`Login email already in use: ${email}`);
     }
 
@@ -249,8 +250,8 @@ export class DeliveryService implements OnApplicationBootstrap {
         throw new BadRequestException("This rider already has a login account");
       }
       const email = input.email.trim().toLowerCase();
-      const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-      if (existing.length > 0) {
+      const existing = await findLiveLoginUserByEmail(this.db, email);
+      if (existing) {
         throw new ConflictException(`Login email already in use: ${email}`);
       }
 

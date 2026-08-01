@@ -16,16 +16,17 @@ const {
 } = process.env;
 
 const MUSA = {
-  companyName: "Musa Cafe and Restaurant",
+  companyName: "Musa Cafe and Restaurants",
   ntn: "5272644-3",
   strn: "",
   businessType: "Restaurant",
   province: "Punjab",
   branchName: "Main",
   branchCode: "MAIN",
-  posId: "197476",
-  accessCode: "1DE18D10",
-  token: "1458bbac-7799-3524-abd5-36dec2dfc82e",
+  /** POS Details from PRA portal */
+  posId: "197656",
+  accessCode: "851C6C3B",
+  token: "ab9b3002-8024-3181-a7b6-427be47603c6",
   username: "3220381740551",
   environment: "production",
 };

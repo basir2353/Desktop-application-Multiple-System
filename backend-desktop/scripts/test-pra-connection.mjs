@@ -7,12 +7,12 @@ const PRODUCTION_URL = "https://ims.pral.com.pk/ims/production/api/Live/PostData
 const SANDBOX_TOKEN = "24d8fab3-f2e9-398f-ae17-b387125ec4a2";
 
 const MUSA = {
-  posId: 197476,
-  accessCode: "1DE18D10",
-  token: "1458bbac-7799-3524-abd5-36dec2dfc82e",
+  posId: 197656,
+  accessCode: "851C6C3B",
+  token: "ab9b3002-8024-3181-a7b6-427be47603c6",
   cnic: "3220381740551",
   pntn: "5272644-3",
-  businessName: "Musa Cafe and Restaurant",
+  businessName: "Musa Cafe and Restaurants",
 };
 
 function samplePayload(posId) {

@@ -2,6 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "General Store Management System",
   "identifier": "com.platform.generalstore",
+  "version": "0.2.9",
   "app": {
     "windows": [
       {
@@ -19,5 +20,13 @@
         "displayLanguageSelector": false
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/basir2353/pops-desktop-updates/releases/latest/download/latest-general-store.json"
+      ]
+    }
   }
 }
+

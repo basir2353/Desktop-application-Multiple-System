@@ -14,7 +14,7 @@ import { BranchGate } from "./pops/components/BranchGate";
 import { PopsRootRedirect } from "./pops/components/PopsRootRedirect";
 import { PopsShell } from "./pops/layouts/PopsShell";
 import { BranchSelectPage } from "./pops/pages/BranchSelectPage";
-import { HAS_GENERAL_STORE, HAS_PHARMACY, HAS_RESTAURANT } from "./lib/edition";
+import { HAS_GENERAL_STORE, HAS_PHARMACY, HAS_RESTAURANT, isSingleSystemEdition } from "./lib/edition";
 import { restaurantRoutes } from "./routes/restaurantRoutes";
 import { pharmacyRoutes } from "./routes/pharmacyRoutes";
 import { generalStoreRoutes } from "./routes/generalStoreRoutes";
@@ -22,6 +22,7 @@ import { sharedRoutes } from "./routes/sharedRoutes";
 import { HistoryNavBar } from "./components/HistoryNavBar";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
 import { MaintenanceBanner } from "./components/MaintenanceBanner";
+import { DesktopUpdateBanner } from "./components/DesktopUpdateBanner";
 import { useOfflineSync } from "./hooks/useOfflineSync";
 import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
@@ -54,7 +55,11 @@ function Protected({ children }: { children: JSX.Element }): JSX.Element {
     return <div className={screenCenterClass}>Restoring session…</div>;
   }
   if (!accessToken) return <Navigate to="/role" replace />;
-  if (isSuperAdminClaims(claims)) return <Navigate to="/super-admin" replace />;
+  // Locked client EXEs must not redirect into Super Admin even if such a token exists.
+  if (isSuperAdminClaims(claims)) {
+    if (isSingleSystemEdition()) return <Navigate to="/role" replace />;
+    return <Navigate to="/super-admin" replace />;
+  }
   return children;
 }
 
@@ -70,6 +75,8 @@ function SuperAdminOnly({ children }: { children: JSX.Element }): JSX.Element {
   if (!sessionReady) {
     return <div className={screenCenterClass}>Restoring session…</div>;
   }
+  // Restaurant / Store / Pharmacy EXEs never expose Super Admin.
+  if (isSingleSystemEdition()) return <Navigate to="/" replace />;
   if (!accessToken) return <Navigate to="/login?role=super_admin" replace />;
   if (!isSuperAdminClaims(claims)) return <Navigate to="/" replace />;
   return children;
@@ -98,6 +105,7 @@ export function App(): JSX.Element {
         <NavigationHistoryProvider>
         <>
           <HistoryNavBar />
+          <DesktopUpdateBanner />
           <MaintenanceBanner />
           <ConnectivityBanner />
           <RootErrorBoundary>

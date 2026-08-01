@@ -36,7 +36,7 @@ export const organizations = pgTable("organizations", {
   praFakeEnabled: boolean("pra_fake_enabled").notNull().default(false),
   /** Org Admin Active: Real PRA (e-IMS / live submit). */
   praRealEnabled: boolean("pra_real_enabled").notNull().default(false),
-  /** Monotonic FPRA invoice sequence (no slashes; padded 8 digits). */
+  /** Monotonic FPRA invoice sequence (used to build real-looking alphanumeric Invoice #). */
   praFakeInvoiceSeq: integer("pra_fake_invoice_seq").notNull().default(0),
   createdBy: uuid("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

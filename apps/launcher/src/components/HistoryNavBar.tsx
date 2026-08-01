@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useNavigationHistory } from "../hooks/useNavigationHistory";
+import { isSingleSystemEdition } from "../lib/edition";
 import { useSessionStore } from "../stores/sessionStore";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -17,7 +18,9 @@ export function HistoryNavBar(): JSX.Element {
     new URLSearchParams(location.search).get("role") === "super_admin";
   const isSuperAdminArea = location.pathname.startsWith("/super-admin");
 
-  const showSuperAdminLogin = !accessToken && !isSuperAdminLogin && !isSuperAdminArea;
+  // Locked editions (Restaurant / Store / Pharmacy EXE) never expose Super Admin.
+  const showSuperAdminLogin =
+    !isSingleSystemEdition() && !accessToken && !isSuperAdminLogin && !isSuperAdminArea;
 
   return (
     <header className="sticky top-0 z-[100] flex items-center gap-2 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:border-slate-800/90 dark:bg-slate-900/95 dark:supports-[backdrop-filter]:bg-slate-900/80">

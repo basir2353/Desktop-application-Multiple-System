@@ -37,6 +37,7 @@ export async function resolvePraFooterForSource(input: {
         invoiceNumber: existing.invoiceNumber,
         orderRef: input.orderRef,
         qrPayload: existing.qrPayload?.trim() || existing.invoiceNumber,
+        branchCode: input.branchCode,
       });
       return { footer, fiscal: existing };
     }
@@ -78,6 +79,7 @@ export async function resolvePraFooterForSource(input: {
     invoiceNumber: autoPra.fiscal!.invoiceNumber,
     orderRef: input.orderRef,
     qrPayload: autoPra.fiscal!.qrPayload?.trim() || autoPra.fiscal!.invoiceNumber,
+    branchCode: input.branchCode,
   });
   return { footer, fiscal: autoPra.fiscal, notice: autoPra.failed ? autoPra.notice : undefined };
 }
@@ -104,6 +106,7 @@ export async function resolvePraFooterForPaidBill(input: {
       invoiceNumber: bill.praInvoiceNumber,
       orderRef,
       qrPayload: bill.praQrPayload?.trim() || bill.praInvoiceNumber,
+      branchCode: input.branchCode,
     });
     return {
       footer,
@@ -139,6 +142,7 @@ export async function resolvePraFooterForPaidBill(input: {
       invoiceNumber: bill.praInvoiceNumber,
       orderRef,
       qrPayload: bill.praQrPayload?.trim() || bill.praInvoiceNumber,
+      branchCode: input.branchCode,
     });
     return {
       footer,

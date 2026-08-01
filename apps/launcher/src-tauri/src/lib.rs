@@ -701,6 +701,8 @@ fn pra_http_post(url: String, token: String, body: String) -> Result<String, Str
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Arc::new(printing::PrintBridgeState::default()))
         .invoke_handler(tauri::generate_handler![
             list_system_printers,

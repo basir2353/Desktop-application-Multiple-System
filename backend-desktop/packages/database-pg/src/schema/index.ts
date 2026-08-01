@@ -24,3 +24,4 @@ export * from "./tax-authority";
 export * from "./printing";
 export * from "./users";
 export * from "./user-invites";
+export * from "./entity-deletion-backups";

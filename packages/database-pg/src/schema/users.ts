@@ -7,7 +7,7 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   /** `super_admin` for platform control-plane users; null for tenant users. */
   platformRole: text("platform_role"),
-  /** active | inactive | suspended */
+  /** active | inactive | suspended | deleted (soft-deleted; email tombstoned) */
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

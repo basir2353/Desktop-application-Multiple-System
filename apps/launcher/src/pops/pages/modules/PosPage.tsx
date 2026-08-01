@@ -25,10 +25,8 @@ import {
   useTaxAuthorityFeatures,
 } from "../../hooks/useTaxAuthorityFeatures";
 import {
-  canEmbedPraOnSlip,
   printIssuedPraSlip,
 } from "../../lib/praIssueFlow";
-import { preparePraReceiptFooter } from "../../lib/praReceiptFooter";
 import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
 import { fetchClosingStatus } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
@@ -74,14 +72,12 @@ import {
 } from "../../lib/posCart";
 import {
   formatSessionPrintName,
-  printReceiptDetailed,
   printKotDetailed,
   resolveSessionPrintName,
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../lib/printTicket";
 import { asPrinterName } from "../../lib/asPrinterName";
-import { loadThermalPrintSettings } from "../../lib/thermalPrintSettings";
 import { fetchOrgUsers } from "../../api/users";
 import {
   BRANCH_PRINT_JOB_DONE_EVENT,
@@ -112,6 +108,7 @@ import { PosPayOutModal } from "../../components/PosPayOutModal";
 import { PosMyPrintersModal } from "../../components/PosMyPrintersModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
 import { createStaffFoodRecord, fetchEmployees } from "../../api/hr";
+import { SearchableSelect } from "../../ui/SearchableSelect";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
 import { fieldInputClass } from "../../lib/themeClasses";
@@ -146,9 +143,7 @@ import { loadPrinterSections } from "../../lib/printerSections";
 import {
   groupCartLinesBySection,
   resolveKotPrinter,
-  resolveReceiptPrinter,
 } from "../../lib/printerRouting";
-import { resolveBillPrintSettingsForReceipt } from "../../lib/billReceiptTemplateAssignments";
 import { logPrintEvent } from "../../lib/printHistory";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
@@ -325,6 +320,9 @@ export function PosPage(): JSX.Element {
   const [myPrintersOpen, setMyPrintersOpen] = useState(false);
   const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
   const [headerVisible, setHeaderVisible] = useState(loadPosHeaderVisible);
+  /** After Close → Pay succeeds, open Closed + PRA for this bill id. */
+  const [closeAfterPayBillId, setCloseAfterPayBillId] = useState<string | null>(null);
+  const pendingCloseAfterPayRef = useRef(false);
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
   const deliveryCustomerFieldRef = useRef<HTMLDivElement>(null);
@@ -1335,9 +1333,14 @@ export function PosPage(): JSX.Element {
     });
   }
 
-  function loadRecentOrderForPayment(order: PosRecentOrder): void {
+  function loadRecentOrderForPayment(
+    order: PosRecentOrder,
+    options?: { thenClose?: boolean },
+  ): void {
+    pendingCloseAfterPayRef.current = Boolean(options?.thenClose);
     if (!canPayPosRecentOrder(order)) {
       setPrintNotice({ message: "This order is already paid.", tone: "error" });
+      pendingCloseAfterPayRef.current = false;
       return;
     }
     if (order.kind === "pending" && order.kitchenTicket) {
@@ -1708,131 +1711,44 @@ export function PosPage(): JSX.Element {
       if (!skipStaffFoodLog) {
         await persistStaffFoodRecord();
       }
-      const sessionUserId = useSessionStore.getState().claims?.sub;
-      const printedBy =
-        resolveSessionPrintName(sessionUserId) ||
-        resolveSessionPrintName(bill.waiterName) ||
-        sessionUserLabel;
-      const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
-      const payload = withPrinterProfile(
-        {
-          ...buildPrintPayload(),
-          // Prefer saved bill totals/lines so auto print matches manual reprint.
-          orderRef: bill.orderRef ?? orderRef,
-          billRef: bill.billRef,
-          waiterName: printedBy,
-          lines: bill.lines.map((line) => ({
-            label: line.label,
-            qty: line.qty,
-            unitPrice: line.unitPrice,
-          })),
-          subtotal: bill.subtotal,
-          discount: bill.discount,
-          service: bill.service,
-          tax: bill.tax,
-          deliveryCharge:
-            typeof bill.deliveryChargePkr === "number" && bill.deliveryChargePkr > 0
-              ? bill.deliveryChargePkr
-              : undefined,
-          total: bill.total,
-          servicePct: bill.servicePct,
-          taxPct: bill.taxPct,
-          payments: bill.payments?.length ? bill.payments : undefined,
-        },
-        receiptProfile,
-      );
-      // One receipt dialog only — never re-open from profile copies when using the OS dialog.
-      const posAction = intent === "invoice" ? "order" : "pay";
-      const thermal = loadThermalPrintSettings(branch?.code);
-      const paperSize =
-        thermal.defaultPaperSize === "custom"
-          ? "custom"
-          : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
-      const systemPrinterName = payload.systemPrinterName ?? null;
-      const target = systemPrinterName ?? payload.printerName ?? "Receipt";
       const kotHint = kotSent
         ? kotPrintErrors.length > 0
           ? ` KOT saved but print failed (${kotPrintErrors.join("; ")}).`
           : " Kitchen ticket sent."
         : "";
 
-      const finishReceipts = async (fiscalForReceipt: PraFiscalInvoice | null = null) => {
-        const embed = canEmbedPraOnSlip(fiscalForReceipt) ? fiscalForReceipt : null;
-        const praFiscal = embed
-          ? await preparePraReceiptFooter({
-              mode: embed.mode,
-              invoiceNumber: embed.invoiceNumber,
-              orderRef: embed.sourceRef ?? bill.orderRef ?? payload.orderRef ?? bill.billRef,
-              qrPayload: embed.qrPayload?.trim() || embed.invoiceNumber,
-            })
-          : null;
-        const result = await printReceiptDetailed({
-          ...payload,
-          paperSize,
-          thermal,
-          billPrintSettings: resolveBillPrintSettingsForReceipt(
-            branch?.code,
-            receiptProfile?.id,
-            posAction,
-          ),
-          copies: asPrinterName(systemPrinterName) ? Math.max(1, payload.copies ?? 1) : 1,
-          praFiscal,
-        });
-        logPrintEvent(branch?.code, {
-          kind: "receipt",
-          printerName: target,
-          orderRef: payload.orderRef,
-          ok: result.ok,
-        });
-        return {
-          printOk: result.ok,
-          printError: result.error,
-          target,
-          kotHint,
-          intent: intent as "pay" | "invoice",
-        };
-      };
+      resetAfterBill();
 
-      const applyPayNotices = (
-        receipt: Awaited<ReturnType<typeof finishReceipts>>,
-        praExtra: string,
-        praFailed: boolean,
-      ) => {
-        if (receipt.printOk && !praFailed) {
-          setPrintNotice(
-            noticeFromPrintResult(
-              true,
-              intent === "invoice"
-                ? `Invoice printed to ${receipt.target} — ${bill.billRef}.${receipt.kotHint}${praExtra}`
-                : `${modeLabel} paid — printed to ${receipt.target} (${bill.billRef}).${receipt.kotHint}${praExtra}`,
-            ),
-          );
-        } else if (!receipt.printOk) {
-          setPrintNotice({
-            tone: "error",
-            message: `Bill ${bill.billRef} saved, but print to ${receipt.target} failed${
-              receipt.printError ? `: ${receipt.printError}` : ""
-            }.${receipt.kotHint}${praExtra} Link an OS printer on Printer Profiles.`,
-          });
-        } else {
-          setPrintNotice({
-            tone: "error",
-            message: `Bill ${bill.billRef} saved.${receipt.kotHint}${praExtra}`,
-          });
-        }
+      // Close → Pay: mark Closed + open that bill’s PRA invoice (Latest orders panel).
+      if (intent === "pay" && pendingCloseAfterPayRef.current) {
+        pendingCloseAfterPayRef.current = false;
+        setCloseAfterPayBillId(bill.id);
+        setPrintNotice({
+          tone: "success",
+          message: `${modeLabel} paid — ${bill.billRef}.${kotHint} Closing with PRA invoice…`,
+        });
         const phone = phoneFromBillNotes(bill.notes);
         if (phone || mode === "delivery") {
           shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
         }
-      };
+        return;
+      }
+      pendingCloseAfterPayRef.current = false;
 
-      resetAfterBill();
-
-      // Pay / Invoice print = simple receipt only. PRA issues on Close when Tax Active.
-      const receipt = await finishReceipts(null);
-      applyPayNotices(receipt, "", false);
+      // Simple Card/Cash invoice = Latest-orders Print only (not auto on Pay/Invoice).
+      setPrintNotice({
+        tone: "success",
+        message: `${modeLabel} ${intent === "invoice" ? "saved" : "paid"} — ${bill.billRef}.${kotHint} Simple invoice: Print button on the order.`,
+      });
+      const phone = phoneFromBillNotes(bill.notes);
+      if (phone || mode === "delivery") {
+        shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
+      }
     },
-    onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
+    onError: (err: Error) => {
+      pendingCloseAfterPayRef.current = false;
+      setPrintNotice({ message: err.message, tone: "error" });
+    },
   });
 
   const splitBillMutation = useMutation({
@@ -1895,89 +1811,13 @@ export function PosPage(): JSX.Element {
       setSplitModalOpen(false);
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
-      const sessionUserId = useSessionStore.getState().claims?.sub;
-      const printedBy =
-        resolveSessionPrintName(sessionUserId) ||
-        sessionUserLabel;
-      const receiptProfile = resolveReceiptPrinter(branch?.code, sessionUserId);
-
-      const printAllReceipts = async (fiscalByBillId: Record<string, PraFiscalInvoice> = {}) => {
-        let printOk = true;
-        let systemPrinterName: string | null | undefined;
-        for (const bill of bills) {
-          const payload = withPrinterProfile(
-            {
-              ...buildPrintPayload(),
-              billRef: bill.billRef,
-              orderRef: bill.orderRef ?? bill.billRef,
-              waiterName:
-                printedBy ||
-                resolveSessionPrintName(bill.waiterName) ||
-                sessionUserLabel,
-              lines: bill.lines.map((line) => ({
-                label: line.label,
-                qty: line.qty,
-                unitPrice: line.unitPrice,
-              })),
-              subtotal: bill.subtotal,
-              discount: bill.discount,
-              service: bill.service,
-              tax: bill.tax,
-              total: bill.total,
-              servicePct: bill.servicePct,
-              taxPct: bill.taxPct,
-              payments: bill.payments?.length ? bill.payments : undefined,
-            },
-            receiptProfile,
-          );
-          systemPrinterName = payload.systemPrinterName ?? systemPrinterName;
-          const thermal = loadThermalPrintSettings(branch?.code);
-          const paperSize =
-            thermal.defaultPaperSize === "custom"
-              ? "custom"
-              : (receiptProfile?.paperSize ?? payload.paperSize ?? thermal.defaultPaperSize);
-          const fiscal = fiscalByBillId[bill.id];
-          const embed = canEmbedPraOnSlip(fiscal) ? fiscal : null;
-          const praFiscal = embed
-            ? await preparePraReceiptFooter({
-                mode: embed.mode,
-                invoiceNumber: embed.invoiceNumber,
-                orderRef: embed.sourceRef ?? bill.orderRef ?? bill.billRef,
-                qrPayload: embed.qrPayload?.trim() || embed.invoiceNumber,
-              })
-            : null;
-          const result = await printReceiptDetailed({
-            ...payload,
-            paperSize,
-            thermal,
-            billPrintSettings: resolveBillPrintSettingsForReceipt(
-              branch?.code,
-              receiptProfile?.id,
-              "pay",
-            ),
-            praFiscal,
-          });
-          logPrintEvent(branch?.code, {
-            kind: "receipt",
-            printerName: payload.systemPrinterName ?? payload.printerName ?? "Receipt",
-            orderRef: payload.orderRef,
-            ok: result.ok,
-          });
-          if (!result.ok) printOk = false;
-        }
-        return { printOk, systemPrinterName };
-      };
-
       resetAfterBill();
 
-      // Split Pay = simple receipts only. PRA issues on Close when Tax Active.
-      const { printOk } = await printAllReceipts();
-      setPrintNotice(
-        noticeFromPrintResult(
-          printOk,
-          `${bills.length} split bills created — ${bills.map((b) => b.billRef).join(", ")}`,
-        ),
-      );
+      // Simple invoice = Latest-orders Print only (not auto on Split Pay).
+      setPrintNotice({
+        tone: "success",
+        message: `${bills.length} split bills paid — ${bills.map((b) => b.billRef).join(", ")}. Simple invoice: Print button on the order.`,
+      });
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
   });
@@ -2474,7 +2314,7 @@ export function PosPage(): JSX.Element {
         <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
           {/* Category pills — bar background only; amber on selected */}
           {categories.length > 0 ? (
-            <div className="mb-1.5 grid shrink-0 grid-cols-4 gap-1.5 rounded-xl bg-amber-50 p-1.5 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
+            <div className="mb-2.5 grid shrink-0 grid-cols-4 gap-2 rounded-xl bg-amber-50 p-2 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
               <button
                 type="button"
                 onClick={() => {
@@ -2571,7 +2411,7 @@ export function PosPage(): JSX.Element {
                     : "No items in this category."}
               </p>
             ) : (
-              <div className="grid grid-cols-3 gap-1 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-6">
                 {filteredMenu.map((item) => {
                   const img = resolveMenuImageUrl(item.imageUrl);
                   const variants = resolvePosSellableVariants(item);
@@ -2588,7 +2428,7 @@ export function PosPage(): JSX.Element {
                       key={item.id}
                       type="button"
                       onClick={() => onDishClick(item)}
-                      className="flex flex-col rounded border border-slate-800/80 bg-slate-900/40 p-1 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
+                      className="flex flex-col rounded-md border border-slate-800/80 bg-slate-900/40 p-1.5 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
                     >
                       {img ? (
                         <img
@@ -2726,26 +2566,28 @@ export function PosPage(): JSX.Element {
                     <option value="guest">Guest</option>
                   </select>
                   {staffFoodConsumerType === "staff" ? (
-                    <select
+                    <SearchableSelect
                       value={staffFoodEmployeeId}
-                      onChange={(e) => {
-                        setStaffFoodEmployeeId(e.target.value);
+                      onChange={(next) => {
+                        setStaffFoodEmployeeId(next);
                         setStaffFoodPendingName("");
                       }}
-                      className={`${TICKET_INPUT_CLASS} py-1.5 ${
-                        !staffFoodEmployeeId ? "border-amber-400 dark:border-amber-500/40" : ""
-                      }`}
-                    >
-                      <option value="">
-                        {staffEmployeesQuery.isLoading ? "Loading staff…" : "Select staff *"}
-                      </option>
-                      {activeStaffEmployees.map((employee) => (
-                        <option key={employee.id} value={employee.id}>
-                          {employee.displayName}
-                          {employee.jobTitle ? ` · ${employee.jobTitle}` : ""}
-                        </option>
-                      ))}
-                    </select>
+                      options={activeStaffEmployees.map((employee) => ({
+                        value: employee.id,
+                        label: employee.jobTitle
+                          ? `${employee.displayName} · ${employee.jobTitle}`
+                          : employee.displayName,
+                        searchText: `${employee.displayName} ${employee.jobTitle ?? ""}`,
+                      }))}
+                      placeholder={
+                        staffEmployeesQuery.isLoading ? "Loading staff…" : "Select staff *"
+                      }
+                      searchPlaceholder="Search staff…"
+                      allowEmpty
+                      className={!staffFoodEmployeeId ? "[&_button]:border-amber-400 dark:[&_button]:border-amber-500/40" : ""}
+                      aria-label="Select staff"
+                      required
+                    />
                   ) : (
                     <input
                       placeholder="Guest name *"
@@ -3299,6 +3141,8 @@ export function PosPage(): JSX.Element {
             isError={kitchenQuery.isError || ordersQuery.isError}
             onEdit={loadRecentOrderForEdit}
             onPayOrder={loadRecentOrderForPayment}
+            closeAfterPayBillId={closeAfterPayBillId}
+            onCloseAfterPayHandled={() => setCloseAfterPayBillId(null)}
             onNotice={(message, tone = "success") => setPrintNotice({ message, tone })}
           />
         </div>
@@ -3323,7 +3167,10 @@ export function PosPage(): JSX.Element {
           tax={tax}
           deliveryCharge={deliveryCharge}
           isSubmitting={checkoutMutation.isPending}
-          onClose={() => setCheckoutModal(null)}
+          onClose={() => {
+            pendingCloseAfterPayRef.current = false;
+            setCheckoutModal(null);
+          }}
           onValidationError={(message) => setPrintNotice({ message, tone: "error" })}
           onConfirm={({ servicePct: checkoutServicePct, taxPct: checkoutTaxPct, payments, status }) =>
             checkoutMutation.mutate({

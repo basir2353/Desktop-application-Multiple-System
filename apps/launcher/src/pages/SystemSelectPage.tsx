@@ -6,7 +6,7 @@ import {
   type BusinessSystem,
   type BusinessSystemId,
 } from "../lib/businessSystems";
-import { getAvailableSystems } from "../lib/edition";
+import { getAvailableSystems, isSingleSystemEdition } from "../lib/edition";
 import {
   clearDeviceInstall,
   getEffectiveSystemLock,
@@ -89,8 +89,11 @@ export function SystemSelectPage(): JSX.Element {
     return erpEntryPathForRole(id, displayRole);
   }
 
-  // Authenticated Super Admin always lands on the control plane.
+  // Authenticated Super Admin always lands on the control plane (suite only).
   if (accessToken && isSuperAdminClaims(claims)) {
+    if (isSingleSystemEdition()) {
+      return <Navigate to={roleSelectPath(lockedSystemId ?? "restaurant")} replace />;
+    }
     return <Navigate to="/super-admin" replace />;
   }
 

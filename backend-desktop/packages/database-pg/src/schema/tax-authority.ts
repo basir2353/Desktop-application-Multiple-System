@@ -46,12 +46,18 @@ export const taxAuthorityProfiles = pgTable(
     praTokenExpiresAt: timestamp("pra_token_expires_at", { withTimezone: true }),
     praConnectedAt: timestamp("pra_connected_at", { withTimezone: true }),
     praLastError: text("pra_last_error"),
+    /** Last successful PRA token acquisition / refresh. */
     praLastTokenRefreshAt: timestamp("pra_last_token_refresh_at", { withTimezone: true }),
+    /** Last successful PRA invoice submission. */
     praLastInvoiceSentAt: timestamp("pra_last_invoice_sent_at", { withTimezone: true }),
 
+    /** Auto-upload invoices after payment (Real PRA). */
     praAutoSubmit: boolean("pra_auto_submit").notNull().default(true),
+    /** Keep invoices queued when offline / network fails. */
     praOfflineQueue: boolean("pra_offline_queue").notNull().default(true),
+    /** Automatically retry failed submissions. */
     praRetryFailed: boolean("pra_retry_failed").notNull().default(true),
+    /** Cap for automatic retries. */
     praMaxRetryAttempts: integer("pra_max_retry_attempts").notNull().default(3),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -72,6 +78,7 @@ export const taxAuthorityInvoices = pgTable(
       .notNull()
       .references(() => popsBranches.id, { onDelete: "cascade" }),
     authority: text("authority").notNull(),
+    /** fake | real — distinguishes FPRA slips from live e-IMS submits. */
     invoiceMode: text("invoice_mode").notNull().default("real"),
     sourceType: text("source_type").notNull(),
     sourceId: uuid("source_id").notNull(),
@@ -100,6 +107,7 @@ export const taxAuthorityInvoices = pgTable(
   ],
 );
 
+/** Audit trail for PRA connect / submit / retry events. */
 export const taxAuthorityActivityLogs = pgTable("tax_authority_activity_logs", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id")

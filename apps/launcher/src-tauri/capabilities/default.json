@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "Default window capability set for the launcher shell.",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-open"]
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "updater:default",
+    "process:default"
+  ]
 }
+

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   canChangePosRecentOrderTable,
@@ -67,8 +67,12 @@ type Props = {
   isLoading: boolean;
   isError: boolean;
   onEdit?: (order: PosRecentOrder) => void;
-  onPayOrder?: (order: PosRecentOrder) => void;
+  /** `thenClose`: after Pay succeeds, parent passes `closeAfterPayBillId` so we mark Closed + show PRA. */
+  onPayOrder?: (order: PosRecentOrder, options?: { thenClose?: boolean }) => void;
   onNotice?: (message: string, tone?: "success" | "error") => void;
+  /** Bill just paid via Close → Pay; panel marks Closed and shows that bill’s PRA invoice. */
+  closeAfterPayBillId?: string | null;
+  onCloseAfterPayHandled?: () => void;
 };
 
 function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
@@ -85,6 +89,8 @@ export function PosLatestOrdersPanel({
   onEdit,
   onPayOrder,
   onNotice,
+  closeAfterPayBillId = null,
+  onCloseAfterPayHandled,
 }: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
@@ -145,9 +151,13 @@ export function PosLatestOrdersPanel({
     input: Omit<PrintTicketInput, "kind">;
     printerName?: string;
     systemPrinterName?: string;
+    /** Close final = PRA invoice; Print = simple slip. */
+    title?: string;
+    subtitle?: string;
   } | null>(null);
   const [dismissedRevision, setDismissedRevision] = useState(0);
   const [, setTimeTick] = useState(0);
+  const handledCloseAfterPayRef = useRef<string | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setTimeTick((n) => n + 1), 30_000);
@@ -250,6 +260,7 @@ export function PosLatestOrdersPanel({
           invoiceNumber: issued.fiscal.invoiceNumber,
           orderRef: bill.orderRef ?? bill.billRef ?? order.ref,
           qrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
+          branchCode: branch!.code,
         });
         const base = billToPrintInput(branch!.name, branch!.code, {
           ...bill,
@@ -298,15 +309,16 @@ export function PosLatestOrdersPanel({
     const profile = resolveReceiptPrinter(branch.code, printUserId);
     const assigned = printUserId ? getWaiterPrinter(branch.code, printUserId) : null;
 
-    // Always prefer the paid bill for this ORD-# so All-tab reprints match Pay (PRA).
+    // Always prefer this order’s bill by id so Close/Print never pick another ORD’s totals.
     let bill = order.bill ?? null;
     try {
       const bills = await fetchCompletedOrders(branch.code);
+      const billId = bill?.id;
       const orderRef = (order.ref || order.bill?.orderRef || order.bill?.billRef || "")
         .trim()
         .toLowerCase();
       const fresh =
-        (bill ? bills.find((b) => b.id === bill!.id) : undefined) ??
+        (billId ? bills.find((b) => b.id === billId) : undefined) ??
         (orderRef
           ? bills.find(
               (b) =>
@@ -327,18 +339,26 @@ export function PosLatestOrdersPanel({
     let notice: string | undefined;
 
     // Print = always simple (no PRA). Close = issue/embed PRA when Tax Active.
-    if (bill && options?.embedPra) {
-      const resolved = await resolvePraFooterForPaidBill({
-        branchCode: branch.code,
-        bill,
-        issueIfMissing: true,
-      });
-      praFiscal = resolved.footer;
-      notice = resolved.notice;
-      if (resolved.blockedReal && resolved.notice) {
-        window.alert(resolved.notice);
-      } else if (!praFiscal && resolved.notice) {
-        window.alert(resolved.notice);
+    if (options?.embedPra) {
+      if (!bill) {
+        notice = "Paid bill not found for this order — cannot issue PRA invoice.";
+        praFiscal = null;
+      } else {
+        const resolved = await resolvePraFooterForPaidBill({
+          branchCode: branch.code,
+          bill,
+          issueIfMissing: true,
+        });
+        praFiscal = resolved.footer;
+        notice = resolved.notice;
+        if (resolved.blockedReal && resolved.notice) {
+          window.alert(resolved.notice);
+        } else if (!praFiscal && resolved.notice) {
+          window.alert(resolved.notice);
+        } else if (!praFiscal && !resolved.notice) {
+          notice =
+            "PRA invoice issue skip ho gayi (Tax Active check karein ya thori der baad Close dobara try karein).";
+        }
       }
     } else {
       praFiscal = null;
@@ -368,6 +388,8 @@ export function PosLatestOrdersPanel({
         input: built.input,
         printerName: built.printerName,
         systemPrinterName: built.systemPrinterName,
+        title: "Simple invoice",
+        subtitle: "Print = simple slip (no PRA)",
       });
     })();
   }
@@ -381,18 +403,77 @@ export function PosLatestOrdersPanel({
     openPrintPreview(order);
   }
 
-  /** Close (paid): final receipt — PRA footer only when Tax Active / already issued. */
-  function printOrderDirect(order: PosRecentOrder): void {
+  /**
+   * Close (paid): mark status Closed + show this order’s real PRA invoice (number + QR + logo).
+   * Never fall back to the simple Card/Cash slip — that is Print's job.
+   */
+  function markOrderClosed(order: PosRecentOrder): void {
+    if (branch?.code) dismissPosOrder(branch.code, order.id);
+    setDismissedRevision((n) => n + 1);
+    setSelectedId(null);
+    closeOrderMutation.mutate(order);
+  }
+
+  function openCloseInvoicePreview(order: PosRecentOrder): void {
     void (async () => {
+      if (!branch) return;
+
+      // Status first — Paid tab shows "Closed" even if PRA preview is blocked.
+      markOrderClosed(order);
+
+      if (!praFakeEnabled && !praRealEnabled) {
+        window.alert(
+          "Order Closed.\n\nPRA invoice ke liye Settings → Tax mein FPRA ya Real PRA Active karein.\nSimple slip ke liye Print use karein.",
+        );
+        onNotice?.(`Order ${order.ref} Closed.`, "success");
+        return;
+      }
+
       const built = await buildPaidReceiptInput(order, { embedPra: true });
-      if (!built) return;
-      void printReceiptAsync({
-        ...built.input,
-        printerName: built.printerName ?? built.systemPrinterName,
+      if (!built) {
+        window.alert(
+          `Order ${order.ref} Closed, lekin bill load nahi hui. Paid tab se Print / Close dobara try karein.`,
+        );
+        return;
+      }
+
+      const hasPra = Boolean(built.input.praFiscal?.invoiceNumber);
+      if (!hasPra) {
+        window.alert(
+          built.notice ||
+            `Order ${order.ref} Closed, lekin PRA invoice issue nahi hui (Invoice # / QR missing).\n\nFPRA Active check karein. Simple slip ke liye Print use karein.`,
+        );
+        return;
+      }
+
+      setPrintPreview({
+        input: built.input,
+        printerName: built.printerName,
         systemPrinterName: built.systemPrinterName,
+        title: `Real invoice (PRA) · ${order.ref}`,
+        subtitle: `PRA Invoice # ${built.input.praFiscal!.invoiceNumber} · QR + logo`,
       });
+      if (built.notice) onNotice?.(built.notice, "success");
+      else onNotice?.(`Order ${order.ref} Closed — PRA invoice ready.`, "success");
     })();
   }
+
+  /** After Close → Pay, show PRA + Closed for that exact paid bill. */
+  useEffect(() => {
+    if (!closeAfterPayBillId) {
+      handledCloseAfterPayRef.current = null;
+      return;
+    }
+    if (handledCloseAfterPayRef.current === closeAfterPayBillId) return;
+    const paid = orders.find(
+      (o) => o.bill?.id === closeAfterPayBillId && o.bill.status === "completed",
+    );
+    if (!paid) return;
+    handledCloseAfterPayRef.current = closeAfterPayBillId;
+    onCloseAfterPayHandled?.();
+    openCloseInvoicePreview(paid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot when this bill appears after Close→Pay
+  }, [closeAfterPayBillId, orders]);
 
   function toggleSelected(order: PosRecentOrder): void {
     setSelectedId((current) => (current === order.id ? null : order.id));
@@ -400,20 +481,20 @@ export function PosLatestOrdersPanel({
 
   /**
    * Close:
-   * - Unpaid / held → Pay first (select cash/card), then simple invoice.
-   * - Paid → finalize: print with PRA only if Tax Active, dismiss from list.
+   * - Unpaid / held → Pay first, then auto Closed + PRA for that bill.
+   * - Paid → status Closed + real PRA invoice for this order.
    */
   function closeOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
     if (canPayPosRecentOrder(order)) {
-      onPayOrder?.(order);
+      onPayOrder?.(order, { thenClose: true });
+      onNotice?.(
+        `Pay ${order.ref} — after payment status Closed + PRA invoice open hogi.`,
+        "success",
+      );
       return;
     }
-    printOrderDirect(order);
-    if (branch?.code) dismissPosOrder(branch.code, order.id);
-    setDismissedRevision((n) => n + 1);
-    setSelectedId(null);
-    closeOrderMutation.mutate(order);
+    openCloseInvoicePreview(order);
   }
 
   function handlePrintPreviewClose(): void {
@@ -434,7 +515,7 @@ export function PosLatestOrdersPanel({
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
               <div className="mt-0.5 text-[10px] text-slate-500">
-                Edit = items · Print = simple invoice · Close = finalize (+ PRA if active)
+                Edit = items · Print = simple · Close = Closed + PRA invoice
               </div>
             </div>
             <Link
@@ -446,19 +527,31 @@ export function PosLatestOrdersPanel({
           </div>
 
           <div className="relative mt-2">
+            <span
+              className="pointer-events-none absolute left-2.5 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+              aria-hidden
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-3.5 w-3.5"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+            </span>
             <input
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search orders…"
-              className="w-full rounded-md border border-slate-700 bg-slate-950 py-1.5 pl-7 pr-2 text-[11px] text-white outline-none placeholder:text-slate-600 focus:border-amber-500/40"
+              className="w-full rounded-md border border-slate-700 bg-slate-950 py-1.5 pl-8 pr-2 text-[11px] text-white outline-none placeholder:text-slate-600 focus:border-amber-500/40"
             />
-            <span
-              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-500"
-              aria-hidden
-            >
-              ⌕
-            </span>
             {isSearching ? (
               <button
                 type="button"
@@ -594,7 +687,7 @@ export function PosLatestOrdersPanel({
                             onClick={(e) => closeOrder(order, e)}
                             disabled={closeOrderMutation.isPending}
                             aria-label="Close order"
-                            title="Close order"
+                            title="Close — status Closed + this order’s PRA invoice"
                           >
                             ✕
                           </button>
@@ -653,7 +746,7 @@ export function PosLatestOrdersPanel({
                             title={
                               order.kind === "pending" && order.kitchenTicket?.status !== "done"
                                 ? "Print kitchen order ticket (order stays editable)"
-                                : "Print / reprint final receipt"
+                                : "Print simple invoice (no PRA)"
                             }
                           >
                             Print
@@ -681,8 +774,8 @@ export function PosLatestOrdersPanel({
                             disabled={closeOrderMutation.isPending}
                             title={
                               canPayPosRecentOrder(order)
-                                ? "Finalize: pay, print final bill, lock order"
-                                : "Print final receipt and close"
+                                ? "Pay → status Closed + this order’s PRA invoice"
+                                : "Status Closed + this order’s PRA invoice"
                             }
                           >
                             Close
@@ -756,6 +849,8 @@ export function PosLatestOrdersPanel({
           printerName={printPreview.printerName}
           systemPrinterName={printPreview.systemPrinterName}
           billPrintSettings={printPreview.input.billPrintSettings}
+          title={printPreview.title}
+          subtitle={printPreview.subtitle}
           onClose={handlePrintPreviewClose}
         />
       ) : null}

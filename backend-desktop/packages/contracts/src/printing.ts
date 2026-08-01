@@ -80,6 +80,7 @@ export const printerNodeSchema = z.object({
   pingMs: z.number().nonnegative().nullable().optional(),
   lastHeartbeatAt: z.string().datetime().nullable().optional(),
   backupPrinterId: z.string().nullable().optional(),
+  /** Legacy profile id from pops-printer-routing-v1 */
   legacyProfileId: z.string().nullable().optional(),
 });
 export type PrinterNode = z.infer<typeof printerNodeSchema>;
@@ -88,6 +89,7 @@ export const printJobPayloadSchema = z.object({
   kind: printJobKindSchema,
   html: z.string().optional(),
   plainText: z.string().optional(),
+  /** Base64 PNG for image print path */
   imageBase64: z.string().optional(),
   systemPrinterName: z.string().nullable().optional(),
   copies: z.number().int().min(1).max(10).default(1),
@@ -183,6 +185,7 @@ export const printingStatusSchema = z.object({
 });
 export type PrintingStatus = z.infer<typeof printingStatusSchema>;
 
+/** Socket.IO / realtime event names */
 export const PRINT_WS_EVENTS = [
   "printer-online",
   "printer-offline",
@@ -214,14 +217,19 @@ export const printAlertSchema = z.object({
 });
 export type PrintAlert = z.infer<typeof printAlertSchema>;
 
+/** Default LAN port for Branch Print Server HTTP API */
 export const BRANCH_PRINT_SERVER_DEFAULT_PORT = 9740;
+
+/** UDP discovery magic / service type */
 export const BRANCH_PRINT_DISCOVERY_SERVICE = "_pops-print._tcp.local";
 export const BRANCH_PRINT_UDP_PORT = 9741;
 export const BRANCH_PRINT_UDP_MAGIC = "POPS_PRINT_DISCOVER_v1";
 
+/** Feature flag key in platform settings */
 export const PRINTING_ENTERPRISE_ENABLED_KEY = "printing_enterprise_enabled";
 export const PRINTING_CLOUD_QUEUE_ENABLED_KEY = "printing_cloud_queue_enabled";
 
+/** Print path priority for failover */
 export const PRINT_PATH_PRIORITY = [
   "direct_ip",
   "branch_server",

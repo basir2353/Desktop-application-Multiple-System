@@ -1,7 +1,23 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/** Ensure Tauri updater signing key is in env (PATH var alone is unreliable on Windows). */
+function withSigningEnv(baseEnv) {
+  const env = { ...baseEnv };
+  if (!(env.TAURI_SIGNING_PRIVATE_KEY ?? "").trim()) {
+    const keyPath = (env.TAURI_SIGNING_PRIVATE_KEY_PATH ?? "").trim();
+    if (keyPath && existsSync(keyPath)) {
+      env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(keyPath, "utf8");
+    }
+  }
+  // Empty password keys still prompt unless this is set explicitly.
+  if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
+    env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "";
+  }
+  return env;
+}
 
 /**
  * Builds a single-system desktop installer.
@@ -76,7 +92,7 @@ console.log(`[build-edition] Building "${edition}" installer (API: ${apiUrl})…
 const result = spawnSync("pnpm", args, {
   cwd: join(__dirname, ".."),
   stdio: "inherit",
-  env: { ...process.env, PLATFORM_EDITION: edition },
+  env: withSigningEnv({ ...process.env, PLATFORM_EDITION: edition }),
   shell: process.platform === "win32",
 });
 

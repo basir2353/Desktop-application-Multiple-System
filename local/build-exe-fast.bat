@@ -23,6 +23,7 @@ set "CARGO_INCREMENTAL=1"
 REM Built-in fallback URL; EXE still has Live/Local toggle at runtime
 set "VITE_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app"
 set "PLATFORM_EDITION=suite"
+set "TAURI_SIGNING_PRIVATE_KEY_PATH=%USERPROFILE%\.tauri\pops-updater.key"
 
 if exist "%APPDATA%\npm\pnpm.cmd" (
   set "PNPM=%APPDATA%\npm\pnpm.cmd"

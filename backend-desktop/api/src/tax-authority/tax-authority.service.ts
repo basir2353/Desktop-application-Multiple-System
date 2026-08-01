@@ -53,6 +53,12 @@ import {
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import {
+  buildBillPraSourceLines,
+  parsePraSourceLines,
+  withAllocatedStoreLineTaxes,
+  type PraSourceLine,
+} from "./pra-invoice-lines";
 
 type ProfileRow = typeof taxAuthorityProfiles.$inferSelect;
 
@@ -1896,7 +1902,14 @@ const responsePayload = {
         .limit(1);
       if (bill?.praInvoiceNumber && (bill.praMode === "fake" || bill.praMode === "real")) {
         const profile = await this.getProfile(organizationId, branch.id);
-        const lines = this.parseLines(bill.linesJson);
+        const { lines, taxableAmountPkr } = buildBillPraSourceLines({
+          linesJson: bill.linesJson,
+          subtotalPkr: bill.subtotalPkr,
+          discountPkr: bill.discountPkr,
+          servicePkr: bill.servicePkr,
+          deliveryChargePkr: bill.deliveryChargePkr,
+          taxPkr: bill.taxPkr,
+        });
         return {
           mode: bill.praMode,
           invoiceNumber: bill.praInvoiceNumber,
@@ -1909,7 +1922,7 @@ const responsePayload = {
           strn: profile?.strn ?? "",
           branchCode: profile?.praBranchCode || branch.code,
           sourceRef: bill.billRef,
-          taxableAmountPkr: Math.max(0, bill.subtotalPkr - bill.discountPkr),
+          taxableAmountPkr,
           taxAmountPkr: bill.taxPkr,
           totalAmountPkr: bill.totalPkr,
           lines: lines.map((line) => ({
@@ -2485,14 +2498,22 @@ const responsePayload = {
         )
         .limit(1);
       if (!row) throw new NotFoundException("Bill not found");
+      const { lines, taxableAmountPkr } = buildBillPraSourceLines({
+        linesJson: row.linesJson,
+        subtotalPkr: row.subtotalPkr,
+        discountPkr: row.discountPkr,
+        servicePkr: row.servicePkr,
+        deliveryChargePkr: row.deliveryChargePkr,
+        taxPkr: row.taxPkr,
+      });
       return {
         id: sourceId,
         ref: row.billRef,
         date: row.createdAt,
-        taxableAmountPkr: Math.max(0, row.subtotalPkr - row.discountPkr),
+        taxableAmountPkr,
         taxAmountPkr: row.taxPkr,
         totalPkr: row.totalPkr,
-        lines: this.parseLines(row.linesJson),
+        lines,
       };
     }
 
@@ -2537,15 +2558,18 @@ const responsePayload = {
         taxableAmountPkr: Math.max(0, row.subtotalPkr - row.discountPkr - row.promotionDiscountPkr),
         taxAmountPkr: row.taxPkr,
         totalPkr: row.totalPkr,
-        lines: saleLines.map((l) => {
-          const qty = l.isWeighed === "yes" ? Math.max(0.001, l.qty / 1000) : Math.max(1, l.qty);
-          return {
-            description: productName(l.productId, l.displayName),
-            qty,
-            amount: l.lineTotalPkr,
-            tax: 0,
-          };
-        }),
+        lines: withAllocatedStoreLineTaxes(
+          saleLines.map((l) => {
+            const qty = l.isWeighed === "yes" ? Math.max(0.001, l.qty / 1000) : Math.max(1, l.qty);
+            return {
+              description: productName(l.productId, l.displayName),
+              qty,
+              amount: l.lineTotalPkr,
+              tax: 0,
+            };
+          }),
+          row.taxPkr,
+        ),
       };
     }
 
@@ -2573,8 +2597,8 @@ const responsePayload = {
   }
 
   /**
-   * Next FPRA invoice number for this org: sequential natural number
-   * (e.g. 35929, 35930, …) — no leading zeros. Atomic UPDATE so concurrent Pays don't collide.
+   * Next FPRA invoice number for this org — real-looking alphanumeric
+   * (e.g. 197476FGYI32391068). Atomic UPDATE so concurrent Pays don't collide.
    */
   private async allocateFakePraInvoiceNumber(organizationId: string): Promise<string> {
     const [row] = await this.db
@@ -2586,36 +2610,38 @@ const responsePayload = {
       .where(eq(organizations.id, organizationId))
       .returning({ seq: organizations.praFakeInvoiceSeq });
     const seq = Math.max(1, Number(row?.seq ?? 1));
-    // Base so slips look like real-world invoice #s (first org invoice → 35929).
-    const FAKE_PRA_INVOICE_BASE = 35928;
-    return String(FAKE_PRA_INVOICE_BASE + seq);
+    return this.formatFakePraInvoiceNumber(organizationId, seq);
+  }
+
+  /** 6 digits + 4 letters + 8 digits — matches real PRA-style invoice ids. */
+  private formatFakePraInvoiceNumber(_organizationId: string, seq: number): string {
+    const prefix = String(197475 + seq).padStart(6, "0").slice(-6);
+    const letters = this.fakePraLetterBlock(seq);
+    const suffix = String(10_000_000 + ((seq * 7919 + 3_239_106) % 89_999_999)).slice(-8);
+    return `${prefix}${letters}${suffix}`;
+  }
+
+  private fakePraLetterBlock(seq: number): string {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let h = Math.imul(seq, 2654435761) >>> 0;
+    let out = "";
+    for (let i = 0; i < 4; i++) {
+      out += alphabet[(h + i * 17) % alphabet.length]!;
+      h = (Math.imul(h, 33) + i) >>> 0;
+    }
+    return out;
   }
 
   /** PRA PostData USIN — unique per source UUID so billRef collisions across orgs/branches don't clash. */
   private buildPraUsin(sourceId: string, sourceRef: string): string {
     const idPart = sourceId.replace(/-/g, "").slice(0, 8);
-    const refPart = sourceRef.replace(/[^A-Za-z0-9]/g, "").slice(0, 28);
+    const refPart = sourceRef.replace(/[^A-Za-z0-9]/g, "").slice(-28);
     const body = refPart ? `${idPart}-${refPart}` : idPart;
     return body.slice(0, 50) || `USIN${Date.now()}`.slice(0, 50);
   }
 
-  private parseLines(raw: string | null): Array<{ description: string; qty: number; amount: number; tax: number }> {
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map((line) => {
-        const row = line as Record<string, unknown>;
-        return {
-          description: String(row.name ?? row.description ?? "Item"),
-          qty: Number(row.qty ?? 1),
-          amount: Number(row.unitPrice ?? row.amount ?? 0) * Number(row.qty ?? 1),
-          tax: Number(row.tax ?? 0),
-        };
-      });
-    } catch {
-      return [];
-    }
+  private parseLines(raw: string | null): PraSourceLine[] {
+    return parsePraSourceLines(raw);
   }
 
   private buildInvoicePayload(
@@ -2628,18 +2654,20 @@ const responsePayload = {
       taxableAmountPkr: number;
       taxAmountPkr: number;
       totalPkr: number;
-      lines: Array<{ description: string; qty: number; amount: number; tax: number }>;
+      lines: PraSourceLine[];
     },
   ) {
     const invoiceDate = source.date.toISOString().slice(0, 10);
+    const taxRatePct =
+      source.taxableAmountPkr > 0
+        ? Math.round((source.taxAmountPkr / source.taxableAmountPkr) * 10000) / 100
+        : 0;
     const items =
       source.lines.length > 0
         ? source.lines.map((line) => ({
             hsCode: "0000.0000",
             productDescription: line.description,
-            rate: source.taxableAmountPkr > 0
-              ? `${Math.round((source.taxAmountPkr / source.taxableAmountPkr) * 100)}%`
-              : "0%",
+            rate: `${Math.round(taxRatePct)}%`,
             uoM: "Numbers, pieces, units",
             quantity: line.qty,
             totalValues: 0,
@@ -2659,10 +2687,7 @@ const responsePayload = {
             {
               hsCode: "0000.0000",
               productDescription: source.ref,
-              rate:
-                source.taxableAmountPkr > 0
-                  ? `${Math.round((source.taxAmountPkr / source.taxableAmountPkr) * 100)}%`
-                  : "0%",
+              rate: `${Math.round(taxRatePct)}%`,
               uoM: "Numbers, pieces, units",
               quantity: 1,
               totalValues: 0,
@@ -2728,19 +2753,19 @@ const responsePayload = {
         source.lines.length > 0
           ? source.lines.map((line, idx) => {
               const qty = Math.max(1, line.qty || 1);
-              const lineTotal = line.amount;
-              const lineTax = line.tax || 0;
-              const saleValue = Math.max(0, lineTotal - lineTax);
+              // Amounts from POS are tax-exclusive; TaxCharged is allocated ST.
+              const saleValue = Math.max(0, Math.round(line.amount));
+              const lineTax = Math.max(0, Math.round(line.tax || 0));
               const taxRate =
-                saleValue > 0 ? Math.round((lineTax / saleValue) * 10000) / 100 : 0;
+                saleValue > 0 ? Math.round((lineTax / saleValue) * 10000) / 100 : taxRatePct;
               return {
                 ItemCode: `IT_${idx + 1}`,
-                ItemName: line.description || `Item ${idx + 1}`,
+                ItemName: (line.description || `Item ${idx + 1}`).slice(0, 100),
                 Quantity: qty,
                 PCTCode: "98012000",
                 TaxRate: taxRate,
                 SaleValue: saleValue,
-                TotalAmount: lineTotal,
+                TotalAmount: saleValue + lineTax,
                 TaxCharged: lineTax,
                 Discount: 0,
                 FurtherTax: 0,
@@ -2754,12 +2779,9 @@ const responsePayload = {
                 ItemName: source.ref,
                 Quantity: 1,
                 PCTCode: "98012000",
-                TaxRate:
-                  source.taxableAmountPkr > 0
-                    ? Math.round((source.taxAmountPkr / source.taxableAmountPkr) * 10000) / 100
-                    : 0,
+                TaxRate: taxRatePct,
                 SaleValue: source.taxableAmountPkr,
-                TotalAmount: source.totalPkr,
+                TotalAmount: source.taxableAmountPkr + source.taxAmountPkr,
                 TaxCharged: source.taxAmountPkr,
                 Discount: 0,
                 FurtherTax: 0,

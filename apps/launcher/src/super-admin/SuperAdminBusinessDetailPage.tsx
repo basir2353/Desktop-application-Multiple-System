@@ -235,7 +235,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
             className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
             disabled={deleteMut.isPending}
             onClick={() => {
-              if (window.confirm(`Delete business “${b.name}”?`)) deleteMut.mutate();
+              if (window.confirm(`Delete business “${b.name}”? It is archived (backup kept) and removed from live lists. Login emails can be reused.`)) deleteMut.mutate();
             }}
           >
             Delete

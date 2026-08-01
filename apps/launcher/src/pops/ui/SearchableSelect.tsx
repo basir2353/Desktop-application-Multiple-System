@@ -115,14 +115,32 @@ export function SearchableSelect({
           className="absolute left-0 right-0 z-40 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
           role="listbox"
         >
-          <div className="border-b border-slate-200 p-1.5 dark:border-slate-700">
+          <div className="relative border-b border-slate-200 p-1.5 dark:border-slate-700">
+            <span
+              className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+              aria-hidden
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-3.5 w-3.5"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+            </span>
             <input
               ref={searchRef}
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchPlaceholder}
-              className={`${fieldInputClass} w-full py-1.5 text-xs`}
+              className={`${fieldInputClass} w-full py-1.5 pl-8 text-xs`}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();

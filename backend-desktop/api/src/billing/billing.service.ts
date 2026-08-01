@@ -26,6 +26,7 @@ import { ClosingService } from "../closing/closing.service";
 import { InventoryDeductionService } from "../inventory/inventory-deduction.service";
 import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
 import { assertDineInTableAvailable } from "../tables/table-booking";
+import { findLiveLoginUserByEmail, findLiveLoginUserByEmailExcluding } from "../lib/login-email";
 
 type BillTotals = {
   subtotal: number;
@@ -133,8 +134,8 @@ export class BillingService implements OnApplicationBootstrap {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     const email = input.email.trim().toLowerCase();
 
-    const existing = await this.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existing.length > 0) {
+    const existing = await findLiveLoginUserByEmail(this.db, email);
+    if (existing) {
       throw new ConflictException(`Login email already in use: ${email}`);
     }
 
@@ -166,12 +167,8 @@ export class BillingService implements OnApplicationBootstrap {
 
     if (input.email) {
       const email = input.email.trim().toLowerCase();
-      const existing = await this.db
-        .select({ id: users.id })
-        .from(users)
-        .where(and(eq(users.email, email), ne(users.id, waiterId)))
-        .limit(1);
-      if (existing.length > 0) {
+      const existing = await findLiveLoginUserByEmailExcluding(this.db, email, waiterId);
+      if (existing) {
         throw new ConflictException(`Login email already in use: ${email}`);
       }
       await this.db.update(users).set({ email }).where(eq(users.id, waiterId));
@@ -570,7 +567,7 @@ export class BillingService implements OnApplicationBootstrap {
           sourceType: "bill",
           sourceId: row.id,
           sourceRef: row.billRef,
-          taxableAmountPkr: Math.max(0, row.subtotalPkr - row.discountPkr),
+          taxableAmountPkr: Math.max(0, row.subtotalPkr - row.discountPkr + (row.servicePkr ?? 0)),
           taxAmountPkr: row.taxPkr,
         });
       }

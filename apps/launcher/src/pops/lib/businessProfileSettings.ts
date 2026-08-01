@@ -2,6 +2,8 @@
 
 export type BusinessProfile = {
   logoUrl: string | null;
+  /** Custom PRA footer mark on fiscal receipts; null = built-in PRA SVG. */
+  praLogoUrl: string | null;
   address: string;
   phone: string;
   taxId: string;
@@ -9,6 +11,7 @@ export type BusinessProfile = {
 
 export const DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
   logoUrl: null,
+  praLogoUrl: null,
   address: "",
   phone: "",
   taxId: "",
@@ -21,6 +24,7 @@ const STORAGE_KEY = "pops-business-profile-v1";
 export function normalizeBusinessProfile(input: Partial<BusinessProfile>): BusinessProfile {
   return {
     logoUrl: input.logoUrl?.trim() || null,
+    praLogoUrl: input.praLogoUrl?.trim() || null,
     address: (input.address ?? "").trim().slice(0, 160),
     phone: (input.phone ?? "").trim().slice(0, 32),
     taxId: (input.taxId ?? "").trim().slice(0, 32),

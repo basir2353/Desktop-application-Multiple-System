@@ -1,6 +1,8 @@
 import type { PraFiscalInvoice } from "@platform/contracts";
 import { loadBillPrintSettings } from "./billPrintSettings";
 import type { PraReceiptFooter } from "./praReceiptFooter";
+import { formatPraInvoiceNumberForSlip } from "./praReceiptFooter";
+import { resolvePraLogoSrc } from "./praLogo";
 import { praQrDataUrl, sanitizePraQrPayload } from "./praQr";
 import { buildTicketHtml, type PrintTicketInput } from "./printTicket";
 
@@ -65,15 +67,20 @@ export async function buildPraFiscalHtml(
 ): Promise<string> {
   const mode = fiscal.mode === "real" ? "real" : "fake";
   const cleanQr = sanitizePraQrPayload(fiscal.qrPayload || fiscal.invoiceNumber, mode);
-  const qrDataUrl = await praQrDataUrl(cleanQr, 160, mode);
+  const branchCode = options?.branchCode || fiscal.branchCode || "";
+  const [qrDataUrl, logoDataUrl] = await Promise.all([
+    praQrDataUrl(cleanQr, 160, mode),
+    resolvePraLogoSrc(branchCode || undefined),
+  ]);
+  const displayInvoice = formatPraInvoiceNumberForSlip(fiscal.invoiceNumber, mode);
   const praFiscal: PraReceiptFooter = {
     mode,
-    invoiceNumber: fiscal.invoiceNumber,
+    invoiceNumber: displayInvoice,
     orderRef: fiscal.sourceRef || fiscal.invoiceNumber,
     qrPayload: cleanQr,
     qrDataUrl,
+    logoDataUrl,
   };
-  const branchCode = options?.branchCode || fiscal.branchCode || "";
   const input: PrintTicketInput = {
     kind: "receipt",
     ...fiscalToReceiptPrintInput(fiscal, options),

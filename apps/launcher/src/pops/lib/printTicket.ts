@@ -25,6 +25,7 @@ import {
 import { toPng } from "html-to-image";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
 import { loadReceiptPoweredBy } from "./receiptBranding";
+import { resolveBusinessLogoSrc } from "./businessLogo";
 import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
 import { buildPraReceiptFooterHtml, PRA_RECEIPT_FOOTER_CSS, type PraReceiptFooter } from "./praReceiptFooter";
 import { asPrinterName } from "./asPrinterName";
@@ -88,6 +89,11 @@ export type PrintTicketInput = {
   isOrderUpdate?: boolean;
   /** FPRA/Real PRA footer (invoice # + QR) printed under the order receipt. */
   praFiscal?: PraReceiptFooter | null;
+  /**
+   * Optional company logo for the receipt header (data URL preferred).
+   * When omitted, Content Updation business logo is loaded from branchCode.
+   */
+  businessLogoSrc?: string | null;
 };
 
 /** Apply a resolved printer profile onto a ticket payload. */
@@ -873,29 +879,34 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       const cardNet = round2(taxable + service + delivery + cardGst);
       const cashNet = round2(taxable + service + delivery + cashGst);
       const money = (n: number) => formatMoney(n, moneyCompact);
+      const servicePct = Math.max(0, Number(input.servicePct ?? 0));
+      const midRows = (gstPct: number, gstAmt: number) =>
+        [
+          `<div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>`,
+          input.discount > 0
+            ? `<div class="row"><span class="label">Discount</span><span class="value discount">− ${money(input.discount)}</span></div>`
+            : "",
+          service > 0
+            ? `<div class="row"><span class="label">Service${servicePct > 0 ? ` (${servicePct}%)` : ""}</span><span class="value">${money(service)}</span></div>`
+            : "",
+          delivery > 0
+            ? `<div class="row"><span class="label">Delivery</span><span class="value">${money(delivery)}</span></div>`
+            : "",
+          `<div class="row"><span class="label">GST (${gstPct}%)</span><span class="value">${money(gstAmt)}</span></div>`,
+        ]
+          .filter(Boolean)
+          .join("");
       parts.push(`
       <div class="pay-compare">
         <div class="pay-compare-col">
           <div class="pay-compare-title">On Card Payment</div>
-          <div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>
-          ${
-            input.discount > 0
-              ? `<div class="row"><span class="label">Discount</span><span class="value discount">− ${money(input.discount)}</span></div>`
-              : ""
-          }
-          <div class="row"><span class="label">GST (${cardGstPct}%)</span><span class="value">${money(cardGst)}</span></div>
-          <div class="row grand"><span class="label">Net Total</span><span class="value">${money(cardNet)}</span></div>
+          ${midRows(cardGstPct, cardGst)}
+          <div class="row grand pay-net"><span class="label">Net</span><span class="value">${money(cardNet)}</span></div>
         </div>
         <div class="pay-compare-col">
           <div class="pay-compare-title">On Cash Payment</div>
-          <div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>
-          ${
-            input.discount > 0
-              ? `<div class="row"><span class="label">Discount</span><span class="value discount">− ${money(input.discount)}</span></div>`
-              : ""
-          }
-          <div class="row"><span class="label">GST (${cashGstPct}%)</span><span class="value">${money(cashGst)}</span></div>
-          <div class="row grand"><span class="label">Net Total</span><span class="value">${money(cashNet)}</span></div>
+          ${midRows(cashGstPct, cashGst)}
+          <div class="row grand pay-net"><span class="label">Net</span><span class="value">${money(cashNet)}</span></div>
         </div>
       </div>`);
     }
@@ -996,13 +1007,23 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       : !isReceipt && kotSettings.headerBusinessName.trim()
         ? kotSettings.headerBusinessName.trim()
         : input.branchName;
+  const businessLogoSrc = isReceipt
+    ? input.businessLogoSrc !== undefined
+      ? input.businessLogoSrc
+      : resolveBusinessLogoSrc(input.branchCode)
+    : null;
+  const businessLogoHtml = businessLogoSrc
+    ? `<div class="business-logo-wrap" style="text-align:${headerAlign};"><img class="business-logo" src="${escapeHtml(businessLogoSrc)}" alt="" width="72" height="72" style="display:block;margin:4px auto 0;width:72px;height:72px;object-fit:contain;" /></div>`
+    : "";
   const showHeaderSubtitle =
     isReceipt && fields!.headerSubtitle && billSettings.headerSubtitle.trim().length > 0;
   const showFooterPrimary = isReceipt && fields!.footer;
   const showFooterSecondary =
     isReceipt && fields!.footerSecondary && billSettings.footerSecondaryText.trim().length > 0;
   const showHeaderBlock =
-    isReceipt && fields && (fields.branchName || fields.documentTitle || showHeaderSubtitle);
+    isReceipt &&
+    fields &&
+    (fields.branchName || fields.documentTitle || showHeaderSubtitle || Boolean(businessLogoSrc));
   /** KOT: show company once in header; date alone under meta (not branch code again). */
   const kotTimestampHtml = !isReceipt
     ? `<div class="timestamp">${escapeHtml(printedAt)}</div>`
@@ -1034,8 +1055,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
           }
           switch (blockId) {
             case "branchName":
-              return fields.branchName
-                ? `<div class="branch-name${blockInkClass(billSettings, "branchName")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "branchName", receiptFonts.branchName)}">${escapeHtml(displayBusinessName)}</div>`
+              return fields.branchName || businessLogoHtml
+                ? `<div class="receipt-brand" style="text-align:${headerAlign};">
+                ${
+                  fields.branchName
+                    ? `<div class="branch-name${blockInkClass(billSettings, "branchName")}" style="text-align:${headerAlign};${blockStyleInline(billSettings, "branchName", receiptFonts.branchName)}">${escapeHtml(displayBusinessName)}</div>`
+                    : ""
+                }
+                ${businessLogoHtml}
+              </div>`
                 : "";
             case "headerSubtitle":
               return showHeaderSubtitle
@@ -1103,8 +1131,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-receipt {
       padding: ${compact ? "4px 2px 8px" : "6px 3px 10px"};
       line-height: 1.25;
-      border-top: 2px solid #000;
-      border-bottom: 2px solid #000;
+      border-top: none;
+      border-bottom: none;
     }
     body.ticket-receipt .branch-name {
       font-size: ${receiptFonts.branchName}px;
@@ -1113,8 +1141,25 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       line-height: 1.2;
       text-align: center;
       color: #000;
-      padding: 2px 0 4px;
-      border-bottom: 1.5px solid #000;
+      padding: 2px 0 6px;
+      border-top: 1px solid #000;
+      border-bottom: 1px solid #000;
+    }
+    body.ticket-receipt .receipt-brand {
+      text-align: center;
+      width: 100%;
+    }
+    body.ticket-receipt .business-logo-wrap {
+      margin: 0 auto 6px;
+      text-align: center;
+    }
+    body.ticket-receipt .business-logo {
+      display: block !important;
+      width: 72px !important;
+      height: 72px !important;
+      margin: 4px auto 0 !important;
+      object-fit: contain;
+      image-rendering: auto;
     }
     body.ticket-receipt .header-subtitle {
       margin-top: 4px;
@@ -1169,6 +1214,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt .meta-pra-invoice {
       align-items: flex-start;
+      margin: 4px 0;
+    }
+    body.ticket-receipt .meta-pra-invoice .meta-label {
+      font-size: ${Math.max(10, receiptFonts.metaChip)}px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
     }
     body.ticket-receipt .meta-pra-invoice .meta-value {
       white-space: normal !important;
@@ -1176,7 +1228,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       text-overflow: clip !important;
       word-break: break-all;
       overflow-wrap: anywhere;
-      line-height: 1.3;
+      line-height: 1.25;
+      font-size: 11px !important;
+      font-weight: 800;
+      letter-spacing: 0.02em;
     }
     body.ticket-receipt .notes {
       text-align: center;
@@ -1217,7 +1272,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-bottom: 1px dashed #000;
       vertical-align: top;
     }
-    body.ticket-receipt tbody tr:last-child td { border-bottom: 1.5px solid #000; }
+    body.ticket-receipt tbody tr:last-child td { border-bottom: 1px solid #000; }
     body.ticket-receipt td.item-name {
       font-size: ${receiptFonts.itemName}px;
       font-weight: 700;
@@ -1265,8 +1320,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-receipt .row.grand {
       margin-top: 6px;
       padding: 4px 0;
-      border-top: 1.5px solid #000;
-      border-bottom: 1.5px solid #000;
+      border-top: 1px solid #000;
+      border-bottom: none;
       background: transparent;
     }
     body.ticket-receipt .row.grand .label,
@@ -1277,9 +1332,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt .footer {
       margin-top: ${compact ? "6px" : "8px"};
-      padding: 4px 0 2px;
+      padding: 6px 0 4px;
       border-top: 1px dashed #000;
-      border-bottom: 1px dashed #000;
+      border-bottom: 1px solid #000;
       font-size: ${receiptFonts.footer}px;
       font-weight: 600;
       letter-spacing: 0.06em;
@@ -1309,7 +1364,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       display: flex; justify-content: space-between; gap: 10px;
       margin: 0 0 8px; padding-bottom: 7px; border-bottom: 1px dashed #000;
     }
-    body.ticket-receipt .clear-item:last-child { border-bottom: 1.5px solid #000; }
+    body.ticket-receipt .clear-item:last-child { border-bottom: 1px solid #000; }
     body.ticket-receipt .clear-item-main { flex: 1 1 auto; min-width: 0; }
     body.ticket-receipt .clear-item-name { font-size: ${receiptFonts.itemName}px; font-weight: 700; color: #000; }
     body.ticket-receipt .clear-item-qty { margin-top: 2px; font-size: ${receiptFonts.amt}px; color: #000; }
@@ -1640,28 +1695,65 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     .pay-compare {
       display: flex;
-      gap: 6px;
-      border-top: 1.5px dashed #000;
-      margin-top: 6px;
-      padding-top: 6px;
+      gap: 8px;
+      border-top: none;
+      margin-top: 8px;
+      padding-top: 0;
     }
     .pay-compare-col {
       flex: 1 1 50%;
       min-width: 0;
       border: 1px solid #000;
-      padding: 4px;
+      padding: 5px 4px 4px;
     }
     .pay-compare-title {
       font-size: ${Math.max(9, (isReceipt ? receiptFonts.rowLabel : kotBase) - 1)}px;
       font-weight: 700;
       text-align: center;
       margin-bottom: 4px;
-      border-bottom: 1px solid #000;
-      padding-bottom: 2px;
+      border-bottom: 1px dashed #000;
+      padding-bottom: 3px;
+    }
+    .pay-compare-col .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      flex-wrap: nowrap;
+      gap: 6px;
+      margin: 2px 0;
+    }
+    .pay-compare-col .row .label {
+      flex: 1 1 auto;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pay-compare-col .row .value {
+      flex: 0 0 auto;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .pay-compare-col .row.pay-net {
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px solid #000;
+      align-items: center;
+    }
+    .pay-compare-col .row.pay-net .label {
+      font-weight: 800;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .pay-compare-col .row.pay-net .value {
+      font-weight: 800;
+      font-size: ${Math.max(11, (isReceipt ? receiptFonts.rowValue : kotBase) + 1)}px;
+      margin-left: auto;
     }
     .pay-settled {
-      margin-top: 6px;
-      border-top: 1.5px dashed #000;
+      margin-top: 8px;
+      border-top: 1px dashed #000;
       padding-top: 6px;
     }
     .pay-settled-title {

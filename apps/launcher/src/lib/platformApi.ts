@@ -170,6 +170,14 @@ export async function updatePlatformUser(
   return readJson(res, (json) => platformUserSchema.parse(json));
 }
 
+export async function deletePlatformUser(userId: string): Promise<void> {
+  const res = await authFetch(`/v1/platform/users/${userId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Delete failed (${res.status})`);
+  }
+}
+
 export async function resetPlatformUserPassword(userId: string, password: string): Promise<void> {
   const res = await authFetch(`/v1/platform/users/${userId}/reset-password`, {
     method: "POST",

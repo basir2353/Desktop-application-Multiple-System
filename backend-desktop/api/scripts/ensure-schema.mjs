@@ -444,6 +444,18 @@ const STATEMENTS = [
     dismissed boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now()
   )`,
+  `CREATE TABLE IF NOT EXISTS entity_deletion_backups (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type text NOT NULL,
+    entity_id uuid NOT NULL,
+    original_email text,
+    label text,
+    payload jsonb NOT NULL,
+    deleted_by uuid,
+    deleted_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS entity_deletion_backups_entity_idx
+    ON entity_deletion_backups (entity_type, entity_id)`,
 ];
 export function ensureCriticalSchema() {
   const databaseUrl = process.env.DATABASE_URL?.trim();

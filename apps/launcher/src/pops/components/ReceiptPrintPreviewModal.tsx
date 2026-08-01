@@ -18,6 +18,8 @@ type Props = {
   printerName?: string;
   systemPrinterName?: string;
   billPrintSettings?: BillPrintSettings;
+  title?: string;
+  subtitle?: string;
   onClose: () => void;
   onPrinted?: (ok: boolean) => void;
 };
@@ -28,6 +30,8 @@ export function ReceiptPrintPreviewModal({
   printerName,
   systemPrinterName,
   billPrintSettings,
+  title = "Print preview",
+  subtitle,
   onClose,
   onPrinted,
 }: Props): JSX.Element {
@@ -113,12 +117,12 @@ export function ReceiptPrintPreviewModal({
               id="receipt-print-preview-title"
               className="text-sm font-semibold text-white"
             >
-              Print preview
+              {title}
             </h2>
             <p className="mt-0.5 truncate text-[11px] text-slate-400">
-              {input.orderRef}
-              {input.billRef ? ` · ${input.billRef}` : ""} · {input.modeLabel}
-              {" · same design as printer"}
+              {subtitle
+                ? subtitle
+                : `${input.orderRef}${input.billRef ? ` · ${input.billRef}` : ""} · ${input.modeLabel} · same design as printer`}
             </p>
           </div>
           <button

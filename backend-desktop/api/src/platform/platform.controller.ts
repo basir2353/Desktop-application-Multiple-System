@@ -95,7 +95,7 @@ export class PlatformController {
   @RequirePermissions("platform.businesses.manage")
   deleteBusiness(@CurrentUser() user: AccessJwtPayload, @Param("businessId") businessId: string) {
     this.platform.assertSuperAdmin(user);
-    return this.platform.deleteBusiness(businessId);
+    return this.platform.deleteBusiness(user, businessId);
   }
 
   @Post("businesses/:businessId/grant-licence")
@@ -167,6 +167,14 @@ export class PlatformController {
   listUsers(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
     return this.platform.listUsers();
+  }
+
+  @Delete("users/:userId")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions("platform.users.manage")
+  deleteUser(@CurrentUser() user: AccessJwtPayload, @Param("userId") userId: string) {
+    this.platform.assertSuperAdmin(user);
+    return this.platform.deleteUser(user, userId);
   }
 
   @Patch("users/:userId")

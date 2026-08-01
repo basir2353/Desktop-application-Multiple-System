@@ -381,12 +381,13 @@ export const resetPlatformUserPasswordSchema = z.object({
   password: z.string().min(8).max(128),
 });
 
-export const USER_ACCOUNT_STATUSES = ["active", "inactive", "suspended"] as const;
+export const USER_ACCOUNT_STATUSES = ["active", "inactive", "suspended", "deleted"] as const;
 export const userAccountStatusSchema = z.enum(USER_ACCOUNT_STATUSES);
 export type UserAccountStatus = z.infer<typeof userAccountStatusSchema>;
 
+/** PATCH can activate / deactivate / suspend — hard soft-delete uses DELETE. */
 export const updatePlatformUserSchema = z.object({
-  status: userAccountStatusSchema.optional(),
+  status: z.enum(["active", "inactive", "suspended"]).optional(),
   name: z.string().min(1).max(200).optional(),
 });
 

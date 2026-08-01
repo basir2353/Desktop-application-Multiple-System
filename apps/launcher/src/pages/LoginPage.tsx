@@ -15,6 +15,7 @@ import {
   getInstalledSystemId,
   recordDeviceInstall,
 } from "../lib/deviceInstall";
+import { isSingleSystemEdition } from "../lib/edition";
 import {
   loginRolesForSystem,
   membershipMatchesLoginRole,
@@ -79,18 +80,32 @@ export function LoginPage(): JSX.Element {
 
   useEffect(() => {
     if (!roleMeta) return;
-    setEmail(roleMeta.demoEmail ?? "");
-    setPinEmail(roleMeta.demoEmail ?? "");
-    if (isSuperAdminLogin) {
-      setPassword(DEMO_SUPER_ADMIN_PASSWORD);
-    } else if (roleMeta.kind === "admin") {
-      setPassword(DEMO_OWNER_PASSWORD);
+    // Client EXEs (Restaurant / Store / Pharmacy): empty fields — user types given credentials.
+    // Suite keeps demo autofill for platform testing only.
+    if (isSingleSystemEdition()) {
+      setEmail("");
+      setPinEmail("");
+      setPassword("");
     } else {
-      setPassword(DEMO_STAFF_PASSWORD);
+      setEmail(roleMeta.demoEmail ?? "");
+      setPinEmail(roleMeta.demoEmail ?? "");
+      if (isSuperAdminLogin) {
+        setPassword(DEMO_SUPER_ADMIN_PASSWORD);
+      } else if (roleMeta.kind === "admin") {
+        setPassword(DEMO_OWNER_PASSWORD);
+      } else {
+        setPassword(DEMO_STAFF_PASSWORD);
+      }
     }
     setMode("password");
     setError(null);
   }, [roleMeta?.id, roleMeta?.kind, roleMeta?.demoEmail, isSuperAdminLogin]);
+
+  // Locked client installers cannot open Super Admin at all.
+  if (isSuperAdminLogin && isSingleSystemEdition()) {
+    const locked = getEffectiveSystemLock() ?? getInstalledSystemId();
+    return <Navigate to={locked ? roleSelectPath(locked) : "/"} replace />;
+  }
 
   // Once a business system is installed on this machine the Super Admin console
   // is no longer reachable from it — the device belongs to that system admin.
@@ -122,6 +137,9 @@ export function LoginPage(): JSX.Element {
 
     if (isSuperAdminClaims(claims)) {
       clearSession();
+      if (isSingleSystemEdition()) {
+        throw new Error("This app does not support Super Admin login. Use your business credentials.");
+      }
       throw new Error("Super Admin accounts must sign in from the Super Admin login.");
     }
 
@@ -208,7 +226,7 @@ export function LoginPage(): JSX.Element {
 
   if (isSuperAdminLogin && roleMeta) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-slate-50 px-6 dark:bg-slate-950">
+      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-gradient-to-b from-teal-50 via-slate-50 to-slate-100 px-6 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
         <div className="mb-4 flex items-center justify-between">
           <button
             type="button"
@@ -219,8 +237,11 @@ export function LoginPage(): JSX.Element {
           </button>
           <ThemeToggle />
         </div>
-        <div className={`${loginCardClass} ring-1 ring-amber-500/40`}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600 dark:text-amber-400">
+        <div className="mb-3 rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-center text-xs font-semibold text-teal-800 dark:text-teal-200">
+          Design refresh · Desktop v0.2.9 · auto-update live
+        </div>
+        <div className={`${loginCardClass} border-teal-500/20 shadow-lg shadow-teal-900/5 ring-1 ring-teal-500/35`}>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-700 dark:text-teal-300">
             Platform
           </p>
           <h1 className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
@@ -248,7 +269,7 @@ export function LoginPage(): JSX.Element {
               />
             </label>
             {error ? <div className="text-sm text-red-600 dark:text-red-400">{error}</div> : null}
-            <Button className="w-full" disabled={loading} type="submit">
+            <Button className="w-full !bg-teal-700 hover:!bg-teal-800" disabled={loading} type="submit">
               {loading ? "Signing in…" : "Sign in as Super Admin"}
             </Button>
           </form>
@@ -258,7 +279,7 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-slate-50 px-6 dark:bg-slate-950">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-gradient-to-b from-teal-50 via-slate-50 to-slate-100 px-6 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
       <div className="mb-4 flex items-center justify-between">
         <button
           type="button"
@@ -284,7 +305,11 @@ export function LoginPage(): JSX.Element {
         </div>
       </div>
 
-      <div className={`${loginCardClass} ${accentRing}`}>
+      <div className="mb-3 rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-center text-xs font-semibold text-teal-800 dark:text-teal-200">
+        Design refresh · Desktop v0.2.9 · auto-update live
+      </div>
+
+      <div className={`${loginCardClass} border-teal-500/20 shadow-lg shadow-teal-900/5 ${accentRing}`}>
         <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${system!.accentClass}`}>
           {system!.shortName}
         </p>

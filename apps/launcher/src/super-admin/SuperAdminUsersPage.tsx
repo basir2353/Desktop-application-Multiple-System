@@ -7,6 +7,7 @@ import {
   fetchPlatformUsers,
   resetPlatformUserPassword,
   updatePlatformUser,
+  deletePlatformUser,
 } from "../lib/platformApi";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
 
@@ -65,12 +66,22 @@ export function SuperAdminUsersPage(): JSX.Element {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Update failed"),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (userId: string) => deletePlatformUser(userId),
+    onSuccess: async () => {
+      setMessage("User deleted and archived. Login email can be reused.");
+      await qc.invalidateQueries({ queryKey: ["platform", "users"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Delete failed"),
+  });
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className={`text-lg font-semibold ${headingClass}`}>All users</h2>
         <p className={`mt-1 text-sm ${mutedClass}`}>
-          Manage accounts across every business — activate, suspend, or reset passwords.
+          Manage live accounts across every business — activate, suspend, or delete (archived
+          backup; removed from this list). Customer emails are separate from login emails.
         </p>
       </div>
 
@@ -230,6 +241,26 @@ export function SuperAdminUsersPage(): JSX.Element {
                             Reset password
                           </button>
                         )}
+
+                        {u.platformRole !== "super_admin" ? (
+                          <button
+                            type="button"
+                            className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                            disabled={deleteMut.isPending}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Delete user “${u.email}”? They disappear from live lists (backup kept). Login email can be reused. Customer records are not affected.`,
+                                )
+                              ) {
+                                setMessage(null);
+                                deleteMut.mutate(u.id);
+                              }
+                            }}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

@@ -538,6 +538,7 @@ export function TaxPage(): JSX.Element {
                 invoiceNumber: fiscal.invoiceNumber,
                 orderRef: bill.orderRef ?? bill.billRef,
                 qrPayload: fiscal.qrPayload?.trim() || fiscal.invoiceNumber,
+                branchCode,
               });
               const result = await printReceiptDetailed({
                 ...billToPrintInput(branchLabel, branchCode, bill),

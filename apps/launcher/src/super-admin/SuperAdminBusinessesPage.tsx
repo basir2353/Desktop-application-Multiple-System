@@ -206,8 +206,8 @@ export function SuperAdminBusinessesPage(): JSX.Element {
             setShowForm((v) => !v);
           }}
         >
-          {showForm ? "Cancel" : "New business"}
-        </Button>
+                          {showForm ? "Cancel" : "New business"}
+                        </Button>
       </div>
 
       {showForm ? (
@@ -218,7 +218,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
             setError(null);
             if (emailTakenBy) {
               setError(
-                `Email “${form.adminEmail.trim()}” is already admin of “${emailTakenBy.name}”. Use a different email for each business.`,
+                `Login email “${form.adminEmail.trim()}” is already used by “${emailTakenBy.name}”. Customer emails are separate — use a different login email.`,
               );
               return;
             }
@@ -310,7 +310,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                     autoComplete="off"
                   />
                   <p className={`mt-1 text-[11px] ${mutedClass}`}>
-                    Must be unique — one email can own only one business.
+                    Login email only (not customer email). Must be unique among live user accounts.
                   </p>
                   {emailTakenBy ? (
                     <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
@@ -635,7 +635,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                             className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
                             disabled={deleteMut.isPending}
                             onClick={() => {
-                              if (window.confirm(`Delete business “${b.name}”?`)) {
+                              if (window.confirm(`Delete business “${b.name}”? It is archived (backup kept) and removed from live lists. Login emails can be reused.`)) {
                                 deleteMut.mutate(b.id);
                               }
                             }}

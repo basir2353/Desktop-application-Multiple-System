@@ -187,14 +187,17 @@ export class AuthService implements OnModuleInit {
     alsoBindEmail?: string;
   }): Promise<void> {
     const adminEmail = input.adminEmail.trim().toLowerCase();
+    // Dedicated demo org only — never pick the first active business of this type
+    // (that overwrote Super Admin–created clients with name/plan "demo").
+    const demoLicenceKey = `LIC-DEMO-${input.systemType.toUpperCase()}`;
     let orgId: string | undefined;
 
-    const byType = await this.db
+    const byKey = await this.db
       .select({ id: organizations.id })
       .from(organizations)
-      .where(and(eq(organizations.systemType, input.systemType), eq(organizations.status, "active")))
+      .where(eq(organizations.licenceKey, demoLicenceKey))
       .limit(1);
-    orgId = byType[0]?.id;
+    orgId = byKey[0]?.id;
 
     if (!orgId) {
       const [org] = await this.db
@@ -204,7 +207,7 @@ export class AuthService implements OnModuleInit {
           systemType: input.systemType,
           status: "active",
           licencePlan: "demo",
-          licenceKey: `LIC-DEMO-${input.systemType.toUpperCase()}`,
+          licenceKey: demoLicenceKey,
         })
         .returning({ id: organizations.id });
       orgId = org?.id;
@@ -345,7 +348,12 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    if (user.status === "inactive" || user.status === "suspended") {
+    if (
+      user.status === "inactive" ||
+      user.status === "suspended" ||
+      user.status === "deleted" ||
+      user.email.toLowerCase().endsWith("@deleted.local")
+    ) {
       throw new UnauthorizedException("Account deactivated. Contact an administrator.");
     }
 
@@ -417,12 +425,14 @@ export class AuthService implements OnModuleInit {
     let org = row0.org;
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
-      // Demo / seed tenants: auto-restore so local + mobile testing is not stuck after soft-delete.
-      const isDemo =
+      // Only auto-restore dedicated seed demo orgs (LIC-DEMO-*), never Super Admin soft-deletes.
+      const isSeedDemoOrg =
+        typeof org.licenceKey === "string" && org.licenceKey.toUpperCase().startsWith("LIC-DEMO-");
+      const isDemoEmail =
         normalizedEmail.endsWith("@pops.demo") ||
         normalizedEmail ===
           (this.config.get<string>("SEED_USER_EMAIL") ?? "admin.restaurant@pops.demo").toLowerCase();
-      if (isDemo) {
+      if (isSeedDemoOrg && isDemoEmail) {
         const [restored] = await this.db
           .update(organizations)
           .set({ status: "active", updatedAt: new Date() })

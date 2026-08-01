@@ -37,6 +37,7 @@ import {
   popsBranches,
   refreshTokens,
   users,
+  entityDeletionBackups,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import * as bcrypt from "bcryptjs";
@@ -45,6 +46,12 @@ import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { isSuperAdmin } from "../auth/jwt.types";
 import { OrgAlertsService } from "../org-alerts/org-alerts.service";
+import {
+  findLiveLoginUserByEmail,
+  isDeletedLoginUser,
+  isTombstoneEmail,
+  tombstoneLoginEmail,
+} from "../lib/login-email";
 
 const LICENCE_TZ = "Asia/Karachi";
 
@@ -183,14 +190,11 @@ export class PlatformService {
 
   async createBusiness(actor: AccessJwtPayload, input: CreateBusiness): Promise<Business> {
     const adminEmail = input.adminEmail.trim().toLowerCase();
-    const existingUser = await this.db
-      .select({ id: users.id, email: users.email })
-      .from(users)
-      .where(sql`lower(${users.email}) = ${adminEmail}`)
-      .limit(1);
-    if (existingUser.length > 0) {
+    // Login namespace only — customer / patient emails are separate tables.
+    const existingUser = await findLiveLoginUserByEmail(this.db, adminEmail);
+    if (existingUser) {
       throw new ConflictException(
-        "This email is already registered. Each business needs its own unique admin email — you cannot create another business with the same email.",
+        "This login email is already used by another user account. Customer emails are separate — pick a different login email for this business admin.",
       );
     }
 
@@ -708,14 +712,147 @@ export class PlatformService {
     return this.sendLicenceReminders({ mode });
   }
 
-  async deleteBusiness(businessId: string): Promise<{ ok: true }> {
+  async deleteBusiness(actor: AccessJwtPayload, businessId: string): Promise<{ ok: true }> {
+    const orgRows = await this.db
+      .select()
+      .from(organizations)
+      .where(and(eq(organizations.id, businessId), ne(organizations.status, "deleted")))
+      .limit(1);
+    const org = orgRows[0];
+    if (!org) throw new NotFoundException("Business not found");
+
+    const memberRows = await this.db
+      .select({
+        userId: users.id,
+        email: users.email,
+        name: users.name,
+        status: users.status,
+        platformRole: users.platformRole,
+        role: organizationMemberships.role,
+        active: organizationMemberships.active,
+      })
+      .from(organizationMemberships)
+      .innerJoin(users, eq(users.id, organizationMemberships.userId))
+      .where(eq(organizationMemberships.organizationId, businessId));
+
+    const adminEmail =
+      memberRows.find((m) => m.role === "owner" || m.role === "admin")?.email ?? null;
+
+    await this.db.insert(entityDeletionBackups).values({
+      entityType: "business",
+      entityId: businessId,
+      originalEmail: adminEmail,
+      label: org.name,
+      deletedBy: actor.sub,
+      payload: {
+        organization: org,
+        members: memberRows,
+        deletedAt: new Date().toISOString(),
+      },
+    });
+
     const [updated] = await this.db
       .update(organizations)
       .set({ status: "deleted", updatedAt: new Date() })
-      .where(and(eq(organizations.id, businessId), ne(organizations.status, "deleted")))
+      .where(eq(organizations.id, businessId))
       .returning({ id: organizations.id });
     if (!updated) throw new NotFoundException("Business not found");
+
+    await this.db
+      .update(organizationMemberships)
+      .set({ active: false })
+      .where(eq(organizationMemberships.organizationId, businessId));
+
+    for (const member of memberRows) {
+      if (member.platformRole === "super_admin") continue;
+      const otherLive = await this.db
+        .select({ organizationId: organizationMemberships.organizationId })
+        .from(organizationMemberships)
+        .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+        .where(
+          and(
+            eq(organizationMemberships.userId, member.userId),
+            ne(organizationMemberships.organizationId, businessId),
+            ne(organizations.status, "deleted"),
+          ),
+        )
+        .limit(1);
+      if (otherLive.length > 0) continue;
+      await this.tombstoneLoginUser(member.userId, member.email);
+    }
+
     return { ok: true };
+  }
+
+  async deleteUser(actor: AccessJwtPayload, userId: string): Promise<{ ok: true }> {
+    const rows = await this.db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        platformRole: users.platformRole,
+        status: users.status,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const target = rows[0];
+    if (!target) throw new NotFoundException("User not found");
+    if (target.platformRole === "super_admin") {
+      throw new BadRequestException("Cannot delete the Super Admin account");
+    }
+    if (isDeletedLoginUser(target)) {
+      throw new NotFoundException("User not found");
+    }
+
+    const memberships = await this.db
+      .select({
+        organizationId: organizationMemberships.organizationId,
+        role: organizationMemberships.role,
+        active: organizationMemberships.active,
+        businessName: organizations.name,
+        businessStatus: organizations.status,
+      })
+      .from(organizationMemberships)
+      .leftJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+      .where(eq(organizationMemberships.userId, userId));
+
+    await this.db.insert(entityDeletionBackups).values({
+      entityType: "user",
+      entityId: userId,
+      originalEmail: target.email,
+      label: target.name ?? target.email,
+      deletedBy: actor.sub,
+      payload: {
+        user: target,
+        memberships,
+        deletedAt: new Date().toISOString(),
+      },
+    });
+
+    await this.tombstoneLoginUser(userId, target.email);
+    return { ok: true };
+  }
+
+  /** Soft-delete a login account: backup email freed, hidden from live lists, cannot sign in. */
+  private async tombstoneLoginUser(userId: string, currentEmail: string): Promise<void> {
+    if (isTombstoneEmail(currentEmail)) {
+      await this.db.update(users).set({ status: "deleted" }).where(eq(users.id, userId));
+    } else {
+      await this.db
+        .update(users)
+        .set({
+          status: "deleted",
+          email: tombstoneLoginEmail(userId),
+        })
+        .where(eq(users.id, userId));
+    }
+    await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+    await this.db
+      .update(organizationMemberships)
+      .set({ active: false })
+      .where(eq(organizationMemberships.userId, userId));
   }
 
   async listUsers(): Promise<PlatformUser[]> {
@@ -731,6 +868,7 @@ export class PlatformService {
         active: organizationMemberships.active,
         businessId: organizations.id,
         businessName: organizations.name,
+        businessStatus: organizations.status,
         systemType: organizations.systemType,
       })
       .from(users)
@@ -738,19 +876,25 @@ export class PlatformService {
       .leftJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
       .orderBy(desc(users.createdAt));
 
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      email: row.email,
-      role: row.platformRole === "super_admin" ? "super_admin" : (row.role ?? "none"),
-      platformRole: row.platformRole === "super_admin" ? "super_admin" : null,
-      businessId: row.businessId,
-      businessName: row.businessName,
-      systemType: (row.systemType as SystemType | null) ?? null,
-      status: row.status,
-      active: row.active ?? row.status === "active",
-      createdAt: row.createdAt.toISOString(),
-    }));
+    return rows
+      .filter((row) => {
+        if (isDeletedLoginUser(row)) return false;
+        if (row.businessStatus === "deleted") return false;
+        return true;
+      })
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        role: row.platformRole === "super_admin" ? "super_admin" : (row.role ?? "none"),
+        platformRole: row.platformRole === "super_admin" ? "super_admin" : null,
+        businessId: row.businessId,
+        businessName: row.businessName,
+        systemType: (row.systemType as SystemType | null) ?? null,
+        status: row.status,
+        active: row.active ?? row.status === "active",
+        createdAt: row.createdAt.toISOString(),
+      }));
   }
 
   async resetUserPassword(userId: string, password: string): Promise<{ ok: true }> {
