@@ -58,7 +58,8 @@ function computeBillTotals(input: CreateBill): {
       : Math.round((subtotal * (input.discountPct ?? 0)) / 100);
   const afterDiscount = Math.max(0, subtotal - discount);
   const service = Math.round((afterDiscount * servicePct) / 100);
-  const tax = Math.round(((afterDiscount + service) * taxPct) / 100);
+  // Service + delivery are never taxed — only food/item subtotal after discount.
+  const tax = Math.round((afterDiscount * taxPct) / 100);
   const delivery = input.deliveryChargePkr ?? 0;
   const total = afterDiscount + service + tax + delivery;
   return { subtotal, discount, service, tax, total, servicePct, taxPct };

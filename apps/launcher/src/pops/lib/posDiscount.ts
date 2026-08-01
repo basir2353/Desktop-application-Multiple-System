@@ -47,12 +47,10 @@ export function computeTicketTotals(
   const service = Math.round(afterDisc * (servicePct / 100));
   const effectiveTaxPct = taxPct > 0 ? taxPct : 0;
 
-  // Tax base: taxable items' value net of the discount they absorbed, plus their fair
-  // share of the service charge. With no eligibility info, taxableBase === subtotal and
-  // this reduces to the original (afterDisc + service) * taxPct formula.
+  // Tax base: taxable items' value net of the discount they absorbed only.
+  // Service charges and delivery are fees — never taxed (PRA + business rule).
   const taxableAfterDiscount = Math.max(0, taxableBase - Math.min(discount, taxableBase));
-  const taxableShareOfService = afterDisc > 0 ? service * (taxableAfterDiscount / afterDisc) : 0;
-  const tax = Math.round((taxableAfterDiscount + taxableShareOfService) * (effectiveTaxPct / 100));
+  const tax = Math.round(taxableAfterDiscount * (effectiveTaxPct / 100));
 
   const charge = Math.max(0, Math.round(deliveryCharge));
   const total = afterDisc + service + tax + charge;

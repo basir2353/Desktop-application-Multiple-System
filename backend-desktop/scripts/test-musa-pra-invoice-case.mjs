@@ -10,8 +10,8 @@
  *
  * What this tests:
  *   1) PostData Items use real dish `label` (not generic "Item")
- *   2) Line TaxCharged is allocated (not 0 while footer ST has value)
- *   3) Gross (TotalSaleValue) includes service so Gross + ST = Net
+ *   2) Line TaxCharged is allocated on food only (service/delivery TaxCharged = 0)
+ *   3) Gross is food-only; Net = Gross + ST + service (+ delivery)
  *   4) Optional live probe with POSID 0 (no real fiscal invoice)
  *
  * Usage:
@@ -77,7 +77,10 @@ function buildPraUsin(sourceId, sourceRef) {
 }
 
 function buildPostDataPayload() {
-  const { lines, taxableAmountPkr } = buildBillPraSourceLines(BILL_CASE);
+  const { lines, taxableAmountPkr, taxAmountPkr } = buildBillPraSourceLines(BILL_CASE);
+  const service = Math.max(0, BILL_CASE.servicePkr);
+  const delivery = Math.max(0, BILL_CASE.deliveryChargePkr);
+  const totalBillAmount = taxableAmountPkr + taxAmountPkr + service + delivery;
   const now = new Date();
   const dt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
@@ -110,13 +113,13 @@ function buildPostDataPayload() {
     BuyerCNIC: "",
     BuyerName: "Walking Customer",
     BuyerPhoneNumber: "",
-    TotalBillAmount: BILL_CASE.totalPkr,
+    TotalBillAmount: totalBillAmount,
     TotalQuantity: Math.max(
       1,
       items.reduce((s, it) => s + Number(it.Quantity), 0),
     ),
     TotalSaleValue: taxableAmountPkr,
-    TotalTaxCharged: BILL_CASE.taxPkr,
+    TotalTaxCharged: taxAmountPkr,
     Discount: 0,
     FurtherTax: 0,
     PaymentMode: 1,
@@ -129,6 +132,7 @@ function buildPostDataPayload() {
       dated: BILL_CASE.dated,
       lines,
       taxableAmountPkr,
+      taxAmountPkr,
     },
   };
 }
@@ -146,9 +150,10 @@ function runPayloadAssertions(payload) {
   assert(service, "missing Service charges item");
   assert(food.ItemName !== "Item", "ItemName still generic Item");
   assert(food.TaxCharged > 0, `food TaxCharged is ${food.TaxCharged}`);
-  assert(service.TaxCharged > 0, `service TaxCharged is ${service.TaxCharged}`);
+  assert(service.TaxCharged === 0, `service TaxCharged is ${service.TaxCharged} (must be 0)`);
   const taxSum = payload.Items.reduce((s, i) => s + i.TaxCharged, 0);
-  assert(taxSum === BILL_CASE.taxPkr, `line tax sum ${taxSum} != ${BILL_CASE.taxPkr}`);
+  assert(taxSum === payload.TotalTaxCharged, `line tax sum ${taxSum} != ${payload.TotalTaxCharged}`);
+  assert(taxSum === 42, `expected scaled food tax 42, got ${taxSum}`); // round(45*280/302)
   console.log("OK Items:", payload.Items.map((i) => ({
     ItemName: i.ItemName,
     SaleValue: i.SaleValue,
@@ -156,15 +161,25 @@ function runPayloadAssertions(payload) {
     TotalAmount: i.TotalAmount,
   })));
 
-  console.log("\n=== 3) Totals (screenshot bug: 280+45≠347) ===");
-  assert(payload.TotalSaleValue === 302, `Gross ${payload.TotalSaleValue}`);
-  assert(payload.TotalTaxCharged === 45, `ST ${payload.TotalTaxCharged}`);
-  assert(payload.TotalBillAmount === 347, `Net ${payload.TotalBillAmount}`);
+  console.log("\n=== 3) Totals (food Gross + ST + service = Net) ===");
+  assert(payload.TotalSaleValue === 280, `Gross ${payload.TotalSaleValue}`);
+  assert(payload.TotalTaxCharged === 42, `ST ${payload.TotalTaxCharged}`);
+  assert(payload.TotalBillAmount === 344, `Net ${payload.TotalBillAmount}`); // 280+42+22
   assert(
-    payload.TotalSaleValue + payload.TotalTaxCharged === payload.TotalBillAmount,
-    `Gross+ST ${payload.TotalSaleValue + payload.TotalTaxCharged} != Net ${payload.TotalBillAmount}`,
+    payload.TotalSaleValue + payload.TotalTaxCharged + BILL_CASE.servicePkr ===
+      payload.TotalBillAmount,
+    `Gross+ST+service ${payload.TotalSaleValue + payload.TotalTaxCharged + BILL_CASE.servicePkr} != Net ${payload.TotalBillAmount}`,
   );
-  console.log("OK Gross", payload.TotalSaleValue, "+ ST", payload.TotalTaxCharged, "= Net", payload.TotalBillAmount);
+  console.log(
+    "OK Gross",
+    payload.TotalSaleValue,
+    "+ ST",
+    payload.TotalTaxCharged,
+    "+ service",
+    BILL_CASE.servicePkr,
+    "= Net",
+    payload.TotalBillAmount,
+  );
 
   console.log("\n=== 4) Musa POS header ===");
   assert(payload.POSID === MUSA.posId, `POSID ${payload.POSID}`);

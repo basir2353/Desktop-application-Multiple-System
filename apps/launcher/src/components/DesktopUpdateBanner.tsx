@@ -15,6 +15,11 @@ function isTauriShell(): boolean {
   return Boolean(w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri);
 }
 
+function errMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err || "Update failed.");
+}
+
 /**
  * Top banner: checks GitHub Releases feed on launch and installs signed updates.
  * No-op in browser / Vite web preview.
@@ -32,20 +37,31 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const update = await check();
-        if (cancelled || !update) return;
+        if (cancelled) return;
+        if (!update) {
+          // Already latest — keep quiet unless we were showing an error.
+          setState((prev) => (prev.kind === "error" ? { kind: "hidden" } : prev.kind === "available" || prev.kind === "downloading" ? prev : { kind: "hidden" }));
+          return;
+        }
         setState({
           kind: "available",
           version: update.version,
           notes: (update.body ?? "").trim(),
         });
       } catch (err) {
-        // Offline / no release yet — stay quiet.
-        console.debug("[updater] check skipped", err);
+        if (cancelled) return;
+        const message = errMessage(err);
+        // Surface real failures (404 / network) so users aren't stuck silent.
+        if (/404|Not Found|failed|network|timed out|download/i.test(message)) {
+          setState({ kind: "error", message });
+        } else {
+          console.debug("[updater] check skipped", err);
+        }
       }
     }
 
     void runCheck();
-    const timer = window.setInterval(() => void runCheck(), 6 * 60 * 60 * 1000);
+    const timer = window.setInterval(() => void runCheck(), 30 * 60 * 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -54,9 +70,9 @@ export function DesktopUpdateBanner(): JSX.Element | null {
 
   async function installUpdate(): Promise<void> {
     if (state.kind !== "available" && state.kind !== "error") return;
-    const version =
+    const versionHint =
       state.kind === "available" ? state.version : dismissedVersion ?? "update";
-    setState({ kind: "downloading", version, percent: null });
+    setState({ kind: "downloading", version: versionHint, percent: null });
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
       const { relaunch } = await import("@tauri-apps/plugin-process");
@@ -82,8 +98,7 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       });
       await relaunch();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setState({ kind: "error", message: message || "Update failed." });
+      setState({ kind: "error", message: errMessage(err) });
     }
   }
 

@@ -20,11 +20,13 @@ import {
   type MonthlyLicenceRow,
   type MonthlyLicenceStatus,
   type PlatformAnalytics,
+  type PlatformPublicInfo,
   type PlatformUser,
   type SendLicenceReminders,
   type SystemType,
   type UpdateBusiness,
   type UpdatePlatformSettings,
+  type UpdatePlatformUser,
 } from "@platform/contracts";
 import {
   licencePayments,
@@ -33,6 +35,7 @@ import {
   organizations,
   platformSettings,
   popsBranches,
+  refreshTokens,
   users,
   entityDeletionBackups,
   type PlatformPgDb,
@@ -110,8 +113,13 @@ export class PlatformService {
         licencePlan: organizations.licencePlan,
         licenceExpiresAt: organizations.licenceExpiresAt,
         enabledModules: organizations.enabledModules,
+        fbrAllowed: organizations.fbrAllowed,
+        praFakeAllowed: organizations.praFakeAllowed,
+        praRealAllowed: organizations.praRealAllowed,
         fbrEnabled: organizations.fbrEnabled,
         praEnabled: organizations.praEnabled,
+        praFakeEnabled: organizations.praFakeEnabled,
+        praRealEnabled: organizations.praRealEnabled,
         createdBy: organizations.createdBy,
         createdAt: organizations.createdAt,
       })
@@ -181,7 +189,6 @@ export class PlatformService {
   }
 
   async createBusiness(actor: AccessJwtPayload, input: CreateBusiness): Promise<Business> {
-<<<<<<< Updated upstream
     const adminEmail = input.adminEmail.trim().toLowerCase();
     // Login namespace only — customer / patient emails are separate tables.
     const existingUser = await findLiveLoginUserByEmail(this.db, adminEmail);
@@ -189,19 +196,16 @@ export class PlatformService {
       throw new ConflictException(
         "This login email is already used by another user account. Customer emails are separate — pick a different login email for this business admin.",
       );
-=======
-    const existingUser = await this.db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, input.adminEmail.trim().toLowerCase()))
-      .limit(1);
-    if (existingUser.length > 0) {
-      throw new ConflictException("Admin email is already registered");
->>>>>>> Stashed changes
     }
 
     const passwordHash = await bcrypt.hash(input.adminPassword, 12);
     const licenceKey = input.licenceKey ?? `LIC-${randomBytes(8).toString("hex").toUpperCase()}`;
+    const settings = await this.getSettings();
+    const defaultPlan =
+      typeof settings.entries.default_licence_plan === "string" &&
+      settings.entries.default_licence_plan.trim()
+        ? settings.entries.default_licence_plan.trim()
+        : "standard";
 
     const [org] = await this.db
       .insert(organizations)
@@ -210,11 +214,12 @@ export class PlatformService {
         systemType: input.systemType,
         status: "active",
         licenceKey,
-        licencePlan: input.licencePlan ?? "standard",
+        licencePlan: input.licencePlan ?? defaultPlan,
         licenceExpiresAt: input.licenceExpiresAt ? new Date(input.licenceExpiresAt) : null,
         enabledModules: input.enabledModules ?? null,
-        fbrEnabled: input.fbrEnabled ?? false,
-        praEnabled: input.praEnabled ?? false,
+        fbrAllowed: input.fbrEnabled ?? false,
+        fbrEnabled: false,
+        ...this.resolvePraSectionGrantsForWrite(input),
         createdBy: actor.sub,
       })
       .returning();
@@ -225,7 +230,7 @@ export class PlatformService {
       .insert(users)
       .values({
         name: input.adminName.trim(),
-        email: input.adminEmail.trim().toLowerCase(),
+        email: adminEmail,
         passwordHash,
         status: "active",
         platformRole: null,
@@ -263,6 +268,12 @@ export class PlatformService {
       throw new BadRequestException("Use DELETE to remove a business");
     }
 
+    const [raw] = await this.db
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, businessId))
+      .limit(1);
+
     const [updated] = await this.db
       .update(organizations)
       .set({
@@ -276,8 +287,18 @@ export class PlatformService {
             }
           : {}),
         ...(input.enabledModules !== undefined ? { enabledModules: input.enabledModules } : {}),
-        ...(input.fbrEnabled !== undefined ? { fbrEnabled: input.fbrEnabled } : {}),
-        ...(input.praEnabled !== undefined ? { praEnabled: input.praEnabled } : {}),
+        ...(input.fbrEnabled !== undefined
+          ? {
+              fbrAllowed: input.fbrEnabled,
+              ...(input.fbrEnabled ? {} : { fbrEnabled: false }),
+            }
+          : {}),
+        ...this.resolvePraSectionGrantsForUpdate(input, {
+          praFakeAllowed: Boolean(raw?.praFakeAllowed) || Boolean(raw?.praFakeEnabled),
+          praRealAllowed: Boolean(raw?.praRealAllowed) || Boolean(raw?.praRealEnabled),
+          praFakeEnabled: Boolean(raw?.praFakeEnabled),
+          praRealEnabled: Boolean(raw?.praRealEnabled),
+        }),
         updatedAt: new Date(),
       })
       .where(eq(organizations.id, businessId))
@@ -881,7 +902,86 @@ export class PlatformService {
     if (!rows[0]) throw new NotFoundException("User not found");
     const passwordHash = await bcrypt.hash(password, 12);
     await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
     return { ok: true };
+  }
+
+  async updateUser(userId: string, input: UpdatePlatformUser): Promise<PlatformUser> {
+    const rows = await this.db
+      .select({
+        id: users.id,
+        platformRole: users.platformRole,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const target = rows[0];
+    if (!target) throw new NotFoundException("User not found");
+    if (target.platformRole === "super_admin" && input.status && input.status !== "active") {
+      throw new BadRequestException("Cannot deactivate the Super Admin account");
+    }
+
+    const [updated] = await this.db
+      .update(users)
+      .set({
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      })
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        platformRole: users.platformRole,
+        status: users.status,
+        createdAt: users.createdAt,
+      });
+
+    if (!updated) throw new NotFoundException("User not found");
+
+    if (input.status === "inactive" || input.status === "suspended") {
+      await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+      await this.db
+        .update(organizationMemberships)
+        .set({ active: false })
+        .where(eq(organizationMemberships.userId, userId));
+    } else if (input.status === "active") {
+      await this.db
+        .update(organizationMemberships)
+        .set({ active: true })
+        .where(eq(organizationMemberships.userId, userId));
+    }
+
+    const listed = await this.listUsers();
+    const match = listed.find((u) => u.id === userId);
+    if (match) return match;
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      role: updated.platformRole === "super_admin" ? "super_admin" : "none",
+      platformRole: updated.platformRole === "super_admin" ? "super_admin" : null,
+      businessId: null,
+      businessName: null,
+      systemType: null,
+      status: updated.status,
+      active: updated.status === "active",
+      createdAt: updated.createdAt.toISOString(),
+    };
+  }
+
+  async getPublicInfo(): Promise<PlatformPublicInfo> {
+    const { entries } = await this.getSettings();
+    const support =
+      typeof entries.support_email === "string" && entries.support_email.trim()
+        ? entries.support_email.trim()
+        : null;
+    const maintenance =
+      typeof entries.maintenance_message === "string" && entries.maintenance_message.trim()
+        ? entries.maintenance_message.trim()
+        : null;
+    return { supportEmail: support, maintenanceMessage: maintenance };
   }
 
   async getSettings(): Promise<{ entries: Record<string, unknown> }> {
@@ -951,7 +1051,84 @@ export class PlatformService {
 
   async listSystemTypes(): Promise<{ id: SystemType; label: string }[]> {
     const { SYSTEM_TYPE_LABELS } = await import("@platform/contracts");
-    return SYSTEM_TYPES.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
+    // Only systems with a shipped ERP shell (exclude grocery/retail placeholders).
+    const shipped: SystemType[] = ["restaurant", "pharmacy", "general_store"];
+    return shipped.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
+  }
+
+  /** Super Admin: section visibility (Fake + Real can both be shown). Active stays with Org Admin. */
+  private resolvePraSectionGrantsForWrite(input: {
+    praEnabled?: boolean;
+    praFakeEnabled?: boolean;
+    praRealEnabled?: boolean;
+  }): {
+    praFakeAllowed: boolean;
+    praRealAllowed: boolean;
+    praEnabled: boolean;
+    praFakeEnabled: boolean;
+    praRealEnabled: boolean;
+  } {
+    const fakeProvided = input.praFakeEnabled !== undefined;
+    const realProvided = input.praRealEnabled !== undefined;
+    let praFakeAllowed = false;
+    let praRealAllowed = false;
+    if (fakeProvided || realProvided) {
+      praFakeAllowed = Boolean(input.praFakeEnabled);
+      praRealAllowed = Boolean(input.praRealEnabled);
+    } else if (input.praEnabled !== undefined) {
+      praRealAllowed = Boolean(input.praEnabled);
+    }
+    return {
+      praFakeAllowed,
+      praRealAllowed,
+      praEnabled: false,
+      praFakeEnabled: false,
+      praRealEnabled: false,
+    };
+  }
+
+  private resolvePraSectionGrantsForUpdate(
+    input: {
+      praEnabled?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
+    },
+    current: {
+      praFakeAllowed?: boolean;
+      praRealAllowed?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
+    },
+  ): Partial<{
+    praFakeAllowed: boolean;
+    praRealAllowed: boolean;
+    praEnabled: boolean;
+    praFakeEnabled: boolean;
+    praRealEnabled: boolean;
+  }> {
+    const fakeProvided = input.praFakeEnabled !== undefined;
+    const realProvided = input.praRealEnabled !== undefined;
+    if (!fakeProvided && !realProvided && input.praEnabled === undefined) return {};
+
+    let praFakeAllowed = Boolean(current.praFakeAllowed);
+    let praRealAllowed = Boolean(current.praRealAllowed);
+    if (fakeProvided || realProvided) {
+      if (fakeProvided) praFakeAllowed = Boolean(input.praFakeEnabled);
+      if (realProvided) praRealAllowed = Boolean(input.praRealEnabled);
+    } else if (input.praEnabled !== undefined) {
+      praRealAllowed = Boolean(input.praEnabled);
+      if (!input.praEnabled) praFakeAllowed = false;
+    }
+
+    const praFakeEnabled = praFakeAllowed ? Boolean(current.praFakeEnabled) : false;
+    const praRealEnabled = praRealAllowed ? Boolean(current.praRealEnabled) : false;
+    return {
+      praFakeAllowed,
+      praRealAllowed,
+      praFakeEnabled,
+      praRealEnabled,
+      praEnabled: praFakeEnabled || praRealEnabled,
+    };
   }
 
   private toBusiness(
@@ -964,8 +1141,13 @@ export class PlatformService {
       licencePlan: string | null;
       licenceExpiresAt: Date | null;
       enabledModules?: string[] | null;
+      fbrAllowed?: boolean;
+      praFakeAllowed?: boolean;
+      praRealAllowed?: boolean;
       fbrEnabled?: boolean;
       praEnabled?: boolean;
+      praFakeEnabled?: boolean;
+      praRealEnabled?: boolean;
       createdBy: string | null;
       createdAt: Date;
     },
@@ -977,6 +1159,13 @@ export class PlatformService {
     const licenceDaysLeft = expiresAt
       ? Math.ceil((expiresAt.getTime() - now) / (24 * 60 * 60 * 1000))
       : undefined;
+    // Super Admin checkboxes = section visibility (Allowed), with Active soft-backfill.
+    const fbrAllowed = Boolean(row.fbrAllowed) || Boolean(row.fbrEnabled);
+    const praFakeAllowed = Boolean(row.praFakeAllowed) || Boolean(row.praFakeEnabled);
+    const praRealAllowed =
+      Boolean(row.praRealAllowed) ||
+      Boolean(row.praRealEnabled) ||
+      (Boolean(row.praEnabled) && !Boolean(row.praFakeEnabled) && !Boolean(row.praFakeAllowed));
     return {
       id: row.id,
       name: row.name,
@@ -986,8 +1175,10 @@ export class PlatformService {
       licencePlan: row.licencePlan,
       licenceExpiresAt: expiresAt?.toISOString() ?? null,
       enabledModules: row.enabledModules ?? null,
-      fbrEnabled: row.fbrEnabled ?? false,
-      praEnabled: row.praEnabled ?? false,
+      fbrEnabled: fbrAllowed,
+      praEnabled: praFakeAllowed || praRealAllowed,
+      praFakeEnabled: praFakeAllowed,
+      praRealEnabled: praRealAllowed,
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
       adminEmail: extras?.adminEmail ?? null,

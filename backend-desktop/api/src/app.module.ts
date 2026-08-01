@@ -26,13 +26,14 @@ import { UsersModule } from "./users/users.module";
 import { PlatformModule } from "./platform/platform.module";
 import { OrgAlertsModule } from "./org-alerts/org-alerts.module";
 import { TaxAuthorityModule } from "./tax-authority/tax-authority.module";
+import { PrintingModule } from "./printing/printing.module";
 import { ReportsModule } from "./reports/reports.module";
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // Load backend/.env first, then repo-root .env (later files do not override earlier by default in Nest — order matters: last wins in dotenv; Nest merges with last loaded taking precedence for duplicate keys depending on version — we put most specific last).
+      // Load backend-desktop/.env first, then repo-root .env (later files do not override earlier by default in Nest — order matters: last wins in dotenv; Nest merges with last loaded taking precedence for duplicate keys depending on version — we put most specific last).
       envFilePath: [
         join(process.cwd(), "..", "..", ".env"),
         join(process.cwd(), "..", ".env"),
@@ -64,6 +65,7 @@ import { ReportsModule } from "./reports/reports.module";
     PharmacyModule,
     StoreModule,
     TaxAuthorityModule,
+    PrintingModule,
     ReportsModule,
   ],
 })

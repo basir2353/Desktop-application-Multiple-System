@@ -121,7 +121,7 @@ export function allocateLineTaxes(
 
 /**
  * Build restaurant bill lines for PRA: real item names, discount applied,
- * optional service / delivery rows, tax allocated onto taxed lines.
+ * optional service / delivery rows (never taxed), tax only on food/items.
  */
 export function buildBillPraSourceLines(input: {
   linesJson: string | null | undefined;
@@ -130,11 +130,11 @@ export function buildBillPraSourceLines(input: {
   servicePkr: number;
   deliveryChargePkr: number;
   taxPkr: number;
-}): { lines: PraSourceLine[]; taxableAmountPkr: number } {
+}): { lines: PraSourceLine[]; taxableAmountPkr: number; taxAmountPkr: number } {
   const afterDisc = Math.max(0, Math.round(input.subtotalPkr) - Math.round(input.discountPkr));
   const service = Math.max(0, Math.round(input.servicePkr));
   const delivery = Math.max(0, Math.round(input.deliveryChargePkr));
-  const tax = Math.max(0, Math.round(input.taxPkr));
+  const billTax = Math.max(0, Math.round(input.taxPkr));
 
   let food = parsePraSourceLines(input.linesJson);
   if (food.length === 0 && afterDisc > 0) {
@@ -146,7 +146,9 @@ export function buildBillPraSourceLines(input: {
   const lines: PraSourceLine[] = [...food];
   const zeroTax = new Set<number>();
 
+  // Service + delivery are untaxed fee lines (PRA + business rule).
   if (service > 0) {
+    zeroTax.add(lines.length);
     lines.push({ description: "Service charges", qty: 1, amount: service, tax: 0 });
   }
   if (delivery > 0) {
@@ -154,11 +156,21 @@ export function buildBillPraSourceLines(input: {
     lines.push({ description: "Delivery charges", qty: 1, amount: delivery, tax: 0 });
   }
 
-  // POS tax base = afterDisc + service (delivery is not taxed).
-  const taxableAmountPkr = afterDisc + service;
+  // Tax base is food/items only — never service or delivery.
+  const taxableAmountPkr = afterDisc;
+  // Older POS bills may still store tax that included service; strip that portion.
+  const legacyTaxBase = afterDisc + service;
+  const taxForItems =
+    service > 0 && legacyTaxBase > 0 && afterDisc > 0
+      ? Math.round((billTax * afterDisc) / legacyTaxBase)
+      : billTax;
+
+  const priced = allocateLineTaxes(lines, taxForItems, zeroTax);
+  const taxAmountPkr = priced.reduce((s, l) => s + Math.max(0, l.tax), 0);
   return {
-    lines: allocateLineTaxes(lines, tax, zeroTax),
+    lines: priced,
     taxableAmountPkr,
+    taxAmountPkr,
   };
 }
 

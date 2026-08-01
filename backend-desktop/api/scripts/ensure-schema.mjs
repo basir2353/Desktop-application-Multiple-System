@@ -283,7 +283,6 @@ const STATEMENTS = [
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_invoices_source_uidx
-<<<<<<< Updated upstream
     ON tax_authority_invoices (organization_id, authority, invoice_mode, source_type, source_id)`,
   `CREATE TABLE IF NOT EXISTS tax_authority_activity_logs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -393,9 +392,6 @@ const STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS entity_deletion_backups_entity_idx
     ON entity_deletion_backups (entity_type, entity_id)`,
-=======
-    ON tax_authority_invoices (organization_id, authority, source_type, source_id)`,
->>>>>>> Stashed changes
 ];
 export function ensureCriticalSchema() {
   const databaseUrl = process.env.DATABASE_URL?.trim();

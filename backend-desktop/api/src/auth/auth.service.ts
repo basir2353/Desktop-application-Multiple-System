@@ -422,7 +422,6 @@ export class AuthService implements OnModuleInit {
     if (!row0) throw new UnauthorizedException("No organization membership");
 
     const m = row0.membership;
-<<<<<<< Updated upstream
     let org = row0.org;
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
@@ -442,9 +441,6 @@ export class AuthService implements OnModuleInit {
         if (restored) org = restored;
       }
     }
-=======
-    const org = row0.org;
->>>>>>> Stashed changes
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
       throw new UnauthorizedException(

@@ -18,31 +18,48 @@ export const taxInvoiceSourceTypeSchema = z.enum(["bill", "store_sale", "pharmac
 export type TaxInvoiceSourceType = z.infer<typeof taxInvoiceSourceTypeSchema>;
 
 export const taxInvoiceStatusSchema = z.enum([
+  "pending",
   "queued",
   "submitting",
   "submitted",
   "verified",
   "failed",
+  "cancelled",
 ]);
 export type TaxInvoiceStatus = z.infer<typeof taxInvoiceStatusSchema>;
 
 const ntnSchema = z
   .string()
   .trim()
-  .regex(/^\d{7}(-\d)?$|^\d{13}$/, "NTN must be 7 digits (optional -check) or 13-digit CNIC");
+  .transform((v) => {
+    const raw = v.replace(/^P/i, "").trim();
+    const digitsOnly = raw.replace(/-/g, "");
+    if (digitsOnly.length === 13) return digitsOnly;
+    return raw;
+  })
+  .refine(
+    (v) => /^\d{7}(-\d)?$|^\d{13}$/.test(v),
+    "NTN/PNTN must be 7 digits (optional -check) or 13-digit CNIC",
+  );
 
-const strnSchema = z
-  .string()
-  .trim()
-  .min(1, "STRN is required")
-  .max(32);
-
+/** Strict company info (FBR). */
 export const taxCompanyInfoSchema = z.object({
   companyName: z.string().trim().min(1, "Company name is required").max(200),
   ntn: ntnSchema,
-  strn: strnSchema,
+  strn: z.string().trim().min(1, "STRN is required").max(32),
   businessType: z.string().trim().min(1, "Business type is required").max(100),
   province: z.string().trim().min(1, "Province is required").max(100),
+  branchName: z.string().trim().min(1, "Branch name is required").max(200),
+  branchCode: z.string().trim().min(1, "Branch code is required").max(64),
+});
+
+/** Softer company info for Real PRA (STRN optional per registration). */
+export const praCompanyInfoSchema = z.object({
+  companyName: z.string().trim().min(1, "Business name is required").max(200),
+  ntn: ntnSchema,
+  strn: z.string().trim().max(32).optional().default(""),
+  businessType: z.string().trim().max(100).optional().default(""),
+  province: z.string().trim().min(1, "Province is required").max(100).default("Punjab"),
   branchName: z.string().trim().min(1, "Branch name is required").max(200),
   branchCode: z.string().trim().min(1, "Branch code is required").max(64),
 });
@@ -60,31 +77,86 @@ export type FbrConnectInput = z.infer<typeof fbrConnectSchema>;
 
 export const praConnectSchema = z.object({
   branchCode: z.string().trim().min(1),
-  company: taxCompanyInfoSchema,
-  registrationNumber: z.string().trim().min(1, "Registration number is required").max(100),
+  company: praCompanyInfoSchema,
+  /**
+   * PRA POS ID from POS Details tab (required for PostData `POSID`).
+   * Falls back to registrationNumber when omitted (legacy).
+   */
+  posId: z.string().trim().max(100).optional().default(""),
+  /** Access Code from POS Details (POS dashboard login). */
+  accessCode: z.string().trim().max(200).optional().default(""),
+  /** Bearer token from POS Details — used as Authorization: Bearer <token>. */
+  token: z.string().trim().max(2000).optional().default(""),
+  /** Optional PNTN / legacy registration number. */
+  registrationNumber: z.string().trim().max(100).optional().default(""),
+  /** Optional CNIC / portal username for reference. */
   username: z.string().trim().max(200).optional().default(""),
-  password: z.string().trim().min(1, "Password / API key is required").max(2000),
-  praBranchCode: z.string().trim().min(1, "PRA branch code is required").max(64),
+  /** Optional portal password (not required for PostData API). */
+  password: z.string().trim().max(2000).optional().default(""),
+  praBranchCode: z.string().trim().max(64).optional().default(""),
   environment: taxEnvironmentSchema.default("sandbox"),
+}).superRefine((val, ctx) => {
+  const posId = (val.posId || val.registrationNumber || "").trim();
+  // Access Code + Token may be blank when the client is keeping previously saved secrets.
+  if (!posId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "POS ID is required",
+      path: ["posId"],
+    });
+  }
 });
 export type PraConnectInput = z.infer<typeof praConnectSchema>;
 
-/** Super Admin—granted FBR / PRA flags for the signed-in business (no branch required). */
+export const praIntegrationSettingsSchema = z.object({
+  autoSubmit: z.boolean().default(true),
+  offlineQueue: z.boolean().default(true),
+  retryFailed: z.boolean().default(true),
+  maxRetryAttempts: z.number().int().min(0).max(20).default(3),
+});
+export type PraIntegrationSettings = z.infer<typeof praIntegrationSettingsSchema>;
+
+export const updatePraIntegrationSettingsSchema = z.object({
+  branchCode: z.string().trim().min(1),
+  autoSubmit: z.boolean().optional(),
+  offlineQueue: z.boolean().optional(),
+  retryFailed: z.boolean().optional(),
+  maxRetryAttempts: z.number().int().min(0).max(20).optional(),
+});
+export type UpdatePraIntegrationSettingsInput = z.infer<typeof updatePraIntegrationSettingsSchema>;
+
+/** Super Admin section grants + Org Admin Active flags for the signed-in business. */
 export const taxAuthorityFeaturesSchema = z.object({
+  /** Super Admin: show FBR section. */
+  fbrAllowed: z.boolean().default(false),
+  /** Super Admin: show FPRA section. */
+  praFakeAllowed: z.boolean().default(false),
+  /** Super Admin: show Real PRA section. */
+  praRealAllowed: z.boolean().default(false),
+  /** Org Admin Active: FBR on/off. */
   fbrEnabled: z.boolean(),
-<<<<<<< Updated upstream
   /** True when FPRA and/or Real PRA Active (legacy-compatible). */
-=======
->>>>>>> Stashed changes
   praEnabled: z.boolean(),
+  /** Org Admin Active: FPRA. */
+  praFakeEnabled: z.boolean().default(false),
+  /** Org Admin Active: Real PRA. */
+  praRealEnabled: z.boolean().default(false),
 });
 export type TaxAuthorityFeatures = z.infer<typeof taxAuthorityFeaturesSchema>;
 
+export const praInvoiceModeSchema = z.enum(["fake", "real"]);
+export type PraInvoiceMode = z.infer<typeof praInvoiceModeSchema>;
+
 export const taxAuthorityStatusSchema = z.object({
   branchCode: z.string(),
-  /** Super Admin—granted feature flags for this business. */
+  fbrAllowed: z.boolean().default(false),
+  praFakeAllowed: z.boolean().default(false),
+  praRealAllowed: z.boolean().default(false),
+  /** Org Admin Active flags. */
   fbrEnabled: z.boolean().default(false),
   praEnabled: z.boolean().default(false),
+  praFakeEnabled: z.boolean().default(false),
+  praRealEnabled: z.boolean().default(false),
   company: z.object({
     companyName: z.string().default(""),
     ntn: z.string().default(""),
@@ -108,13 +180,22 @@ export const taxAuthorityStatusSchema = z.object({
   pra: z.object({
     status: taxConnectionStatusSchema,
     environment: taxEnvironmentSchema,
+    /** POS ID (PostData POSID). */
+    posId: z.string().nullable().optional().default(null),
     registrationNumber: z.string().nullable(),
     username: z.string().nullable(),
     passwordMasked: z.string().nullable(),
+    tokenMasked: z.string().nullable().optional().default(null),
     praBranchCode: z.string().nullable(),
     connectedAt: z.string().nullable(),
     tokenExpiresAt: z.string().nullable(),
+    lastTokenRefreshAt: z.string().nullable().optional().default(null),
+    lastInvoiceSentAt: z.string().nullable().optional().default(null),
     lastError: z.string().nullable(),
+    autoSubmit: z.boolean().default(true),
+    offlineQueue: z.boolean().default(true),
+    retryFailed: z.boolean().default(true),
+    maxRetryAttempts: z.number().int().default(3),
   }),
 });
 export type TaxAuthorityStatus = z.infer<typeof taxAuthorityStatusSchema>;
@@ -122,7 +203,7 @@ export type TaxAuthorityStatus = z.infer<typeof taxAuthorityStatusSchema>;
 export const taxConnectResultSchema = z.object({
   authority: taxAuthoritySchema,
   status: taxConnectionStatusSchema,
-  connectedAt: z.string(),
+  connectedAt: z.string().nullable().optional().default(null),
   tokenExpiresAt: z.string().nullable(),
   message: z.string(),
 });
@@ -131,7 +212,9 @@ export type TaxConnectResult = z.infer<typeof taxConnectResultSchema>;
 export const taxInvoiceSchema = z.object({
   id: z.string().uuid(),
   authority: taxAuthoritySchema,
+  invoiceMode: praInvoiceModeSchema.default("real"),
   sourceType: taxInvoiceSourceTypeSchema,
+  sourceId: z.string().uuid().optional(),
   sourceRef: z.string(),
   status: taxInvoiceStatusSchema,
   taxableAmountPkr: z.number().int(),
@@ -145,7 +228,6 @@ export const taxInvoiceSchema = z.object({
 });
 export type TaxInvoice = z.infer<typeof taxInvoiceSchema>;
 
-<<<<<<< Updated upstream
 /** FPRA or Real PRA fiscal details attached to a sale / bill. */
 export const praFiscalInvoiceSchema = z.object({
   mode: praInvoiceModeSchema,
@@ -219,8 +301,6 @@ export const confirmPraClientPostSchema = z.object({
 });
 export type ConfirmPraClientPostInput = z.infer<typeof confirmPraClientPostSchema>;
 
-=======
->>>>>>> Stashed changes
 export const sendTaxInvoiceSchema = z.object({
   branchCode: z.string().trim().min(1),
   sourceType: taxInvoiceSourceTypeSchema,
@@ -235,3 +315,75 @@ export const sendTaxInvoiceResultSchema = z.object({
   message: z.string(),
 });
 export type SendTaxInvoiceResult = z.infer<typeof sendTaxInvoiceResultSchema>;
+
+export const praDashboardSchema = z.object({
+  mode: praInvoiceModeSchema.default("real"),
+  todaySubmitted: z.number().int(),
+  todayFailed: z.number().int(),
+  pendingQueue: z.number().int(),
+  todayTaxableTotalPkr: z.number().int().default(0),
+  todayTaxTotalPkr: z.number().int().default(0),
+  lastSyncAt: z.string().nullable(),
+  connectionStatus: taxConnectionStatusSchema,
+  lastError: z.string().nullable(),
+});
+export type PraDashboard = z.infer<typeof praDashboardSchema>;
+
+export const praReportPeriodSchema = z.enum(["daily", "weekly", "monthly", "yearly"]);
+export type PraReportPeriod = z.infer<typeof praReportPeriodSchema>;
+
+export const praReportBucketSchema = z.object({
+  key: z.string(),
+  invoiceCount: z.number().int(),
+  submittedCount: z.number().int(),
+  failedCount: z.number().int(),
+  pendingCount: z.number().int(),
+  taxableTotalPkr: z.number().int(),
+  taxTotalPkr: z.number().int(),
+});
+export type PraReportBucket = z.infer<typeof praReportBucketSchema>;
+
+export const praReportsSchema = z.object({
+  summary: z.object({
+    invoiceCount: z.number().int(),
+    submittedCount: z.number().int(),
+    failedCount: z.number().int(),
+    pendingCount: z.number().int(),
+    taxableTotalPkr: z.number().int(),
+    taxTotalPkr: z.number().int(),
+  }),
+  buckets: z.array(praReportBucketSchema),
+  filtersEcho: z.object({
+    mode: praInvoiceModeSchema,
+    period: praReportPeriodSchema,
+    from: z.string(),
+    to: z.string(),
+    status: z.string().nullable().optional(),
+  }),
+});
+export type PraReports = z.infer<typeof praReportsSchema>;
+
+export const taxActivityLogSchema = z.object({
+  id: z.string().uuid(),
+  createdAt: z.string(),
+  event: z.string(),
+  invoiceNumber: z.string().nullable(),
+  praInvoiceNumber: z.string().nullable(),
+  status: z.string(),
+  errorMessage: z.string().nullable(),
+  retryCount: z.number().int(),
+});
+export type TaxActivityLog = z.infer<typeof taxActivityLogSchema>;
+
+export const retryFailedTaxInvoicesSchema = z.object({
+  branchCode: z.string().trim().min(1),
+  authority: taxAuthoritySchema.optional().default("pra"),
+});
+export type RetryFailedTaxInvoicesInput = z.infer<typeof retryFailedTaxInvoicesSchema>;
+
+export const retryFailedTaxInvoicesResultSchema = z.object({
+  retried: z.number().int(),
+  skipped: z.number().int(),
+  message: z.string(),
+});
+export type RetryFailedTaxInvoicesResult = z.infer<typeof retryFailedTaxInvoicesResultSchema>;
