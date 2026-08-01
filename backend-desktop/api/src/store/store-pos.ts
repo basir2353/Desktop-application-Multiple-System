@@ -5,9 +5,6 @@ export type SaleLineInput = {
   productId: string;
   qty: number;
   qtyGrams?: number;
-  unitPrice?: number;
-  productName?: string;
-  priceLevel?: string;
 };
 
 export type ResolvedSaleLine = {
@@ -24,14 +21,10 @@ export type PricedSaleLine = ResolvedSaleLine & {
   productName: string;
   sku: string;
   qtyLabel: string;
-  priceLevel?: string;
-  categoryId?: string | null;
-  supplierId?: string | null;
 };
 
 export type PromotionConfig = {
   percent?: number;
-  amount?: number;
   buyQty?: number;
   getQty?: number;
   bundlePrice?: number;
@@ -40,10 +33,6 @@ export type PromotionConfig = {
   triggerProductId?: string;
   targetProductId?: string;
   categoryId?: string;
-  supplierId?: string;
-  nameContains?: string;
-  scope?: "all" | "department" | "vendor" | "named" | "custom";
-  priceLevels?: string[];
 };
 
 export function resolveSaleLineQty(isWeighed: boolean, line: SaleLineInput): ResolvedSaleLine {
@@ -57,84 +46,41 @@ export function resolveSaleLineQty(isWeighed: boolean, line: SaleLineInput): Res
 export function priceSaleLine(
   product: { name: string; sku: string; sellingPricePkr: number; taxPct: number; isWeighed: boolean },
   line: ResolvedSaleLine,
-  unitPriceOverride?: number,
-  displayName?: string,
-  extras?: { priceLevel?: string; categoryId?: string | null; supplierId?: string | null },
 ): PricedSaleLine {
-  const unitPrice =
-    unitPriceOverride !== undefined && unitPriceOverride >= 0
-      ? unitPriceOverride
-      : product.sellingPricePkr;
   const lineSubtotal = product.isWeighed
-    ? computeWeighedLinePrice(unitPrice, line.qtyUnits)
-    : unitPrice * line.qtyUnits;
+    ? computeWeighedLinePrice(product.sellingPricePkr, line.qtyUnits)
+    : product.sellingPricePkr * line.qtyUnits;
   const lineTax = Math.round((lineSubtotal * product.taxPct) / 100);
   const qtyLabel = product.isWeighed ? `${(line.qtyUnits / 1000).toFixed(3)} kg` : String(line.qtyUnits);
   return {
     ...line,
-    unitPrice,
+    unitPrice: product.sellingPricePkr,
     lineSubtotal,
     lineTax,
     lineTotal: lineSubtotal + lineTax,
-    productName: displayName?.trim() || product.name,
+    productName: product.name,
     sku: product.sku,
     qtyLabel,
-    priceLevel: extras?.priceLevel,
-    categoryId: extras?.categoryId ?? null,
-    supplierId: extras?.supplierId ?? null,
   };
-}
-
-function normalizePriceLevel(level?: string | null): string {
-  const v = (level || "regular").toLowerCase();
-  if (v === "market_sale" || v === "market") return "employee";
-  return v;
-}
-
-function promoMatchesLine(
-  line: PricedSaleLine,
-  promo: { productIds: string[]; config: PromotionConfig },
-): boolean {
-  const cfg = promo.config;
-  const scope = cfg.scope ?? (promo.productIds.length === 0 ? "all" : "custom");
-  const levels = cfg.priceLevels?.length ? cfg.priceLevels.map(normalizePriceLevel) : null;
-  if (levels && !levels.includes(normalizePriceLevel(line.priceLevel))) return false;
-
-  switch (scope) {
-    case "all":
-      return true;
-    case "department":
-      return Boolean(cfg.categoryId) && line.categoryId === cfg.categoryId;
-    case "vendor":
-      return Boolean(cfg.supplierId) && line.supplierId === cfg.supplierId;
-    case "named": {
-      const q = (cfg.nameContains ?? "").trim().toLowerCase();
-      if (!q) return false;
-      return line.productName.toLowerCase().includes(q);
-    }
-    case "custom":
-    default: {
-      if (promo.productIds.length === 0) return true;
-      return promo.productIds.includes(line.productId);
-    }
-  }
 }
 
 export function applyStorePromotions(
   pricedLines: PricedSaleLine[],
   promotions: Array<{
-    type: StorePromotionType | string;
+    type: StorePromotionType;
     productIds: string[];
     config: PromotionConfig;
     isActive: boolean;
   }>,
 ): number {
   let discount = 0;
+  const now = Date.now();
 
   for (const promo of promotions) {
     if (!promo.isActive) continue;
 
-    const matching = pricedLines.filter((l) => promoMatchesLine(l, promo));
+    const productSet = new Set(promo.productIds);
+    const matching = pricedLines.filter((l) => productSet.size === 0 || productSet.has(l.productId));
     if (matching.length === 0) continue;
 
     switch (promo.type) {
@@ -144,15 +90,6 @@ export function applyStorePromotions(
         discount += matching.reduce((s, l) => s + Math.round((l.lineSubtotal * pct) / 100), 0);
         break;
       }
-      case "amount_off": {
-        const amount = promo.config.amount ?? 0;
-        if (amount <= 0) break;
-        for (const line of matching) {
-          const units = line.isWeighed ? 1 : line.qtyUnits;
-          discount += Math.min(line.lineSubtotal, amount * units);
-        }
-        break;
-      }
       case "buy_x_get_y": {
         const buyQty = promo.config.buyQty ?? 2;
         const getQty = promo.config.getQty ?? 1;
@@ -160,19 +97,6 @@ export function applyStorePromotions(
           if (line.isWeighed) continue;
           const freeUnits = Math.floor(line.qtyUnits / (buyQty + getQty)) * getQty;
           if (freeUnits > 0) discount += freeUnits * line.unitPrice;
-        }
-        break;
-      }
-      case "buy_x_percent_off": {
-        const buyQty = promo.config.buyQty ?? 12;
-        const pct = promo.config.percent ?? 0;
-        if (buyQty <= 0 || pct <= 0) break;
-        for (const line of matching) {
-          if (line.isWeighed) continue;
-          const sets = Math.floor(line.qtyUnits / buyQty);
-          if (sets <= 0) continue;
-          const discountable = sets * buyQty;
-          discount += Math.round((discountable * line.unitPrice * pct) / 100);
         }
         break;
       }
@@ -190,7 +114,7 @@ export function applyStorePromotions(
         break;
       }
       case "mix_match": {
-        const anyQty = promo.config.anyQty ?? promo.config.buyQty ?? 3;
+        const anyQty = promo.config.anyQty ?? 3;
         const fixedPrice = promo.config.fixedPrice ?? 0;
         if (anyQty <= 0 || fixedPrice <= 0) break;
         const units = matching.filter((l) => !l.isWeighed).reduce((s, l) => s + l.qtyUnits, 0);
@@ -221,8 +145,8 @@ export function applyStorePromotions(
         const pct = promo.config.percent ?? 0;
         const categoryId = promo.config.categoryId as string | undefined;
         if (pct <= 0 || !categoryId) break;
-        const catLines = matching.filter((l) => l.categoryId === categoryId);
-        discount += catLines.reduce((s, l) => s + Math.round((l.lineSubtotal * pct) / 100), 0);
+        void categoryId;
+        discount += matching.reduce((s, l) => s + Math.round((l.lineSubtotal * pct) / 100), 0);
         break;
       }
       default:
@@ -230,6 +154,7 @@ export function applyStorePromotions(
     }
   }
 
+  void now;
   return discount;
 }
 

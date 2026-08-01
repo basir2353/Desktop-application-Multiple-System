@@ -53,7 +53,25 @@ export async function fetchRestaurantReport(
   try {
     const res = await authFetch(`/v1/reports/${reportId}?${params}`);
     if (res.ok) {
-      return restaurantReportSchema.parse(await res.json());
+      const report = restaurantReportSchema.parse(await res.json());
+      // Prefer local aggregate until Railway cash-report includes delivery/discount/canceled.
+      const cashNeedsUpgrade =
+        reportId === "cash-report" &&
+        !report.rows.some(
+          (r) =>
+            r.section === "deliveryCharges" ||
+            r.section === "discount" ||
+            r.section === "canceledOrders" ||
+            /delivery charge|discount given|canceled orders/i.test(r.label),
+        );
+      if (cashNeedsUpgrade) {
+        try {
+          return await buildClientRestaurantReport(branchCode, reportId, options);
+        } catch {
+          return report;
+        }
+      }
+      return report;
     }
     if (res.status === 404 || res.status === 501 || res.status === 502) {
       return buildClientRestaurantReport(branchCode, reportId, options);

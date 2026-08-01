@@ -2,9 +2,16 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from "@nes
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { RESTAURANT_REPORT_DEFS } from "@platform/contracts";
 import {
+  popsBankAccounts,
+  popsBankTransactions,
   popsBills,
   popsBranches,
+  popsCashMovements,
   popsCashSessions,
+  popsCustomerInvoices,
+  popsCustomerPayments,
+  popsEmployeeAdvances,
+  popsEmployees,
   popsExpenses,
   popsIngredients,
   popsKitchenLineCancellations,
@@ -100,6 +107,11 @@ export class ReportsService {
           ...base,
           ...(await this.cashSessionReport(organizationId, branch.id, range, def.id)),
         };
+      case "cash-report":
+        return {
+          ...base,
+          ...(await this.cashReport(organizationId, branch.id, range)),
+        };
       case "profit-loss": {
         const pl = await this.accounting.getReport(organizationId, branchCode, "profit-loss");
         const rows = (pl.rows ?? []).map((r) => {
@@ -144,6 +156,10 @@ export class ReportsService {
         return { ...base, ...(await this.vendorLedger(organizationId, branch.id, range)) };
       case "vendors-balance":
         return { ...base, ...(await this.vendorsBalance(organizationId, branch.id)) };
+      case "customer-ledger":
+        return { ...base, ...(await this.customerLedger(organizationId, branch.id, range)) };
+      case "employee-ledger":
+        return { ...base, ...(await this.employeeLedger(organizationId, branch.id, range)) };
       case "ingredients-usage":
         return { ...base, ...(await this.ingredientsUsage(organizationId, branch.id, range)) };
       case "ingredients-stock":
@@ -501,6 +517,336 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Cash report — service charges, tax by rate (16% cash / 8% card·online),
+   * remaining cash on hand, and bank receipts per account.
+   */
+  private async cashReport(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const bills = await this.completedBills(organizationId, branchId, range);
+    const voidBills = await this.db
+      .select()
+      .from(popsBills)
+      .where(
+        and(
+          eq(popsBills.organizationId, organizationId),
+          eq(popsBills.branchId, branchId),
+          eq(popsBills.status, "void"),
+          gte(popsBills.createdAt, this.rangeStart(range)),
+          lte(popsBills.createdAt, this.rangeEnd(range)),
+        ),
+      );
+
+    let serviceCharges = 0;
+    let deliveryCharges = 0;
+    let discountTotal = 0;
+    let tax16 = 0;
+    let tax8 = 0;
+    let taxOther = 0;
+    let cashReceived = 0;
+    let cardReceived = 0;
+    let walletReceived = 0;
+    let bankPosReceived = 0;
+    let serviceQty = 0;
+    let deliveryQty = 0;
+    let discountQty = 0;
+    let tax16Qty = 0;
+    let tax8Qty = 0;
+    let taxOtherQty = 0;
+    let cashQty = 0;
+    let cardQty = 0;
+    let walletQty = 0;
+    let bankPosQty = 0;
+    let canceledAmount = 0;
+
+    for (const bill of bills) {
+      const service = bill.servicePkr ?? 0;
+      if (service > 0) {
+        serviceCharges += service;
+        serviceQty += 1;
+      }
+      const delivery = bill.deliveryChargePkr ?? 0;
+      if (delivery > 0) {
+        deliveryCharges += delivery;
+        deliveryQty += 1;
+      }
+      const discount = bill.discountPkr ?? 0;
+      if (discount > 0) {
+        discountTotal += discount;
+        discountQty += 1;
+      }
+      const tax = bill.taxPkr ?? 0;
+      const pct = bill.taxPct ?? 0;
+      if (tax > 0) {
+        if (pct >= 12) {
+          tax16 += tax;
+          tax16Qty += 1;
+        } else if (pct > 0) {
+          tax8 += tax;
+          tax8Qty += 1;
+        } else {
+          taxOther += tax;
+          taxOtherQty += 1;
+        }
+      }
+
+      let payments: { method?: string; amount?: number }[] = [];
+      if (bill.paymentsJson) {
+        try {
+          const parsed = JSON.parse(bill.paymentsJson) as { method?: string; amount?: number }[];
+          if (Array.isArray(parsed)) payments = parsed;
+        } catch {
+          payments = [];
+        }
+      }
+      let billCash = 0;
+      let billCard = 0;
+      let billWallet = 0;
+      let billBank = 0;
+      for (const p of payments) {
+        const amount = Math.max(0, Math.round(Number(p.amount ?? 0)));
+        const method = String(p.method ?? "").toLowerCase();
+        if (method === "cash") billCash += amount;
+        else if (method === "card") billCard += amount;
+        else if (method === "wallet") billWallet += amount;
+        else if (method === "bank") billBank += amount;
+      }
+      if (billCash > 0) {
+        cashReceived += billCash;
+        cashQty += 1;
+      }
+      if (billCard > 0) {
+        cardReceived += billCard;
+        cardQty += 1;
+      }
+      if (billWallet > 0) {
+        walletReceived += billWallet;
+        walletQty += 1;
+      }
+      if (billBank > 0) {
+        bankPosReceived += billBank;
+        bankPosQty += 1;
+      }
+    }
+
+    for (const bill of voidBills) {
+      canceledAmount += bill.totalPkr ?? 0;
+    }
+
+    const movements = await this.db
+      .select()
+      .from(popsCashMovements)
+      .where(
+        and(
+          eq(popsCashMovements.organizationId, organizationId),
+          eq(popsCashMovements.branchId, branchId),
+          gte(popsCashMovements.createdAt, this.rangeStart(range)),
+          lte(popsCashMovements.createdAt, this.rangeEnd(range)),
+        ),
+      );
+
+    let paidIn = 0;
+    let paidOut = 0;
+    let paidInQty = 0;
+    let paidOutQty = 0;
+    for (const m of movements) {
+      if (m.type === "paid_in") {
+        paidIn += m.amountPkr;
+        paidInQty += 1;
+      } else if (m.type === "paid_out") {
+        paidOut += m.amountPkr;
+        paidOutQty += 1;
+      }
+    }
+
+    const remainingCash = cashReceived + paidIn - paidOut;
+
+    const accounts = await this.db
+      .select()
+      .from(popsBankAccounts)
+      .where(
+        and(eq(popsBankAccounts.organizationId, organizationId), eq(popsBankAccounts.branchId, branchId)),
+      )
+      .orderBy(popsBankAccounts.name);
+
+    const txns = await this.db
+      .select()
+      .from(popsBankTransactions)
+      .where(
+        and(
+          eq(popsBankTransactions.organizationId, organizationId),
+          eq(popsBankTransactions.branchId, branchId),
+          gte(popsBankTransactions.txnDate, range.from),
+          lte(popsBankTransactions.txnDate, range.to),
+        ),
+      );
+
+    const depositsByAccount = new Map<string, { amount: number; qty: number }>();
+    for (const t of txns) {
+      if (t.type !== "deposit") continue;
+      const cur = depositsByAccount.get(t.bankAccountId) ?? { amount: 0, qty: 0 };
+      cur.amount += t.amountPkr;
+      cur.qty += 1;
+      depositsByAccount.set(t.bankAccountId, cur);
+    }
+
+    const rows: {
+      label: string;
+      amount: number;
+      qty: number;
+      meta?: string;
+      section: string;
+    }[] = [
+      {
+        section: "deliveryCharges",
+        label: "Total delivery charges",
+        amount: deliveryCharges,
+        qty: deliveryQty,
+        meta: "Click to see delivery bills",
+      },
+      {
+        section: "serviceCharges",
+        label: "Service charges collected",
+        amount: serviceCharges,
+        qty: serviceQty,
+        meta: "Click to see bills",
+      },
+      {
+        section: "tax16",
+        label: "16% tax collected",
+        amount: tax16,
+        qty: tax16Qty,
+        meta: "Cash payment rate · click for bills",
+      },
+      {
+        section: "tax8",
+        label: "8% tax collected",
+        amount: tax8,
+        qty: tax8Qty,
+        meta: "Card / online / bank rate · click for bills",
+      },
+    ];
+    if (taxOther > 0 || taxOtherQty > 0) {
+      rows.push({
+        section: "taxOther",
+        label: "Other tax collected",
+        amount: taxOther,
+        qty: taxOtherQty,
+        meta: "Non 8%/16% bills",
+      });
+    }
+    rows.push(
+      {
+        section: "discount",
+        label: "Discount given",
+        amount: discountTotal,
+        qty: discountQty,
+        meta: "Click to see discounted bills",
+      },
+      {
+        section: "canceledOrders",
+        label: "Canceled orders",
+        amount: canceledAmount,
+        qty: voidBills.length,
+        meta: "Void bills in range",
+      },
+      {
+        section: "cashReceived",
+        label: "Cash received (POS)",
+        amount: cashReceived,
+        qty: cashQty,
+        meta: "Click to see cash bills",
+      },
+      {
+        section: "remainingCash",
+        label: "Remaining cash available",
+        amount: remainingCash,
+        qty: cashQty + paidInQty + paidOutQty,
+        meta: `Cash ${cashReceived} + paid in ${paidIn} − paid out ${paidOut}`,
+      },
+      {
+        section: "cardReceived",
+        label: "Card received",
+        amount: cardReceived,
+        qty: cardQty,
+        meta: "Click to see card bills",
+      },
+      {
+        section: "walletReceived",
+        label: "Wallet / online received",
+        amount: walletReceived,
+        qty: walletQty,
+        meta: "Click to see wallet bills",
+      },
+    );
+
+    let bankDepositsTotal = 0;
+    let bankDepositQty = 0;
+    for (const acct of accounts) {
+      const received = depositsByAccount.get(acct.id) ?? { amount: 0, qty: 0 };
+      bankDepositsTotal += received.amount;
+      bankDepositQty += received.qty;
+      rows.push({
+        section: `bank:${acct.id}`,
+        label: `Bank · ${acct.name}`,
+        amount: received.amount,
+        qty: received.qty,
+        meta: [acct.bankName, acct.accountNumber, `balance ${acct.balancePkr}`].filter(Boolean).join(" · "),
+      });
+    }
+    if (bankPosReceived > 0 || bankPosQty > 0) {
+      rows.push({
+        section: "bankPos",
+        label: "Bank transfer (POS sales)",
+        amount: bankPosReceived,
+        qty: bankPosQty,
+        meta: "Not linked to a specific bank account",
+      });
+      bankDepositsTotal += bankPosReceived;
+      bankDepositQty += bankPosQty;
+    }
+
+    const empty =
+      bills.length === 0 &&
+      voidBills.length === 0 &&
+      movements.length === 0 &&
+      bankDepositsTotal === 0 &&
+      accounts.length === 0;
+
+    return {
+      rows,
+      totals: {
+        deliveryCharges,
+        serviceCharges,
+        tax16,
+        tax8,
+        taxOther,
+        discount: discountTotal,
+        canceledOrders: canceledAmount,
+        canceledQty: voidBills.length,
+        cashReceived,
+        remainingCash,
+        cardReceived,
+        walletReceived,
+        bankReceived: bankDepositsTotal,
+        bills: bills.length,
+        serviceQty,
+        deliveryQty,
+        discountQty,
+        tax16Qty,
+        tax8Qty,
+        cashQty,
+        cardQty,
+        walletQty,
+        bankDepositQty,
+      },
+      empty,
+    };
+  }
+
   private async expenseReport(organizationId: string, branchId: string, range: { from: string; to: string; fromTime: string; toTime: string }) {
     const rowsDb = await this.db
       .select()
@@ -698,6 +1044,183 @@ export class ReportsService {
     return {
       rows,
       totals: { outstanding: rows.reduce((s, r) => s + (r.balance ?? 0), 0), vendors: rows.length },
+      empty: rows.length === 0,
+    };
+  }
+
+  private async customerLedger(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const invoices = await this.db
+      .select()
+      .from(popsCustomerInvoices)
+      .where(
+        and(
+          eq(popsCustomerInvoices.organizationId, organizationId),
+          eq(popsCustomerInvoices.branchId, branchId),
+          gte(popsCustomerInvoices.createdAt, this.rangeStart(range)),
+          lte(popsCustomerInvoices.createdAt, this.rangeEnd(range)),
+        ),
+      )
+      .orderBy(desc(popsCustomerInvoices.createdAt));
+
+    const payments = await this.db
+      .select({
+        paymentRef: popsCustomerPayments.paymentRef,
+        amountPkr: popsCustomerPayments.amountPkr,
+        paymentDate: popsCustomerPayments.paymentDate,
+        customerName: popsCustomerInvoices.customerName,
+        customerPhone: popsCustomerInvoices.customerPhone,
+      })
+      .from(popsCustomerPayments)
+      .innerJoin(popsCustomerInvoices, eq(popsCustomerPayments.invoiceId, popsCustomerInvoices.id))
+      .where(
+        and(
+          eq(popsCustomerInvoices.organizationId, organizationId),
+          eq(popsCustomerInvoices.branchId, branchId),
+          gte(popsCustomerPayments.paymentDate, range.from),
+          lte(popsCustomerPayments.paymentDate, range.to),
+        ),
+      )
+      .orderBy(desc(popsCustomerPayments.paymentDate));
+
+    const map = new Map<
+      string,
+      { debit: number; credit: number; balance: number; qty: number; phone: string | null }
+    >();
+    for (const inv of invoices) {
+      const key = `${inv.customerName}|${inv.customerPhone ?? ""}`;
+      const cur = map.get(key) ?? {
+        debit: 0,
+        credit: 0,
+        balance: 0,
+        qty: 0,
+        phone: inv.customerPhone,
+      };
+      cur.debit += inv.amountPkr;
+      cur.credit += inv.paidPkr;
+      cur.balance += Math.max(0, inv.amountPkr - inv.paidPkr);
+      cur.qty += 1;
+      map.set(key, cur);
+    }
+    // Include payments that may fall in range for invoices outside create range (credit only).
+    for (const p of payments) {
+      const key = `${p.customerName}|${p.customerPhone ?? ""}`;
+      if (map.has(key)) continue;
+      const cur = map.get(key) ?? {
+        debit: 0,
+        credit: 0,
+        balance: 0,
+        qty: 0,
+        phone: p.customerPhone,
+      };
+      cur.credit += p.amountPkr;
+      map.set(key, cur);
+    }
+
+    const rows = [...map.entries()]
+      .map(([key, v]) => {
+        const label = key.split("|")[0] || "Customer";
+        return {
+          label,
+          debit: v.debit,
+          credit: v.credit,
+          balance: v.balance,
+          amount: v.balance,
+          qty: v.qty,
+          meta: [v.phone, `${v.qty} invoice(s)`, `outstanding ${v.balance}`].filter(Boolean).join(" · "),
+        };
+      })
+      .sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+
+    return {
+      rows,
+      totals: {
+        debit: rows.reduce((s, r) => s + (r.debit ?? 0), 0),
+        credit: rows.reduce((s, r) => s + (r.credit ?? 0), 0),
+        balance: rows.reduce((s, r) => s + (r.balance ?? 0), 0),
+        customers: rows.length,
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  private async employeeLedger(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const employees = await this.db
+      .select()
+      .from(popsEmployees)
+      .where(and(eq(popsEmployees.organizationId, organizationId), eq(popsEmployees.branchId, branchId)))
+      .orderBy(popsEmployees.displayName);
+
+    const advances = await this.db
+      .select()
+      .from(popsEmployeeAdvances)
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, organizationId),
+          eq(popsEmployeeAdvances.branchId, branchId),
+        ),
+      );
+
+    const openByEmployee = new Map<string, { amount: number; count: number }>();
+    for (const a of advances) {
+      if (a.status !== "open" && a.status !== "reserved") continue;
+      const cur = openByEmployee.get(a.employeeId) ?? { amount: 0, count: 0 };
+      cur.amount += a.amountPkr;
+      cur.count += 1;
+      openByEmployee.set(a.employeeId, cur);
+    }
+
+    const bills = await this.completedBills(organizationId, branchId, range);
+    const salesByName = new Map<string, { qty: number; amount: number }>();
+    for (const bill of bills) {
+      const name = (bill.waiterName || "").trim().toLowerCase();
+      if (!name) continue;
+      const cur = salesByName.get(name) ?? { qty: 0, amount: 0 };
+      cur.qty += 1;
+      cur.amount += bill.totalPkr;
+      salesByName.set(name, cur);
+    }
+
+    const rows = employees
+      .filter((e) => e.employmentStatus !== "terminated")
+      .map((e) => {
+        const adv = openByEmployee.get(e.id) ?? { amount: 0, count: 0 };
+        const sales = salesByName.get(e.displayName.trim().toLowerCase()) ?? { qty: 0, amount: 0 };
+        const remaining = Math.max(0, e.baseSalaryPkr - adv.amount);
+        return {
+          label: e.displayName,
+          debit: e.baseSalaryPkr,
+          credit: adv.amount,
+          balance: remaining,
+          amount: sales.amount,
+          qty: sales.qty,
+          meta: [
+            e.jobTitle,
+            e.employeeCode,
+            `advances ${adv.count}`,
+            sales.qty > 0 ? `${sales.qty} sales` : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        };
+      });
+
+    return {
+      rows,
+      totals: {
+        salary: rows.reduce((s, r) => s + (r.debit ?? 0), 0),
+        advances: rows.reduce((s, r) => s + (r.credit ?? 0), 0),
+        remaining: rows.reduce((s, r) => s + (r.balance ?? 0), 0),
+        sales: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+        employees: rows.length,
+      },
       empty: rows.length === 0,
     };
   }

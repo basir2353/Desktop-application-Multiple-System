@@ -422,6 +422,7 @@ export class AuthService implements OnModuleInit {
     if (!row0) throw new UnauthorizedException("No organization membership");
 
     const m = row0.membership;
+<<<<<<< Updated upstream
     let org = row0.org;
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
@@ -441,6 +442,9 @@ export class AuthService implements OnModuleInit {
         if (restored) org = restored;
       }
     }
+=======
+    const org = row0.org;
+>>>>>>> Stashed changes
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
       throw new UnauthorizedException(
@@ -555,8 +559,7 @@ export class AuthService implements OnModuleInit {
         row.active !== false &&
         row.userStatus === "active" &&
         row.staffPinHash &&
-        (row.branchScope.trim().toLowerCase() === "all" ||
-          row.branchScope.trim().toUpperCase() === code),
+        (row.branchScope === "all" || row.branchScope.toUpperCase() === code),
     );
 
     for (const row of eligible) {
@@ -725,7 +728,7 @@ export class AuthService implements OnModuleInit {
       organizationId: opts.organizationId,
       permissions: opts.permissions,
       role: opts.role,
-      branchScope: normalizeJwtBranchScope(opts.branchScope),
+      branchScope: opts.branchScope,
       platformRole: opts.platformRole,
       systemType: opts.systemType,
       navAllowlist: opts.navAllowlist,
@@ -786,13 +789,6 @@ function normalizePermissions(value: unknown, role: string): string[] {
     return value.filter((entry): entry is string => typeof entry === "string");
   }
   return permissionsForPopsRole(role);
-}
-
-/** JWT / membership scope: lowercase `all`, otherwise uppercase branch code. */
-function normalizeJwtBranchScope(raw: string | null | undefined): string {
-  const trimmed = (raw ?? "all").trim();
-  if (!trimmed || trimmed.toLowerCase() === "all") return "all";
-  return trimmed.toUpperCase();
 }
 
 function sha256Hex(value: string): string {

@@ -52,24 +52,10 @@ export const storeProductSchema = z.object({
   unitName: z.string().nullable(),
   variantOfId: z.string().uuid().nullable(),
   barcode: z.string().nullable(),
-  barcodes: z
-    .array(z.string())
-    .nullish()
-    .transform((v) => v ?? []),
   qrCode: z.string().nullable(),
   imageUrl: z.string().nullable(),
-  supplierId: z.string().uuid().nullable().optional(),
-  supplierName: z.string().nullable().optional(),
   purchasePrice: z.number(),
-  orderCost: z.number().nullish().transform((v) => v ?? 0),
   sellingPrice: z.number(),
-  salePrice: z.number().nullish().transform((v) => v ?? 0),
-  mrpPrice: z.number().nullish().transform((v) => v ?? 0),
-  wholesalePrice: z.number().nullish().transform((v) => v ?? 0),
-  customPrice: z.number().nullish().transform((v) => v ?? 0),
-  marketSalePrice: z.number().nullish().transform((v) => v ?? 0),
-  marginPct: z.number().nullish().transform((v) => v ?? 0),
-  markupPct: z.number().nullish().transform((v) => v ?? 0),
   taxPct: z.number(),
   reorderLevel: z.number(),
   availableStock: z.number(),
@@ -82,9 +68,6 @@ export const storeProductSchema = z.object({
   trackBatch: z.boolean(),
   trackSerial: z.boolean(),
   isWeighed: z.boolean().default(false),
-  color: z.string().nullable().optional(),
-  size: z.string().nullable().optional(),
-  serialNumbers: z.array(z.string()).nullish().transform((v) => v ?? []),
   nearestExpiry: z.string().nullable(),
 });
 
@@ -252,24 +235,8 @@ export const storePaymentLineSchema = z.object({
   amount: z.number().min(0),
 });
 
-export const STORE_PROMOTION_TYPES = [
-  "percent_off",
-  "amount_off",
-  "buy_x_get_y",
-  "buy_x_percent_off",
-  "fixed_bundle",
-  "mix_match",
-  "cross_sell",
-  "category_off",
-] as const;
+export const STORE_PROMOTION_TYPES = ["percent_off", "buy_x_get_y", "fixed_bundle", "mix_match", "cross_sell", "category_off"] as const;
 export const storePromotionTypeSchema = z.enum(STORE_PROMOTION_TYPES);
-
-/** Price levels an automatic discount may apply to (Retail Pro–style). */
-export const STORE_PROMO_PRICE_LEVELS = ["regular", "sale", "employee", "wholesale", "custom"] as const;
-export const storePromoPriceLevelSchema = z.enum(STORE_PROMO_PRICE_LEVELS);
-
-export const STORE_PROMO_SCOPES = ["all", "department", "vendor", "named", "custom"] as const;
-export const storePromoScopeSchema = z.enum(STORE_PROMO_SCOPES);
 
 export const storeSaleLineSchema = z.object({
   id: z.string().uuid(),
@@ -370,47 +337,25 @@ export const createStoreUnitSchema = z.object({
 
 export const createStoreProductSchema = z.object({
   branchCode: z.string().min(1),
-  sku: z.string().min(1).optional(),
+  sku: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
   categoryId: z.string().uuid().optional(),
   subcategoryId: z.string().uuid().optional(),
   brandId: z.string().uuid().optional(),
   unitId: z.string().uuid().optional(),
-  supplierId: z.string().uuid().optional(),
   barcode: z.string().optional(),
-  /** Primary + ALU barcodes (max 12). First entry is treated as primary UPC when barcode is empty. */
-  barcodes: z.array(z.string().min(1)).max(12).optional(),
   purchasePrice: z.number().min(0).default(0),
-  orderCost: z.number().min(0).default(0),
   sellingPrice: z.number().min(0).default(0),
-  salePrice: z.number().min(0).default(0),
-  mrpPrice: z.number().min(0).default(0),
-  wholesalePrice: z.number().min(0).default(0),
-  customPrice: z.number().min(0).default(0),
-  marketSalePrice: z.number().min(0).default(0),
-  marginPct: z.number().min(0).default(0),
-  markupPct: z.number().min(0).default(0),
   taxPct: z.number().min(0).max(100).default(0),
   reorderLevel: z.number().min(0).default(10),
   availableStock: z.number().min(0).default(0),
   trackBatch: z.boolean().default(false),
   trackSerial: z.boolean().default(false),
   isWeighed: z.boolean().default(false),
-  color: z.string().optional(),
-  size: z.string().optional(),
-  /** Optional serial numbers to register (enables trackSerial when non-empty). */
-  serialNumbers: z.array(z.string().min(1)).max(50).optional(),
   batchNumber: z.string().optional(),
   expiryDate: z.string().optional(),
 });
-
-export const updateStoreProductSchema = createStoreProductSchema
-  .omit({ branchCode: true, availableStock: true, batchNumber: true, expiryDate: true })
-  .partial()
-  .extend({
-    name: z.string().min(1).optional(),
-  });
 
 export const createStoreSupplierSchema = z.object({
   branchCode: z.string().min(1),
@@ -477,8 +422,6 @@ export const createStoreGrnSchema = z.object({
       productId: z.string().uuid(),
       qty: z.number().min(1),
       unitPrice: z.number().min(0),
-      /** Optional new selling price applied when goods are received. */
-      sellingPrice: z.number().min(0).optional(),
       batchNumber: z.string().optional(),
       expiryDate: z.string().optional(),
     }),
@@ -534,12 +477,6 @@ export const createStoreSaleSchema = z.object({
         productId: z.string().uuid(),
         qty: z.number().min(0.001),
         qtyGrams: z.number().min(1).optional(),
-        /** Optional override so POS can sell at Sale / Wholesale / Custom / Market Sale. */
-        unitPrice: z.number().min(0).optional(),
-        /** Receipt-only name for this sale — does not update product master. */
-        productName: z.string().min(1).optional(),
-        /** Active price level on the receipt (used by automatic discounts). */
-        priceLevel: z.string().optional(),
       }),
     )
     .min(1),
@@ -667,7 +604,6 @@ export type StoreDashboard = z.infer<typeof storeDashboardSchema>;
 export type StorePurchaseOrder = z.infer<typeof storePurchaseOrderSchema>;
 export type StoreGrn = z.infer<typeof storeGrnSchema>;
 export type CreateStoreProduct = z.infer<typeof createStoreProductSchema>;
-export type UpdateStoreProduct = z.infer<typeof updateStoreProductSchema>;
 export type CreateStoreCategory = z.infer<typeof createStoreCategorySchema>;
 export type CreateStoreBrand = z.infer<typeof createStoreBrandSchema>;
 export type CreateStoreUnit = z.infer<typeof createStoreUnitSchema>;

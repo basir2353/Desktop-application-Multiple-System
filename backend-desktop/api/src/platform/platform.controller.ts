@@ -17,7 +17,6 @@ import {
   sendLicenceRemindersSchema,
   updateBusinessSchema,
   updatePlatformSettingsSchema,
-  updatePlatformUserSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -27,17 +26,11 @@ import { RequirePermissions } from "../users/require-permission.decorator";
 import { PlatformService } from "./platform.service";
 
 @Controller("v1/platform")
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class PlatformController {
   constructor(private readonly platform: PlatformService) {}
 
-  /** Unauthenticated — maintenance banner + support contact for login screens. */
-  @Get("public-info")
-  getPublicInfo() {
-    return this.platform.getPublicInfo();
-  }
-
   @Get("system-types")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   listSystemTypes(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
@@ -45,7 +38,6 @@ export class PlatformController {
   }
 
   @Get("analytics")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.analytics.read")
   getAnalytics(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
@@ -53,7 +45,6 @@ export class PlatformController {
   }
 
   @Get("businesses")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   listBusinesses(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
@@ -61,7 +52,6 @@ export class PlatformController {
   }
 
   @Get("businesses/:businessId")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   getBusiness(@CurrentUser() user: AccessJwtPayload, @Param("businessId") businessId: string) {
     this.platform.assertSuperAdmin(user);
@@ -69,7 +59,6 @@ export class PlatformController {
   }
 
   @Post("businesses")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   createBusiness(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     this.platform.assertSuperAdmin(user);
@@ -78,7 +67,6 @@ export class PlatformController {
   }
 
   @Patch("businesses/:businessId")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   updateBusiness(
     @CurrentUser() user: AccessJwtPayload,
@@ -91,7 +79,6 @@ export class PlatformController {
   }
 
   @Delete("businesses/:businessId")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   deleteBusiness(@CurrentUser() user: AccessJwtPayload, @Param("businessId") businessId: string) {
     this.platform.assertSuperAdmin(user);
@@ -99,7 +86,6 @@ export class PlatformController {
   }
 
   @Post("businesses/:businessId/grant-licence")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   grantLicence(
     @CurrentUser() user: AccessJwtPayload,
@@ -112,7 +98,6 @@ export class PlatformController {
   }
 
   @Get("licence-payments")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   listLicencePayments(
     @CurrentUser() user: AccessJwtPayload,
@@ -123,7 +108,6 @@ export class PlatformController {
   }
 
   @Get("licence-payments/monthly-status")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   monthlyLicenceStatus(
     @CurrentUser() user: AccessJwtPayload,
@@ -140,7 +124,6 @@ export class PlatformController {
   }
 
   @Post("licence-payments/send-reminders")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   sendLicenceReminders(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     this.platform.assertSuperAdmin(user);
@@ -149,7 +132,6 @@ export class PlatformController {
   }
 
   @Post("businesses/:businessId/licence-payments")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.businesses.manage")
   recordLicencePayment(
     @CurrentUser() user: AccessJwtPayload,
@@ -162,13 +144,13 @@ export class PlatformController {
   }
 
   @Get("users")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.users.manage")
   listUsers(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
     return this.platform.listUsers();
   }
 
+<<<<<<< Updated upstream
   @Delete("users/:userId")
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.users.manage")
@@ -190,8 +172,9 @@ export class PlatformController {
     return this.platform.updateUser(userId, input);
   }
 
+=======
+>>>>>>> Stashed changes
   @Post("users/:userId/reset-password")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.users.manage")
   resetPassword(
     @CurrentUser() user: AccessJwtPayload,
@@ -204,7 +187,6 @@ export class PlatformController {
   }
 
   @Get("settings")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.settings.manage")
   getSettings(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
@@ -212,7 +194,6 @@ export class PlatformController {
   }
 
   @Patch("settings")
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions("platform.settings.manage")
   updateSettings(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     this.platform.assertSuperAdmin(user);

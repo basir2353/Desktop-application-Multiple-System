@@ -2,7 +2,7 @@
 
 NestJS modular monolith: authentication, catalog, billing, kitchen, inventory, HR, accounting, multi-branch, notifications, pharmacy, store, delivery, and sync.
 
-Located at `backend-desktop/api/` — **host this service** on your server. Web, desktop, and mobile clients connect via `VITE_API_BASE_URL` / `EXPO_PUBLIC_API_BASE_URL`.
+Located at `backend/api/` — **host this service** on your server. Web, desktop, and mobile clients connect via `VITE_API_BASE_URL` / `EXPO_PUBLIC_API_BASE_URL`.
 
 ## Development
 

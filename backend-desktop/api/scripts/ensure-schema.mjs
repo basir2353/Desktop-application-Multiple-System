@@ -20,39 +20,6 @@ const STATEMENTS = [
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS enabled_modules jsonb`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fbr_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_enabled boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_enabled boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_real_enabled boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fbr_allowed boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_allowed boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_real_allowed boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_fake_invoice_seq integer NOT NULL DEFAULT 0`,
-  // Continue FPRA sequence after existing fake invoices (avoid restarting at 1).
-  `UPDATE organizations o
-   SET pra_fake_invoice_seq = sub.cnt
-   FROM (
-     SELECT organization_id, COUNT(*)::int AS cnt
-     FROM tax_authority_invoices
-     WHERE authority = 'pra' AND invoice_mode = 'fake'
-     GROUP BY organization_id
-   ) sub
-   WHERE o.id = sub.organization_id AND o.pra_fake_invoice_seq < sub.cnt`,
-  `UPDATE organizations SET pra_real_enabled = true WHERE pra_enabled = true AND pra_fake_enabled = false AND pra_real_enabled = false`,
-  // Existing Active flags also unlock the matching sections for Super Admin grant backfill.
-  `UPDATE organizations SET fbr_allowed = true WHERE fbr_enabled = true AND fbr_allowed = false`,
-  `UPDATE organizations SET pra_fake_allowed = true WHERE pra_fake_enabled = true AND pra_fake_allowed = false`,
-  `UPDATE organizations SET pra_real_allowed = true WHERE pra_real_enabled = true AND pra_real_allowed = false`,
-  `UPDATE organizations SET pra_real_allowed = true WHERE pra_enabled = true AND pra_fake_enabled = false AND pra_real_allowed = false`,
-  `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_mode text`,
-  `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_invoice_number text`,
-  `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_invoice_id text`,
-  `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_qr_payload text`,
-  `ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS pra_issued_at timestamptz`,
-  `ALTER TABLE tax_authority_invoices ADD COLUMN IF NOT EXISTS invoice_mode text NOT NULL DEFAULT 'real'`,
-  `DROP INDEX IF EXISTS tax_authority_invoices_source_uidx`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_invoices_source_uidx
-    ON tax_authority_invoices (organization_id, authority, invoice_mode, source_type, source_id)`,
-  `CREATE INDEX IF NOT EXISTS tax_authority_invoices_report_idx
-    ON tax_authority_invoices (organization_id, branch_id, authority, invoice_mode, created_at)`,
   // General Store core tables (create if drizzle push skipped them on Railway).
   `CREATE TABLE IF NOT EXISTS store_categories (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -198,22 +165,6 @@ const STATEMENTS = [
   `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS lot_number text`,
   `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS manufacturing_date date`,
   `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
-  // General Store POS checkout: missing sale columns → Pay returns Internal server error.
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS promotion_discount_pkr integer NOT NULL DEFAULT 0`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS loyalty_points_earned integer NOT NULL DEFAULT 0`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS loyalty_points_redeemed integer NOT NULL DEFAULT 0`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS amount_paid_pkr integer NOT NULL DEFAULT 0`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS amount_due_pkr integer NOT NULL DEFAULT 0`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS payments_json text`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS shift_id uuid`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS terminal_id text`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS held_label text`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS held_cart_json text`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS coupon_code text`,
-  `ALTER TABLE store_sales ADD COLUMN IF NOT EXISTS gift_card_number text`,
-  `ALTER TABLE store_sale_lines ADD COLUMN IF NOT EXISTS display_name text`,
-  `ALTER TABLE store_sale_lines ADD COLUMN IF NOT EXISTS is_weighed text NOT NULL DEFAULT 'no'`,
-  `ALTER TABLE store_sale_lines ADD COLUMN IF NOT EXISTS batch_id uuid`,
   `CREATE TABLE IF NOT EXISTS store_product_barcodes (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
@@ -305,31 +256,16 @@ const STATEMENTS = [
     pra_token_expires_at timestamptz,
     pra_connected_at timestamptz,
     pra_last_error text,
-    pra_last_token_refresh_at timestamptz,
-    pra_last_invoice_sent_at timestamptz,
-    pra_auto_submit boolean NOT NULL DEFAULT true,
-    pra_offline_queue boolean NOT NULL DEFAULT true,
-    pra_retry_failed boolean NOT NULL DEFAULT true,
-    pra_max_retry_attempts integer NOT NULL DEFAULT 3,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_profiles_org_branch_uidx
     ON tax_authority_profiles (organization_id, branch_id)`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS pops_branches_org_code_uidx
-    ON pops_branches (organization_id, code)`,
-  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_last_token_refresh_at timestamptz`,
-  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_last_invoice_sent_at timestamptz`,
-  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_auto_submit boolean NOT NULL DEFAULT true`,
-  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_offline_queue boolean NOT NULL DEFAULT true`,
-  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_retry_failed boolean NOT NULL DEFAULT true`,
-  `ALTER TABLE tax_authority_profiles ADD COLUMN IF NOT EXISTS pra_max_retry_attempts integer NOT NULL DEFAULT 3`,
   `CREATE TABLE IF NOT EXISTS tax_authority_invoices (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     branch_id uuid NOT NULL REFERENCES pops_branches(id) ON DELETE CASCADE,
     authority text NOT NULL,
-    invoice_mode text NOT NULL DEFAULT 'real',
     source_type text NOT NULL,
     source_id uuid NOT NULL,
     source_ref text NOT NULL,
@@ -347,6 +283,7 @@ const STATEMENTS = [
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS tax_authority_invoices_source_uidx
+<<<<<<< Updated upstream
     ON tax_authority_invoices (organization_id, authority, invoice_mode, source_type, source_id)`,
   `CREATE TABLE IF NOT EXISTS tax_authority_activity_logs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -456,6 +393,9 @@ const STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS entity_deletion_backups_entity_idx
     ON entity_deletion_backups (entity_type, entity_id)`,
+=======
+    ON tax_authority_invoices (organization_id, authority, source_type, source_id)`,
+>>>>>>> Stashed changes
 ];
 export function ensureCriticalSchema() {
   const databaseUrl = process.env.DATABASE_URL?.trim();

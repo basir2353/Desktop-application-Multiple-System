@@ -6,26 +6,13 @@ import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
 import { TaxAuthorityService } from "./tax-authority.service";
 
-/**
- * After Super Admin unlocks FBR/PRA for the business, org Admin / Accountant / Owner
- * may toggle Fake ↔ Real and FBR in Settings. Platform Super Admin always can.
- */
-function assertCanManageTaxFeatures(user: AccessJwtPayload): void {
-  if (isSuperAdmin(user) || user.permissions?.includes("platform.businesses.manage")) return;
-  if (user.permissions?.includes("*")) return;
-  if (
-    user.permissions?.includes("pops.accounting.manage") ||
-    user.permissions?.includes("pops.users.manage")
-  ) {
-    return;
+/** FBR/PRA feature flags are owned by Super Admin (business create/edit), not store staff. */
+function assertSuperAdminTaxFeatures(user: AccessJwtPayload): void {
+  if (!isSuperAdmin(user) && !user.permissions?.includes("platform.businesses.manage")) {
+    throw new ForbiddenException(
+      "Only Super Admin can enable or disable FBR / PRA for a business.",
+    );
   }
-  const role = String(user.role ?? "").toLowerCase();
-  if (role === "admin" || role === "owner" || role === "accountant" || role === "incharge") {
-    return;
-  }
-  throw new ForbiddenException(
-    "Only Admin or Accountant can enable or disable FBR / FPRA / Real PRA.",
-  );
 }
 
 @Controller()
@@ -69,94 +56,6 @@ export class TaxAuthorityController {
     return this.tax.connectPra(user.organizationId, body);
   }
 
-  @Post("v1/pra/test-connection")
-  @RequirePermissions("pops.read")
-  testPra(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.tax.testPraConnection(user.organizationId, body);
-  }
-
-  @Post("v1/pra/prepare-client-test")
-  @RequirePermissions("pops.read")
-  preparePraClientTest(
-    @CurrentUser() user: AccessJwtPayload,
-    @Body() body: { branchCode?: string },
-  ) {
-    return this.tax.preparePraClientTest(user.organizationId, body?.branchCode?.trim() ?? "");
-  }
-
-  @Post("v1/pra/disconnect")
-  @RequirePermissions("pops.read")
-  disconnectPra(
-    @CurrentUser() user: AccessJwtPayload,
-    @Body() body: { branchCode?: string },
-  ) {
-    return this.tax.disconnectPra(user.organizationId, body?.branchCode?.trim() ?? "");
-  }
-
-  @Patch("v1/pra/settings")
-  @RequirePermissions("pops.read")
-  updatePraSettings(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    assertCanManageTaxFeatures(user);
-    return this.tax.updatePraSettings(user.organizationId, body);
-  }
-
-  @Get("v1/pra/dashboard")
-  @RequirePermissions("pops.read")
-  praDashboard(
-    @CurrentUser() user: AccessJwtPayload,
-    @Query("branchCode") branchCode: string,
-    @Query("mode") mode?: string,
-  ) {
-    const invoiceMode = mode === "fake" ? "fake" : "real";
-    return this.tax.getPraDashboard(
-      user.organizationId,
-      branchCode?.trim() ?? "",
-      invoiceMode,
-    );
-  }
-
-  @Get("v1/pra/reports")
-  @RequirePermissions("pops.read")
-  praReports(
-    @CurrentUser() user: AccessJwtPayload,
-    @Query("branchCode") branchCode: string,
-    @Query("mode") mode?: string,
-    @Query("period") period?: string,
-    @Query("from") from?: string,
-    @Query("to") to?: string,
-    @Query("status") status?: string,
-  ) {
-    return this.tax.getPraReports(user.organizationId, {
-      branchCode: branchCode?.trim() ?? "",
-      mode,
-      period,
-      from,
-      to,
-      status,
-    });
-  }
-
-  @Get("v1/pra/activity-logs")
-  @RequirePermissions("pops.read")
-  praActivityLogs(
-    @CurrentUser() user: AccessJwtPayload,
-    @Query("branchCode") branchCode: string,
-    @Query("limit") limit?: string,
-  ) {
-    const n = limit ? Number(limit) : 50;
-    return this.tax.listActivityLogs(
-      user.organizationId,
-      branchCode?.trim() ?? "",
-      Number.isFinite(n) ? n : 50,
-    );
-  }
-
-  @Post("v1/pra/retry-failed")
-  @RequirePermissions("pops.read")
-  retryFailed(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.tax.retryFailedInvoices(user.organizationId, body);
-  }
-
   @Get("v1/pra/status")
   @RequirePermissions("pops.read")
   praStatus(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
@@ -175,63 +74,10 @@ export class TaxAuthorityController {
     return this.tax.sendInvoice(user.organizationId, "pra", body);
   }
 
-  @Post("v1/pra/issue-invoice")
-  @RequirePermissions("pops.read")
-  issuePraInvoice(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.tax.issuePraInvoice(user.organizationId, body);
-  }
-
-  @Post("v1/pra/prepare-client-post")
-  @RequirePermissions("pops.read")
-  preparePraClientPost(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.tax.preparePraClientPost(user.organizationId, body);
-  }
-
-  @Post("v1/pra/confirm-client-post")
-  @RequirePermissions("pops.read")
-  confirmPraClientPost(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.tax.confirmPraClientPost(user.organizationId, body);
-  }
-
-  @Get("v1/pra/fiscal-for-source")
-  @RequirePermissions("pops.read")
-  praFiscalForSource(
-    @CurrentUser() user: AccessJwtPayload,
-    @Query("branchCode") branchCode: string,
-    @Query("sourceType") sourceType: string,
-    @Query("sourceId") sourceId: string,
-  ) {
-    const st =
-      sourceType === "store_sale" || sourceType === "pharmacy_sale" || sourceType === "bill"
-        ? sourceType
-        : "bill";
-    return this.tax.getFiscalForSource(
-      user.organizationId,
-      branchCode?.trim() ?? "",
-      st,
-      sourceId?.trim() ?? "",
-    );
-  }
-
   @Get("v1/pra/invoices")
   @RequirePermissions("pops.read")
-  listPraInvoices(
-    @CurrentUser() user: AccessJwtPayload,
-    @Query("branchCode") branchCode: string,
-    @Query("invoiceMode") invoiceMode?: string,
-    @Query("status") status?: string,
-    @Query("from") from?: string,
-    @Query("to") to?: string,
-    @Query("limit") limit?: string,
-  ) {
-    const n = limit ? Number(limit) : 100;
-    return this.tax.listInvoices(user.organizationId, branchCode?.trim() ?? "", "pra", {
-      invoiceMode,
-      status,
-      from,
-      to,
-      limit: Number.isFinite(n) ? n : 100,
-    });
+  listPraInvoices(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.tax.listInvoices(user.organizationId, branchCode?.trim() ?? "", "pra");
   }
 
   @Get("v1/tax-authority/features")
@@ -244,19 +90,11 @@ export class TaxAuthorityController {
   @RequirePermissions("pops.read")
   setFeatures(
     @CurrentUser() user: AccessJwtPayload,
-    @Body()
-    body: {
-      praEnabled?: boolean;
-      praFakeEnabled?: boolean;
-      praRealEnabled?: boolean;
-      fbrEnabled?: boolean;
-    },
+    @Body() body: { praEnabled?: boolean; fbrEnabled?: boolean },
   ) {
-    assertCanManageTaxFeatures(user);
+    assertSuperAdminTaxFeatures(user);
     return this.tax.setFeatures(user.organizationId, {
       praEnabled: typeof body?.praEnabled === "boolean" ? body.praEnabled : undefined,
-      praFakeEnabled: typeof body?.praFakeEnabled === "boolean" ? body.praFakeEnabled : undefined,
-      praRealEnabled: typeof body?.praRealEnabled === "boolean" ? body.praRealEnabled : undefined,
       fbrEnabled: typeof body?.fbrEnabled === "boolean" ? body.fbrEnabled : undefined,
     });
   }
@@ -269,22 +107,7 @@ export class TaxAuthorityController {
 
   @Get("v1/tax-authority/invoices")
   @RequirePermissions("pops.read")
-  listAll(
-    @CurrentUser() user: AccessJwtPayload,
-    @Query("branchCode") branchCode: string,
-    @Query("invoiceMode") invoiceMode?: string,
-    @Query("status") status?: string,
-    @Query("from") from?: string,
-    @Query("to") to?: string,
-    @Query("limit") limit?: string,
-  ) {
-    const n = limit ? Number(limit) : 100;
-    return this.tax.listInvoices(user.organizationId, branchCode?.trim() ?? "", undefined, {
-      invoiceMode,
-      status,
-      from,
-      to,
-      limit: Number.isFinite(n) ? n : 100,
-    });
+  listAll(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.tax.listInvoices(user.organizationId, branchCode?.trim() ?? "");
   }
 }

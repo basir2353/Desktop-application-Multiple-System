@@ -15,7 +15,6 @@ import {
   storeCustomers,
   storeGiftCards,
   storeInventoryTransactions,
-  storeProductBarcodes,
   storeProductKits,
   storeProducts,
   storePurchaseReturnItems,
@@ -58,73 +57,24 @@ export class StoreGroceryService {
   async lookupProduct(organizationId: string, branchCode: string, query: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     const q = query.trim();
-    if (!q) throw new BadRequestException("Query is required");
-
-    let product =
-      (
-        await this.db
-          .select()
-          .from(storeProducts)
-          .where(
-            and(
-              eq(storeProducts.organizationId, organizationId),
-              eq(storeProducts.branchId, branch.id),
-              sql`(${storeProducts.barcode} = ${q} OR ${storeProducts.sku} = ${q} OR lower(${storeProducts.name}) LIKE ${`%${q.toLowerCase()}%`})`,
-            ),
-          )
-          .limit(1)
-      )[0] ?? null;
-
-    if (!product) {
-      const [hit] = await this.db
-        .select({ productId: storeProductBarcodes.productId })
-        .from(storeProductBarcodes)
-        .innerJoin(storeProducts, eq(storeProducts.id, storeProductBarcodes.productId))
-        .where(
-          and(
-            eq(storeProducts.organizationId, organizationId),
-            eq(storeProducts.branchId, branch.id),
-            eq(storeProductBarcodes.code, q),
-          ),
-        )
-        .limit(1);
-      if (hit) {
-        const [row] = await this.db
-          .select()
-          .from(storeProducts)
-          .where(eq(storeProducts.id, hit.productId))
-          .limit(1);
-        product = row ?? null;
-      }
-    }
-
-    if (!product) throw new NotFoundException("Product not found");
-
-    const barcodeRows = await this.db
+    const [product] = await this.db
       .select()
-      .from(storeProductBarcodes)
-      .where(eq(storeProductBarcodes.productId, product.id))
-      .orderBy(sql`${storeProductBarcodes.sortOrder} asc`);
-    const barcodes =
-      barcodeRows.length > 0
-        ? barcodeRows.map((b) => b.code)
-        : product.barcode
-          ? [product.barcode]
-          : [];
-
+      .from(storeProducts)
+      .where(
+        and(
+          eq(storeProducts.organizationId, organizationId),
+          eq(storeProducts.branchId, branch.id),
+          sql`(${storeProducts.barcode} = ${q} OR ${storeProducts.sku} = ${q} OR lower(${storeProducts.name}) LIKE ${`%${q.toLowerCase()}%`})`,
+        ),
+      )
+      .limit(1);
+    if (!product) throw new NotFoundException("Product not found");
     return {
       id: product.id,
       sku: product.sku,
       name: product.name,
       barcode: product.barcode,
-      barcodes,
-      purchasePrice: product.purchasePricePkr,
       sellingPrice: product.sellingPricePkr,
-      salePrice: product.salePricePkr ?? 0,
-      mrpPrice: product.mrpPricePkr ?? 0,
-      wholesalePrice: product.wholesalePricePkr ?? 0,
-      customPrice: product.customPricePkr ?? 0,
-      marketSalePrice: product.marketSalePricePkr ?? 0,
       isWeighed: product.isWeighed === "yes",
       availableStock: product.availableStock,
       priceLabel: product.isWeighed === "yes" ? `${product.sellingPricePkr} / kg` : `${product.sellingPricePkr}`,

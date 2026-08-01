@@ -465,35 +465,12 @@ export class DeliveryService implements OnApplicationBootstrap {
     const ticket = await this.mapTicketWithRider(row);
     const lines = await this.enrichLinesFromMenu(row.branchId, ticket.lines ?? []);
     const contact = this.parseDeliveryContact(row.itemsSummary);
-    // Prefer structured notes address if summary parsing left a phone / empty address.
-    const notesAddress = this.extractAddressFromNotes(this.extractTicketNotes(row.itemsSummary));
-    const addressLooksLikePhone =
-      /^\+?\d[\d\s()-]{5,}$/.test(contact.address.trim()) && !/[a-zA-Z]{2,}/.test(contact.address);
-    const resolvedAddress =
-      !contact.address ||
-      contact.address === "—" ||
-      addressLooksLikePhone
-        ? notesAddress || contact.address
-        : contact.address;
     return {
       ...ticket,
       lines,
       customerName: contact.customer,
-      customerAddress: resolvedAddress || "—",
+      customerAddress: contact.address,
     };
-  }
-
-  /** If notes is plain address (or Delivery · … · address), return the map destination. */
-  private extractAddressFromNotes(notes: string | null | undefined): string {
-    if (!notes?.trim()) return "";
-    const trimmed = notes.trim();
-    if (/^delivery\b/i.test(trimmed) || trimmed.includes("·")) {
-      const parsed = this.parseDeliveryContact(trimmed);
-      if (parsed.address && parsed.address !== "—") return parsed.address;
-    }
-    // Plain address typed into notes
-    if (!/^\+?\d[\d\s()-]{5,}$/.test(trimmed)) return trimmed;
-    return "";
   }
 
   private async enrichLinesFromMenu(
@@ -543,53 +520,19 @@ export class DeliveryService implements OnApplicationBootstrap {
     });
   }
 
-  private parseDeliveryContact(text: string | null | undefined): {
-    customer: string;
-    address: string;
-    phone: string;
-  } {
-    if (!text?.trim()) return { customer: "—", address: "—", phone: "" };
+  private parseDeliveryContact(text: string | null | undefined): { customer: string; address: string } {
+    if (!text?.trim()) return { customer: "—", address: "—" };
 
-    const parts = text.split("·").map((p) => p.trim()).filter(Boolean);
+    const parts = text.split("·").map((p) => p.trim());
     const deliveryIdx = parts.findIndex((p) => p.toLowerCase() === "delivery");
-    const rest = deliveryIdx >= 0 ? parts.slice(deliveryIdx + 1) : [];
-
-    const looksLikePhone = (value: string): boolean =>
-      /^\+?\d[\d\s()-]{5,}$/.test(value.trim()) && !/[a-zA-Z]{2,}/.test(value);
-
-    if (rest.length >= 3) {
-      const customer = rest[0] || "—";
-      if (looksLikePhone(rest[1])) {
-        return {
-          customer,
-          phone: rest[1],
-          address: rest.slice(2).join(" · ") || "—",
-        };
-      }
+    if (deliveryIdx >= 0) {
       return {
-        customer,
-        phone: "",
-        address: rest.slice(1).join(" · ") || "—",
+        customer: parts[deliveryIdx + 1]?.trim() || "—",
+        address: parts[deliveryIdx + 2]?.trim() || "—",
       };
     }
 
-    if (rest.length === 2) {
-      if (looksLikePhone(rest[0]) && !looksLikePhone(rest[1])) {
-        return { customer: "—", phone: rest[0], address: rest[1] };
-      }
-      if (looksLikePhone(rest[1]) && !looksLikePhone(rest[0])) {
-        // Legacy mistaken "name · phone" without address — keep phone aside
-        return { customer: rest[0], phone: rest[1], address: "—" };
-      }
-      return { customer: rest[0] || "—", phone: "", address: rest[1] || "—" };
-    }
-
-    if (rest.length === 1) {
-      if (looksLikePhone(rest[0])) return { customer: "—", phone: rest[0], address: "—" };
-      return { customer: rest[0], phone: "", address: "—" };
-    }
-
-    return { customer: "—", address: "—", phone: "" };
+    return { customer: "—", address: "—" };
   }
 
   private async fetchDeliveryTickets(

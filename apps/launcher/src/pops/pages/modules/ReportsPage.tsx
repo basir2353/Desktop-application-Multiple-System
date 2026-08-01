@@ -11,6 +11,7 @@ import { fieldInputClass } from "../../lib/themeClasses";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
 import { ModuleFilterBar } from "../../ui/ModuleToolbar";
+import { CashReportPanel } from "./CashReportPanel";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -99,6 +100,36 @@ export function ReportsPage(): JSX.Element {
   }
 
   const rows = reportQuery.data?.rows ?? [];
+  const isCashReport = activeId === "cash-report";
+
+  const moneyTotalKeys = new Set([
+    "amount",
+    "value",
+    "discount",
+    "variance",
+    "counted",
+    "outstanding",
+    "payments",
+    "delivery",
+    "serviceCharges",
+    "deliveryCharges",
+    "tax16",
+    "tax8",
+    "taxOther",
+    "canceledOrders",
+    "cashReceived",
+    "remainingCash",
+    "cardReceived",
+    "walletReceived",
+    "bankReceived",
+    "salary",
+    "advances",
+    "remaining",
+    "sales",
+    "debit",
+    "credit",
+    "balance",
+  ]);
 
   return (
     <div className="space-y-4">
@@ -204,7 +235,7 @@ export function ReportsPage(): JSX.Element {
                   : null}
               </p>
             </div>
-            {reportQuery.data?.totals ? (
+            {reportQuery.data?.totals && !isCashReport ? (
               <div className="flex flex-wrap gap-2">
                 {Object.entries(reportQuery.data.totals).map(([k, v]) => (
                   <div
@@ -213,15 +244,7 @@ export function ReportsPage(): JSX.Element {
                   >
                     <span className="uppercase text-slate-500">{k}</span>{" "}
                     <span className="font-semibold text-slate-800 dark:text-slate-100">
-                      {k.includes("amount") ||
-                      k.includes("value") ||
-                      k.includes("discount") ||
-                      k.includes("variance") ||
-                      k.includes("counted") ||
-                      k.includes("outstanding") ||
-                      k.includes("bills") ||
-                      k.includes("payments") ||
-                      k.includes("delivery")
+                      {moneyTotalKeys.has(k) || k.includes("amount") || k.includes("value")
                         ? formatPkr(v)
                         : v.toLocaleString()}
                     </span>
@@ -242,6 +265,17 @@ export function ReportsPage(): JSX.Element {
               No data for this report in the selected range. New companies stay empty until sales, cash
               sessions, or expenses are recorded.
             </p>
+          ) : isCashReport && reportQuery.data && branch?.code ? (
+            <div className="mt-4">
+              <CashReportPanel
+                report={reportQuery.data}
+                branchCode={branch.code}
+                from={from}
+                to={to}
+                fromTime={fromTime}
+                toTime={toTime}
+              />
+            </div>
           ) : (
             <div className="mt-4">
               <SimpleTable

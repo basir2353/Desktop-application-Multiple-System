@@ -4,6 +4,7 @@ import { z } from "zod";
 export const RESTAURANT_REPORT_DEFS = [
   { id: "sales-by-item", name: "Sales by item", category: "Sales" },
   { id: "cashier-out", name: "Cashier out", category: "Cash" },
+  { id: "cash-report", name: "Cash received method", category: "Cash" },
   { id: "sales-by-kitchen", name: "Sales by kitchen", category: "Sales" },
   { id: "sales-by-employee", name: "Sales by employee", category: "Sales" },
   { id: "sales-by-order-type", name: "Sales by order type", category: "Sales" },
@@ -19,6 +20,8 @@ export const RESTAURANT_REPORT_DEFS = [
   { id: "kitchen-printing-logs", name: "Kitchen printing logs", category: "Kitchen" },
   { id: "kitchen-missing-log", name: "Kitchen missing log", category: "Kitchen" },
   { id: "table-server-change", name: "Table server change", category: "Operations" },
+  { id: "customer-ledger", name: "Customer ledger", category: "Ledgers" },
+  { id: "employee-ledger", name: "Employees ledger", category: "Ledgers" },
   { id: "vendor-ledger", name: "Vendor ledger", category: "Vendors" },
   { id: "vendors-balance", name: "All vendor list with balance", category: "Vendors" },
   { id: "ingredients-usage", name: "Ingredients usage", category: "Inventory" },
@@ -36,6 +39,8 @@ export const restaurantReportRowSchema = z.object({
   debit: z.number().optional(),
   credit: z.number().optional(),
   balance: z.number().optional(),
+  /** Stable section id for cash-report cards / drill-down (e.g. serviceCharges). */
+  section: z.string().optional(),
 }).passthrough();
 
 export const restaurantReportSchema = z.object({

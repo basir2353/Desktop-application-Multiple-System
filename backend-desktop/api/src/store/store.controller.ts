@@ -16,7 +16,6 @@ import {
   validateStoreCouponSchema,
   validateStoreGiftCardSchema,
   updateStoreCustomerTierSchema,
-  updateStoreProductSchema,
   createStorePurchaseOrderSchema,
   createStorePurchaseRequisitionSchema,
   createStoreSaleSchema,
@@ -42,7 +41,7 @@ import { StoreGroceryService } from "./store-grocery.service";
 
 @Controller("v1/store")
 @UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
-@RequireSystemType("general_store")
+@RequireSystemType("general_store", "grocery", "retail")
 export class StoreController {
   constructor(
     private readonly store: StoreService,
@@ -101,16 +100,6 @@ export class StoreController {
   @RequirePermissions("pops.inventory.manage")
   createProduct(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.store.createProduct(user.organizationId, createStoreProductSchema.parse(body));
-  }
-
-  @Patch("products/:productId")
-  @RequirePermissions("pops.inventory.manage")
-  updateProduct(
-    @CurrentUser() user: AccessJwtPayload,
-    @Param("productId") productId: string,
-    @Body() body: unknown,
-  ) {
-    return this.store.updateProduct(user.organizationId, productId, updateStoreProductSchema.parse(body));
   }
 
   @Delete("products/:productId")

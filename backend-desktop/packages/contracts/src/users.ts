@@ -23,11 +23,6 @@ export const roleTemplateSchema = z.object({
   label: z.string(),
   permissions: z.array(z.string()),
   capabilities: z.record(z.string(), capabilityAccessSchema),
-  /**
-   * Default sidebar pages for new users of this role.
-   * `null` / omitted = all pages allowed by module permissions.
-   */
-  navAllowlist: z.array(z.string()).nullable().optional(),
 });
 
 export const orgUserSchema = z.object({
@@ -189,7 +184,6 @@ export const POPS_ROLE_TEMPLATES: RoleTemplate[] = [
     label: "Manager",
     permissions: [
       "pops.read",
-      "pops.users.manage",
       "pops.menu.manage",
       "pops.inventory.manage",
       "pops.hr.manage",
@@ -212,13 +206,11 @@ export const POPS_ROLE_TEMPLATES: RoleTemplate[] = [
   {
     id: "cashier",
     label: "Cashier",
-    /** POS + add-only menu/tables. No reports, settings, void, discount, or closing by default. */
-    permissions: ["pops.read", "pops.menu.create"],
-    navAllowlist: ["pos", "tables", "menu"],
+    permissions: ["pops.read", "pops.pos.void", "pops.pos.discount", "pops.closing.report"],
     capabilities: {
-      "pops.pos.void": "deny",
-      "pops.pos.discount": "deny",
-      "pops.closing.report": "deny",
+      "pops.pos.void": "pin",
+      "pops.pos.discount": "pin",
+      "pops.closing.report": "pin",
       "pops.kitchen.bump": "deny",
     },
   },
@@ -274,54 +266,15 @@ export function permissionsForPopsRole(role: string): string[] {
   return template?.permissions ?? ["pops.read"];
 }
 
-/** Default nav allowlist for a role (`null` = all permission-gated pages). */
-export function navAllowlistForPopsRole(role: string): string[] | null {
-  const template = POPS_ROLE_TEMPLATES.find((r) => r.id === role);
-  if (!template || template.navAllowlist === undefined) return null;
-  return template.navAllowlist == null ? null : [...template.navAllowlist];
-}
-
-export function accessDefaultsForPopsRole(role: string): {
-  permissions: string[];
-  navAllowlist: string[] | null;
-} {
-  return {
-    permissions: permissionsForPopsRole(role),
-    navAllowlist: navAllowlistForPopsRole(role),
-  };
-}
-
 export function canManageOrgUsers(permissions: readonly string[]): boolean {
   return permissions.includes("*") || permissions.includes("pops.users.manage");
-}
-
-/** Full menu/tables mutate (edit + delete), or admin wildcard. */
-export function canManageMenuCatalog(permissions: readonly string[]): boolean {
-  return permissions.includes("*") || permissions.includes("pops.menu.manage");
-}
-
-/** Add menu items / tables (create-only or full manage). */
-export function canCreateMenuCatalog(permissions: readonly string[]): boolean {
-  return (
-    canManageMenuCatalog(permissions) ||
-    permissions.includes("pops.menu.create")
-  );
 }
 
 /** Module toggles for Head Office access control (maps to JWT permission strings). */
 export const POPS_MODULE_ACCESS: { id: string; label: string; description: string }[] = [
   { id: "pops.read", label: "ERP access", description: "Sign in and use basic restaurant modules" },
   { id: "pops.users.manage", label: "Users & access", description: "Create and edit other users" },
-  {
-    id: "pops.menu.create",
-    label: "Menu & tables (add only)",
-    description: "Add menu items and tables — no edit or delete",
-  },
-  {
-    id: "pops.menu.manage",
-    label: "Menu & tables (full)",
-    description: "Add, edit, and delete menu items, categories, and tables",
-  },
+  { id: "pops.menu.manage", label: "Menu", description: "Edit menu, categories, and pricing" },
   { id: "pops.inventory.manage", label: "Inventory", description: "Stock, purchases, and adjustments" },
   { id: "pops.accounting.manage", label: "Accounting", description: "Ledgers, expenses, and finance reports" },
   { id: "pops.hr.manage", label: "HR & payroll", description: "Employees, attendance, and payroll" },

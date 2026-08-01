@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -60,19 +59,7 @@ export class BillingController {
   @Post("bills")
   @RequirePermissions("pops.read")
   createBill(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    let input: ReturnType<typeof createBillSchema.parse>;
-    try {
-      input = createBillSchema.parse(body);
-    } catch (err) {
-      const message =
-        err && typeof err === "object" && "issues" in err
-          ? (err as { issues: Array<{ message?: string }> }).issues
-              .map((i) => i.message)
-              .filter(Boolean)
-              .join("; ")
-          : "Invalid bill payload";
-      throw new BadRequestException(message || "Invalid bill payload");
-    }
+    const input = createBillSchema.parse(body);
     // Waiters / riders may only park bills on hold — cashier/manager closes payment.
     if (
       (user.role === "waiter" || user.role === "rider") &&

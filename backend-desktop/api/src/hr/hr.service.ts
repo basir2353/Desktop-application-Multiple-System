@@ -266,7 +266,8 @@ export class HrService implements OnModuleInit {
         employeeCode: code,
         displayName: m.email.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
         jobTitle: m.role.charAt(0).toUpperCase() + m.role.slice(1),
-        baseSalaryPkr: 240_000,
+        // No fake default — set real salary via Edit employee after sync.
+        baseSalaryPkr: 0,
         joinDate: new Date().toISOString().slice(0, 10),
         email: m.email,
       });

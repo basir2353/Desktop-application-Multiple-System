@@ -43,14 +43,7 @@ export const billLineSchema = z.object({
   label: z.string(),
   qty: z.number().int().positive(),
   unitPrice: z.number().int().nonnegative(),
-  // Drop invalid ids instead of 400 — POS may send local/non-uuid menu ids.
-  menuItemId: z.preprocess((value) => {
-    if (typeof value !== "string") return undefined;
-    const id = value.trim();
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
-      ? id
-      : undefined;
-  }, z.string().uuid().optional()),
+  menuItemId: z.string().uuid().optional(),
 });
 
 export const billStatusSchema = z.enum(["held", "completed", "void", "open"]);
@@ -77,11 +70,6 @@ export const billSchema = z.object({
   riderName: z.string().nullable(),
   deliveryChargePkr: z.number(),
   status: billStatusSchema,
-  praMode: z.enum(["fake", "real"]).nullable().optional(),
-  praInvoiceNumber: z.string().nullable().optional(),
-  praInvoiceId: z.string().nullable().optional(),
-  praQrPayload: z.string().nullable().optional(),
-  praIssuedAt: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 

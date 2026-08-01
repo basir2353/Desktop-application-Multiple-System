@@ -621,8 +621,7 @@ export class BillingService implements OnApplicationBootstrap {
     total: number,
   ): void {
     const paid = payments.reduce((s, p) => s + p.amount, 0);
-    // Allow 1 PKR rounding drift between client/server tax math.
-    if (paid + 1 < total) {
+    if (paid < total) {
       throw new BadRequestException(`Payments (Rs ${paid}) do not cover bill total (Rs ${total})`);
     }
   }
@@ -676,11 +675,6 @@ export class BillingService implements OnApplicationBootstrap {
       riderName,
       deliveryChargePkr: row.deliveryChargePkr,
       status: row.status as "held" | "completed" | "void" | "open",
-      praMode: row.praMode === "fake" || row.praMode === "real" ? row.praMode : null,
-      praInvoiceNumber: row.praInvoiceNumber ?? null,
-      praInvoiceId: row.praInvoiceId ?? null,
-      praQrPayload: row.praQrPayload ?? null,
-      praIssuedAt: row.praIssuedAt ? row.praIssuedAt.toISOString() : null,
       createdAt: row.createdAt.toISOString(),
     };
   }

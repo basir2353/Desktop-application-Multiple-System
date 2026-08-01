@@ -33,12 +33,5 @@ export const popsBills = pgTable("pops_bills", {
   deliveryChargePkr: integer("delivery_charge_pkr").notNull().default(0),
   status: text("status").notNull().default("open"),
   inventoryDeductedAt: timestamp("inventory_deducted_at", { withTimezone: true }),
-  /** fake | real — which PRA path was issued for this bill. */
-  praMode: text("pra_mode"),
-  praInvoiceNumber: text("pra_invoice_number"),
-  /** Internal / fiscal reference id shown on the PRA slip. */
-  praInvoiceId: text("pra_invoice_id"),
-  praQrPayload: text("pra_qr_payload"),
-  praIssuedAt: timestamp("pra_issued_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -1,4 +1,4 @@
-import { boolean, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
 
@@ -46,6 +46,7 @@ export const taxAuthorityProfiles = pgTable(
     praTokenExpiresAt: timestamp("pra_token_expires_at", { withTimezone: true }),
     praConnectedAt: timestamp("pra_connected_at", { withTimezone: true }),
     praLastError: text("pra_last_error"),
+<<<<<<< Updated upstream
     /** Last successful PRA token acquisition / refresh. */
     praLastTokenRefreshAt: timestamp("pra_last_token_refresh_at", { withTimezone: true }),
     /** Last successful PRA invoice submission. */
@@ -59,6 +60,8 @@ export const taxAuthorityProfiles = pgTable(
     praRetryFailed: boolean("pra_retry_failed").notNull().default(true),
     /** Cap for automatic retries. */
     praMaxRetryAttempts: integer("pra_max_retry_attempts").notNull().default(3),
+=======
+>>>>>>> Stashed changes
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -78,8 +81,11 @@ export const taxAuthorityInvoices = pgTable(
       .notNull()
       .references(() => popsBranches.id, { onDelete: "cascade" }),
     authority: text("authority").notNull(),
+<<<<<<< Updated upstream
     /** fake | real — distinguishes FPRA slips from live e-IMS submits. */
     invoiceMode: text("invoice_mode").notNull().default("real"),
+=======
+>>>>>>> Stashed changes
     sourceType: text("source_type").notNull(),
     sourceId: uuid("source_id").notNull(),
     sourceRef: text("source_ref").notNull(),
@@ -100,12 +106,12 @@ export const taxAuthorityInvoices = pgTable(
     uniqueIndex("tax_authority_invoices_source_uidx").on(
       t.organizationId,
       t.authority,
-      t.invoiceMode,
       t.sourceType,
       t.sourceId,
     ),
   ],
 );
+<<<<<<< Updated upstream
 
 /** Audit trail for PRA connect / submit / retry events. */
 export const taxAuthorityActivityLogs = pgTable("tax_authority_activity_logs", {
@@ -124,3 +130,5 @@ export const taxAuthorityActivityLogs = pgTable("tax_authority_activity_logs", {
   metaJson: text("meta_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+=======
+>>>>>>> Stashed changes
