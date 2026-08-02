@@ -86,13 +86,13 @@ export function SuperAdminSecurityPage(): JSX.Element {
         </p>
       ) : null}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
         <h3 className="text-sm font-semibold">Users per business</h3>
         <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {byBusiness.map(([name, count]) => (
             <li
               key={name}
-              className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm dark:border-slate-800"
+              className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm dark:border-white/10"
             >
               <span className="truncate pr-2">{name}</span>
               <span className="font-semibold">{count}</span>
@@ -105,10 +105,10 @@ export function SuperAdminSecurityPage(): JSX.Element {
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder="Filter users…"
-        className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+        className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#070D18]"
       />
 
-      <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900/60">
+      <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white dark:divide-slate-800 border-slate-200 bg-white">
         {rows.slice(0, 80).map((u) => {
           const active = u.status === "active" && u.active !== false;
           return (
@@ -122,7 +122,7 @@ export function SuperAdminSecurityPage(): JSX.Element {
                 {u.businessId ? (
                   <Link
                     to={`/super-admin/businesses/${u.businessId}`}
-                    className="text-xs text-amber-700 hover:underline dark:text-amber-400"
+                    className="text-xs font-medium text-teal-700 hover:underline dark:text-teal-300"
                   >
                     Open business
                   </Link>
@@ -153,7 +153,7 @@ export function SuperAdminSecurityPage(): JSX.Element {
 
       {resetFor ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md space-y-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+          <div className="w-full max-w-md space-y-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-white/15 dark:bg-[#111827]">
             <h3 className="font-semibold">Reset password</h3>
             <input
               type="password"
@@ -196,7 +196,7 @@ function Stat({
       className={`rounded-xl border p-4 ${
         warn
           ? "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
-          : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"
+          : "border-slate-200 bg-white border-slate-200 bg-white"
       }`}
     >
       <p className="text-sm text-slate-500">{label}</p>

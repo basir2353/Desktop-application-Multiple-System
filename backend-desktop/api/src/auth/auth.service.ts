@@ -212,11 +212,19 @@ export class AuthService implements OnModuleInit {
         .returning({ id: organizations.id });
       orgId = org?.id;
     } else {
+      // Respect Super Admin soft-delete — never resurrect LIC-DEMO-* orgs on API boot.
+      const existing = await this.db
+        .select({ id: organizations.id, status: organizations.status })
+        .from(organizations)
+        .where(eq(organizations.id, orgId))
+        .limit(1);
+      if (existing[0]?.status === "deleted") {
+        return;
+      }
       await this.db
         .update(organizations)
         .set({
           name: input.name,
-          status: "active",
           licencePlan: "demo",
           updatedAt: new Date(),
         })
@@ -425,14 +433,15 @@ export class AuthService implements OnModuleInit {
     let org = row0.org;
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
-      // Only auto-restore dedicated seed demo orgs (LIC-DEMO-*), never Super Admin soft-deletes.
+      // Soft-deleted businesses stay deleted (Super Admin Delete). Only reactivate
+      // suspended/inactive seed demos on login — never status "deleted".
       const isSeedDemoOrg =
         typeof org.licenceKey === "string" && org.licenceKey.toUpperCase().startsWith("LIC-DEMO-");
       const isDemoEmail =
         normalizedEmail.endsWith("@pops.demo") ||
         normalizedEmail ===
           (this.config.get<string>("SEED_USER_EMAIL") ?? "admin.restaurant@pops.demo").toLowerCase();
-      if (isSeedDemoOrg && isDemoEmail) {
+      if (org.status !== "deleted" && isSeedDemoOrg && isDemoEmail) {
         const [restored] = await this.db
           .update(organizations)
           .set({ status: "active", updatedAt: new Date() })

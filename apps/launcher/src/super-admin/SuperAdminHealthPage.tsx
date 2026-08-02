@@ -55,7 +55,7 @@ export function SuperAdminHealthPage(): JSX.Element {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">API base URL</p>
           <p className="mt-2 break-all font-mono text-sm">{apiBase}</p>
         </div>
@@ -80,7 +80,7 @@ export function SuperAdminHealthPage(): JSX.Element {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
         <p className="text-sm font-semibold">Maintenance banner (public-info)</p>
         <p className={`mt-1 text-sm ${mutedClass}`}>
           {banner?.trim()
@@ -93,7 +93,7 @@ export function SuperAdminHealthPage(): JSX.Element {
       </div>
 
       {h?.body ? (
-        <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-950 p-4 text-xs text-slate-200 dark:border-slate-800">
+        <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-900 p-4 text-xs text-slate-100 dark:border-white/10 dark:bg-[#070D18]">
           {h.body}
         </pre>
       ) : null}

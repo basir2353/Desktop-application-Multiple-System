@@ -10,6 +10,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import type {
   CreateAttendance,
   CreateEmployee,
+  CreateEmployeeAdvance,
   CreateHrPayrollRun,
   CreateLeaveRequest,
   CreateStaffFood,
@@ -670,6 +671,110 @@ export class HrService implements OnModuleInit {
         ),
       );
     return this.getPayrollRun(organizationId, payrollId);
+  }
+
+  /**
+   * Record a salary advance from HR (payroll UI +).
+   * Optional sessionId also posts a cash drawer paid_out; otherwise ledger-only.
+   */
+  async createEmployeeAdvance(
+    organizationId: string,
+    userEmail: string,
+    input: CreateEmployeeAdvance,
+  ) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const [emp] = await this.db
+      .select()
+      .from(popsEmployees)
+      .where(
+        and(
+          eq(popsEmployees.id, input.employeeId),
+          eq(popsEmployees.organizationId, organizationId),
+          eq(popsEmployees.branchId, branch.id),
+        ),
+      )
+      .limit(1);
+    if (!emp) throw new NotFoundException("Employee not found on this branch");
+    if (emp.employmentStatus === "terminated") {
+      throw new BadRequestException("Cannot advance a terminated employee");
+    }
+
+    const reason = (input.reason?.trim() || `Employee advance: ${emp.displayName}`).slice(0, 500);
+    const amountPkr = Math.round(input.amountPkr);
+    if (amountPkr <= 0) throw new BadRequestException("Advance amount must be positive");
+
+    const openAdvances = await this.db
+      .select()
+      .from(popsEmployeeAdvances)
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, organizationId),
+          eq(popsEmployeeAdvances.employeeId, emp.id),
+          inArray(popsEmployeeAdvances.status, ["open", "reserved"]),
+        ),
+      );
+    const alreadyOut = openAdvances.reduce((s, a) => s + a.amountPkr, 0);
+    const salaryCap = Math.max(0, emp.baseSalaryPkr);
+    if (alreadyOut + amountPkr > salaryCap) {
+      const remaining = Math.max(0, salaryCap - alreadyOut);
+      throw new BadRequestException(
+        `Advance cannot exceed base salary (${salaryCap.toLocaleString()} PKR). ` +
+          `Already outstanding ${alreadyOut.toLocaleString()} PKR — max new advance ${remaining.toLocaleString()} PKR.`,
+      );
+    }
+
+    if (input.sessionId) {
+      const movement = await this.accounting.recordCashMovement(organizationId, userEmail, {
+        branchCode: input.branchCode,
+        sessionId: input.sessionId,
+        type: "paid_out",
+        amountPkr,
+        reason: `Employee advance: ${emp.displayName} — ${reason}`,
+        partyKind: "employee",
+        employeeId: emp.id,
+        asAdvance: true,
+        clientRequestId: input.clientRequestId,
+      });
+      if (movement.advanceId) {
+        const [advance] = await this.db
+          .select()
+          .from(popsEmployeeAdvances)
+          .where(eq(popsEmployeeAdvances.id, movement.advanceId))
+          .limit(1);
+        if (advance) return this.mapAdvance(advance, emp);
+      }
+    }
+
+    if (input.clientRequestId) {
+      const [existing] = await this.db
+        .select()
+        .from(popsEmployeeAdvances)
+        .where(
+          and(
+            eq(popsEmployeeAdvances.organizationId, organizationId),
+            eq(popsEmployeeAdvances.clientRequestId, input.clientRequestId),
+          ),
+        )
+        .limit(1);
+      if (existing) return this.mapAdvance(existing, emp);
+    }
+
+    const [advance] = await this.db
+      .insert(popsEmployeeAdvances)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        employeeId: emp.id,
+        amountPkr,
+        reason,
+        cashMovementId: null,
+        status: "open",
+        clientRequestId: input.clientRequestId ?? null,
+        recordedBy: userEmail,
+      })
+      .returning();
+    if (!advance) throw new BadRequestException("Failed to record advance");
+    return this.mapAdvance(advance, emp);
   }
 
   /** Open (and optionally reserved) salary advances for payroll planning. */

@@ -41,6 +41,7 @@ export async function createCloudPrintJob(input: {
   branchCode: string;
   printerName?: string | null;
   orderId?: string | null;
+  userId?: string | null;
   payload: PrintJobPayload;
   deviceLabel?: string;
 }): Promise<{ ok: boolean; jobId?: string; error?: string }> {
@@ -48,6 +49,7 @@ export async function createCloudPrintJob(input: {
     branchCode: input.branchCode,
     printerName: input.printerName ?? null,
     orderId: input.orderId ?? null,
+    userId: input.userId ?? null,
     deviceLabel: input.deviceLabel ?? "waiter-mobile",
     payload: input.payload,
   };

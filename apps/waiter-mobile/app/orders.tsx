@@ -27,11 +27,11 @@ import { kitchenTicketTotal } from "../src/lib/orderHistory";
 import { printCartBill, printKitchenOrder } from "../src/lib/printBill";
 import { inferOrderModeFromStation } from "../src/lib/orderMode";
 import { resolveStaffRole } from "../src/lib/roles";
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS } from "../src/lib/posTaxSettings";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-const SERVICE_PCT = 10;
-const TAX_PCT = 15;
+const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -109,9 +109,7 @@ export default function OrdersScreen() {
       lines.length > 0
         ? lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0)
         : kitchenTicketTotal(ticket, menuItems) ?? 0;
-    const service = Math.round(subtotal * (SERVICE_PCT / 100));
-    const tax = Math.round((subtotal + service) * (TAX_PCT / 100));
-    const total = subtotal + service + tax;
+    const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
     const ok = await printCartBill({
       branchName: branch.name,
       branchCode: branch.code,
@@ -123,11 +121,17 @@ export default function OrdersScreen() {
           ? lines
           : [{ label: ticket.itemsSummary || "Order", qty: 1, unitPrice: subtotal }],
       subtotal,
-      service,
-      servicePct: SERVICE_PCT,
-      tax,
-      taxPct: TAX_PCT,
-      total,
+      service: totals.service,
+      servicePct: totals.servicePct,
+      tax: totals.tax,
+      taxPct: totals.taxPct,
+      total: totals.total,
+      cashTaxPct: totals.cashTaxPct,
+      cardTaxPct: totals.cardTaxPct,
+      cashTax: totals.cashTax,
+      cardTax: totals.cardTax,
+      cashTotal: totals.cashTotal,
+      cardTotal: totals.cardTotal,
     });
     setPrintingId(null);
     setNotice(ok ? `Bill sent for ${orderRefFromTicket(ticket)}.` : `Could not print bill.`);
@@ -224,7 +228,7 @@ export default function OrdersScreen() {
                       borderRadius: 8,
                       borderWidth: 1,
                       borderColor: colors.border,
-                      backgroundColor: "#0b1220",
+                      backgroundColor: colors.bg,
                       paddingHorizontal: 14,
                       paddingVertical: 10,
                       opacity: isPrinting ? 0.6 : 1,
@@ -257,8 +261,8 @@ export default function OrdersScreen() {
                       style={{
                         borderRadius: 8,
                         borderWidth: 1,
-                        borderColor: "rgba(245, 158, 11, 0.45)",
-                        backgroundColor: "rgba(245, 158, 11, 0.12)",
+                        borderColor: "rgba(15, 118, 110, 0.45)",
+                        backgroundColor: "rgba(15, 118, 110, 0.12)",
                         paddingHorizontal: 14,
                         paddingVertical: 10,
                       }}

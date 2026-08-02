@@ -363,6 +363,19 @@ export const orgAlertSchema = z.object({
   dismissedAt: z.string().nullable(),
 });
 
+/** Super Admin: wipe all transactional data; keep setup (users, menu, catalogue). */
+export const resetBusinessTransactionsSchema = z.object({
+  confirmName: z.string().min(1),
+});
+
+export const resetBusinessTransactionsResultSchema = z.object({
+  ok: z.literal(true),
+  businessId: z.string().uuid(),
+  businessName: z.string(),
+  deletedRows: z.number().int().nonnegative(),
+  wipedTables: z.array(z.string()),
+});
+
 export const platformUserSchema = z.object({
   id: z.string().uuid(),
   name: z.string().nullable(),
@@ -375,6 +388,12 @@ export const platformUserSchema = z.object({
   status: z.string(),
   active: z.boolean(),
   createdAt: z.string(),
+  /**
+   * Last password written by Super Admin / staff-create flows.
+   * Null when unknown (user self-changed, or account older than this field).
+   * Super Admin View only — not used by tenant apps.
+   */
+  lastSetPassword: z.string().nullable().optional().default(null),
 });
 
 export const resetPlatformUserPasswordSchema = z.object({
@@ -434,6 +453,10 @@ export type MonthlyLicenceStatus = z.infer<typeof monthlyLicenceStatusSchema>;
 export type SendLicenceReminders = z.infer<typeof sendLicenceRemindersSchema>;
 export type LicenceReminderResult = z.infer<typeof licenceReminderResultSchema>;
 export type OrgAlert = z.infer<typeof orgAlertSchema>;
+export type ResetBusinessTransactions = z.infer<typeof resetBusinessTransactionsSchema>;
+export type ResetBusinessTransactionsResult = z.infer<
+  typeof resetBusinessTransactionsResultSchema
+>;
 export type PlatformUser = z.infer<typeof platformUserSchema>;
 export type UpdatePlatformUser = z.infer<typeof updatePlatformUserSchema>;
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;

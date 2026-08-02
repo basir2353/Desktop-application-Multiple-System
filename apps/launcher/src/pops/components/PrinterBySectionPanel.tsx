@@ -12,6 +12,7 @@ import {
   clearSectionRouting,
   movePrinterPriority,
   PRINTER_TYPE_LABELS,
+  printerTypesForSectionName,
   togglePrinterForSection,
   toggleUserForSection,
   toggleUserPrinter,
@@ -434,8 +435,13 @@ export function PrinterBySectionPanel({
                           className="rounded-md border border-slate-800 px-2.5 py-1.5 text-left text-xs text-slate-300 hover:border-amber-500/40 hover:text-white"
                           onClick={() => {
                             togglePrinterForSection(branchCode, selected.id, p.id, true);
-                            for (const userId of getUsersForSection(branchCode, selected.id)) {
-                              toggleUserPrinter(branchCode, userId, p.id, true);
+                            const allowed = new Set(
+                              printerTypesForSectionName(selected.id, selected.name),
+                            );
+                            if (allowed.has(p.printerType)) {
+                              for (const userId of getUsersForSection(branchCode, selected.id)) {
+                                toggleUserPrinter(branchCode, userId, p.id, true);
+                              }
                             }
                             notify(`Added ${p.name} to ${selected.name}.`);
                           }}

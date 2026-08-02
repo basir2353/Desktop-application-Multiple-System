@@ -18,7 +18,13 @@ import {
   Title,
   colors,
 } from "../src/components/ui";
-import { formatPkr, salesMetricsFromOrders } from "../src/lib/orderSales";
+import {
+  currentBusinessDateKey,
+  filterOrdersByDate,
+  formatPkr,
+  ownerDashboardFromOrders,
+  salesMetricsFromOrders,
+} from "../src/lib/orderSales";
 import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -88,6 +94,11 @@ export default function AdminHomeScreen() {
 
   const orderSales = useMemo(
     () => salesMetricsFromOrders(ordersQuery.data ?? []),
+    [ordersQuery.data],
+  );
+
+  const todayOwnerMetrics = useMemo(
+    () => ownerDashboardFromOrders(filterOrdersByDate(ordersQuery.data ?? [], currentBusinessDateKey())),
     [ordersQuery.data],
   );
 
@@ -225,6 +236,58 @@ export default function AdminHomeScreen() {
             }
           />
         </View>
+
+        <Subtitle>Today — owner summary</Subtitle>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <StatCard
+            label="Total Sales"
+            value={ordersQuery.isLoading ? "…" : formatPkr(todayOwnerMetrics.totalSales)}
+            hint={`${todayOwnerMetrics.orderCount} orders`}
+            accent={colors.success}
+          />
+          <StatCard
+            label="Total Discount"
+            value={formatPkr(todayOwnerMetrics.totalDiscount)}
+            hint="Given today"
+          />
+        </View>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <StatCard
+            label="Service charges"
+            value={formatPkr(todayOwnerMetrics.totalServiceCharges)}
+            hint="Collected"
+          />
+          <StatCard
+            label="Delivery charges"
+            value={formatPkr(todayOwnerMetrics.totalDeliveryCharges)}
+            hint="Collected"
+          />
+        </View>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <StatCard
+            label="Cash payments"
+            value={formatPkr(todayOwnerMetrics.cashPayments)}
+            hint="Today"
+          />
+          <StatCard
+            label="Card payments"
+            value={formatPkr(todayOwnerMetrics.cardPayments)}
+            hint="Today"
+          />
+        </View>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <StatCard
+            label="Cash tax"
+            value={formatPkr(todayOwnerMetrics.cashTaxCollected)}
+            hint="Collected"
+          />
+          <StatCard
+            label="Card tax"
+            value={formatPkr(todayOwnerMetrics.cardTaxCollected)}
+            hint="Collected"
+          />
+        </View>
+
         <View style={{ flexDirection: "row", gap: 10 }}>
           <StatCard
             label="Kitchen"
@@ -312,6 +375,34 @@ export default function AdminHomeScreen() {
           title="Live orders"
           subtitle="Bills · kitchen queue · advance tickets"
           onPress={() => router.push("/admin-orders")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="💵"
+          title="Cash drawer"
+          subtitle="Cashier In · Pay In · Cashier Out"
+          onPress={() => router.push("/admin-cash")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="💸"
+          title="Pay Out"
+          subtitle="Supplier · Customer · Employee · Expense"
+          onPress={() => router.push("/admin-payout")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="📒"
+          title="Ledgers"
+          subtitle="Vendor pay · Customer receive · invoices"
+          onPress={() => router.push("/admin-ledger")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="📊"
+          title="Reports"
+          subtitle="Cash · Customer · party balances"
+          onPress={() => router.push("/admin-reports")}
           variant="primary"
         />
         <ActionTile

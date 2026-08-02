@@ -12,6 +12,27 @@ import { saveThermalPrintSettings } from "./thermalPrintSettings";
 
 export type PrinterPaperSize = "58mm" | "80mm" | "100mm" | "A4" | "custom";
 
+/** Slip text size on this printer (KOT / receipt). */
+export type PrinterTextScale = "S" | "M" | "L";
+
+export const PRINTER_TEXT_SCALE_LABELS: Record<PrinterTextScale, string> = {
+  S: "Small",
+  M: "Medium",
+  L: "Large",
+};
+
+export function normalizePrinterTextScale(raw: unknown): PrinterTextScale {
+  const t = String(raw ?? "").toUpperCase();
+  if (t === "S" || t === "L") return t;
+  return "M";
+}
+
+export function printerTextScaleFactor(scale: PrinterTextScale | undefined): number {
+  if (scale === "S") return 0.85;
+  if (scale === "L") return 1.2;
+  return 1;
+}
+
 /** Logical role of a printer profile (restaurant + general-store). */
 export type PrinterType =
   | "kitchen"
@@ -82,6 +103,8 @@ export type PrinterProfile = {
   assignedUserId?: string;
   copies: number;
   paperSize: PrinterPaperSize;
+  /** Slip text size for this printer (S / M / L). */
+  textScale: PrinterTextScale;
   autoCut: boolean;
 };
 
@@ -140,6 +163,7 @@ function normalizeProfile(raw: Partial<PrinterProfile> & Pick<PrinterProfile, "i
       raw.paperSize === "custom"
         ? raw.paperSize
         : "80mm",
+    textScale: normalizePrinterTextScale(raw.textScale),
     autoCut: raw.autoCut !== false,
   };
 }
@@ -245,6 +269,7 @@ export function addPrinterProfile(
     assignedCounter: extra?.assignedCounter,
     copies: 1,
     paperSize: "80mm",
+    textScale: "M",
     autoCut: true,
   };
   saveState(branchCode, { ...state, printers: [...state.printers, profile] });
@@ -494,7 +519,12 @@ export function resolvePrinterForUser(
 }
 
 /**
- * Best printer for a KOT job: section assignment → user kitchen/bar → branch kitchen default.
+ * Best printer for a KOT job.
+ * When `sectionId` is set: ONLY printers explicitly assigned to that section
+ * (never fall back to “any kitchen printer” — that made one assign look global).
+ * When `sectionId` is null (no category routing): user typed printer → system
+ * kitchen/bar section primary → orphan type default (not linked to any section).
+ * Never steal a printer that belongs only to Grill/Waiter/etc.
  */
 export function resolveKotPrinter(
   branchCode: string | undefined,
@@ -502,11 +532,42 @@ export function resolveKotPrinter(
   userId?: string | null,
   preferredType: PrinterType = "kitchen",
 ): PrinterProfile | null {
-  return (
-    resolvePrimaryPrinterForSection(branchCode, sectionId, userId) ??
-    resolvePrinterForUser(branchCode, userId, preferredType) ??
-    resolveDefaultPrinterByType(branchCode, preferredType)
+  if (sectionId) {
+    return resolvePrimaryPrinterForSection(branchCode, sectionId, userId);
+  }
+  const fromUser = resolvePrinterForUser(branchCode, userId, preferredType);
+  if (fromUser) return fromUser;
+
+  const systemSectionId =
+    preferredType === "bar" ? "bar" : preferredType === "kitchen" ? "kitchen" : null;
+  if (systemSectionId) {
+    const fromSystemSection = resolvePrimaryPrinterForSection(
+      branchCode,
+      systemSectionId,
+      userId,
+    );
+    if (fromSystemSection) return fromSystemSection;
+  }
+
+  return resolveOrphanDefaultPrinterByType(branchCode, preferredType);
+}
+
+/** Type default among profiles that are not assigned to any printer section. */
+export function resolveOrphanDefaultPrinterByType(
+  branchCode: string | undefined,
+  printerType: PrinterType,
+): PrinterProfile | null {
+  if (!branchCode) return null;
+  const state = loadPrinterRouting(branchCode);
+  const assignedAnywhere = new Set<string>();
+  for (const ids of Object.values(state.sectionPrinters)) {
+    for (const id of ids) assignedAnywhere.add(id);
+  }
+  const typed = state.printers.filter(
+    (p) => p.printerType === printerType && !assignedAnywhere.has(p.id),
   );
+  const withOs = typed.filter((p) => p.systemPrinterName?.trim());
+  return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(typed);
 }
 
 export function updatePrinterProfile(
@@ -569,6 +630,41 @@ export function setSectionPrinters(branchCode: string, sectionId: string, printe
     ...state,
     sectionPrinters: { ...state.sectionPrinters, [sectionId]: printerIds },
   });
+}
+
+/** Make `printerId` the primary printer for a section (index 0). Adds it if missing. */
+export function setSectionPrimaryPrinter(
+  branchCode: string,
+  sectionId: string,
+  printerId: string,
+): void {
+  const state = loadPrinterRouting(branchCode);
+  const current = state.sectionPrinters[sectionId] ?? [];
+  const next = [printerId, ...current.filter((id) => id !== printerId)];
+  setSectionPrinters(branchCode, sectionId, next);
+}
+
+/** Sections that currently list this printer (primary first when applicable). */
+export function listSectionsForPrinter(
+  branchCode: string | undefined,
+  printerId: string,
+  sections: { id: string; name: string; icon?: string }[],
+): { id: string; name: string; icon?: string; primary: boolean }[] {
+  if (!branchCode) return [];
+  const map = loadPrinterRouting(branchCode).sectionPrinters;
+  const out: { id: string; name: string; icon?: string; primary: boolean }[] = [];
+  for (const section of sections) {
+    const ids = map[section.id] ?? [];
+    const index = ids.indexOf(printerId);
+    if (index === -1) continue;
+    out.push({
+      id: section.id,
+      name: section.name,
+      icon: section.icon,
+      primary: index === 0,
+    });
+  }
+  return out;
 }
 
 /** Toggle a printer in/out of a section's list, keeping existing order (new ones append as backup). */
@@ -642,11 +738,41 @@ export function toggleUserForSection(
     : current.filter((id) => id !== userId);
   setSectionUsers(branchCode, sectionId, next);
 
-  // Keep user↔printer map in sync so POS resolve prefers this section's devices.
-  const printerIds = loadPrinterRouting(branchCode).sectionPrinters[sectionId] ?? [];
+  // Only sync printers that belong to this section's role (kitchen vs receipt).
+  // Previously every printer in the section was attached — bill print then could
+  // resolve against kitchen devices and multi-printer section lists.
+  const state = loadPrinterRouting(branchCode);
+  const section = loadPrinterSections(branchCode).find((s) => s.id === sectionId);
+  const allowedTypes = new Set(printerTypesForSectionName(section?.id ?? sectionId, section?.name ?? ""));
+  const printerIds = (state.sectionPrinters[sectionId] ?? []).filter((id) => {
+    const profile = state.printers.find((p) => p.id === id);
+    return profile != null && allowedTypes.has(profile.printerType);
+  });
   for (const printerId of printerIds) {
     toggleUserPrinter(branchCode, userId, printerId, assign);
   }
+}
+
+/** Which profile types a print section should drive (kitchen vs bill/receipt). */
+export function printerTypesForSectionName(sectionId: string, sectionName: string): PrinterType[] {
+  const id = sectionId.toLowerCase();
+  const n = sectionName.toLowerCase();
+  if (
+    id.includes("receipt") ||
+    id.includes("bill") ||
+    id.includes("cashier") ||
+    id.includes("counter") ||
+    n.includes("receipt") ||
+    n.includes("bill") ||
+    n.includes("cashier") ||
+    n.includes("counter")
+  ) {
+    return ["receipt", "counter"];
+  }
+  if (id.includes("bar") || n.includes("bar") || n.includes("beverage")) {
+    return ["bar"];
+  }
+  return ["kitchen"];
 }
 
 /** Printer profiles currently linked to a section (primary first). */

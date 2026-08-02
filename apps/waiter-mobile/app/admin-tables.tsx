@@ -390,13 +390,13 @@ export default function AdminTablesScreen() {
                           borderRadius: 12,
                           borderWidth: 1,
                           borderColor: busy
-                            ? "rgba(245, 158, 11, 0.5)"
+                            ? "rgba(15, 118, 110, 0.5)"
                             : inactive
                               ? colors.border
                               : colors.border,
                           backgroundColor: busy
-                            ? "rgba(245, 158, 11, 0.12)"
-                            : "#020617",
+                            ? "rgba(15, 118, 110, 0.12)"
+                            : colors.bg,
                           gap: 4,
                           opacity: inactive ? 0.55 : 1,
                         }}

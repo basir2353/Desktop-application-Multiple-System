@@ -271,8 +271,70 @@ function forceArm64Only(propsPath) {
   if (!/^reactNativeArchitectures=/m.test(text)) {
     text = `${text.trimEnd()}\nreactNativeArchitectures=arm64-v8a\n`;
   }
+  // Ensure size-reduction flags survive reused android/ trees.
+  const flags = {
+    "android.enableProguardInReleaseBuilds": "true",
+    "android.enableShrinkResourcesInReleaseBuilds": "true",
+    "expo.gif.enabled": "false",
+    "expo.webp.enabled": "false",
+    "expo.webp.animated": "false",
+    "expo.useLegacyPackaging": "true",
+  };
+  for (const [key, value] of Object.entries(flags)) {
+    const pattern = new RegExp(`^${key.replace(/\./g, "\\.")}=.*$`, "m");
+    text = pattern.test(text)
+      ? text.replace(pattern, `${key}=${value}`)
+      : `${text.trimEnd()}\n${key}=${value}\n`;
+  }
   writeFileSync(propsPath, text);
 }
+
+/** Strip x86 / armeabi from the APK even if Gradle still resolves those AARs. */
+function forceArm64AbiFilters(buildGradlePath) {
+  if (!existsSync(buildGradlePath)) return;
+  let text = readFileSync(buildGradlePath, "utf8");
+  let changed = false;
+
+  if (!text.includes('abiFilters "arm64-v8a"') && !text.includes("abiFilters 'arm64-v8a'")) {
+    if (/defaultConfig\s*\{/.test(text)) {
+      text = text.replace(
+        /defaultConfig\s*\{/,
+        `defaultConfig {
+        ndk {
+            abiFilters "arm64-v8a"
+        }`,
+      );
+      changed = true;
+    }
+  }
+
+  if (!text.includes("**/x86_64/**") && text.includes("packagingOptions")) {
+    text = text.replace(
+      /packagingOptions\s*\{/,
+      `packagingOptions {
+        exclude "lib/armeabi-v7a/**"
+        exclude "lib/x86/**"
+        exclude "lib/x86_64/**"`,
+    );
+    changed = true;
+  } else if (!text.includes("**/x86_64/**") && text.includes("jniLibs")) {
+    // RN 0.76 style packagingOptions { jniLibs { ... } }
+    if (!text.includes('excludes += ["**/armeabi-v7a/**"')) {
+      text = text.replace(
+        /jniLibs\s*\{/,
+        `jniLibs {
+            excludes += ["**/armeabi-v7a/**", "**/x86/**", "**/x86_64/**"]`,
+      );
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeFileSync(buildGradlePath, text);
+    console.log("[build-apk] Forced arm64-v8a abiFilters + excluded other ABIs");
+  }
+}
+
 
 function ensureAndroidProject(apiUrl, buildPaths) {
   const buildGradle = join(buildPaths.androidDir, "app", "build.gradle");
@@ -333,6 +395,7 @@ function ensureAndroidProject(apiUrl, buildPaths) {
   patchAndroidBuildGradle(buildGradle, buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
+  forceArm64AbiFilters(buildGradle);
   forceApplicationId(buildGradle, variant.packageId);
   forceAppDisplayName(buildPaths.androidDir, variant.displayName);
 }
@@ -456,6 +519,7 @@ function applyAndroidPatches(buildPaths) {
   patchAndroidBuildGradle(buildGradle, buildPaths.appRoot);
   patchGradleProperties(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
+  forceArm64AbiFilters(buildGradle);
   forceApplicationId(buildGradle, variant.packageId);
   forceAppDisplayName(buildPaths.androidDir, variant.displayName);
   patchExpoModulesCoreReactNativeDir(buildPaths);
@@ -670,3 +734,26 @@ if (resolve(paths.apkSrc) !== resolve(apkDest)) {
 }
 
 console.log(`[build-apk] Done → ${apkDest}`);
+
+try {
+  const manifestScript = join(__dirname, "write-mobile-update-manifest.mjs");
+  if ((variantArg === "admin" || variantArg === "staff") && existsSync(manifestScript)) {
+    const appJsonPath = join(appRoot, "app.json");
+    let ver = "1.0.0";
+    let code = "0";
+    if (existsSync(appJsonPath)) {
+      const appJson = JSON.parse(readFileSync(appJsonPath, "utf8"));
+      ver = String(appJson.expo?.version ?? ver);
+      code = String(appJson.expo?.android?.versionCode ?? code);
+    }
+    const r = spawnSync(process.execPath, [manifestScript, variantArg, ver, code], {
+      cwd: appRoot,
+      stdio: "inherit",
+    });
+    if (r.status !== 0) {
+      console.warn("[build-apk] update manifest write failed (APK still built)");
+    }
+  }
+} catch (err) {
+  console.warn("[build-apk] update manifest skipped:", err instanceof Error ? err.message : err);
+}

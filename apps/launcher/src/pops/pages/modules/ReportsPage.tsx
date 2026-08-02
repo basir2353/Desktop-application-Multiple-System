@@ -260,11 +260,6 @@ export function ReportsPage(): JSX.Element {
             <p className="mt-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
               {(reportQuery.error as Error).message}
             </p>
-          ) : rows.length === 0 || reportQuery.data?.empty ? (
-            <p className="mt-6 rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">
-              No data for this report in the selected range. New companies stay empty until sales, cash
-              sessions, or expenses are recorded.
-            </p>
           ) : isCashReport && reportQuery.data && branch?.code ? (
             <div className="mt-4">
               <CashReportPanel
@@ -275,6 +270,31 @@ export function ReportsPage(): JSX.Element {
                 fromTime={fromTime}
                 toTime={toTime}
               />
+            </div>
+          ) : rows.length === 0 || reportQuery.data?.empty ? (
+            <div className="mt-6 space-y-2 rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">
+              <p>
+                No data for this report in the selected range. New companies stay empty until sales, cash
+                sessions, or expenses are recorded.
+              </p>
+              {activeId === "customer-ledger" ? (
+                <p className="text-xs text-slate-400">
+                  Customer ledger uses credit invoices from{" "}
+                  <Link to="/pops/accounting/receivable" className="text-emerald-600 hover:underline dark:text-emerald-400">
+                    Accounting → Receivable
+                  </Link>
+                  . Add a customer invoice there, then reopen this report.
+                </p>
+              ) : null}
+              {activeId === "employee-ledger" ? (
+                <p className="text-xs text-slate-400">
+                  Employees ledger needs staff on this branch — add them under{" "}
+                  <Link to="/pops/hr/employees" className="text-emerald-600 hover:underline dark:text-emerald-400">
+                    HR → Employees
+                  </Link>
+                  .
+                </p>
+              ) : null}
             </div>
           ) : (
             <div className="mt-4">

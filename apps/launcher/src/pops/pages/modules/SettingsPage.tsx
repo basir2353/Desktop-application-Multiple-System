@@ -1,7 +1,9 @@
 import { Button } from "@platform/ui";
+import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
+import { updatePopsBranch } from "../../api/operations";
 import {
   DEFAULT_POS_SETTINGS,
   loadPosSettings,
@@ -30,15 +32,18 @@ import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useThemeStore } from "../../../stores/themeStore";
 import { hasAnyPermission, sessionCanManageUsers } from "../../lib/roleAccess";
 import { PageHeader } from "../../ui/PageHeader";
+import { fieldInputClass } from "../../lib/themeClasses";
 
 export function SettingsPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
+  const setBranch = usePopsStore((s) => s.setBranch);
   const claims = useSessionStore((s) => s.claims);
   const themeMode = useThemeStore((s) => s.mode);
   const [saved, setSaved] = useState<PosSettings>(DEFAULT_POS_SETTINGS);
   const [draft, setDraft] = useState<PosSettings>(DEFAULT_POS_SETTINGS);
   const [notice, setNotice] = useState<string | null>(null);
   const [taxError, setTaxError] = useState<string | null>(null);
+  const [branchDraft, setBranchDraft] = useState({ name: "", city: "", code: "" });
   const terminalId = getOrCreateTerminalId();
   const taxFeatures = useTaxAuthorityFeatures();
   const taxUnlockedBySuperAdmin = isTaxAuthorityEnabled(taxFeatures.data);
@@ -48,6 +53,11 @@ export function SettingsPage(): JSX.Element {
     hasAnyPermission(claims?.permissions, ["pops.accounting.manage", "pops.users.manage"]);
   /** Settings FBR/PRA toggles only after Super Admin enables tax for this business. */
   const showTaxFeatureToggles = canManageTaxFeatures && taxUnlockedBySuperAdmin;
+  const canEditBranch = hasAnyPermission(claims?.permissions, [
+    "pops.menu.manage",
+    "pops.multi_branch.manage",
+    "*",
+  ]);
 
   const authorizedTerminals = useMemo(
     () => loadAuthorizedTerminals(branch?.code),
@@ -59,6 +69,36 @@ export function SettingsPage(): JSX.Element {
     setSaved(loaded);
     setDraft(loaded);
   }, [branch?.code]);
+
+  useEffect(() => {
+    if (!branch) return;
+    setBranchDraft({ name: branch.name, city: branch.city, code: branch.code });
+  }, [branch?.id, branch?.name, branch?.city, branch?.code]);
+
+  const branchUpdateMut = useMutation({
+    mutationFn: () => {
+      if (!branch?.id) throw new Error("No branch selected");
+      return updatePopsBranch(branch.id, {
+        name: branchDraft.name.trim(),
+        city: branchDraft.city.trim(),
+        code: branchDraft.code.trim() || undefined,
+      });
+    },
+    onSuccess: (updated) => {
+      setBranch({
+        id: updated.id,
+        code: updated.code,
+        name: updated.name,
+        city: updated.city,
+      });
+      setTaxError(null);
+      setNotice(`Branch saved as “${updated.name}” (${updated.code}).`);
+    },
+    onError: (err) => {
+      setNotice(null);
+      setTaxError(err instanceof Error ? err.message : "Branch update failed");
+    },
+  });
 
   const preview = useMemo(() => {
     const sampleSubtotal = 10_000;
@@ -160,6 +200,53 @@ export function SettingsPage(): JSX.Element {
         <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-800 dark:text-red-200">
           {taxError}
         </p>
+      ) : null}
+
+      {canEditBranch ? (
+        <section className="max-w-xl space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Branch details</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Edit the currently open branch. Name and city are safe to change anytime.
+          </p>
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+            Name
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={branchDraft.name}
+              onChange={(e) => setBranchDraft((f) => ({ ...f, name: e.target.value }))}
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+            City
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={branchDraft.city}
+              onChange={(e) => setBranchDraft((f) => ({ ...f, city: e.target.value }))}
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+            Code
+            <input
+              className={`mt-1 w-full ${fieldInputClass}`}
+              value={branchDraft.code}
+              onChange={(e) => setBranchDraft((f) => ({ ...f, code: e.target.value }))}
+            />
+          </label>
+          <Button
+            type="button"
+            disabled={
+              branchUpdateMut.isPending ||
+              !branchDraft.name.trim() ||
+              !branchDraft.city.trim() ||
+              (branchDraft.name === branch.name &&
+                branchDraft.city === branch.city &&
+                branchDraft.code === branch.code)
+            }
+            onClick={() => branchUpdateMut.mutate()}
+          >
+            {branchUpdateMut.isPending ? "Saving…" : "Save branch"}
+          </Button>
+        </section>
       ) : null}
 
       {showTaxFeatureToggles ? (

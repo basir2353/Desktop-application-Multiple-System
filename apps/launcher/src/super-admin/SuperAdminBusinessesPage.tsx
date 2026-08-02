@@ -20,14 +20,35 @@ import {
   fetchPlatformBusinesses,
   fetchPlatformSettings,
   fetchPlatformSystemTypes,
+  fetchPlatformUsers,
+  resetPlatformUserPassword,
   updatePlatformBusiness,
 } from "../lib/platformApi";
 import {
   businessSystemList,
   systemTypeForBusinessSystemId,
 } from "../lib/businessSystems";
-import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
 import { resolvePraFlags } from "./superAdminHelpers";
+import { SuperAdminBusinessUsersViewModal } from "./SuperAdminBusinessUsersViewModal";
+import { SuperAdminUserViewModal } from "./SuperAdminUserViewModal";
+import type { Business, PlatformUser } from "@platform/contracts";
+import {
+  saBtnAccentClass,
+  saBtnDangerClass,
+  saBtnGhostClass,
+  saBtnPrimaryClass,
+  saInputClass,
+  saLinkClass,
+  saMutedClass,
+  saPageSubClass,
+  saPageTitleClass,
+  saTableHeadClass,
+  saTableWrapClass,
+} from "./superAdminTheme";
+
+const fieldInputClass = saInputClass;
+const headingClass = saPageTitleClass;
+const mutedClass = saMutedClass;
 
 const STATUS_ACTIONS: { status: BusinessStatus; label: string }[] = [
   { status: "active", label: "Activate" },
@@ -68,12 +89,15 @@ function emptyForm(
 export function SuperAdminBusinessesPage(): JSX.Element {
   const qc = useQueryClient();
   const businesses = useQuery({ queryKey: ["platform", "businesses"], queryFn: fetchPlatformBusinesses });
+  const users = useQuery({ queryKey: ["platform", "users"], queryFn: fetchPlatformUsers });
   const systemTypes = useQuery({ queryKey: ["platform", "system-types"], queryFn: fetchPlatformSystemTypes });
   const settings = useQuery({ queryKey: ["platform", "settings"], queryFn: fetchPlatformSettings });
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [viewBusiness, setViewBusiness] = useState<Business | null>(null);
+  const [viewUser, setViewUser] = useState<PlatformUser | null>(null);
   const defaultPlan =
     typeof settings.data?.entries.default_licence_plan === "string" &&
     settings.data.entries.default_licence_plan.trim()
@@ -107,11 +131,30 @@ export function SuperAdminBusinessesPage(): JSX.Element {
   const selectedPlan = (form.licencePlan ?? defaultPlan) as string;
   const selectedMeta = planMeta[selectedPlan as LicencePlan] ?? planMeta.standard;
 
+  const usersQuery = useQuery({
+    queryKey: ["platform", "users"],
+    queryFn: fetchPlatformUsers,
+    staleTime: 30_000,
+  });
+
+  /** Blocks create only when email is on a live business/user. Orphans are freed by the API. */
   const emailTakenBy = useMemo(() => {
     const email = form.adminEmail.trim().toLowerCase();
     if (!email.includes("@")) return null;
-    return (businesses.data ?? []).find((b) => (b.adminEmail ?? "").toLowerCase() === email) ?? null;
-  }, [businesses.data, form.adminEmail]);
+    const byBusiness =
+      (businesses.data ?? []).find((b) => (b.adminEmail ?? "").toLowerCase() === email) ?? null;
+    if (byBusiness) return byBusiness.name;
+    const byUser =
+      (usersQuery.data ?? []).find(
+        (u) => u.email.toLowerCase() === email && Boolean(u.businessId),
+      ) ?? null;
+    if (byUser) {
+      return byUser.businessName?.trim()
+        ? `${byUser.name} · ${byUser.businessName}`
+        : byUser.name;
+    }
+    return null;
+  }, [businesses.data, form.adminEmail, usersQuery.data]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -171,6 +214,24 @@ export function SuperAdminBusinessesPage(): JSX.Element {
     },
   });
 
+  const resetUserMut = useMutation({
+    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+      resetPlatformUserPassword(userId, password),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["platform", "users"] });
+      if (viewUser) {
+        const next = await qc.fetchQuery({
+          queryKey: ["platform", "users"],
+          queryFn: fetchPlatformUsers,
+        });
+        const refreshed = next.find(
+          (u) => u.id === viewUser.id && u.businessId === viewUser.businessId,
+        );
+        if (refreshed) setViewUser(refreshed);
+      }
+    },
+  });
+
   function selectPlan(plan: LicencePlan): void {
     setForm((f) => ({
       ...f,
@@ -212,7 +273,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
 
       {showForm ? (
         <form
-          className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
+          className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm border-slate-200 bg-white"
           onSubmit={(e) => {
             e.preventDefault();
             setError(null);
@@ -346,8 +407,8 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                       className={[
                         "rounded-xl border px-3 py-3 text-left transition",
                         active
-                          ? "border-amber-500 bg-amber-50 ring-2 ring-amber-500/40 dark:border-amber-500 dark:bg-amber-950/40"
-                          : "border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-950/40 dark:hover:border-slate-600",
+                          ? "border-teal-500 bg-teal-50 ring-2 ring-teal-500/30"
+                          : "border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-white/15 dark:bg-[#070D18]/40 dark:hover:border-slate-600",
                       ].join(" ")}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -356,7 +417,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                         </p>
                         <span
                           className={`shrink-0 text-xs font-medium ${
-                            active ? "text-amber-800 dark:text-amber-300" : mutedClass
+                            active ? "text-teal-800" : mutedClass
                           }`}
                         >
                           {formatSuggestedPkr(meta.suggestedPkr)}
@@ -377,7 +438,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                 })}
               </div>
 
-              <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-950/30 sm:grid-cols-2">
+              <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 dark:border-white/15 dark:bg-[#070D18]/30 sm:grid-cols-2">
                 <Field
                   label={
                     selectedPlan === "custom"
@@ -452,7 +513,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
               </p>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4 dark:border-white/10">
               <Button type="submit" disabled={createMut.isPending || Boolean(emailTakenBy)}>
                 {createMut.isPending ? "Creating…" : "Create business + admin"}
               </Button>
@@ -497,11 +558,11 @@ export function SuperAdminBusinessesPage(): JSX.Element {
           {businesses.error instanceof Error ? businesses.error.message : "Failed to load"}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
+        <div className={saTableWrapClass}>
           <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+            <thead className={saTableHeadClass}>
               <tr>
-                <th className="px-4 py-3 font-medium">Business</th>
+                <th className="px-4 py-3">Business</th>
                 <th className="px-4 py-3 font-medium">System</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Licence</th>
@@ -510,7 +571,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100 dark:divide-white/10">
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={7} className={`px-4 py-8 text-center ${mutedClass}`}>
@@ -529,7 +590,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                       <td className="px-4 py-3">
                         <Link
                           to={`/super-admin/businesses/${b.id}`}
-                          className="font-medium text-amber-700 hover:underline dark:text-amber-400"
+                          className={saLinkClass}
                         >
                           {b.name}
                         </Link>
@@ -586,7 +647,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                                 });
                               }}
                             />
-                            <span className="font-medium text-amber-800 dark:text-amber-300">
+                            <span className="font-medium text-teal-800">
                               FPRA
                             </span>
                           </label>
@@ -613,9 +674,19 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                       <td className="px-4 py-3">{b.adminEmail ?? "—"}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            className={saBtnAccentClass}
+                            onClick={() => {
+                              setViewUser(null);
+                              setViewBusiness(b);
+                            }}
+                          >
+                            View
+                          </button>
                           <Link
                             to={`/super-admin/businesses/${b.id}`}
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            className={saBtnGhostClass}
                           >
                             Manage
                           </Link>
@@ -623,7 +694,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                             <button
                               key={a.status}
                               type="button"
-                              className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                               disabled={updateMut.isPending}
                               onClick={() => updateMut.mutate({ id: b.id, status: a.status })}
                             >
@@ -632,7 +703,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
                           ))}
                           <button
                             type="button"
-                            className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                            className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-500/40 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-500/10"
                             disabled={deleteMut.isPending}
                             onClick={() => {
                               if (window.confirm(`Delete business “${b.name}”? It is archived (backup kept) and removed from live lists. Login emails can be reused.`)) {
@@ -652,6 +723,24 @@ export function SuperAdminBusinessesPage(): JSX.Element {
           </table>
         </div>
       )}
+
+      {viewBusiness && !viewUser ? (
+        <SuperAdminBusinessUsersViewModal
+          business={viewBusiness}
+          users={(users.data ?? []).filter((u) => u.businessId === viewBusiness.id)}
+          onClose={() => setViewBusiness(null)}
+          onViewUser={(u) => setViewUser(u)}
+        />
+      ) : null}
+
+      {viewUser ? (
+        <SuperAdminUserViewModal
+          user={viewUser}
+          onClose={() => setViewUser(null)}
+          resetPending={resetUserMut.isPending}
+          onResetPassword={(userId, password) => resetUserMut.mutate({ userId, password })}
+        />
+      ) : null}
     </div>
   );
 }
@@ -695,7 +784,7 @@ function TaxChip({
       className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition ${
         checked
           ? "border-emerald-400/70 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/30"
-          : "border-slate-200 dark:border-slate-700"
+          : "border-slate-200 dark:border-white/15"
       }`}
     >
       <input

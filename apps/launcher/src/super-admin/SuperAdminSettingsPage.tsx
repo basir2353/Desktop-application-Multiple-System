@@ -123,7 +123,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
         </p>
       </div>
 
-      <section className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
         <div>
           <h3 className={`text-sm font-semibold ${headingClass}`}>Receipt powered-by line</h3>
           <p className={`mt-1 text-xs ${mutedClass}`}>
@@ -161,7 +161,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
         </div>
       </section>
 
-      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
         <div>
           <h3 className={`text-sm font-semibold ${headingClass}`}>Licence packages (editable)</h3>
           <p className={`mt-1 text-xs ${mutedClass}`}>
@@ -178,7 +178,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
               return (
                 <div
                   key={plan}
-                  className="rounded-lg border border-slate-200 p-3 dark:border-slate-700"
+                  className="rounded-lg border border-slate-200 p-3 dark:border-white/15"
                 >
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                     {plan}
@@ -285,7 +285,7 @@ export function SuperAdminSettingsPage(): JSX.Element {
         <p className={mutedClass}>Loading…</p>
       ) : (
         <form
-          className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60"
+          className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white"
           onSubmit={(e) => {
             e.preventDefault();
             setMessage(null);

@@ -488,6 +488,32 @@ async function printHtml(
     /** Soft profile/label hint for desktop routing — never treated as Windows spooler name. */
     printerName?: string | null;
     orderId?: string | null;
+    sectionId?: string | null;
+    ticket?: {
+      branchName?: string;
+      modeLabel?: string;
+      tableLabel?: string;
+      waiterName?: string;
+      notes?: string;
+      isOrderUpdate?: boolean;
+      orderRef?: string;
+      lines?: Array<{
+        label: string;
+        qty: number;
+        unitPrice?: number;
+        menuItemId?: string;
+        categoryId?: string;
+      }>;
+      subtotal?: number;
+      discount?: number;
+      service?: number;
+      tax?: number;
+      deliveryCharge?: number;
+      total?: number;
+      servicePct?: number;
+      taxPct?: number;
+      discountPct?: number;
+    };
   },
 ): Promise<boolean> {
   if (opts?.branchCode) {
@@ -497,17 +523,32 @@ async function printHtml(
 
     const anySilentMode = settings.modeLive || settings.modeIp || settings.modeServer;
 
+    let userId: string | null = null;
+    try {
+      const { useSessionStore } = await import("../stores/sessionStore");
+      userId = useSessionStore.getState().claims?.sub ?? null;
+    } catch {
+      userId = null;
+    }
+
     // Never send mobile display labels as systemPrinterName — that caused XPS/PDF picks on Windows.
     const silent = await trySilentBranchPrint({
       branchCode: opts.branchCode,
       printerName: opts.printerName ?? null,
       orderId: opts.orderId ?? null,
+      userId,
       payload: {
         kind: opts.kind ?? "receipt",
         html,
         systemPrinterName: null,
         copies: 1,
         orderRef: opts.orderId ?? null,
+        sectionId: opts.sectionId ?? null,
+        meta: {
+          userId,
+          ticket: opts.ticket ?? null,
+          source: "waiter-mobile",
+        },
       },
     });
     if (silent) return true;
@@ -539,7 +580,28 @@ async function printHtml(
 
 async function printKitchenHtml(
   html: string,
-  opts?: { branchCode?: string; orderId?: string | null },
+  opts?: {
+    branchCode?: string;
+    orderId?: string | null;
+    sectionId?: string | null;
+    ticket?: {
+      branchName?: string;
+      modeLabel?: string;
+      tableLabel?: string;
+      waiterName?: string;
+      notes?: string;
+      isOrderUpdate?: boolean;
+      orderRef?: string;
+      lines?: Array<{
+        label: string;
+        qty: number;
+        unitPrice?: number;
+        menuItemId?: string;
+        categoryId?: string;
+      }>;
+      total?: number;
+    };
+  },
 ): Promise<boolean> {
   const settings = await loadMobilePrinterSettings();
   const kitchens = activeKitchenPrinters(settings);
@@ -550,20 +612,50 @@ async function printKitchenHtml(
     kind: "kot",
     printerName,
     orderId: opts?.orderId ?? null,
+    sectionId: opts?.sectionId ?? null,
+    ticket: opts?.ticket,
   });
 }
 
 async function printBillHtml(
   html: string,
-  opts?: { branchCode?: string; orderId?: string | null },
+  opts?: {
+    branchCode?: string;
+    orderId?: string | null;
+    ticket?: {
+      branchName?: string;
+      modeLabel?: string;
+      tableLabel?: string;
+      waiterName?: string;
+      notes?: string;
+      orderRef?: string;
+      lines?: Array<{
+        label: string;
+        qty: number;
+        unitPrice?: number;
+        menuItemId?: string;
+        categoryId?: string;
+      }>;
+      subtotal?: number;
+      discount?: number;
+      service?: number;
+      tax?: number;
+      deliveryCharge?: number;
+      total?: number;
+      servicePct?: number;
+      taxPct?: number;
+      discountPct?: number;
+    };
+  },
 ): Promise<boolean> {
-  const settings = await loadMobilePrinterSettings();
-  const bill = settings.billPrinter.trim() || null;
+  // Do not send mobile soft labels (e.g. "Cashier / Billing") — desktop routes the bill
+  // solely to this logged-in user's assigned receipt/counter printer in POS settings.
   return printHtml(html, undefined, {
     branchCode: opts?.branchCode,
     kind: "receipt",
-    printerName: bill,
+    printerName: null,
     orderId: opts?.orderId ?? null,
+    ticket: opts?.ticket,
   });
 }
 
@@ -577,9 +669,30 @@ export async function printBillReceipt(
     bill,
     issueIfMissing: true,
   }).catch(() => null);
+  const lines = (bill.lines ?? []).map((l) => ({
+    label: l.label,
+    qty: l.qty,
+    unitPrice: l.unitPrice,
+  }));
   return printBillHtml(buildReceiptHtml(branchName, branchCode, bill, pra), {
     branchCode,
     orderId: bill.billRef,
+    ticket: {
+      branchName,
+      modeLabel: bill.tableLabel,
+      tableLabel: bill.tableLabel,
+      orderRef: bill.orderRef ?? bill.billRef,
+      lines,
+      subtotal: bill.subtotal,
+      service: bill.service,
+      tax: bill.tax,
+      deliveryCharge: bill.deliveryChargePkr,
+      total: bill.total,
+      servicePct: bill.servicePct,
+      taxPct: bill.taxPct,
+      discount: 0,
+      discountPct: 0,
+    },
   });
 }
 
@@ -598,6 +711,12 @@ export async function printCartBill(input: {
   taxPct: number;
   total: number;
   deliveryChargePkr?: number;
+  cashTaxPct?: number;
+  cardTaxPct?: number;
+  cashTax?: number;
+  cardTax?: number;
+  cashTotal?: number;
+  cardTotal?: number;
 }): Promise<boolean> {
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
@@ -613,6 +732,14 @@ export async function printCartBill(input: {
     )
     .join("");
   const delivery = input.deliveryChargePkr ?? 0;
+  const cashTaxPct = input.cashTaxPct ?? input.taxPct;
+  const cardTaxPct = input.cardTaxPct ?? (cashTaxPct >= 15 ? 8 : cashTaxPct);
+  const cashTax =
+    input.cashTax ?? Math.round(((input.subtotal + input.service) * cashTaxPct) / 100);
+  const cardTax =
+    input.cardTax ?? Math.round(((input.subtotal + input.service) * cardTaxPct) / 100);
+  const cashTotal = input.cashTotal ?? input.subtotal + input.service + cashTax + delivery;
+  const cardTotal = input.cardTotal ?? input.subtotal + input.service + cardTax + delivery;
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -662,6 +789,9 @@ export async function printCartBill(input: {
       font-weight: 800; font-size: 14px; border-top: 2px solid #000;
       margin-top: 6px; padding-top: 6px;
     }
+    .pay-compare { display: flex; gap: 6px; margin-top: 10px; border-top: 1px dashed #000; padding-top: 8px; }
+    .pay-compare-col { flex: 1; min-width: 0; }
+    .pay-compare-title { font-size: 10px; font-weight: 800; text-transform: uppercase; margin-bottom: 4px; }
     .timestamp { text-align: center; font-size: 11px; margin: 10px 0 6px; }
     .footer { text-align: center; margin-top: 10px; font-weight: 700; }
   </style>
@@ -681,9 +811,19 @@ export async function printCartBill(input: {
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>${formatPkr(input.subtotal)}</span></div>
     <div class="row"><span>Service (${input.servicePct}%)</span><span>${formatPkr(input.service)}</span></div>
-    <div class="row"><span>Tax (${input.taxPct}%)</span><span>${formatPkr(input.tax)}</span></div>
     ${delivery > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
-    <div class="row grand"><span>Total</span><span>${formatPkr(input.total)}</span></div>
+  </div>
+  <div class="pay-compare">
+    <div class="pay-compare-col">
+      <div class="pay-compare-title">Cash (${cashTaxPct}%)</div>
+      <div class="row"><span>Sales Tax</span><span>${formatPkr(cashTax)}</span></div>
+      <div class="row grand"><span>Net</span><span>${formatPkr(cashTotal)}</span></div>
+    </div>
+    <div class="pay-compare-col">
+      <div class="pay-compare-title">Card (${cardTaxPct}%)</div>
+      <div class="row"><span>Sales Tax</span><span>${formatPkr(cardTax)}</span></div>
+      <div class="row grand"><span>Net</span><span>${formatPkr(cardTotal)}</span></div>
+    </div>
   </div>
   <div class="timestamp">${escapeHtml(printedAt)} · ${escapeHtml(input.branchCode)}</div>
   <div class="footer">Thank you — visit again</div>
@@ -692,6 +832,23 @@ export async function printCartBill(input: {
   return printBillHtml(html, {
     branchCode: input.branchCode,
     orderId: input.orderRef,
+    ticket: {
+      branchName: input.branchName,
+      modeLabel: input.tableLabel,
+      tableLabel: input.tableLabel,
+      waiterName: input.waiterName ?? undefined,
+      orderRef: input.orderRef,
+      lines: input.lines,
+      subtotal: input.subtotal,
+      service: input.service,
+      tax: input.tax,
+      deliveryCharge: delivery,
+      total: input.total,
+      servicePct: input.servicePct,
+      taxPct: input.taxPct,
+      discount: 0,
+      discountPct: 0,
+    },
   });
 }
 
@@ -700,24 +857,49 @@ export async function printKitchenOrder(
   branchName: string,
   branchCode: string,
   ticket: KitchenTicket,
-  _menuItems?: MenuItem[],
+  menuItems?: MenuItem[],
+  opts?: { isOrderUpdate?: boolean },
 ): Promise<boolean> {
-  const lines = linesFromTicket(ticket);
+  const lines = linesFromTicket(ticket).map((line) => {
+    const fromTicket = ticket.lines?.find(
+      (l) => l.label === line.label && l.qty === line.qty,
+    );
+    const menuItemId = fromTicket?.menuItemId;
+    const menu = menuItemId ? menuItems?.find((m) => m.id === menuItemId) : undefined;
+    return {
+      ...line,
+      menuItemId,
+      categoryId: menu?.categoryId,
+      unitPrice: line.unitPrice ?? fromTicket?.unitPrice ?? 0,
+    };
+  });
   const notes = ticket.notes?.trim() || extractKitchenNotes(ticket) || null;
+  const orderRef = orderRefFromTicket(ticket);
   const html = buildKotHtml({
     branchName,
     branchCode,
-    orderRef: orderRefFromTicket(ticket),
+    orderRef,
     ticketRef: ticket.ticketRef,
     stationLabel: ticket.stationLabel,
     waiterName: ticket.createdByName,
     notes,
     priority: ticket.priority,
     lines,
+    isOrderUpdate: opts?.isOrderUpdate,
   });
   return printKitchenHtml(html, {
     branchCode,
-    orderId: orderRefFromTicket(ticket),
+    orderId: orderRef,
+    ticket: {
+      branchName,
+      modeLabel: ticket.stationLabel,
+      tableLabel: ticket.stationLabel,
+      waiterName: ticket.createdByName ?? undefined,
+      notes: notes ?? undefined,
+      isOrderUpdate: opts?.isOrderUpdate,
+      orderRef,
+      lines,
+    },
   });
 }
 
@@ -729,8 +911,9 @@ export async function printCartOrder(input: {
   stationLabel: string;
   waiterName?: string | null;
   notes?: string | null;
-  lines: PrintLine[];
+  lines: Array<PrintLine & { menuItemId?: string; categoryId?: string }>;
   total?: number | null;
+  isOrderUpdate?: boolean;
 }): Promise<boolean> {
   const html = buildKotHtml({
     branchName: input.branchName,
@@ -742,9 +925,21 @@ export async function printCartOrder(input: {
     notes: input.notes,
     lines: input.lines,
     total: input.total,
+    isOrderUpdate: input.isOrderUpdate,
   });
   return printKitchenHtml(html, {
     branchCode: input.branchCode,
     orderId: input.orderRef,
+    ticket: {
+      branchName: input.branchName,
+      modeLabel: input.stationLabel,
+      tableLabel: input.stationLabel,
+      waiterName: input.waiterName ?? undefined,
+      notes: input.notes ?? undefined,
+      isOrderUpdate: input.isOrderUpdate,
+      orderRef: input.orderRef,
+      lines: input.lines,
+      total: input.total ?? undefined,
+    },
   });
 }

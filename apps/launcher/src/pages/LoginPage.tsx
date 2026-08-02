@@ -221,8 +221,8 @@ export function LoginPage(): JSX.Element {
 
   const pinUsers = branch?.code ? Object.keys(loadBranchPinMap(branch.code)).length : 0;
   const accentRing = isAdminLogin
-    ? "ring-1 ring-amber-500/40"
-    : "ring-1 ring-sky-500/30";
+    ? "ring-1 ring-teal-500/40"
+    : "ring-1 ring-teal-500/25";
 
   if (isSuperAdminLogin && roleMeta) {
     return (
@@ -327,7 +327,7 @@ export function LoginPage(): JSX.Element {
               type="button"
               className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${
                 mode === "password"
-                  ? "bg-sky-500 text-white"
+                  ? "bg-teal-700 text-white dark:bg-teal-600"
                   : "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
               }`}
               onClick={() => setMode("password")}
@@ -338,7 +338,7 @@ export function LoginPage(): JSX.Element {
               type="button"
               className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${
                 mode === "pin"
-                  ? "bg-sky-500 text-white"
+                  ? "bg-teal-700 text-white dark:bg-teal-600"
                   : "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
               }`}
               onClick={() => setMode("pin")}

@@ -539,6 +539,9 @@ export function StoreProductsPage(): JSX.Element {
                 {(suppliersQuery.data ?? []).map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
+                    {s.openingBalancePkr > 0
+                      ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
+                      : " · Bal —"}
                   </option>
                 ))}
               </StoreSelect>

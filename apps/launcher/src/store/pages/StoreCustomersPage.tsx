@@ -50,6 +50,7 @@ export function StoreCustomersPage(): JSX.Element {
   const invalidate = useInvalidateStore();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [search, setSearch] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
 
   const customersQuery = useQuery({ queryKey: ["store", "customers", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchStoreCustomers(branch!.code) });
@@ -58,6 +59,18 @@ export function StoreCustomersPage(): JSX.Element {
     mutationFn: () => createStoreCustomer({ branchCode: branch!.code, name, phone }),
     onSuccess: () => { invalidate(); setName(""); setNotice("Customer added"); },
   });
+
+  const customers = customersQuery.data ?? [];
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.phone ?? "").toLowerCase().includes(q) ||
+        (c.membershipTier ?? "").toLowerCase().includes(q),
+    );
+  }, [customers, search]);
 
   return (
     <div className="space-y-5">
@@ -68,9 +81,20 @@ export function StoreCustomersPage(): JSX.Element {
         <StoreField label="Phone"><StoreInput value={phone} onChange={(e) => setPhone(e.target.value)} /></StoreField>
         <div className="col-span-full"><button type="button" onClick={() => createMutation.mutate()} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white">Add customer</button></div>
       </StoreFormSection>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="min-w-[12rem] flex-1 rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white sm:max-w-xs"
+          placeholder="Search name, phone, tier…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <span className="text-xs text-slate-500">
+          {filtered.length} / {customers.length}
+        </span>
+      </div>
       <StoreDataTable
         columns={["Name", "Phone", "Tier", "Loyalty pts", "Credit limit", "Outstanding", "Total purchases"]}
-        rows={(customersQuery.data ?? []).map((c) => [
+        rows={filtered.map((c) => [
           c.name, c.phone ?? "—", (c.membershipTier ?? "standard").toUpperCase(), c.loyaltyPoints, formatPkr(c.creditLimitPkr), formatPkr(c.outstandingPkr), formatPkr(c.totalPurchases),
         ])}
       />

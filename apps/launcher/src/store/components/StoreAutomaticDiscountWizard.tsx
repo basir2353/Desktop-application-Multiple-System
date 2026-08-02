@@ -446,7 +446,12 @@ export function StoreAutomaticDiscountWizard({
                 >
                   <option value="">Select vendor</option>
                   {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.openingBalancePkr > 0
+                        ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
+                        : " · Bal —"}
+                    </option>
                   ))}
                 </StoreSelect>
               ) : null}

@@ -1,11 +1,13 @@
 import {
   attendanceRecordSchema,
   createAttendanceSchema,
+  createEmployeeAdvanceSchema,
   createEmployeeSchema,
   createHrPayrollRunSchema,
   createLeaveRequestSchema,
   createStaffFoodSchema,
   employeeSchema,
+  employeeAdvanceSchema,
   hrDashboardSchema,
   hrPayrollRunSchema,
   leaveRequestSchema,
@@ -18,10 +20,12 @@ import {
   updateLeaveRequestSchema,
   type CreateAttendance,
   type CreateEmployee,
+  type CreateEmployeeAdvance,
   type CreateHrPayrollRun,
   type CreateLeaveRequest,
   type CreateStaffFood,
   type Employee,
+  type EmployeeAdvance,
   type EmployeeAdvanceSummary,
   type LeaveRequest,
   type SalarySlip,
@@ -177,6 +181,17 @@ export async function fetchEmployeeAdvances(
     if (/404|not found|failed to fetch|network/i.test(msg)) return [];
     throw err;
   }
+}
+
+export async function createEmployeeAdvance(input: CreateEmployeeAdvance): Promise<EmployeeAdvance> {
+  const body = createEmployeeAdvanceSchema.parse(input);
+  const res = await authFetch("/v1/hr/advances", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return employeeAdvanceSchema.parse(await res.json());
 }
 
 export async function createHrPayrollRun(input: CreateHrPayrollRun) {

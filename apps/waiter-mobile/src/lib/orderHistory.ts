@@ -80,9 +80,10 @@ export function unifiedOrderStatus(order: UnifiedOrder): string {
   return kitchenStatusLabel(order.ticket.status);
 }
 
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS } from "./posTaxSettings";
+
 /** Matches the service/tax rates used when taking a new order in app/order.tsx. */
-const SERVICE_PCT = 10;
-const TAX_PCT = 0.15;
+const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
 
 function normalizeLabel(label: string): string {
   return label.toLowerCase().replace(/\s+/g, " ").trim();
@@ -160,9 +161,8 @@ function estimatedLinesTotal(
   }
 
   if (subtotal <= 0) return null;
-  const service = Math.round(subtotal * (SERVICE_PCT / 100));
-  const tax = Math.round((subtotal + service) * TAX_PCT);
-  return subtotal + service + tax;
+  const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
+  return totals.total;
 }
 
 export function unifiedOrderTotal(
@@ -236,7 +236,7 @@ export function orderStatusAccent(order: UnifiedOrder): string {
   const status = unifiedOrderStatus(order).toLowerCase();
   if (status === "paid" || status === "ready") return "#22c55e";
   if (status === "cooking") return "#38bdf8";
-  if (status === "on hold" || status === "new") return "#f59e0b";
+  if (status === "on hold" || status === "new") return "#F59E0B";
   return "#94a3b8";
 }
 

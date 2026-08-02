@@ -41,6 +41,7 @@ import {
   type UpdateAdjustmentStatus,
   type UpdateIngredient,
   type UpdateInventoryCategory,
+  type UpdatePurchaseOrder,
   type UpdatePurchaseOrderStatus,
   type UpdateRecipe,
   type UpdateSupplier,
@@ -174,6 +175,19 @@ export async function updatePurchaseOrderStatus(
   input: UpdatePurchaseOrderStatus,
 ): Promise<PurchaseOrder> {
   const res = await authFetch(`/v1/inventory/purchase-orders/${poId}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await parseError(res, "Update PO failed");
+  return purchaseOrderSchema.parse(await res.json());
+}
+
+export async function updatePurchaseOrder(
+  poId: string,
+  input: UpdatePurchaseOrder,
+): Promise<PurchaseOrder> {
+  const res = await authFetch(`/v1/inventory/purchase-orders/${poId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

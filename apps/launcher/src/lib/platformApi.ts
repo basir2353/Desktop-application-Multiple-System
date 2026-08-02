@@ -24,6 +24,8 @@ import {
   type UpdateBusiness,
   type UpdatePlatformSettings,
   type UpdatePlatformUser,
+  type ResetBusinessTransactionsResult,
+  resetBusinessTransactionsResultSchema,
 } from "@platform/contracts";
 import { getApiBaseUrl } from "./apiBase";
 import { authFetch } from "./authFetch";
@@ -92,6 +94,19 @@ export async function deletePlatformBusiness(businessId: string): Promise<void> 
     const text = await res.text();
     throw new Error(text || `Delete failed (${res.status})`);
   }
+}
+
+/** Wipe all sales / journals / stock movements — dashboard & P&L go to zero. Keeps users & menu. */
+export async function resetPlatformBusinessTransactions(
+  businessId: string,
+  confirmName: string,
+): Promise<ResetBusinessTransactionsResult> {
+  const res = await authFetch(`/v1/platform/businesses/${businessId}/reset-transactions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmName }),
+  });
+  return readJson(res, (json) => resetBusinessTransactionsResultSchema.parse(json));
 }
 
 export async function grantPlatformLicence(

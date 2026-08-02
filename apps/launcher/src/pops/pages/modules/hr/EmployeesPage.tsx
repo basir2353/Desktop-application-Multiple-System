@@ -101,6 +101,20 @@ export function EmployeesPage(): JSX.Element {
     },
   });
 
+  const disableMutation = useMutation({
+    mutationFn: (id: string) => updateEmployee(id, { employmentStatus: "on_leave" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["hr"] });
+    },
+  });
+
+  const enableMutation = useMutation({
+    mutationFn: (id: string) => updateEmployee(id, { employmentStatus: "active" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["hr"] });
+    },
+  });
+
   if (employeesQuery.isLoading) return <HrLoading />;
   if (employeesQuery.isError) return <HrError message={(employeesQuery.error as Error).message} />;
 
@@ -169,7 +183,7 @@ export function EmployeesPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Employees"
-        subtitle="Staff records linked to branch users. Sync from Users & access or add manually. Edit any row to update salary and details."
+        subtitle="Staff records linked to branch users. Sync from Users & access or add manually. Edit salary, Disable (on leave), or Terminate."
       />
 
       {canManage ? (
@@ -336,6 +350,33 @@ export function EmployeesPage(): JSX.Element {
                       {editingId === r.id ? "Editing…" : "Edit"}
                     </button>
                     {r.employmentStatus === "active" ? (
+                      <button
+                        type="button"
+                        className="text-xs text-amber-400 hover:text-amber-300"
+                        onClick={() => {
+                          if (
+                            !confirm(
+                              `Disable employee "${String(r.displayName)}"?\n\nStatus will be set to on leave (can re-enable later).`,
+                            )
+                          ) {
+                            return;
+                          }
+                          disableMutation.mutate(String(r.id));
+                        }}
+                      >
+                        Disable
+                      </button>
+                    ) : null}
+                    {r.employmentStatus === "on_leave" ? (
+                      <button
+                        type="button"
+                        className="text-xs text-emerald-400 hover:text-emerald-300"
+                        onClick={() => enableMutation.mutate(String(r.id))}
+                      >
+                        Enable
+                      </button>
+                    ) : null}
+                    {r.employmentStatus === "active" || r.employmentStatus === "on_leave" ? (
                       <button
                         type="button"
                         className="text-xs text-red-400 hover:text-red-300"

@@ -2,9 +2,11 @@ import {
   createPopsBranchSchema,
   dashboardResponseSchema,
   popsBranchSchema,
+  updatePopsBranchSchema,
   type CreatePopsBranch,
   type DashboardResponse,
   type PopsBranch,
+  type UpdatePopsBranch,
 } from "@platform/contracts";
 import { authFetch, SessionExpiredError, isSessionExpiredError } from "../../lib/authFetch";
 
@@ -28,6 +30,23 @@ export async function createPopsBranch(input: CreatePopsBranch): Promise<PopsBra
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(err?.message ?? `Create branch failed: ${res.status}`);
+  }
+  return popsBranchSchema.parse(await res.json());
+}
+
+export async function updatePopsBranch(
+  branchId: string,
+  input: UpdatePopsBranch,
+): Promise<PopsBranch> {
+  const body = updatePopsBranchSchema.parse(input);
+  const res = await authFetch(`/v1/operations/branches/${branchId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Update branch failed: ${res.status}`);
   }
   return popsBranchSchema.parse(await res.json());
 }

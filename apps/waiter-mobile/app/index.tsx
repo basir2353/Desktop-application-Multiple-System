@@ -252,7 +252,7 @@ export default function LoginScreen() {
                       borderRadius: 12,
                       borderWidth: 1.5,
                       borderColor: roleTab === role ? colors.accent : colors.border,
-                      backgroundColor: roleTab === role ? "#1e3a5f" : "#020617",
+                      backgroundColor: roleTab === role ? "rgba(15, 118, 110, 0.18)" : colors.bg,
                       alignItems: "center",
                     }}
                   >

@@ -1,6 +1,7 @@
 import type { Ingredient } from "@platform/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { inputClass } from "../hooks/useInventory";
+import { formatSelectQty } from "../lib/selectMeta";
 import { modalBackdropRaisedClass } from "../lib/themeClasses";
 
 type Props = {
@@ -142,21 +143,23 @@ export function IngredientPickerModal({
               const checked = selectedIds.has(ing.id);
               return (
                 <li key={ing.id}>
-                  <label className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 transition hover:bg-slate-100 dark:hover:bg-slate-800/80">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-slate-100 dark:hover:bg-slate-800/80">
                     <input
                       type={single ? "radio" : "checkbox"}
                       name={single ? "ingredient-picker-single" : undefined}
                       checked={checked}
                       onChange={() => toggle(ing.id)}
-                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium text-slate-900 dark:text-white">{ing.name}</span>
                       <span className="mt-0.5 block text-[10px] text-slate-500">
                         {ing.sku}
                         {ing.categoryName ? ` · ${ing.categoryName}` : ""}
-                        {` · ${ing.currentStock} ${ing.unit}`}
                       </span>
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold tabular-nums text-indigo-600 dark:text-indigo-300">
+                      {formatSelectQty(ing.currentStock, ing.unit)}
                     </span>
                   </label>
                 </li>

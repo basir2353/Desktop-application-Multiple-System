@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   acceptInviteSchema,
   createOrgUserSchema,
@@ -76,6 +76,12 @@ export class UsersController {
   ) {
     const parsed = updateOrgUserSchema.parse(body);
     return this.users.updateUser(user.organizationId, userId, parsed);
+  }
+
+  @Delete(":userId")
+  @RequirePermissions("pops.users.manage")
+  remove(@CurrentUser() user: AccessJwtPayload, @Param("userId") userId: string) {
+    return this.users.deleteUser(user.organizationId, user.sub, userId);
   }
 
   @Post(":userId/reset-password")

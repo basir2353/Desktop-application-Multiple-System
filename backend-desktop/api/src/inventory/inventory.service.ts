@@ -23,6 +23,7 @@ import type {
   UpdateIngredient,
   UpdateInventoryCategory,
   UpdatePurchaseOrderStatus,
+  UpdatePurchaseOrder,
   UpdateRecipe,
   UpdateSupplier,
   UpdateWasteStatus,
@@ -686,6 +687,53 @@ export class InventoryService implements OnModuleInit {
       .returning();
     if (!row) throw new NotFoundException("PO not found");
     await this.audit(organizationId, po.branchId, userEmail, "PO status updated", "Purchase Orders", `${row.poNumber} → ${input.status}`);
+    return (await this.loadPurchaseOrders(po.branchId)).find((p) => p.id === poId)!;
+  }
+
+  async updatePurchaseOrder(
+    organizationId: string,
+    userEmail: string,
+    poId: string,
+    input: UpdatePurchaseOrder,
+  ) {
+    const po = await this.getPurchaseOrder(organizationId, poId);
+    if (po.status !== "Draft" && po.status !== "Pending") {
+      throw new BadRequestException("Only Draft or Pending kitchen demand vouchers can be edited");
+    }
+
+    if (input.supplierId) {
+      await this.getSupplier(organizationId, input.supplierId);
+    }
+
+    const patch: Partial<typeof popsPurchaseOrders.$inferInsert> = {};
+    if (input.supplierId !== undefined) patch.supplierId = input.supplierId;
+    if (input.expectedDate !== undefined) patch.expectedDate = input.expectedDate;
+    if (input.requestedBy !== undefined) {
+      patch.requestedBy = input.requestedBy?.trim() || userEmail;
+    }
+    if (input.chef !== undefined) patch.chef = input.chef?.trim() || null;
+
+    if (input.lines) {
+      const totalAmount = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
+      patch.totalAmountPkr = totalAmount;
+      await this.db.delete(popsPurchaseOrderLines).where(eq(popsPurchaseOrderLines.purchaseOrderId, poId));
+      for (const line of input.lines) {
+        await this.getIngredient(organizationId, line.ingredientId);
+        await this.db.insert(popsPurchaseOrderLines).values({
+          purchaseOrderId: poId,
+          ingredientId: line.ingredientId,
+          qty: line.qty,
+          unit: line.unit,
+          unitCostPkr: line.unitCost,
+        });
+      }
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await this.db.update(popsPurchaseOrders).set(patch).where(eq(popsPurchaseOrders.id, poId));
+    }
+
+    await this.audit(organizationId, po.branchId, userEmail, "PO updated", "Purchase Orders", po.poNumber);
     return (await this.loadPurchaseOrders(po.branchId)).find((p) => p.id === poId)!;
   }
 

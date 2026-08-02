@@ -9,8 +9,20 @@ import {
   grantPlatformLicence,
   updatePlatformBusiness,
 } from "../lib/platformApi";
-import { headingClass, mutedClass } from "../pops/lib/themeClasses";
 import { exportBusinessesCsv, resolvePraFlags } from "./superAdminHelpers";
+import {
+  saBtnGhostClass,
+  saBtnPrimaryClass,
+  saCardClass,
+  saHeadingClass,
+  saLinkClass,
+  saWarnLinkClass,
+  saMutedClass,
+  saPageSubClass,
+  saPageTitleClass,
+  saStatClass,
+  saWarnPanelClass,
+} from "./superAdminTheme";
 
 export function SuperAdminOverviewPage(): JSX.Element {
   const navigate = useNavigate();
@@ -69,7 +81,7 @@ export function SuperAdminOverviewPage(): JSX.Element {
   });
 
   if (query.isLoading) {
-    return <p className={mutedClass}>Loading analytics…</p>;
+    return <p className={saMutedClass}>Loading analytics…</p>;
   }
   if (query.error) {
     return (
@@ -95,23 +107,21 @@ export function SuperAdminOverviewPage(): JSX.Element {
       <section>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className={`text-lg font-semibold ${headingClass}`}>Cross-business overview</h2>
-            <p className={`mt-1 text-sm ${mutedClass}`}>
-              Live counts across every installed client system.
-            </p>
+            <h2 className={saPageTitleClass}>Platform overview</h2>
+            <p className={saPageSubClass}>Live counts across every installed client system.</p>
           </div>
-          <Button
+          <button
             type="button"
-            variant="ghost"
+            className={saBtnGhostClass}
             disabled={!businesses.data?.length}
             onClick={() => {
               if (businesses.data?.length) exportBusinessesCsv(businesses.data);
             }}
           >
-            Export businesses CSV
-          </Button>
+            Export CSV
+          </button>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Stat label="Total businesses" value={data.totalBusinesses} />
           <Stat label="Active" value={data.activeBusinesses} />
           <Stat label="Suspended" value={data.suspendedBusinesses} />
@@ -126,34 +136,31 @@ export function SuperAdminOverviewPage(): JSX.Element {
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
-        <h2 className={`text-base font-semibold ${headingClass}`}>Tax summary</h2>
-        <p className={`mt-1 text-sm ${mutedClass}`}>FBR / FPRA / Real PRA across all businesses.</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <section className={saCardClass}>
+        <h2 className={saHeadingClass}>Tax summary</h2>
+        <p className={`mt-1 text-sm ${saMutedClass}`}>FBR / FPRA / Real PRA across all businesses.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Stat label="FBR on" value={taxCounts.fbr} />
           <Stat label="FPRA on" value={taxCounts.praFake} />
           <Stat label="Real PRA on" value={taxCounts.praReal} />
           <Stat label="Both PRA" value={taxCounts.praBoth} />
           <Stat label="Neither" value={taxCounts.neither} />
         </div>
-        <Link
-          to="/super-admin/tax"
-          className="mt-3 inline-block text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
-        >
+        <Link to="/super-admin/tax" className={`mt-4 inline-block text-xs ${saLinkClass}`}>
           Open tax map →
         </Link>
       </section>
 
-      <section className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
-        <h2 className={`text-base font-semibold ${headingClass}`}>Quick actions</h2>
-        <p className={`mt-1 text-sm ${mutedClass}`}>
+      <section className={saCardClass}>
+        <h2 className={saHeadingClass}>Quick actions</h2>
+        <p className={`mt-1 text-sm ${saMutedClass}`}>
           Suspend, activate, grant 5 days, or jump to detail for one business.
         </p>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
+        <div className="mt-4 flex flex-wrap items-end gap-3">
           <label className="min-w-[220px] flex-1 text-sm">
-            <span className="mb-1 block text-xs text-slate-500">Business</span>
+            <span className={`mb-1 block text-xs ${saMutedClass}`}>Business</span>
             <select
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
               value={selectedId}
               onChange={(e) => {
                 setSelectedId(e.target.value);
@@ -180,8 +187,9 @@ export function SuperAdminOverviewPage(): JSX.Element {
           >
             Suspend
           </Button>
-          <Button
+          <button
             type="button"
+            className={saBtnPrimaryClass}
             disabled={busy}
             onClick={() => {
               const b = requireSelected();
@@ -191,9 +199,10 @@ export function SuperAdminOverviewPage(): JSX.Element {
             }}
           >
             Activate
-          </Button>
-          <Button
+          </button>
+          <button
             type="button"
+            className={saBtnPrimaryClass}
             disabled={busy}
             onClick={() => {
               const b = requireSelected();
@@ -203,24 +212,22 @@ export function SuperAdminOverviewPage(): JSX.Element {
             }}
           >
             Grant 5 days
-          </Button>
-          <Button
+          </button>
+          <button
             type="button"
-            variant="ghost"
+            className={saBtnGhostClass}
             disabled={!selectedId}
             onClick={() => {
               if (selectedId) navigate(`/super-admin/businesses/${selectedId}`);
             }}
           >
             Open detail
-          </Button>
+          </button>
         </div>
         {actionMsg ? (
           <p
             className={`mt-3 text-sm ${
-              /fail|error|Select/i.test(actionMsg)
-                ? "text-red-600 dark:text-red-400"
-                : "text-emerald-700 dark:text-emerald-400"
+              /fail|error|Select/i.test(actionMsg) ? "text-red-600" : "text-emerald-700"
             }`}
           >
             {actionMsg}
@@ -229,17 +236,12 @@ export function SuperAdminOverviewPage(): JSX.Element {
       </section>
 
       <section>
-        <h2 className={`text-lg font-semibold ${headingClass}`}>By system type</h2>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <h2 className={saPageTitleClass}>By system type</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {data.bySystemType.map((row) => (
-            <div
-              key={row.systemType}
-              className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60"
-            >
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {SYSTEM_TYPE_LABELS[row.systemType]}
-              </p>
-              <p className="mt-1 text-2xl font-semibold">{row.count}</p>
+            <div key={row.systemType} className={saStatClass}>
+              <p className={`text-sm ${saMutedClass}`}>{SYSTEM_TYPE_LABELS[row.systemType]}</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{row.count}</p>
             </div>
           ))}
         </div>
@@ -247,33 +249,25 @@ export function SuperAdminOverviewPage(): JSX.Element {
 
       {data.licenceAlerts.length > 0 ? (
         <section>
-          <h2 className={`text-lg font-semibold ${headingClass}`}>Licence alerts</h2>
-          <p className={`mt-1 text-sm ${mutedClass}`}>Expired or expiring within 30 days.</p>
-          <ul className="mt-3 divide-y divide-slate-200 rounded-xl border border-amber-200 bg-amber-50/60 dark:divide-slate-800 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <h2 className={saPageTitleClass}>Licence alerts</h2>
+          <p className={saPageSubClass}>Expired or expiring within 30 days.</p>
+          <ul className={`mt-4 divide-y divide-amber-200/80 overflow-hidden dark:divide-amber-500/20 ${saWarnPanelClass} !p-0`}>
             {data.licenceAlerts.map((b) => {
               const expired =
                 b.licenceExpiresAt && new Date(b.licenceExpiresAt).getTime() < Date.now();
               return (
                 <li key={b.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div>
-                    <Link
-                      to={`/super-admin/businesses/${b.id}`}
-                      className="font-medium text-amber-800 hover:underline dark:text-amber-300"
-                    >
+                    <Link to={`/super-admin/businesses/${b.id}`} className={saWarnLinkClass}>
                       {b.name}
                     </Link>
-                    <p className={`text-sm ${mutedClass}`}>
+                    <p className={`text-sm ${saMutedClass}`}>
                       {SYSTEM_TYPE_LABELS[b.systemType]} · {b.licencePlan ?? "—"} ·{" "}
                       {expired ? "Expired" : "Expiring"}{" "}
-                      {b.licenceExpiresAt
-                        ? new Date(b.licenceExpiresAt).toLocaleDateString()
-                        : ""}
+                      {b.licenceExpiresAt ? new Date(b.licenceExpiresAt).toLocaleDateString() : ""}
                     </p>
                   </div>
-                  <Link
-                    to="/super-admin/licences"
-                    className="text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
-                  >
+                  <Link to="/super-admin/licences" className={`text-xs font-semibold ${saWarnLinkClass}`}>
                     Manage
                   </Link>
                 </li>
@@ -285,32 +279,26 @@ export function SuperAdminOverviewPage(): JSX.Element {
 
       <section>
         <div className="flex items-center justify-between gap-3">
-          <h2 className={`text-lg font-semibold ${headingClass}`}>Recent businesses</h2>
-          <Link
-            to="/super-admin/businesses"
-            className="text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
-          >
+          <h2 className={saPageTitleClass}>Recent businesses</h2>
+          <Link to="/super-admin/businesses" className={`text-xs ${saLinkClass}`}>
             View all
           </Link>
         </div>
-        <ul className="mt-3 divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900/60">
+        <ul className={`mt-4 divide-y divide-slate-100 overflow-hidden ${saCardClass} !p-0`}>
           {data.recentBusinesses.length === 0 ? (
-            <li className={`px-4 py-6 text-sm ${mutedClass}`}>No businesses yet.</li>
+            <li className={`px-4 py-6 text-sm ${saMutedClass}`}>No businesses yet.</li>
           ) : (
             data.recentBusinesses.map((b) => (
               <li key={b.id} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div>
-                  <Link
-                    to={`/super-admin/businesses/${b.id}`}
-                    className="font-medium text-amber-700 hover:underline dark:text-amber-400"
-                  >
+                  <Link to={`/super-admin/businesses/${b.id}`} className={saLinkClass}>
                     {b.name}
                   </Link>
-                  <p className={`text-sm ${mutedClass}`}>
+                  <p className={`text-sm ${saMutedClass}`}>
                     {SYSTEM_TYPE_LABELS[b.systemType]} · {b.status}
                   </p>
                 </div>
-                <p className={`text-xs ${mutedClass}`}>{new Date(b.createdAt).toLocaleDateString()}</p>
+                <p className={`text-xs ${saMutedClass}`}>{new Date(b.createdAt).toLocaleDateString()}</p>
               </li>
             ))
           )}
@@ -330,15 +318,9 @@ function Stat({
   warn?: boolean;
 }): JSX.Element {
   return (
-    <div
-      className={`rounded-xl border p-4 ${
-        warn
-          ? "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
-          : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"
-      }`}
-    >
-      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
+    <div className={warn ? "rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3.5 dark:border-amber-500/30 dark:bg-amber-500/10" : saStatClass}>
+      <p className={`text-xs font-medium uppercase tracking-wide ${saMutedClass}`}>{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900 dark:text-white">{value}</p>
     </div>
   );
 }

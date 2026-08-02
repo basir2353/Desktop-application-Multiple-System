@@ -15,6 +15,19 @@ export const createPopsBranchSchema = z.object({
 
 export type CreatePopsBranch = z.infer<typeof createPopsBranchSchema>;
 
+/** Partial update — name/city always; code only when unique in the org. */
+export const updatePopsBranchSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    city: z.string().min(1).optional(),
+    code: z.string().min(1).max(16).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.city !== undefined || v.code !== undefined, {
+    message: "Provide at least one of name, city, or code",
+  });
+
+export type UpdatePopsBranch = z.infer<typeof updatePopsBranchSchema>;
+
 export const dashboardMetricsSchema = z.object({
   liveSales: z.object({
     amountPkr: z.number(),

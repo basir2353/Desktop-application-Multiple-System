@@ -775,8 +775,10 @@ export class AccountingService implements OnApplicationBootstrap {
           recordedBy: existing.recordedBy,
           createdAt: existing.createdAt.toISOString(),
           employeeId: existing.employeeId ?? null,
-          partyKind: (existing.partyKind as "supplier" | "customer" | "employee" | null) ?? null,
+          partyKind: (existing.partyKind as "supplier" | "customer" | "employee" | "expense" | null) ?? null,
           advanceId: null as string | null,
+          supplierId: null as string | null,
+          expenseId: null as string | null,
           deduped: true,
         };
       }
@@ -794,6 +796,8 @@ export class AccountingService implements OnApplicationBootstrap {
 
     const partyKind = input.partyKind;
     const employeeId = input.employeeId?.trim() || undefined;
+    const supplierId = input.supplierId?.trim() || undefined;
+    let employeeRow: typeof popsEmployees.$inferSelect | null = null;
     if (employeeId) {
       const [emp] = await this.db
         .select()
@@ -803,11 +807,75 @@ export class AccountingService implements OnApplicationBootstrap {
       if (!emp || emp.branchId !== branch.id) {
         throw new BadRequestException("Employee not found on this branch");
       }
+      employeeRow = emp;
+    }
+
+    if (input.type === "paid_out" && partyKind === "supplier") {
+      if (!supplierId) throw new BadRequestException("Select a supplier for vendor pay out");
+      const [supplier] = await this.db
+        .select()
+        .from(popsSuppliers)
+        .where(
+          and(eq(popsSuppliers.id, supplierId), eq(popsSuppliers.organizationId, organizationId)),
+        )
+        .limit(1);
+      if (!supplier || supplier.branchId !== branch.id) {
+        throw new BadRequestException("Supplier not found on this branch");
+      }
+      const openBills = await this.db
+        .select()
+        .from(popsVendorBills)
+        .where(
+          and(
+            eq(popsVendorBills.organizationId, organizationId),
+            eq(popsVendorBills.branchId, branch.id),
+            eq(popsVendorBills.supplierId, supplierId),
+            inArray(popsVendorBills.status, ["open", "partial"]),
+          ),
+        )
+        .orderBy(popsVendorBills.createdAt);
+      const openBalance = openBills.reduce((s, b) => s + (b.amountPkr - b.paidPkr), 0);
+      if (openBalance <= 0) {
+        throw new BadRequestException("Supplier has no open balance on the ledger");
+      }
+      if (input.amountPkr > openBalance) {
+        throw new BadRequestException(
+          `Payment exceeds supplier ledger balance (${openBalance.toLocaleString()} PKR)`,
+        );
+      }
+    }
+
+    if (input.type === "paid_out" && partyKind === "expense") {
+      if (!input.expenseCategory) {
+        throw new BadRequestException("Select an expense category for expense pay out");
+      }
     }
 
     const asAdvance =
       input.type === "paid_out" &&
       (input.asAdvance === true || (input.asAdvance !== false && partyKind === "employee" && Boolean(employeeId)));
+
+    if (asAdvance && employeeRow) {
+      const openAdvances = await this.db
+        .select()
+        .from(popsEmployeeAdvances)
+        .where(
+          and(
+            eq(popsEmployeeAdvances.organizationId, organizationId),
+            eq(popsEmployeeAdvances.employeeId, employeeRow.id),
+            inArray(popsEmployeeAdvances.status, ["open", "reserved"]),
+          ),
+        );
+      const alreadyOut = openAdvances.reduce((s, a) => s + a.amountPkr, 0);
+      const salaryCap = Math.max(0, employeeRow.baseSalaryPkr);
+      if (alreadyOut + input.amountPkr > salaryCap) {
+        const remaining = Math.max(0, salaryCap - alreadyOut);
+        throw new BadRequestException(
+          `Advance cannot exceed base salary (${salaryCap.toLocaleString()} PKR). ` +
+            `Already outstanding ${alreadyOut.toLocaleString()} PKR — max new advance ${remaining.toLocaleString()} PKR.`,
+        );
+      }
+    }
 
     const [row] = await this.db
       .insert(popsCashMovements)
@@ -827,6 +895,9 @@ export class AccountingService implements OnApplicationBootstrap {
     if (!row) throw new BadRequestException("Failed to record cash movement");
 
     let advanceId: string | null = null;
+    let expenseId: string | null = null;
+    let linkedSupplierId: string | null = supplierId ?? null;
+
     if (asAdvance && employeeId) {
       const [advance] = await this.db
         .insert(popsEmployeeAdvances)
@@ -845,6 +916,28 @@ export class AccountingService implements OnApplicationBootstrap {
       advanceId = advance?.id ?? null;
     }
 
+    if (input.type === "paid_out" && partyKind === "supplier" && supplierId) {
+      await this.allocateSupplierCashPayOut({
+        organizationId,
+        branchId: branch.id,
+        supplierId,
+        amountPkr: input.amountPkr,
+        userEmail,
+        paymentDate: new Date().toISOString().slice(0, 10),
+      });
+    }
+
+    if (input.type === "paid_out" && partyKind === "expense" && input.expenseCategory) {
+      expenseId = await this.createPaidExpenseFromCashPayOut({
+        organizationId,
+        branchId: branch.id,
+        category: input.expenseCategory,
+        amountPkr: input.amountPkr,
+        description: input.reason.trim(),
+        userEmail,
+      });
+    }
+
     return {
       id: row.id,
       sessionId: row.sessionId,
@@ -854,16 +947,129 @@ export class AccountingService implements OnApplicationBootstrap {
       recordedBy: row.recordedBy,
       createdAt: row.createdAt.toISOString(),
       employeeId: row.employeeId ?? null,
-      partyKind: (row.partyKind as "supplier" | "customer" | "employee" | null) ?? null,
+      partyKind: (row.partyKind as "supplier" | "customer" | "employee" | "expense" | null) ?? null,
       advanceId,
+      supplierId: linkedSupplierId,
+      expenseId,
     };
   }
 
+  /** FIFO allocate cash drawer pay-out against open vendor bills (updates supplier ledger). */
+  private async allocateSupplierCashPayOut(opts: {
+    organizationId: string;
+    branchId: string;
+    supplierId: string;
+    amountPkr: number;
+    userEmail: string;
+    paymentDate: string;
+  }): Promise<void> {
+    const openBills = await this.db
+      .select()
+      .from(popsVendorBills)
+      .where(
+        and(
+          eq(popsVendorBills.organizationId, opts.organizationId),
+          eq(popsVendorBills.branchId, opts.branchId),
+          eq(popsVendorBills.supplierId, opts.supplierId),
+          inArray(popsVendorBills.status, ["open", "partial"]),
+        ),
+      )
+      .orderBy(popsVendorBills.createdAt);
+
+    let remaining = opts.amountPkr;
+    for (const bill of openBills) {
+      if (remaining <= 0) break;
+      const balance = bill.amountPkr - bill.paidPkr;
+      if (balance <= 0) continue;
+      const pay = Math.min(remaining, balance);
+      const paymentRef = `VP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const entry = await this.hooks.postEntry(opts.organizationId, opts.branchId, {
+        entryRef: `JV-${paymentRef}`,
+        entryDate: opts.paymentDate,
+        source: "payable",
+        sourceRef: bill.billRef,
+        description: `Vendor pay-out ${bill.billRef}`,
+        createdBy: opts.userEmail,
+        lines: [
+          { accountCode: "2101", debit: pay, credit: 0 },
+          { accountCode: "1101", debit: 0, credit: pay },
+        ],
+      });
+      await this.db.insert(popsVendorPayments).values({
+        vendorBillId: bill.id,
+        paymentRef,
+        amountPkr: pay,
+        paymentDate: opts.paymentDate,
+        method: "cash",
+        journalEntryId: entry?.id ?? null,
+        createdBy: opts.userEmail,
+      });
+      const newPaid = bill.paidPkr + pay;
+      const status = newPaid >= bill.amountPkr ? "paid" : "partial";
+      await this.db
+        .update(popsVendorBills)
+        .set({ paidPkr: newPaid, status })
+        .where(eq(popsVendorBills.id, bill.id));
+      remaining -= pay;
+    }
+  }
+
+  /** Create Approved expense + journal from cash drawer expense pay-out. */
+  private async createPaidExpenseFromCashPayOut(opts: {
+    organizationId: string;
+    branchId: string;
+    category: string;
+    amountPkr: number;
+    description: string;
+    userEmail: string;
+  }): Promise<string> {
+    const expenseRef = `EXP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+    const expenseDate = new Date().toISOString().slice(0, 10);
+    const categoryAccount = this.expenseCategoryAccount(opts.category);
+    const entry = await this.hooks.postEntry(opts.organizationId, opts.branchId, {
+      entryRef: `JV-EXP-${expenseRef}`,
+      entryDate: expenseDate,
+      source: "expense",
+      sourceRef: expenseRef,
+      description: `Expense pay-out: ${opts.category} — ${opts.description}`,
+      createdBy: opts.userEmail,
+      lines: [
+        { accountCode: categoryAccount, debit: opts.amountPkr, credit: 0 },
+        { accountCode: "1101", debit: 0, credit: opts.amountPkr, memo: "Cash pay-out" },
+      ],
+    });
+
+    const [row] = await this.db
+      .insert(popsExpenses)
+      .values({
+        organizationId: opts.organizationId,
+        branchId: opts.branchId,
+        expenseRef,
+        category: opts.category,
+        amountPkr: opts.amountPkr,
+        expenseDate,
+        description: opts.description,
+        recurring: false,
+        status: "Paid",
+        submittedBy: opts.userEmail,
+        approvedBy: opts.userEmail,
+        approvedAt: new Date(),
+        journalEntryId: entry?.id ?? null,
+      })
+      .returning();
+    if (!row) throw new BadRequestException("Failed to create expense from pay-out");
+    return row.id;
+  }
+
   async listCashMovements(organizationId: string, sessionId: string) {
+    const id = sessionId?.trim() ?? "";
+    if (!id) {
+      throw new BadRequestException("sessionId is required");
+    }
     const [session] = await this.db
       .select()
       .from(popsCashSessions)
-      .where(eq(popsCashSessions.id, sessionId))
+      .where(eq(popsCashSessions.id, id))
       .limit(1);
     if (!session || session.organizationId !== organizationId) {
       throw new NotFoundException("Cash session not found");
@@ -883,7 +1089,7 @@ export class AccountingService implements OnApplicationBootstrap {
       .where(
         and(
           eq(popsCashMovements.organizationId, organizationId),
-          eq(popsCashMovements.sessionId, sessionId),
+          eq(popsCashMovements.sessionId, id),
         ),
       )
       .orderBy(desc(popsCashMovements.createdAt));

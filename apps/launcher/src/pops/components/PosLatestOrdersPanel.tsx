@@ -389,7 +389,7 @@ export function PosLatestOrdersPanel({
         printerName: built.printerName,
         systemPrinterName: built.systemPrinterName,
         title: "Simple invoice",
-        subtitle: "Print = simple slip (no PRA)",
+        subtitle: "Print = simple slip (FPRA)",
       });
     })();
   }
@@ -746,7 +746,7 @@ export function PosLatestOrdersPanel({
                             title={
                               order.kind === "pending" && order.kitchenTicket?.status !== "done"
                                 ? "Print kitchen order ticket (order stays editable)"
-                                : "Print simple invoice (no PRA)"
+                                : "Print simple invoice (FPRA)"
                             }
                           >
                             Print

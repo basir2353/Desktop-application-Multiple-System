@@ -1,3 +1,4 @@
+import { EXPENSE_CATEGORIES, type ExpenseCategory } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -6,7 +7,7 @@ import {
   fetchVendorBills,
   recordCashMovement,
 } from "../api/accounting";
-import { fetchEmployees } from "../api/hr";
+import { fetchEmployeeAdvances, fetchEmployees } from "../api/hr";
 import { fetchBranchInventory } from "../api/inventory";
 import { formatPkr } from "../hooks/useAccounting";
 import { fieldInputClass, modalBackdropRaisedClass } from "../lib/themeClasses";
@@ -18,7 +19,7 @@ type Props = {
   onSuccess?: (message: string) => void;
 };
 
-type PartyKind = "supplier" | "customer" | "employee";
+type PartyKind = "supplier" | "customer" | "employee" | "expense";
 type PartyFilter = "all" | PartyKind;
 
 type PosPayOutAccount = {
@@ -28,12 +29,18 @@ type PosPayOutAccount = {
   detail: string | null;
   balance: number | null;
   status: string | null;
+  /** Employee salary advance cap (base salary). */
+  baseSalaryPkr?: number;
+  /** Outstanding open advances already given. */
+  openAdvancePkr?: number;
+  expenseCategory?: ExpenseCategory;
 };
 
 const PARTY_LABEL: Record<PartyKind, string> = {
   supplier: "Supplier",
   customer: "Customer",
   employee: "Employee",
+  expense: "Expense",
 };
 
 const FILTERS: { id: PartyFilter; label: string }[] = [
@@ -41,6 +48,7 @@ const FILTERS: { id: PartyFilter; label: string }[] = [
   { id: "supplier", label: "Supplier" },
   { id: "customer", label: "Customer" },
   { id: "employee", label: "Employee" },
+  { id: "expense", label: "Expense" },
 ];
 
 function accountReasonPrefix(account: PosPayOutAccount): string {
@@ -70,103 +78,119 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
     enabled: Boolean(branch?.code) && accountPickerOpen,
     queryFn: async () => {
       const code = branch!.code;
-      const [invoices, vendorBills, inventory, employees] = await Promise.all([
+      const [invoices, vendorBills, inventory, employees, advances] = await Promise.all([
         fetchCustomerInvoices(code).catch(() => []),
         fetchVendorBills(code).catch(() => []),
         fetchBranchInventory(code).catch(() => null),
         fetchEmployees(code).catch(() => []),
+        fetchEmployeeAdvances(code, "open").catch(() => []),
       ]);
-      return { invoices, vendorBills, inventory, employees };
+      return { invoices, vendorBills, inventory, employees, advances };
     },
   });
 
   const accounts = useMemo<PosPayOutAccount[]>(() => {
     const data = partiesQuery.data;
-    if (!data) return [];
-
     const list: PosPayOutAccount[] = [];
 
-    // Suppliers from inventory + outstanding vendor balances
-    const vendorBalance = new Map<string, { balance: number; status: string }>();
-    for (const bill of data.vendorBills) {
-      const existing = vendorBalance.get(bill.supplierId);
-      if (existing) {
-        existing.balance += bill.balance;
-        if (bill.status === "open" || existing.status === "open") existing.status = "open";
-        else if (bill.status === "partial" || existing.status === "partial") existing.status = "partial";
-      } else {
-        vendorBalance.set(bill.supplierId, { balance: bill.balance, status: bill.status });
-      }
-    }
-    const suppliers = data.inventory?.suppliers ?? [];
-    const seenSupplierIds = new Set<string>();
-    for (const supplier of suppliers) {
-      if (!supplier.active) continue;
-      seenSupplierIds.add(supplier.id);
-      const bal = vendorBalance.get(supplier.id);
-      list.push({
-        kind: "supplier",
-        id: supplier.id,
-        name: supplier.name,
-        detail: supplier.phone,
-        balance: bal?.balance ?? supplier.openingBalancePkr ?? 0,
-        status: bal?.status ?? null,
-      });
-    }
-    // Vendor bills for suppliers not in inventory list
-    for (const bill of data.vendorBills) {
-      if (seenSupplierIds.has(bill.supplierId)) continue;
-      seenSupplierIds.add(bill.supplierId);
-      const bal = vendorBalance.get(bill.supplierId);
-      list.push({
-        kind: "supplier",
-        id: bill.supplierId,
-        name: bill.supplierName,
-        detail: bill.invoiceNumber ? `Bill ${bill.invoiceNumber}` : bill.billRef,
-        balance: bal?.balance ?? bill.balance,
-        status: bal?.status ?? bill.status,
-      });
-    }
-
-    // Customers from receivable invoices
-    const byCustomer = new Map<string, PosPayOutAccount>();
-    for (const invoice of data.invoices) {
-      const key = `${invoice.customerName}|${invoice.customerPhone ?? ""}`;
-      const existing = byCustomer.get(key);
-      if (existing) {
-        existing.balance = (existing.balance ?? 0) + invoice.balance;
-        if (invoice.status === "open" || existing.status === "open") existing.status = "open";
-        else if (invoice.status === "partial" || existing.status === "partial") {
-          existing.status = "partial";
+    if (data) {
+      const vendorBalance = new Map<string, { balance: number; status: string }>();
+      for (const bill of data.vendorBills) {
+        const existing = vendorBalance.get(bill.supplierId);
+        if (existing) {
+          existing.balance += bill.balance;
+          if (bill.status === "open" || existing.status === "open") existing.status = "open";
+          else if (bill.status === "partial" || existing.status === "partial") existing.status = "partial";
+        } else {
+          vendorBalance.set(bill.supplierId, { balance: bill.balance, status: bill.status });
         }
-      } else {
-        byCustomer.set(key, {
-          kind: "customer",
-          id: key,
-          name: invoice.customerName,
-          detail: invoice.customerPhone,
-          balance: invoice.balance,
-          status: invoice.status,
+      }
+      const suppliers = data.inventory?.suppliers ?? [];
+      const seenSupplierIds = new Set<string>();
+      for (const supplier of suppliers) {
+        if (!supplier.active) continue;
+        seenSupplierIds.add(supplier.id);
+        const bal = vendorBalance.get(supplier.id);
+        list.push({
+          kind: "supplier",
+          id: supplier.id,
+          name: supplier.name,
+          detail: supplier.phone,
+          balance: bal?.balance ?? supplier.openingBalancePkr ?? 0,
+          status: bal?.status ?? null,
+        });
+      }
+      for (const bill of data.vendorBills) {
+        if (seenSupplierIds.has(bill.supplierId)) continue;
+        seenSupplierIds.add(bill.supplierId);
+        const bal = vendorBalance.get(bill.supplierId);
+        list.push({
+          kind: "supplier",
+          id: bill.supplierId,
+          name: bill.supplierName,
+          detail: bill.invoiceNumber ? `Bill ${bill.invoiceNumber}` : bill.billRef,
+          balance: bal?.balance ?? bill.balance,
+          status: bal?.status ?? bill.status,
+        });
+      }
+
+      const byCustomer = new Map<string, PosPayOutAccount>();
+      for (const invoice of data.invoices) {
+        const key = `${invoice.customerName}|${invoice.customerPhone ?? ""}`;
+        const existing = byCustomer.get(key);
+        if (existing) {
+          existing.balance = (existing.balance ?? 0) + invoice.balance;
+          if (invoice.status === "open" || existing.status === "open") existing.status = "open";
+          else if (invoice.status === "partial" || existing.status === "partial") {
+            existing.status = "partial";
+          }
+        } else {
+          byCustomer.set(key, {
+            kind: "customer",
+            id: key,
+            name: invoice.customerName,
+            detail: invoice.customerPhone,
+            balance: invoice.balance,
+            status: invoice.status,
+          });
+        }
+      }
+      list.push(...byCustomer.values());
+
+      const openByEmployee = new Map<string, number>();
+      for (const adv of data.advances ?? []) {
+        openByEmployee.set(adv.employeeId, (openByEmployee.get(adv.employeeId) ?? 0) + (adv.openAdvancePkr ?? 0));
+      }
+      for (const employee of data.employees) {
+        if (employee.employmentStatus === "terminated") continue;
+        list.push({
+          kind: "employee",
+          id: employee.id,
+          name: employee.displayName,
+          detail: [employee.jobTitle, employee.phone].filter(Boolean).join(" · ") || null,
+          balance: null,
+          status: employee.employmentStatus,
+          baseSalaryPkr: employee.baseSalaryPkr,
+          openAdvancePkr: openByEmployee.get(employee.id) ?? 0,
         });
       }
     }
-    list.push(...byCustomer.values());
 
-    // Employees
-    for (const employee of data.employees) {
-      if (employee.employmentStatus === "terminated") continue;
+    for (const category of EXPENSE_CATEGORIES) {
       list.push({
-        kind: "employee",
-        id: employee.id,
-        name: employee.displayName,
-        detail: [employee.jobTitle, employee.phone].filter(Boolean).join(" · ") || null,
+        kind: "expense",
+        id: `expense:${category}`,
+        name: category,
+        detail: "Expense category",
         balance: null,
-        status: employee.employmentStatus,
+        status: null,
+        expenseCategory: category,
       });
     }
 
     list.sort((a, b) => {
-      const kindOrder = { supplier: 0, customer: 1, employee: 2 }[a.kind] - { supplier: 0, customer: 1, employee: 2 }[b.kind];
+      const order = { supplier: 0, customer: 1, employee: 2, expense: 3 };
+      const kindOrder = order[a.kind] - order[b.kind];
       if (kindOrder !== 0) return kindOrder;
       return a.name.localeCompare(b.name);
     });
@@ -232,7 +256,12 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
       const prefix = accountReasonPrefix(account);
       const trimmed = current.trim();
       if (!trimmed) return prefix;
-      if (trimmed.startsWith("Supplier:") || trimmed.startsWith("Customer:") || trimmed.startsWith("Employee:")) {
+      if (
+        trimmed.startsWith("Supplier:") ||
+        trimmed.startsWith("Customer:") ||
+        trimmed.startsWith("Employee:") ||
+        trimmed.startsWith("Expense:")
+      ) {
         return prefix;
       }
       return trimmed;
@@ -248,18 +277,63 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
         selectedAccount && !baseReason.toLowerCase().includes(selectedAccount.name.toLowerCase())
           ? `${accountReasonPrefix(selectedAccount)} — ${baseReason}`
           : baseReason || (selectedAccount ? accountReasonPrefix(selectedAccount) : "Pay out");
-      const isEmployee = selectedAccount?.kind === "employee";
+      const amountPkr = Number(amount);
+
+      if (selectedAccount?.kind === "employee") {
+        const salaryCap = Math.max(0, selectedAccount.baseSalaryPkr ?? 0);
+        const alreadyOut = Math.max(0, selectedAccount.openAdvancePkr ?? 0);
+        if (alreadyOut + amountPkr > salaryCap) {
+          const remaining = Math.max(0, salaryCap - alreadyOut);
+          throw new Error(
+            `Advance cannot exceed base salary (${salaryCap.toLocaleString()} PKR). ` +
+              `Already outstanding ${alreadyOut.toLocaleString()} PKR — max new advance ${remaining.toLocaleString()} PKR.`,
+          );
+        }
+        return recordCashMovement({
+          branchCode: branch!.code,
+          sessionId: sessionQuery.data!.id,
+          type: "paid_out",
+          amountPkr,
+          reason: `Employee advance: ${selectedAccount.name} — ${linked.replace(/^Employee:\s*/i, "")}`,
+          partyKind: "employee",
+          employeeId: selectedAccount.id,
+          asAdvance: true,
+        });
+      }
+
+      if (selectedAccount?.kind === "supplier") {
+        return recordCashMovement({
+          branchCode: branch!.code,
+          sessionId: sessionQuery.data!.id,
+          type: "paid_out",
+          amountPkr,
+          reason: linked,
+          partyKind: "supplier",
+          supplierId: selectedAccount.id,
+        });
+      }
+
+      if (selectedAccount?.kind === "expense") {
+        const category =
+          selectedAccount.expenseCategory ?? (selectedAccount.name as ExpenseCategory);
+        return recordCashMovement({
+          branchCode: branch!.code,
+          sessionId: sessionQuery.data!.id,
+          type: "paid_out",
+          amountPkr,
+          reason: linked,
+          partyKind: "expense",
+          expenseCategory: category,
+        });
+      }
+
       return recordCashMovement({
         branchCode: branch!.code,
         sessionId: sessionQuery.data!.id,
         type: "paid_out",
-        amountPkr: Number(amount),
-        reason: isEmployee
-          ? `Employee advance: ${selectedAccount!.name} — ${linked.replace(/^Employee:\s*/i, "")}`
-          : linked,
-        partyKind: selectedAccount?.kind,
-        employeeId: isEmployee ? selectedAccount!.id : undefined,
-        asAdvance: isEmployee,
+        amountPkr,
+        reason: linked,
+        partyKind: selectedAccount?.kind === "customer" ? "customer" : undefined,
       });
     },
     onSuccess: async (movement) => {
@@ -362,7 +436,7 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
                     ? `${PARTY_LABEL[selectedAccount.kind]} · ${selectedAccount.name}${
                         selectedAccount.detail ? ` · ${selectedAccount.detail}` : ""
                       }`
-                    : "Account (optional) — Supplier, Customer, or Employee"}
+                    : "Account (optional) — Supplier, Customer, Employee, or Expense"}
                 </span>
                 <span className="shrink-0 text-slate-400" aria-hidden>
                   {accountPickerOpen ? "▲" : "▼"}
@@ -374,7 +448,9 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
                   <span>
                     {selectedAccount.balance != null
                       ? `Balance: ${formatPkr(selectedAccount.balance)}`
-                      : PARTY_LABEL[selectedAccount.kind]}
+                      : selectedAccount.kind === "employee"
+                        ? `Salary ${formatPkr(selectedAccount.baseSalaryPkr ?? 0)} · advance ${formatPkr(selectedAccount.openAdvancePkr ?? 0)}`
+                        : PARTY_LABEL[selectedAccount.kind]}
                   </span>
                   <button
                     type="button"
@@ -406,13 +482,13 @@ export function PosPayOutModal({ onClose, onSuccess }: Props): JSX.Element {
                   </div>
                   <input
                     className={`${fieldInputClass} mb-2`}
-                    placeholder="Search supplier, customer, or employee…"
+                    placeholder="Search supplier, customer, employee, or expense…"
                     value={accountSearch}
                     onChange={(e) => setAccountSearch(e.target.value)}
                     autoFocus
                   />
                   <p className="mb-1 px-1 text-[10px] text-slate-500">Use ↑ ↓ keys, Enter to select</p>
-                  {partiesQuery.isLoading ? (
+                  {partiesQuery.isLoading && partyFilter !== "expense" ? (
                     <p className="px-1 py-2 text-xs text-slate-500">Loading accounts…</p>
                   ) : accounts.length === 0 ? (
                     <p className="px-1 py-2 text-xs text-slate-500">

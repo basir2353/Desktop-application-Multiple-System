@@ -4,6 +4,7 @@ import {
   type KitchenTicket,
   type MenuItem,
 } from "@platform/contracts";
+import { buildCartLine, matchVariantFromLabel } from "./cartVariants";
 import type { CartLine } from "./orderDrafts";
 
 export type StoredOrderLine = {
@@ -98,12 +99,17 @@ export function cartFromStoredLines(menuItems: MenuItem[], lines: StoredOrderLin
   for (const line of lines) {
     const item = matchMenuItem(menuItems, line);
     if (!item) continue;
-    const existing = cart.find((row) => row.item.id === item.id);
+    const variant = matchVariantFromLabel(item, line.label, line.unitPrice);
+    const built = buildCartLine(item, variant, line.qty, line.qty);
+    if (line.unitPrice != null && line.unitPrice >= 0) {
+      built.unitPrice = Math.round(line.unitPrice);
+    }
+    const existing = cart.find((row) => row.key === built.key);
     if (existing) {
       existing.qty += line.qty;
       existing.printedQty = (existing.printedQty ?? 0) + line.qty;
     } else {
-      cart.push({ item, qty: line.qty, printedQty: line.qty });
+      cart.push(built);
     }
   }
   return cart;

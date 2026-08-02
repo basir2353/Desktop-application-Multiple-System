@@ -24,6 +24,7 @@ import {
 } from "./kotPrintSettings";
 import { toPng } from "html-to-image";
 import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
+import { printerTextScaleFactor } from "./printerRouting";
 import { loadReceiptPoweredBy } from "./receiptBranding";
 import { resolveBusinessLogoSrc } from "./businessLogo";
 import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
@@ -65,6 +66,8 @@ export type PrintTicketInput = {
   systemPrinterName?: string;
   copies?: number;
   paperSize?: PrinterPaperSize;
+  /** Multiplier for slip text (from printer profile S/M/L). Default 1. */
+  textScale?: number;
   /** Override branch thermal defaults (preview / unsaved draft). */
   thermal?: ThermalPrintSettings;
   notes?: string;
@@ -110,6 +113,7 @@ export function withPrinterProfile<T extends Omit<PrintTicketInput, "kind">>(
     systemPrinterName: linked ?? fromInput,
     copies: profile.copies,
     paperSize: profile.paperSize,
+    textScale: printerTextScaleFactor(profile.textScale),
   };
 }
 
@@ -769,7 +773,18 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const contentWidthMm = thermalContentWidthMm(paperSize, marginMm, thermal.customPaperWidthMm);
   const moneyCompact = thermal.compactMoney;
   activeShowCurrencyPrefix = thermal.showCurrencyPrefix === true;
-  const receiptFonts = billReceiptFontSizes(billSettings.baseFontSize);
+  const textScale =
+    typeof input.textScale === "number" && input.textScale > 0 ? input.textScale : 1;
+  const receiptFontsBase = billReceiptFontSizes(billSettings.baseFontSize);
+  const receiptFonts =
+    textScale === 1
+      ? receiptFontsBase
+      : (Object.fromEntries(
+          Object.entries(receiptFontsBase).map(([k, v]) => [
+            k,
+            Math.max(8, Math.round(Number(v) * textScale)),
+          ]),
+        ) as typeof receiptFontsBase);
   const fields = isReceipt ? billSettings.fields : null;
   const isOrderUpdate = !isReceipt && Boolean(input.isOrderUpdate);
   const title = isReceipt
@@ -819,8 +834,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       const kotSepClass = !isReceipt && kotSettings.itemUnderlineSeparator ? ' class="kot-item-sep"' : "";
       if (!isReceipt) {
         return `<tr${kotSepClass}>
-        <td class="qty">${line.qty}</td>
-        <td class="item-name">${escapeHtml(line.label)}</td>
+        <td class="item-line"><span class="qty">${line.qty}</span>&nbsp;&nbsp;<span class="item-name">${escapeHtml(line.label)}</span></td>
       </tr>`;
       }
       if (useClearLayout) return "";
@@ -982,9 +996,10 @@ export function buildTicketHtml(input: PrintTicketInput): string {
 
   const emphasizeMeta = isReceipt || kotSettings.emphasizeOrderMeta;
   // 80mm keeps the bold kitchen look; 58mm must shrink or chips/items overflow the roll.
-  const kotBase = narrowPaper
+  const kotBaseRaw = narrowPaper
     ? Math.max(10, Math.round(kotSettings.baseFontSize * 0.7))
     : kotSettings.baseFontSize;
+  const kotBase = Math.max(9, Math.round(kotBaseRaw * textScale));
   const bodyFontSize = !isReceipt ? kotBase : receiptFonts.body;
   const kotItemFont = kotBase + (narrowPaper ? 1 : 3);
   const kotQtyFont = kotBase + (narrowPaper ? 2 : 4);
@@ -992,7 +1007,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const kotBranchFont = kotBase + (narrowPaper ? 2 : 5);
   const kotDocFont = kotBase;
   const kotChipPad = narrowPaper ? "2px 5px" : "4px 8px";
-  const kotItemAlign = narrowPaper ? "left" : "right";
+  // Qty sits immediately before the item name (no wide QTY | ITEM gap).
+  const kotItemAlign = "left";
   const compact = isReceipt && billSettings.layout === "compact";
   const headerAlign = isReceipt && billSettings.headerAlign === "left" ? "left" : "center";
   const showItemTable = !isReceipt || (!useClearLayout && (fields!.itemQty || fields!.itemAmount || input.lines.length > 0));
@@ -1527,7 +1543,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-bottom: 1px solid #f3f4f6;
     }
     tbody tr:last-child td { border-bottom: none; }
-    /* KOT: kitchen slip — yellow order chips, QTY left / ITEM (right on 80mm, left on 58mm) */
+    /* KOT: kitchen slip — qty immediately before item (no wide gap) */
     body.ticket-kot .header {
       border-bottom: 1.5px solid #000;
       padding-bottom: ${narrowPaper ? "5px" : "8px"};
@@ -1558,7 +1574,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-kot table.items {
       margin: 0;
       width: 100%;
-      table-layout: fixed;
+      table-layout: auto;
     }
     body.ticket-kot thead th {
       padding: ${narrowPaper ? "4px 0 3px" : "6px 0 5px"};
@@ -1566,22 +1582,29 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-bottom: 1.5px solid #000;
       color: #000;
       font-weight: 800;
-    }
-    body.ticket-kot thead th.qty,
-    body.ticket-kot td.qty {
-      width: ${narrowPaper ? "22%" : "16%"};
       text-align: left;
-      padding-right: ${narrowPaper ? "6px" : "12px"};
-      vertical-align: top;
-      white-space: nowrap;
-      font-weight: 800;
     }
-    body.ticket-kot thead th.item,
-    body.ticket-kot td.item-name {
-      text-align: ${kotItemAlign};
-      width: auto;
-      padding-left: 0;
+    body.ticket-kot thead th.item-line {
+      text-align: left;
+    }
+    body.ticket-kot td.item-line {
+      text-align: left;
       font-weight: 800;
+      width: 100%;
+    }
+    body.ticket-kot td.item-line .qty {
+      display: inline;
+      font-weight: 900;
+      font-size: ${kotQtyFont}px;
+      margin-right: 0.65em;
+      padding-right: 2px;
+      white-space: nowrap;
+    }
+    body.ticket-kot td.item-line .item-name {
+      display: inline;
+      font-weight: 800;
+      font-size: ${kotItemFont}px;
+      text-align: left;
     }
     body.ticket-kot tbody td {
       padding: ${narrowPaper ? "5px 0" : "8px 0"};
@@ -1924,8 +1947,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     ? `<table class="items">
     <thead>
       <tr>
-        <th class="qty">QTY</th>
-        <th class="item">ITEM</th>
+        <th class="item-line">QTY ITEM</th>
       </tr>
     </thead>
     <tbody>${lineRows}</tbody>

@@ -82,6 +82,7 @@ module.exports = {
     android: {
       ...base.expo.android,
       package: selected.androidPackage,
+      versionCode: Number(base.expo.android?.versionCode ?? 1100),
     },
     extra: {
       ...(base.expo.extra ?? {}),
@@ -89,6 +90,10 @@ module.exports = {
       appKind: selected.appKind,
       defaultRole: selected.defaultRole,
       apiBaseUrl,
+      appVersion: base.expo.version,
+      updateFeedUrl:
+        process.env.EXPO_PUBLIC_UPDATE_FEED_URL ||
+        `https://github.com/basir2353/pops-mobile-updates/releases/latest/download/latest-${variant === "admin" ? "admin" : "staff"}.json`,
     },
   },
 };

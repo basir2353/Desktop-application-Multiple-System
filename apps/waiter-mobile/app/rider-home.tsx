@@ -135,7 +135,7 @@ export default function RiderHomeScreen() {
 
         <View style={styles.statsRow}>
           <StatCard label="Assigned" value={String(assigned)} accent={colors.accent} />
-          <StatCard label="En route" value={String(enRoute)} accent="#f59e0b" />
+          <StatCard label="En route" value={String(enRoute)} accent={colors.warning} />
           <StatCard label="Completed" value={String(completedToday)} accent={colors.success} />
         </View>
 
@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
   link: { color: colors.accent, fontSize: 13, fontWeight: "600" },
   statsRow: { flexDirection: "row", gap: 10 },
   orderCard: {
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.card,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,

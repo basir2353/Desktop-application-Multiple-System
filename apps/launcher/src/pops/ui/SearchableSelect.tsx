@@ -6,6 +6,8 @@ export type SearchableSelectOption = {
   label: string;
   /** Extra text matched by search (sku, category, …). */
   searchText?: string;
+  /** Right-side hint in closed control and list (balance, stock qty, …). */
+  meta?: string;
 };
 
 type Props = {
@@ -56,7 +58,7 @@ export function SearchableSelect({
     const q = query.trim().toLowerCase();
     if (!q) return options;
     return options.filter((o) => {
-      const hay = `${o.label} ${o.searchText ?? ""}`.toLowerCase();
+      const hay = `${o.label} ${o.searchText ?? ""} ${o.meta ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [options, query]);
@@ -104,7 +106,20 @@ export function SearchableSelect({
           !selected ? "text-slate-500 dark:text-slate-400" : ""
         } ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
       >
-        <span className="min-w-0 truncate">{selected?.label ?? emptyLabel ?? placeholder}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {selected ? (
+            <>
+              {selected.label}
+              {selected.meta ? (
+                <span className="ml-1.5 text-[10px] font-normal tabular-nums text-slate-500 dark:text-slate-400">
+                  · {selected.meta}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            emptyLabel ?? placeholder
+          )}
+        </span>
         <span className="shrink-0 text-[10px] text-slate-400" aria-hidden>
           {open ? "▲" : "▼"}
         </span>
@@ -175,12 +190,17 @@ export function SearchableSelect({
                     type="button"
                     role="option"
                     aria-selected={o.value === value}
-                    className={`flex w-full px-2.5 py-1.5 text-left text-xs text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                    className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 ${
                       o.value === value ? "bg-amber-50 font-medium dark:bg-amber-500/15" : ""
                     }`}
                     onClick={() => pick(o.value)}
                   >
-                    {o.label}
+                    <span className="min-w-0 truncate">{o.label}</span>
+                    {o.meta ? (
+                      <span className="shrink-0 tabular-nums text-[10px] text-slate-500 dark:text-slate-400">
+                        {o.meta}
+                      </span>
+                    ) : null}
                   </button>
                 </li>
               ))

@@ -253,14 +253,14 @@ export function SuperAdminLicencesPage(): JSX.Element {
         </div>
         <Link
           to="/super-admin/payments"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-white/15 dark:hover:bg-slate-800"
         >
           Open Payments →
         </Link>
       </div>
 
       {/* Compact payments peek — full UI lives on Payments page */}
-      <section className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 dark:border-slate-800 dark:from-slate-900/80 dark:to-slate-950">
+      <section className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 dark:border-white/10 dark:from-slate-900/80 dark:to-slate-950">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -316,9 +316,9 @@ export function SuperAdminLicencesPage(): JSX.Element {
             return (
               <li
                 key={b.id}
-                className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
+                className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm border-slate-200 bg-white"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-white/10">
                   <div className="min-w-0">
                     <p className="truncate text-base font-semibold text-slate-900 dark:text-white">
                       {b.name}
@@ -374,8 +374,8 @@ export function SuperAdminLicencesPage(): JSX.Element {
                 </div>
 
                 {isOpen ? (
-                  <div className="border-t border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-950/40">
-                    <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3 pt-2 dark:border-slate-800">
+                  <div className="border-t border-slate-200 bg-slate-50/80 dark:border-white/10 dark:bg-[#070D18]/40">
+                    <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3 pt-2 dark:border-white/10">
                       {(
                         [
                           { id: "licence", label: "1 · Licence" },
@@ -389,7 +389,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                           onClick={() => setManageTab(tab.id)}
                           className={`shrink-0 rounded-t-lg px-4 py-2 text-sm font-medium transition ${
                             manageTab === tab.id
-                              ? "bg-white text-amber-800 shadow-sm dark:bg-slate-900 dark:text-amber-300"
+                              ? "bg-white text-teal-800 shadow-sm dark:bg-[#111827] dark:text-teal-300"
                               : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
                           }`}
                         >
@@ -398,7 +398,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                       ))}
                     </div>
 
-                    <div className="space-y-4 bg-white p-4 dark:bg-slate-900/60">
+                    <div className="space-y-4 bg-white p-4 dark:bg-[#111827]">
                       {manageTab === "licence" ? (
                         <section className="space-y-4">
                           <div>
@@ -408,7 +408,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                               on{" "}
                               <Link
                                 to="/super-admin/payments"
-                                className="text-amber-700 underline dark:text-amber-400"
+                                className="text-teal-700 underline dark:text-teal-300"
                               >
                                 Payments
                               </Link>
@@ -508,7 +508,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                                 {hist.slice(0, 8).map((p) => (
                                   <li
                                     key={p.id}
-                                    className="rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-800"
+                                    className="rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-white/10"
                                   >
                                     <span className="font-medium">
                                       {p.periodDays}d · {p.amount} {p.currency}
@@ -543,7 +543,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                                   key={tpl.id}
                                   type="button"
                                   title={tpl.description}
-                                  className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                                  className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 dark:border-white/15 dark:hover:bg-slate-800"
                                   onClick={() => applyTemplate(tpl.id)}
                                 >
                                   {tpl.label}
@@ -573,7 +573,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                                   className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm ${
                                     checked
                                       ? "border-emerald-400/60 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-                                      : "border-slate-200 dark:border-slate-800"
+                                      : "border-slate-200 dark:border-white/10"
                                   }`}
                                 >
                                   <input
@@ -625,7 +625,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                               className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
                                 fbrEnabled
                                   ? "border-emerald-400/70 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/30"
-                                  : "border-slate-200 dark:border-slate-700"
+                                  : "border-slate-200 dark:border-white/15"
                               }`}
                             >
                               <input
@@ -645,7 +645,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                               className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
                                 praFakeEnabled
                                   ? "border-emerald-400/70 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/30"
-                                  : "border-slate-200 dark:border-slate-700"
+                                  : "border-slate-200 dark:border-white/15"
                               }`}
                             >
                               <input
@@ -668,7 +668,7 @@ export function SuperAdminLicencesPage(): JSX.Element {
                               className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
                                 praRealEnabled
                                   ? "border-emerald-400/70 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/30"
-                                  : "border-slate-200 dark:border-slate-700"
+                                  : "border-slate-200 dark:border-white/15"
                               }`}
                             >
                               <input
@@ -734,15 +734,15 @@ function SummaryChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-xl border px-3 py-2.5 text-left transition hover:border-amber-400/70 dark:hover:border-amber-600 ${
+      className={`rounded-xl border px-3 py-2.5 text-left transition hover:border-teal-400/70 dark:hover:border-teal-600 ${
         warn
           ? "border-rose-300 bg-rose-50/70 dark:border-rose-900 dark:bg-rose-950/30"
           : active
-            ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950/50"
-            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40"
+            ? "border-teal-300 bg-teal-50/50 dark:border-teal-500/40 dark:bg-teal-500/10"
+            : "border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/40"
       }`}
     >
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{title}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{title}</p>
       <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{lines[0]}</p>
       {lines.slice(1).map((line) => (
         <p key={line} className={`mt-0.5 text-xs ${mutedClass}`}>

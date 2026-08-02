@@ -377,6 +377,15 @@ export const updatePurchaseOrderStatusSchema = z.object({
   status: poStatusSchema,
 });
 
+/** Edit draft/pending kitchen demand lines + meta (status stays Draft/Pending). */
+export const updatePurchaseOrderSchema = z.object({
+  supplierId: z.string().uuid().optional(),
+  expectedDate: z.string().nullable().optional(),
+  requestedBy: z.string().max(120).nullable().optional(),
+  chef: z.string().max(120).nullable().optional(),
+  lines: z.array(createPoLineSchema).min(1).optional(),
+});
+
 export const createGrnLineSchema = z.object({
   ingredientId: z.string().uuid(),
   qty: z.number().int().positive(),
@@ -492,6 +501,7 @@ export type CreateSupplier = z.infer<typeof createSupplierSchema>;
 export type UpdateSupplier = z.infer<typeof updateSupplierSchema>;
 export type CreatePurchaseOrder = z.infer<typeof createPurchaseOrderSchema>;
 export type UpdatePurchaseOrderStatus = z.infer<typeof updatePurchaseOrderStatusSchema>;
+export type UpdatePurchaseOrder = z.infer<typeof updatePurchaseOrderSchema>;
 export type CreateGoodsReceipt = z.infer<typeof createGoodsReceiptSchema>;
 export type CreateRecipe = z.infer<typeof createRecipeSchema>;
 export type UpdateRecipe = z.infer<typeof updateRecipeSchema>;

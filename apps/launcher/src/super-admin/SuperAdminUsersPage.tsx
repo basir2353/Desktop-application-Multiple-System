@@ -9,7 +9,23 @@ import {
   updatePlatformUser,
   deletePlatformUser,
 } from "../lib/platformApi";
-import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
+import { SuperAdminUserViewModal } from "./SuperAdminUserViewModal";
+import type { PlatformUser } from "@platform/contracts";
+import {
+  saBtnAccentClass,
+  saBtnDangerClass,
+  saInputClass,
+  saLinkClass,
+  saMutedClass,
+  saPageSubClass,
+  saPageTitleClass,
+  saTableHeadClass,
+  saTableWrapClass,
+} from "./superAdminTheme";
+
+const fieldInputClass = saInputClass;
+const headingClass = saPageTitleClass;
+const mutedClass = saMutedClass;
 
 export function SuperAdminUsersPage(): JSX.Element {
   const qc = useQueryClient();
@@ -20,6 +36,7 @@ export function SuperAdminUsersPage(): JSX.Element {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");
+  const [viewUser, setViewUser] = useState<PlatformUser | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -47,6 +64,11 @@ export function SuperAdminUsersPage(): JSX.Element {
       setPassword("");
       setMessage("Password updated and active sessions revoked.");
       await qc.invalidateQueries({ queryKey: ["platform", "users"] });
+      if (viewUser) {
+        const next = await qc.fetchQuery({ queryKey: ["platform", "users"], queryFn: fetchPlatformUsers });
+        const refreshed = next.find((u) => u.id === viewUser.id && u.businessId === viewUser.businessId);
+        if (refreshed) setViewUser(refreshed);
+      }
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Reset failed"),
   });
@@ -79,7 +101,7 @@ export function SuperAdminUsersPage(): JSX.Element {
     <div className="space-y-6">
       <div>
         <h2 className={`text-lg font-semibold ${headingClass}`}>All users</h2>
-        <p className={`mt-1 text-sm ${mutedClass}`}>
+        <p className={`mt-1 text-sm ${saPageSubClass}`}>
           Manage live accounts across every business — activate, suspend, or delete (archived
           backup; removed from this list). Customer emails are separate from login emails.
         </p>
@@ -123,18 +145,18 @@ export function SuperAdminUsersPage(): JSX.Element {
           {users.error instanceof Error ? users.error.message : "Failed to load"}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
+        <div className={saTableWrapClass}>
           <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+            <thead className={saTableHeadClass}>
               <tr>
-                <th className="px-4 py-3 font-medium">User</th>
-                <th className="px-4 py-3 font-medium">Role</th>
-                <th className="px-4 py-3 font-medium">Business / system</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Actions</th>
+                <th className="px-4 py-3">User</th>
+                <th className="px-4 py-3">Role</th>
+                <th className="px-4 py-3">Business / system</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100 dark:divide-white/10">
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={5} className={`px-4 py-8 text-center ${mutedClass}`}>
@@ -155,7 +177,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                       ) : u.businessId ? (
                         <Link
                           to={`/super-admin/businesses/${u.businessId}`}
-                          className="text-amber-700 hover:underline dark:text-amber-400"
+                          className={saLinkClass}
                         >
                           {u.businessName ?? "—"}
                           {u.systemType ? ` · ${SYSTEM_TYPE_LABELS[u.systemType]}` : ""}
@@ -167,11 +189,21 @@ export function SuperAdminUsersPage(): JSX.Element {
                     <td className="px-4 py-3 capitalize">{u.status}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className={saBtnAccentClass}
+                          onClick={() => {
+                            setMessage(null);
+                            setViewUser(u);
+                          }}
+                        >
+                          View
+                        </button>
                         {u.platformRole !== "super_admin" ? (
                           u.status !== "active" ? (
                             <button
                               type="button"
-                              className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                               disabled={statusMut.isPending}
                               onClick={() => statusMut.mutate({ userId: u.id, status: "active" })}
                             >
@@ -181,7 +213,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                             <>
                               <button
                                 type="button"
-                                className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                                 disabled={statusMut.isPending}
                                 onClick={() => statusMut.mutate({ userId: u.id, status: "inactive" })}
                               >
@@ -189,7 +221,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                               </button>
                               <button
                                 type="button"
-                                className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                                 disabled={statusMut.isPending}
                                 onClick={() => statusMut.mutate({ userId: u.id, status: "suspended" })}
                               >
@@ -231,7 +263,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                         ) : (
                           <button
                             type="button"
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                             onClick={() => {
                               setMessage(null);
                               setResetFor(u.id);
@@ -245,7 +277,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                         {u.platformRole !== "super_admin" ? (
                           <button
                             type="button"
-                            className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                            className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-500/40 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-500/10"
                             disabled={deleteMut.isPending}
                             onClick={() => {
                               if (
@@ -270,6 +302,15 @@ export function SuperAdminUsersPage(): JSX.Element {
           </table>
         </div>
       )}
+
+      {viewUser ? (
+        <SuperAdminUserViewModal
+          user={viewUser}
+          onClose={() => setViewUser(null)}
+          resetPending={resetMut.isPending}
+          onResetPassword={(userId, pw) => resetMut.mutate({ userId, password: pw })}
+        />
+      ) : null}
     </div>
   );
 }

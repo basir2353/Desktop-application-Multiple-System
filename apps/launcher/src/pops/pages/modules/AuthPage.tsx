@@ -22,6 +22,7 @@ import { fetchPopsBranches } from "../../api/operations";
 import { useOrgModuleCeiling } from "../../hooks/useOrgModuleCeiling";
 import {
   createOrgUser,
+  deleteOrgUser,
   fetchAccessControl,
   fetchOrgUsers,
   fetchPendingInvites,
@@ -769,6 +770,17 @@ export function AuthPage(): JSX.Element {
     onError: (err: Error) => setFormError(err.message),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteOrgUser(id),
+    onSuccess: () => {
+      invalidate();
+      setFormError(null);
+    },
+    onError: (err: Error) => {
+      window.alert(err.message || "Delete failed");
+    },
+  });
+
   function openEdit(user: OrgUser): void {
     setSelected(user);
     setFormError(null);
@@ -970,15 +982,39 @@ export function AuthPage(): JSX.Element {
             key: "actions",
             header: "",
             id: "actions",
-            render: (r) => (
-              <Button
-                variant="ghost"
-                className="text-xs"
-                onClick={() => openEdit(r)}
-              >
-                Edit
-              </Button>
-            ),
+            render: (r) => {
+              const isSelf = claims?.sub === r.id;
+              return (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    className="text-xs"
+                    onClick={() => openEdit(r)}
+                  >
+                    Edit
+                  </Button>
+                  {!isSelf ? (
+                    <Button
+                      variant="ghost"
+                      className="text-xs text-rose-400 hover:text-rose-300"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Delete user “${r.email}”? They disappear from live lists (backup kept). Login email can be reused.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        deleteMutation.mutate(r.id);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            },
           },
         ]}
         rows={usersQuery.data ?? []}

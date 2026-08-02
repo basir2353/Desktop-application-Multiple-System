@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { createPopsBranch } from "../../../api/operations";
+import { createPopsBranch, updatePopsBranch } from "../../../api/operations";
 import { fetchMultiBranchOverview } from "../../../api/multi-branch";
 import { formatPkr, mbInputClass, useMultiBranchAccess } from "../../../hooks/useMultiBranch";
 import { useActiveSystemId } from "../../../../hooks/useActiveSystemId";
@@ -27,11 +27,14 @@ export function MultiBranchDashboardPage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const systemId = useActiveSystemId();
-  const { setBranch, displayRole } = usePopsStore();
+  const { setBranch, branch: openBranch, displayRole } = usePopsStore();
   const { canManage } = useMultiBranchAccess();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", city: "", code: "" });
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", city: "", code: "" });
   const [notice, setNotice] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const overviewQuery = useQuery({
     queryKey: ["multi-branch", "overview"],
@@ -55,6 +58,33 @@ export function MultiBranchDashboardPage(): JSX.Element {
           city: created.city,
         });
       }
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, ...input }: { id: string; name: string; city: string; code: string }) =>
+      updatePopsBranch(id, {
+        name: input.name.trim(),
+        city: input.city.trim(),
+        code: input.code.trim() || undefined,
+      }),
+    onSuccess: (updated) => {
+      void queryClient.invalidateQueries({ queryKey: ["multi-branch"] });
+      void queryClient.invalidateQueries({ queryKey: ["operations", "branches"] });
+      if (openBranch?.id === updated.id) {
+        setBranch({
+          id: updated.id,
+          code: updated.code,
+          name: updated.name,
+          city: updated.city,
+        });
+      }
+      setEditId(null);
+      setEditError(null);
+      setNotice(`Branch “${updated.name}” updated.`);
+    },
+    onError: (err) => {
+      setEditError(err instanceof Error ? err.message : "Update failed");
     },
   });
 
@@ -118,6 +148,68 @@ export function MultiBranchDashboardPage(): JSX.Element {
         <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
           {notice}
         </p>
+      ) : null}
+      {editError ? (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          {editError}
+        </p>
+      ) : null}
+
+      {editId && canManage ? (
+        <div className="rounded-lg border border-amber-500/30 bg-slate-900/40 p-4">
+          <div className="text-sm font-medium text-white">Edit branch</div>
+          <p className="mt-1 text-xs text-slate-500">
+            Name and city can always change. Code rename is allowed if unused by another branch —
+            POS/print settings keyed by the old code stay on that code until reconfigured.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <input
+              className={mbInputClass}
+              placeholder="Branch name"
+              value={editForm.name}
+              onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+            />
+            <input
+              className={mbInputClass}
+              placeholder="City"
+              value={editForm.city}
+              onChange={(e) => setEditForm((f) => ({ ...f, city: e.target.value }))}
+            />
+            <input
+              className={mbInputClass}
+              placeholder="Code"
+              value={editForm.code}
+              onChange={(e) => setEditForm((f) => ({ ...f, code: e.target.value }))}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={updateMutation.isPending || !editForm.name.trim() || !editForm.city.trim()}
+              onClick={() =>
+                updateMutation.mutate({
+                  id: editId,
+                  name: editForm.name,
+                  city: editForm.city,
+                  code: editForm.code,
+                })
+              }
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {updateMutation.isPending ? "Saving…" : "Save changes"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditId(null);
+                setEditError(null);
+              }}
+              className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {showCreate && canManage ? (
@@ -195,20 +287,40 @@ export function MultiBranchDashboardPage(): JSX.Element {
               key: "actions",
               header: "",
               render: (r) => (
-                <button
-                  type="button"
-                  className="text-xs text-sky-400 hover:text-sky-300"
-                  onClick={() =>
-                    switchToBranch({
-                      branchId: String(r.branchId),
-                      branchCode: String(r.branchCode),
-                      branchName: String(r.branchName),
-                      city: String(r.city),
-                    })
-                  }
-                >
-                  Open branch
-                </button>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  {canManage ? (
+                    <button
+                      type="button"
+                      className="text-xs text-amber-300 hover:text-amber-200"
+                      onClick={() => {
+                        setShowCreate(false);
+                        setEditError(null);
+                        setEditId(String(r.branchId));
+                        setEditForm({
+                          name: String(r.branchName ?? ""),
+                          city: String(r.city ?? ""),
+                          code: String(r.branchCode ?? ""),
+                        });
+                      }}
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="text-xs text-sky-400 hover:text-sky-300"
+                    onClick={() =>
+                      switchToBranch({
+                        branchId: String(r.branchId),
+                        branchCode: String(r.branchCode),
+                        branchName: String(r.branchName),
+                        city: String(r.city),
+                      })
+                    }
+                  >
+                    Open branch
+                  </button>
+                </div>
               ),
             },
           ]}

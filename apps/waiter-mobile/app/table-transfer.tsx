@@ -403,7 +403,7 @@ export default function TableTransferScreen() {
 const styles = StyleSheet.create({
   scroll: { gap: 14, paddingBottom: 28 },
   subtitle: { color: colors.muted, fontSize: 13, lineHeight: 19 },
-  selectedCard: { gap: 8, borderColor: "rgba(245, 158, 11, 0.35)" },
+  selectedCard: { gap: 8, borderColor: "rgba(15, 118, 110, 0.35)" },
   selectedTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   selectedRef: {
     color: colors.text,
@@ -423,7 +423,7 @@ const styles = StyleSheet.create({
   changeBtnText: { color: colors.accent, fontSize: 12, fontWeight: "700" },
   list: { gap: 8 },
   orderRow: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
   sectionCard: {
     width: "47%",
     flexGrow: 1,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
     width: "30%",
     flexGrow: 1,
     minWidth: 96,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -474,8 +474,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   tableBtnCurrent: {
-    borderColor: "rgba(245, 158, 11, 0.55)",
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderColor: "rgba(15, 118, 110, 0.55)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
   },
   tableBtnBooked: {
     opacity: 0.5,

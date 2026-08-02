@@ -1,13 +1,14 @@
 /** Branch Print Server client + local queue worker (desktop launcher). */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { CreatePrintJob, PrintJob, PrintJobPayload } from "@platform/contracts";
+import type { CreatePrintJob, MenuItem, PrintJob, PrintJobPayload } from "@platform/contracts";
 import {
   BRANCH_PRINT_SERVER_DEFAULT_PORT,
   PRINTING_ENTERPRISE_ENABLED_KEY,
 } from "@platform/contracts";
 import { printImageToSystemPrinter, isDesktopAppRuntime, listSystemPrinters, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
 import { logPrintEvent } from "./printHistory";
+import type { PosCartLine } from "./posCart";
 
 const SETTINGS_KEY = "pops-branch-print-server-v1";
 const PREFERRED_SERVER_KEY = "pops-preferred-branch-print-server-v1";
@@ -72,6 +73,8 @@ export type BranchQueueJob = {
   branchCode: string;
   printerId?: string | null;
   printerName?: string | null;
+  /** Staff who queued the job (waiter / cashier) — receipt routing. */
+  userId?: string | null;
   orderId?: string | null;
   priority: number;
   status: string;
@@ -161,6 +164,7 @@ function mapJob(raw: Record<string, unknown>): BranchQueueJob {
     branchCode: String(raw.branch_code ?? raw.branchCode ?? ""),
     printerId: (raw.printer_id ?? raw.printerId ?? null) as string | null,
     printerName: (raw.printer_name ?? raw.printerName ?? null) as string | null,
+    userId: (raw.user_id ?? raw.userId ?? null) as string | null,
     orderId: (raw.order_id ?? raw.orderId ?? null) as string | null,
     priority: Number(raw.priority ?? 100),
     status: String(raw.status ?? "pending"),
@@ -554,15 +558,27 @@ function acceptPdfFileTarget(name: string | null | undefined): string | null {
 /** Resolve a Windows spooler name for a queued silent job (never open a dialog).
  * Prefers physical thermal/USB; if none linked, falls back to Microsoft Print to PDF
  * so waiter/mobile jobs still open on the laptop (Save As).
+ *
+ * Receipt/bill jobs MUST resolve to a single receipt/counter printer (never kitchen/bar,
+ * never “print to every printer in the section”).
+ * When `userId` is set, that user's assigned bill printer wins over soft mobile labels.
  */
 export async function resolveSilentSystemPrinterName(input: {
   branchCode: string;
   kind?: string | null;
   printerName?: string | null;
   systemPrinterName?: string | null;
+  /** Waiter / cashier who queued the job — used for personal receipt assignment. */
+  userId?: string | null;
+  /** Kitchen/Bar/Grill section — when set, KOT uses that section's printers only. */
+  sectionId?: string | null;
 }): Promise<string | null> {
   const hint = input.systemPrinterName?.trim() || input.printerName?.trim() || "";
   const branchCode = input.branchCode || "MAIN";
+  const kind = String(input.kind ?? "receipt").toLowerCase();
+  const isKot = kind === "kot";
+  const userId = input.userId?.trim() || null;
+  const sectionId = input.sectionId?.trim() || null;
 
   const os = await listSystemPrinters().catch(() => [] as Awaited<ReturnType<typeof listSystemPrinters>>);
   const physicalOs = os.filter((p) => !p.isVirtual && !isVirtualSystemPrinter(p.name));
@@ -575,100 +591,153 @@ export async function resolveSilentSystemPrinterName(input: {
     return n;
   };
 
-  // Ignore mobile display labels that are clearly not OS printers.
-  const hintLooksLikeOs =
+  // Exact / fuzzy OS spooler name (when mobile sends a real Windows printer name).
+  const hintLooksLikeSoftLabel =
     Boolean(hint) &&
-    !/billing printer|kitchen printer|cashier\s*\/|pick one|any assigned|expo/i.test(hint);
+    /billing\s*printer|kitchen\s*printer|cashier\s*\/|pick one|any assigned|expo|cashier\s*\/\s*billing|^billing$|^cashier$/i.test(
+      hint,
+    );
 
-  if (hintLooksLikeOs) {
+  // Real Windows names only — never treat soft mobile labels as OS spooler names.
+  if (hint && !hintLooksLikeSoftLabel) {
     const exactOs = osNames.find((n) => n.toLowerCase() === hint.toLowerCase());
     if (exactOs) return exactOs;
     const fuzzyOs = osNames.find((n) => namesRoughlyMatch(n, hint));
     if (fuzzyOs) return fuzzyOs;
-    // User linked Microsoft Print to PDF / XPS in POS — allow for laptop testing.
     const pdfHint = acceptPdfFileTarget(hint);
     if (pdfHint) return pdfHint;
   }
 
-  const branchPrinters = await listLocalBranchPrinters(branchCode);
-  if (hint) {
-    const byName = branchPrinters.find(
-      (p) => namesRoughlyMatch(p.name, hint) || namesRoughlyMatch(p.windowsPrinterName ?? "", hint),
-    );
-    const linked = acceptPhysical(byName?.windowsPrinterName);
-    if (linked) return linked;
-    const linkedPdf = acceptPdfFileTarget(byName?.windowsPrinterName);
-    if (linkedPdf) return linkedPdf;
-  }
-
   try {
-    const { resolveReceiptPrinter, resolveDefaultPrinterByType, loadPrinterRouting } = await import(
-      "./printerRouting"
-    );
-    const kind = String(input.kind ?? "receipt").toLowerCase();
-    if (kind === "kot") {
-      const kitchen = resolveDefaultPrinterByType(branchCode, "kitchen");
-      const kitchenName = acceptPhysical(kitchen?.systemPrinterName);
-      if (kitchenName) return kitchenName;
-      const bar = resolveDefaultPrinterByType(branchCode, "bar");
-      const barName = acceptPhysical(bar?.systemPrinterName);
-      if (barName) return barName;
-      const routing = loadPrinterRouting(branchCode);
-      const anyKot = routing.printers.find(
-        (p) =>
-          (p.printerType === "kitchen" || p.printerType === "bar") &&
-          acceptPhysical(p.systemPrinterName),
-      );
-      const anyKotName = acceptPhysical(anyKot?.systemPrinterName);
-      if (anyKotName) return anyKotName;
-    }
-    const receipt = resolveReceiptPrinter(branchCode);
-    const receiptName = acceptPhysical(receipt?.systemPrinterName);
-    if (receiptName) return receiptName;
-    const any = loadPrinterRouting(branchCode).printers.find((p) => acceptPhysical(p.systemPrinterName));
-    const anyName = acceptPhysical(any?.systemPrinterName);
-    if (anyName) return anyName;
+    const {
+      resolveKotPrinter,
+      resolveDefaultPrinterByType,
+      resolvePrinterForUser,
+    } = await import("./printerRouting");
+    const routing = loadPrinterRouting(branchCode);
 
-    // Routing only has PDF/XPS linked — use that for laptop.
-    const anyPdf = loadPrinterRouting(branchCode).printers
-      .map((p) => acceptPdfFileTarget(p.systemPrinterName))
-      .find(Boolean);
-    if (anyPdf) return anyPdf;
+    if (isKot) {
+      // Section-scoped first (mobile + desktop parity).
+      if (sectionId) {
+        const sectionKot = resolveKotPrinter(branchCode, sectionId, userId, "kitchen");
+        const sectionName =
+          acceptPhysical(sectionKot?.systemPrinterName) ??
+          acceptPdfFileTarget(sectionKot?.systemPrinterName);
+        if (sectionName) return sectionName;
+        // Strict: do not fall through to another section's printer.
+        return null;
+      }
+      // Soft profile hint → section-safe KOT resolve (never steal Grill-only printers).
+      if (hint) {
+        const allowedTypes = new Set(["kitchen", "bar"]);
+        const profile = routing.printers.find(
+          (p) =>
+            allowedTypes.has(p.printerType) &&
+            (namesRoughlyMatch(p.name, hint) ||
+              namesRoughlyMatch(p.systemPrinterName ?? "", hint)),
+        );
+        if (profile) {
+          const linked = acceptPhysical(profile.systemPrinterName);
+          if (linked) return linked;
+          const linkedPdf = acceptPdfFileTarget(profile.systemPrinterName);
+          if (linkedPdf) return linkedPdf;
+        }
+      }
+      const kitchenKot = resolveKotPrinter(branchCode, null, userId, "kitchen");
+      const kitchenName =
+        acceptPhysical(kitchenKot?.systemPrinterName) ??
+        acceptPdfFileTarget(kitchenKot?.systemPrinterName);
+      if (kitchenName) return kitchenName;
+      const barKot = resolveKotPrinter(branchCode, null, userId, "bar");
+      const barName =
+        acceptPhysical(barKot?.systemPrinterName) ??
+        acceptPdfFileTarget(barKot?.systemPrinterName);
+      if (barName) return barName;
+    } else {
+      // Receipt / bill — user-assigned bill printer first (mobile + desktop).
+      // Soft labels like "Cashier / Billing" must never override personal assignment.
+      const userBill =
+        resolvePrinterForUser(branchCode, userId, "receipt") ??
+        resolvePrinterForUser(branchCode, userId, "counter");
+      if (userBill) {
+        const linked = acceptPhysical(userBill.systemPrinterName);
+        if (linked) return linked;
+        const linkedPdf = acceptPdfFileTarget(userBill.systemPrinterName);
+        if (linkedPdf) return linkedPdf;
+        // Assigned but not linked to a Windows printer — do not guess another device
+        // (that caused mobile bills to land on the PC default / office printer).
+        return null;
+      } else {
+        // No personal assignment: optional receipt/counter profile hint (never kitchen/bar).
+        if (hint && !hintLooksLikeSoftLabel) {
+          const allowedTypes = new Set(["receipt", "counter"]);
+          const profile = routing.printers.find(
+            (p) =>
+              allowedTypes.has(p.printerType) &&
+              (namesRoughlyMatch(p.name, hint) ||
+                namesRoughlyMatch(p.systemPrinterName ?? "", hint)),
+          );
+          if (profile) {
+            const linked = acceptPhysical(profile.systemPrinterName);
+            if (linked) return linked;
+            const linkedPdf = acceptPdfFileTarget(profile.systemPrinterName);
+            if (linkedPdf) return linkedPdf;
+          }
+        }
+        const branchReceipt = resolveDefaultPrinterByType(branchCode, "receipt");
+        const branchReceiptName = acceptPhysical(branchReceipt?.systemPrinterName);
+        if (branchReceiptName) return branchReceiptName;
+        const counter = resolveDefaultPrinterByType(branchCode, "counter");
+        const counterName = acceptPhysical(counter?.systemPrinterName);
+        if (counterName) return counterName;
+        const anyReceipt = routing.printers.find(
+          (p) =>
+            (p.printerType === "receipt" || p.printerType === "counter") &&
+            acceptPhysical(p.systemPrinterName),
+        );
+        const anyReceiptName = acceptPhysical(anyReceipt?.systemPrinterName);
+        if (anyReceiptName) return anyReceiptName;
+        const anyReceiptPdf = routing.printers
+          .filter((p) => p.printerType === "receipt" || p.printerType === "counter")
+          .map((p) => acceptPdfFileTarget(p.systemPrinterName))
+          .find(Boolean);
+        if (anyReceiptPdf) return anyReceiptPdf;
+      }
+    }
   } catch {
     // ignore routing errors
   }
 
+  // Receipt jobs: never fall back to Windows default / kitchen / first-imported printers.
+  if (!isKot) {
+    const pdfOnOs = os.find((p) => /print\s*to\s*pdf/i.test(p.name))?.name;
+    if (pdfOnOs) return pdfOnOs;
+    if (os.length > 0) return "Microsoft Print to PDF";
+    return null;
+  }
+
+  const branchPrinters = await listLocalBranchPrinters(branchCode);
   const firstBranch = branchPrinters.find((p) => acceptPhysical(p.windowsPrinterName));
   const firstBranchName = acceptPhysical(firstBranch?.windowsPrinterName);
   if (firstBranchName) return firstBranchName;
 
-  const firstBranchPdf = branchPrinters
-    .map((p) => acceptPdfFileTarget(p.windowsPrinterName))
-    .find(Boolean);
-  if (firstBranchPdf) return firstBranchPdf;
-
-  // Prefer default physical printer.
   const defaultPhysical = physicalOs.find((p) => p.isDefault)?.name;
   if (defaultPhysical) return defaultPhysical;
   if (osNames[0]) return osNames[0];
 
-  // No thermal linked — laptop fallback: Microsoft Print to PDF (opens Save As).
   const pdfOnOs = os.find((p) => /print\s*to\s*pdf/i.test(p.name))?.name;
   if (pdfOnOs) return pdfOnOs;
-  const defaultOs = os.find((p) => p.isDefault)?.name;
-  const defaultPdf = acceptPdfFileTarget(defaultOs);
-  if (defaultPdf) return defaultPdf;
   if (os.length > 0) return "Microsoft Print to PDF";
   return null;
 }
 
 async function pngBytesFromPayload(
   payload: PrintJobPayload,
+  paperOverride?: string | null,
 ): Promise<{ bytes: Uint8Array; paperMm: number } | null> {
+  const raw = paperOverride?.trim() || payload.paperSize?.trim() || "80mm";
   const paper =
-    payload.paperSize === "58mm" || payload.paperSize === "80mm" || payload.paperSize === "100mm"
-      ? payload.paperSize
-      : "80mm";
+    raw === "58mm" || raw === "80mm" || raw === "100mm" ? raw : "80mm";
   const paperMm = paper === "58mm" ? 58 : paper === "100mm" ? 100 : 80;
 
   if (payload.imageBase64?.trim()) {
@@ -689,29 +758,99 @@ async function pngBytesFromPayload(
   return { bytes: png, paperMm };
 }
 
-async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolean; error?: string; printer?: string }> {
-  const payload = JSON.parse(job.payloadJson) as PrintJobPayload;
+type MobileTicketLine = {
+  label: string;
+  qty: number;
+  unitPrice?: number;
+  menuItemId?: string;
+  categoryId?: string;
+};
+
+type MobileTicketMeta = {
+  branchName?: string;
+  modeLabel?: string;
+  tableLabel?: string;
+  waiterName?: string;
+  notes?: string;
+  isOrderUpdate?: boolean;
+  orderRef?: string;
+  lines?: MobileTicketLine[];
+  subtotal?: number;
+  discount?: number;
+  service?: number;
+  tax?: number;
+  deliveryCharge?: number;
+  total?: number;
+  servicePct?: number;
+  taxPct?: number;
+  discountPct?: number;
+};
+
+function readMobileTicketMeta(payload: PrintJobPayload): MobileTicketMeta | null {
+  const raw = payload.meta?.ticket;
+  if (!raw || typeof raw !== "object") return null;
+  return raw as MobileTicketMeta;
+}
+
+async function printPngToResolvedPrinter(input: {
+  branchCode: string;
+  kind: string;
+  orderId?: string | null;
+  jobId: string;
+  userId: string | null;
+  sectionId?: string | null;
+  printerHint?: string | null;
+  html: string;
+  copies?: number;
+  paperSize?: string | null;
+}): Promise<{ ok: boolean; error?: string; printer?: string }> {
   let printer = await resolveSilentSystemPrinterName({
-    branchCode: job.branchCode,
-    kind: payload.kind,
-    printerName: job.printerName ?? payload.systemPrinterName,
-    systemPrinterName: payload.systemPrinterName,
+    branchCode: input.branchCode,
+    kind: input.kind,
+    printerName: input.printerHint,
+    systemPrinterName: null,
+    userId: input.userId,
+    sectionId: input.sectionId,
   });
 
-  // XPS / OpenXPS → force PDF (never open .oxps Save As from mobile jobs).
   if (printer && isXpsSystemPrinter(printer)) {
     printer = preferPdfOverXpsPrinter(printer);
   }
 
+  // Prefer paper size from the profile that owns this OS printer.
+  let paperSize = input.paperSize?.trim() || null;
+  let copies = input.copies ?? 1;
+  try {
+    const { loadPrinterRouting } = await import("./printerRouting");
+    const routing = loadPrinterRouting(input.branchCode);
+    const profile = routing.printers.find(
+      (p) =>
+        p.systemPrinterName?.trim() &&
+        printer &&
+        p.systemPrinterName.trim().toLowerCase() === printer.trim().toLowerCase(),
+    );
+    if (profile) {
+      paperSize = profile.paperSize || paperSize;
+      copies = profile.copies || copies;
+    }
+  } catch {
+    // ignore
+  }
+
   if (!printer) {
+    const isReceipt = String(input.kind).toLowerCase() !== "kot";
     return {
       ok: false,
-      error:
-        "No Windows printer found. Link a thermal/USB printer in POS, or Microsoft Print to PDF for laptop testing.",
+      error: isReceipt
+        ? input.userId
+          ? "No bill printer for this user. In POS → Printer settings, assign a Receipt printer to this waiter/cashier and link the Windows printer."
+          : "No bill printer found. Assign a Receipt printer in POS → Printer settings."
+        : input.sectionId
+          ? "No printer assigned to this kitchen section. In POS → Printers, select the section and tap Use for…"
+          : "No Windows printer found. Link a thermal/USB printer in POS, or Microsoft Print to PDF for laptop testing.",
     };
   }
 
-  // Allow PDF (laptop). Remap XPS → PDF. Still refuse Fax/OneNote.
   if (isVirtualSystemPrinter(printer) && !/print\s*to\s*pdf/i.test(printer)) {
     if (isXpsSystemPrinter(printer)) {
       printer = preferPdfOverXpsPrinter(printer) ?? "Microsoft Print to PDF";
@@ -723,7 +862,10 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
     }
   }
 
-  const rendered = await pngBytesFromPayload(payload);
+  const rendered = await pngBytesFromPayload(
+    { kind: input.kind as PrintJobPayload["kind"], html: input.html, copies, paperSize: paperSize ?? undefined },
+    paperSize,
+  );
   if (!rendered) {
     return { ok: false, error: "Missing image/HTML payload for silent print" };
   }
@@ -731,12 +873,229 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
   const result = await printImageToSystemPrinter({
     printerName: printer,
     pngBytes: rendered.bytes,
-    jobName: `${payload.kind} · ${job.orderId ?? job.id}`,
-    copies: payload.copies ?? 1,
+    jobName: `${input.kind} · ${input.orderId ?? input.jobId}`,
+    copies,
     paperWidthMm: rendered.paperMm,
   });
   if (result.ok) return { ok: true, printer };
   return { ok: false, error: result.error, printer };
+}
+
+async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolean; error?: string; printer?: string }> {
+  const payload = JSON.parse(job.payloadJson) as PrintJobPayload & { userId?: string | null };
+  const userId =
+    job.userId?.trim() ||
+    (typeof payload.userId === "string" ? payload.userId.trim() : "") ||
+    (typeof payload.meta?.userId === "string" ? String(payload.meta.userId).trim() : "") ||
+    null;
+  const kind = String(payload.kind ?? "receipt").toLowerCase();
+  const ticket = readMobileTicketMeta(payload);
+  const sectionId = payload.sectionId?.trim() || null;
+
+  // Dynamic path: rebuild with desktop printTicket (paper size, text scale, KOT/bill settings).
+  if (ticket?.lines && ticket.lines.length > 0) {
+    try {
+      const { buildTicketHtml, withPrinterProfile } = await import("./printTicket");
+      const {
+        resolveKotPrinter,
+        resolveReceiptPrinter,
+        groupCartLinesBySection,
+      } = await import("./printerRouting");
+      const { loadPrinterSections } = await import("./printerSections");
+      const { loadKotPrintSettings } = await import("./kotPrintSettings");
+      const { loadBillPrintSettings } = await import("./billPrintSettings");
+      // MenuItem / PosCartLine used via casts below.
+
+      const branchName = ticket.branchName?.trim() || job.branchCode;
+      const orderRef =
+        ticket.orderRef?.trim() ||
+        payload.orderRef?.trim() ||
+        job.orderId?.trim() ||
+        job.id;
+
+      if (kind === "kot") {
+        const cartLines: PosCartLine[] = ticket.lines.map((line, index) => {
+          const id = line.menuItemId?.trim() || `mobile-line-${index}`;
+          const categoryId = line.categoryId?.trim() || "";
+          const item = {
+            id,
+            categoryId,
+            name: line.label,
+            portion: null,
+            price: line.unitPrice ?? 0,
+          } as unknown as MenuItem;
+          return {
+            key: id,
+            item,
+            variant: null,
+            qty: Math.max(1, Number(line.qty) || 1),
+            unitPrice: Number(line.unitPrice) || 0,
+            lineLabel: line.label,
+            sortOrder: index + 1,
+          };
+        });
+
+        const enabledSections = loadPrinterSections(job.branchCode).filter((s) => s.enabled);
+        const enabledIds = new Set(enabledSections.map((s) => s.id));
+        const groups =
+          enabledSections.length > 0 && cartLines.some((l) => l.item.categoryId || l.item.id)
+            ? groupCartLinesBySection(job.branchCode, cartLines, enabledIds)
+            : [{ sectionId: sectionId, lines: cartLines }];
+
+        // If everything lands in one null group, still print once (kitchen default).
+        const printable =
+          groups.length === 0
+            ? [{ sectionId: sectionId, lines: cartLines }]
+            : groups;
+
+        let lastPrinter: string | undefined;
+        const errors: string[] = [];
+        let okCount = 0;
+
+        for (const group of printable) {
+          if (!group.lines.length) continue;
+          const section = group.sectionId
+            ? enabledSections.find((s) => s.id === group.sectionId)
+            : null;
+          const preferredType =
+            section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
+              ? ("bar" as const)
+              : ("kitchen" as const);
+          const profile = resolveKotPrinter(
+            job.branchCode,
+            group.sectionId,
+            userId,
+            preferredType,
+          );
+          const label = section ? `${section.icon} ${section.name}` : "Kitchen";
+          const base = {
+            branchName,
+            branchCode: job.branchCode,
+            orderRef,
+            modeLabel: ticket.modeLabel?.trim() || label,
+            tableLabel: ticket.tableLabel?.trim() || ticket.modeLabel?.trim() || undefined,
+            waiterName: ticket.waiterName?.trim() || undefined,
+            notes: ticket.notes?.trim() || undefined,
+            isOrderUpdate: Boolean(ticket.isOrderUpdate),
+            lines: group.lines.map((l) => ({
+              label: l.lineLabel,
+              qty: l.qty,
+              unitPrice: 0,
+            })),
+            subtotal: 0,
+            discount: 0,
+            service: 0,
+            tax: 0,
+            total: 0,
+            servicePct: 0,
+            discountPct: 0,
+            kotSettings: loadKotPrintSettings(job.branchCode),
+          };
+          const enriched = withPrinterProfile(base, profile);
+          const html = buildTicketHtml({ ...enriched, kind: "kot" });
+          const result = await printPngToResolvedPrinter({
+            branchCode: job.branchCode,
+            kind: "kot",
+            orderId: job.orderId,
+            jobId: job.id,
+            userId,
+            sectionId: group.sectionId,
+            printerHint: job.printerName ?? profile?.name ?? null,
+            html,
+            copies: enriched.copies ?? 1,
+            paperSize: enriched.paperSize ?? null,
+          });
+          if (result.ok) {
+            okCount += 1;
+            lastPrinter = result.printer;
+          } else if (result.error) {
+            errors.push(result.error);
+          }
+        }
+
+        if (okCount > 0) return { ok: true, printer: lastPrinter };
+        return {
+          ok: false,
+          error: errors[0] ?? "KOT print failed",
+          printer: lastPrinter,
+        };
+      }
+
+      // Receipt — rebuild with bill customization + assigned receipt printer paper size.
+      const profile = resolveReceiptPrinter(job.branchCode, userId);
+      const lines = ticket.lines.map((l) => ({
+        label: l.label,
+        qty: Math.max(1, Number(l.qty) || 1),
+        unitPrice: Number(l.unitPrice) || 0,
+      }));
+      const subtotal =
+        ticket.subtotal ??
+        lines.reduce((sum, l) => sum + l.unitPrice * l.qty, 0);
+      const base = {
+        branchName,
+        branchCode: job.branchCode,
+        orderRef,
+        modeLabel: ticket.modeLabel?.trim() || "Staff",
+        tableLabel: ticket.tableLabel?.trim() || undefined,
+        waiterName: ticket.waiterName?.trim() || undefined,
+        notes: ticket.notes?.trim() || undefined,
+        lines,
+        subtotal,
+        discount: ticket.discount ?? 0,
+        service: ticket.service ?? 0,
+        tax: ticket.tax ?? 0,
+        deliveryCharge: ticket.deliveryCharge ?? 0,
+        total: ticket.total ?? subtotal + (ticket.service ?? 0) + (ticket.tax ?? 0),
+        servicePct: ticket.servicePct ?? 0,
+        taxPct: ticket.taxPct,
+        discountPct: ticket.discountPct ?? 0,
+        billPrintSettings: loadBillPrintSettings(job.branchCode),
+      };
+      const enriched = withPrinterProfile(base, profile);
+      const html = buildTicketHtml({ ...enriched, kind: "receipt" });
+      return printPngToResolvedPrinter({
+        branchCode: job.branchCode,
+        kind: "receipt",
+        orderId: job.orderId,
+        jobId: job.id,
+        userId,
+        sectionId: null,
+        printerHint: job.printerName ?? profile?.name ?? null,
+        html,
+        copies: enriched.copies ?? 1,
+        paperSize: enriched.paperSize ?? null,
+      });
+    } catch (err) {
+      // Fall through to legacy HTML path if rebuild fails.
+      console.warn("[branchPrint] structured mobile rebuild failed", err);
+    }
+  }
+
+  // Legacy HTML path — still apply sectionId + profile paper size when possible.
+  let paperOverride: string | null = payload.paperSize?.trim() || null;
+  try {
+    const { resolveKotPrinter, resolveReceiptPrinter } = await import("./printerRouting");
+    const profile =
+      kind === "kot"
+        ? resolveKotPrinter(job.branchCode, sectionId, userId, "kitchen")
+        : resolveReceiptPrinter(job.branchCode, userId);
+    if (profile?.paperSize) paperOverride = profile.paperSize;
+  } catch {
+    // ignore
+  }
+
+  return printPngToResolvedPrinter({
+    branchCode: job.branchCode,
+    kind,
+    orderId: job.orderId,
+    jobId: job.id,
+    userId,
+    sectionId,
+    printerHint: job.printerName ?? payload.systemPrinterName ?? null,
+    html: payload.html?.trim() || "",
+    copies: payload.copies ?? 1,
+    paperSize: paperOverride,
+  });
 }
 
 /** Drain local SQLite queue via HTML→PNG + named Windows printer (no dialog). */
@@ -825,6 +1184,7 @@ export function ensureCloudPrintPoller(branchCode: string): void {
       const row = (await res.json()) as {
         id?: string;
         branchCode?: string;
+        userId?: string | null;
         printerName?: string | null;
         orderId?: string | null;
         payloadJson?: PrintJobPayload | Record<string, unknown>;
@@ -837,12 +1197,19 @@ export function ensureCloudPrintPoller(branchCode: string): void {
         id: row.id,
         branchCode: String(row.branchCode ?? code),
         printerName: row.printerName ?? null,
+        userId: row.userId ?? null,
         orderId: row.orderId ?? null,
         priority: 100,
         status: "printing",
         retryCount: 0,
         error: null,
-        payloadJson: JSON.stringify(payload),
+        payloadJson: JSON.stringify({
+          ...payload,
+          meta: {
+            ...(payload.meta && typeof payload.meta === "object" ? payload.meta : {}),
+            userId: row.userId ?? null,
+          },
+        }),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         printedAt: null,

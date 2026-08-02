@@ -55,24 +55,45 @@ export default function AdminMoreScreen() {
 
         <Subtitle>Money</Subtitle>
         <ActionTile
-          icon="💰"
-          title="Sales"
-          subtitle="Date filter · channels · top items"
-          onPress={() => router.push("/admin-sales")}
+          icon="💵"
+          title="Cash drawer"
+          subtitle="Cashier In · Pay In · Paying Out · Cashier Out"
+          onPress={() => router.push("/admin-cash")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="💸"
+          title="Pay Out"
+          subtitle="Supplier · Customer · Employee · Expense"
+          onPress={() => router.push("/admin-payout")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="📒"
+          title="Ledgers"
+          subtitle="Pay vendor · receive customer · create invoice"
+          onPress={() => router.push("/admin-ledger")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="🏪"
+          title="Vendors"
+          subtitle="Add / view supplier entries"
+          onPress={() => router.push("/admin-vendors")}
           variant="primary"
         />
         <ActionTile
           icon="📊"
           title="Reports"
-          subtitle="Charges · discount · party · salary · expense"
+          subtitle="Cash · Customer · charges · party · salary"
           onPress={() => router.push("/admin-reports")}
           variant="primary"
         />
         <ActionTile
-          icon="💸"
-          title="Payout"
-          subtitle="Salary, vendor & party pay out"
-          onPress={() => router.push("/admin-payout")}
+          icon="💰"
+          title="Sales"
+          subtitle="Date filter · channels · top items"
+          onPress={() => router.push("/admin-sales")}
           variant="primary"
         />
 

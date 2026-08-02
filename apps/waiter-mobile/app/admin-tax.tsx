@@ -373,7 +373,7 @@ function ToggleRow({
         paddingVertical: 12,
         paddingHorizontal: 12,
         borderRadius: 12,
-        backgroundColor: "#020617",
+        backgroundColor: colors.bg,
         borderWidth: 1,
         borderColor: colors.border,
         opacity: disabled ? 0.45 : 1,

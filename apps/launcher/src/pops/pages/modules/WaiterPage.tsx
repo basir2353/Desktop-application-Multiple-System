@@ -486,6 +486,12 @@ export function WaiterPage(): JSX.Element {
             useSessionStore.getState().claims?.sub,
             preferredType,
           );
+        if (group.sectionId && !profile?.systemPrinterName?.trim()) {
+          const label = section ? `${section.icon} ${section.name}` : group.sectionId;
+          printOk = false;
+          errors.push(`${label}: no printer assigned (Printers tab → pick section → Use for…)`);
+          continue;
+        }
         const payload = withPrinterProfile(
           {
             branchName: branch?.name ?? "POPS",

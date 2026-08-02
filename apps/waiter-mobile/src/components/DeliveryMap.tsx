@@ -45,7 +45,7 @@ function mapsEmbedHtml(address: string): string {
 <html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <style>
-  html,body{margin:0;padding:0;height:100%;background:#0f172a;}
+  html,body{margin:0;padding:0;height:100%;background:#0B1220;}
   iframe{border:0;width:100%;height:100%;}
 </style>
 </head><body>
@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#0f172a",
+    backgroundColor: colors.bg,
   },
   webview: { flex: 1, backgroundColor: "transparent" },
   address: { color: colors.text, fontSize: 14, lineHeight: 20 },
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   btnPrimary: { backgroundColor: colors.accent },
-  btnPrimaryText: { color: "#0f172a", fontWeight: "800", fontSize: 14 },
+  btnPrimaryText: { color: colors.accentText, fontWeight: "800", fontSize: 14 },
   btnGhost: {
     borderWidth: 1,
     borderColor: colors.border,

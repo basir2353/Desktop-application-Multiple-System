@@ -1,6 +1,6 @@
 import { CHRONIC_DISEASES, type PharmacyPatient } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   createPharmacyPatient,
   fetchPharmacyPatientHistory,
@@ -31,6 +31,7 @@ export function PharmacyCustomersPage(): JSX.Element {
   const [editingPatient, setEditingPatient] = useState<PharmacyPatient | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const query = useQuery({
     queryKey: ["pharmacy", "patients", branch?.code],
@@ -43,6 +44,20 @@ export function PharmacyCustomersPage(): JSX.Element {
     enabled: Boolean(historyId),
     queryFn: () => fetchPharmacyPatientHistory(historyId!),
   });
+
+  const patients = query.data ?? [];
+  const filteredPatients = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return patients;
+    return patients.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.phone ?? "").toLowerCase().includes(q) ||
+        (p.email ?? "").toLowerCase().includes(q) ||
+        p.allergies.some((a) => a.toLowerCase().includes(q)) ||
+        p.chronicDiseases.some((d) => d.toLowerCase().includes(q)),
+    );
+  }, [patients, search]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -253,6 +268,18 @@ export function PharmacyCustomersPage(): JSX.Element {
         </div>
       ) : null}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className={`${pharmacyInputClass} min-w-[12rem] flex-1 sm:max-w-xs`}
+          placeholder="Search name, phone, email…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <span className="text-xs text-slate-500">
+          {filteredPatients.length} / {patients.length}
+        </span>
+      </div>
+
       <SimpleTable<PharmacyPatient>
         rowKey={(r) => r.id}
         columns={[
@@ -279,7 +306,7 @@ export function PharmacyCustomersPage(): JSX.Element {
             ),
           },
         ]}
-        rows={query.data ?? []}
+        rows={filteredPatients}
       />
     </div>
   );

@@ -3,8 +3,10 @@ import { Redirect } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import {
+  fetchCashMovements,
   fetchCustomerInvoices,
   fetchExpenses,
+  fetchOpenCashSession,
   fetchVendorBills,
 } from "../src/api/accounting";
 import { fetchOrders } from "../src/api/billing";
@@ -23,9 +25,11 @@ import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-type TabId = "charges" | "discount" | "party" | "salary" | "expense";
+type TabId = "cash" | "customer" | "charges" | "discount" | "party" | "salary" | "expense";
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "cash", label: "Cash" },
+  { id: "customer", label: "Customer" },
   { id: "charges", label: "Charges" },
   { id: "discount", label: "Discount" },
   { id: "party", label: "Party" },
@@ -38,7 +42,7 @@ export default function AdminReportsScreen() {
   const branch = useBranchStore((s) => s.branch);
   const allowed = isAdminOrIncharge(claims);
   const branchCode = branch?.code;
-  const [tab, setTab] = useState<TabId>("charges");
+  const [tab, setTab] = useState<TabId>("cash");
   const [range, setRange] = useState<DateRangeValue>(defaultDateRange);
 
   const ordersQuery = useQuery({
@@ -49,7 +53,10 @@ export default function AdminReportsScreen() {
   const invoicesQuery = useQuery({
     queryKey: ["admin", "receivable", branchCode],
     queryFn: () => fetchCustomerInvoices(branchCode!),
-    enabled: allowed && Boolean(branchCode) && (tab === "party" || tab === "charges"),
+    enabled:
+      allowed &&
+      Boolean(branchCode) &&
+      (tab === "party" || tab === "charges" || tab === "customer"),
   });
   const vendorsQuery = useQuery({
     queryKey: ["admin", "payable", branchCode],
@@ -65,6 +72,16 @@ export default function AdminReportsScreen() {
     queryKey: ["admin", "expenses", branchCode],
     queryFn: () => fetchExpenses(branchCode!),
     enabled: allowed && Boolean(branchCode) && tab === "expense",
+  });
+  const cashSessionQuery = useQuery({
+    queryKey: ["admin", "cash-session-open", branchCode],
+    queryFn: () => fetchOpenCashSession(branchCode!),
+    enabled: allowed && Boolean(branchCode) && tab === "cash",
+  });
+  const cashMovesQuery = useQuery({
+    queryKey: ["admin", "cash-movements", cashSessionQuery.data?.id],
+    queryFn: () => fetchCashMovements(cashSessionQuery.data!.id),
+    enabled: allowed && Boolean(cashSessionQuery.data?.id) && tab === "cash",
   });
 
   const rangedOrders = useMemo(
@@ -169,6 +186,132 @@ export default function AdminReportsScreen() {
             );
           })}
         </ScrollView>
+
+        {tab === "cash" ? (
+          <>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <StatCard
+                label="Drawer"
+                value={cashSessionQuery.data ? "Open" : "Closed"}
+                hint="Cashier In / Out"
+                accent={cashSessionQuery.data ? colors.success : colors.muted}
+              />
+              <StatCard
+                label="Expected"
+                value={formatPkr(cashSessionQuery.data?.liveExpectedCash ?? 0)}
+                hint="Live drawer"
+              />
+            </View>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <StatCard
+                label="Pay In"
+                value={formatPkr(
+                  (cashMovesQuery.data ?? [])
+                    .filter((m) => m.type === "paid_in")
+                    .reduce((s, m) => s + m.amountPkr, 0),
+                )}
+                accent={colors.success}
+              />
+              <StatCard
+                label="Paying Out"
+                value={formatPkr(
+                  (cashMovesQuery.data ?? [])
+                    .filter((m) => m.type === "paid_out")
+                    .reduce((s, m) => s + m.amountPkr, 0),
+                )}
+                accent={colors.warning}
+              />
+            </View>
+            <Card>
+              <Subtitle>Session movements</Subtitle>
+              {!cashSessionQuery.data ? (
+                <Text style={{ color: colors.muted, marginTop: 8 }}>
+                  No open drawer — use Cash drawer → Cashier In.
+                </Text>
+              ) : (cashMovesQuery.data ?? []).length === 0 ? (
+                <Text style={{ color: colors.muted, marginTop: 8 }}>No pay in / out yet.</Text>
+              ) : (
+                [...(cashMovesQuery.data ?? [])]
+                  .sort(
+                    (a, b) =>
+                      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+                  )
+                  .map((m) => (
+                    <View
+                      key={m.id}
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        paddingVertical: 10,
+                        borderBottomWidth: 1,
+                        borderBottomColor: colors.border,
+                      }}
+                    >
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>
+                          {m.type === "paid_in" ? "Pay In / Cashier In" : "Paying Out"}
+                        </Text>
+                        <Text style={{ color: colors.muted, fontSize: 11 }} numberOfLines={2}>
+                          {m.reason}
+                        </Text>
+                      </View>
+                      <Text
+                        style={{
+                          color: m.type === "paid_in" ? colors.success : colors.warning,
+                          fontWeight: "800",
+                        }}
+                      >
+                        {m.type === "paid_in" ? "+" : "−"}
+                        {formatPkr(m.amountPkr)}
+                      </Text>
+                    </View>
+                  ))
+              )}
+            </Card>
+          </>
+        ) : null}
+
+        {tab === "customer" ? (
+          <>
+            <StatCard
+              label="Customer outstanding"
+              value={formatPkr(partyRows.customerTotal)}
+              hint={`${partyRows.customers.length} parties · update in Ledgers`}
+              accent={colors.success}
+            />
+            <Card>
+              <Subtitle>Customer report</Subtitle>
+              {partyRows.customers.length === 0 ? (
+                <Text style={{ color: colors.muted, marginTop: 8 }}>
+                  No customer balances in this range.
+                </Text>
+              ) : (
+                partyRows.customers.map((c) => (
+                  <View
+                    key={`${c.name}-${c.phone}`}
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      paddingVertical: 10,
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.border,
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontWeight: "700" }}>{c.name}</Text>
+                      {c.phone ? (
+                        <Text style={{ color: colors.muted, fontSize: 11 }}>{c.phone}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={{ color: colors.success, fontWeight: "800" }}>
+                      {formatPkr(c.balance)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </>
+        ) : null}
 
         {tab === "charges" ? (
           <>

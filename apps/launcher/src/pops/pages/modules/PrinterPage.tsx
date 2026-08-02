@@ -31,14 +31,17 @@ import {
   getUserIdsForPrinter,
   importPrinterConfig,
   listAssignedCounters,
+  listSectionsForPrinter,
   loadPrinterRouting,
   movePrinterPriority,
   PRINTER_ROUTING_CHANGED_EVENT,
+  PRINTER_TEXT_SCALE_LABELS,
   printerTypeLabel,
   printerTypesForSystem,
   setCategorySections,
   setItemSections,
   setReceiptPrinter,
+  setSectionPrimaryPrinter,
   setUserPrinters,
   togglePrinterForSection,
   toggleUserPrinter,
@@ -46,6 +49,7 @@ import {
   type PrinterPaperSize,
   type PrinterProfile,
   type PrinterRoutingState,
+  type PrinterTextScale,
   type PrinterType,
 } from "../../lib/printerRouting";
 import { listSystemPrintersDetailed, type SystemPrinterInfo } from "../../lib/systemPrinters";
@@ -343,9 +347,14 @@ function PrinterSectionsTab({
   const filteredSections = sections.filter((s) =>
     s.name.toLowerCase().includes(sectionSearch.trim().toLowerCase()),
   );
-  const filteredPrinters = routing.printers.filter((p) =>
-    p.name.toLowerCase().includes(printerSearch.trim().toLowerCase()),
-  );
+  const assignedIds = selectedSection ? routing.sectionPrinters[selectedSection.id] ?? [] : [];
+  /** Center table: ONLY printers assigned to the selected section (not all profiles). */
+  const filteredPrinters = (selectedSection
+    ? assignedIds
+        .map((id) => routing.printers.find((p) => p.id === id))
+        .filter((p): p is (typeof routing.printers)[number] => Boolean(p))
+    : []
+  ).filter((p) => p.name.toLowerCase().includes(printerSearch.trim().toLowerCase()));
   const displayedSystemPrinters = useMemo(() => {
     const q = printerSearch.trim().toLowerCase();
     const source = allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters;
@@ -381,7 +390,6 @@ function PrinterSectionsTab({
   const linkedItems = selectedSection
     ? items.filter((i) => (routing.byItem[i.id] ?? []).includes(selectedSection.id))
     : [];
-  const assignedIds = selectedSection ? routing.sectionPrinters[selectedSection.id] ?? [] : [];
 
   function assignSystemPrinter(printer: SystemPrinterInfo): void {
     if (!selectedSection) {
@@ -409,17 +417,18 @@ function PrinterSectionsTab({
         return;
       }
     } else {
+      // Keep existing printerType — do not retag a shared profile as Kitchen when
+      // linking it to another section (Grill/Waiter). Assignment is per sectionId.
       updatePrinterProfile(branchCode, profile.id, {
-        printerType,
-        systemPrinterName,
+        systemPrinterName: profile.systemPrinterName?.trim() || systemPrinterName,
       });
     }
     togglePrinterForSection(branchCode, selectedSection.id, profile.id, true);
     maybeSetDefaultPosPrinter(branchCode, profile.id, printerType, selectedSection.id);
     notify(
       printer.isVirtual
-        ? `✓ ${printer.name} → ${selectedSection.name} (PDF/XPS Auto). Windows may ask where to save.`
-        : `✓ ${printer.name} → ${selectedSection.name}. Done.`,
+        ? `✓ ${printer.name} → ${selectedSection.name} only (PDF/XPS). Other sections unchanged.`
+        : `✓ ${printer.name} → ${selectedSection.name} only. Other sections unchanged.`,
     );
     setPrinterPickerOpen(false);
     setPrinterSearch("");
@@ -435,11 +444,11 @@ function PrinterSectionsTab({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-sm font-semibold text-slate-900 dark:text-white">
-              1) Pick a section → 2) Tap a printer
+              1) Pick a section on the left → 2) Assign printer (only that section)
             </div>
             <p className="mt-1 text-xs text-slate-500">
               {selectedSection
-                ? `Selected: ${selectedSection.name}. Tap “Use for ${selectedSection.name}” on a printer below.`
+                ? `Selected: ${selectedSection.name}. “Use for ${selectedSection.name}” applies to this section only — not Bar, Grill, Waiter, etc.`
                 : isStore
                   ? "Select Receipt or Counter on the left, then choose a printer."
                   : "Select Kitchen or Bar on the left, then choose a printer."}
@@ -472,18 +481,33 @@ function PrinterSectionsTab({
               </p>
             </div>
           ) : (
-            displayedSystemPrinters.map((printer) => (
+            displayedSystemPrinters.map((printer) => {
+              const linkedProfile =
+                routing.printers.find((p) => p.systemPrinterName === printer.name) ??
+                routing.printers.find(
+                  (p) => p.name.toLowerCase() === printer.name.toLowerCase(),
+                );
+              const alreadyOnSection = Boolean(
+                linkedProfile && assignedIds.includes(linkedProfile.id),
+              );
+              return (
               <div
                 key={printer.name}
                 className={`rounded-lg border p-3 ${
-                  printer.isVirtual
-                    ? "border-slate-800 bg-slate-950/40 opacity-90"
-                    : "border-slate-700 bg-slate-950/60"
+                  alreadyOnSection
+                    ? "border-amber-500/40 bg-amber-500/5"
+                    : printer.isVirtual
+                      ? "border-slate-800 bg-slate-950/40 opacity-90"
+                      : "border-slate-700 bg-slate-950/60"
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="truncate text-sm font-medium text-white">{printer.name}</div>
-                  {printer.isVirtual ? (
+                  {alreadyOnSection ? (
+                    <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-300">
+                      On {selectedSection?.name ?? "section"}
+                    </span>
+                  ) : printer.isVirtual ? (
                     <span className="shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] text-sky-300">
                       PDF/XPS
                     </span>
@@ -494,21 +518,39 @@ function PrinterSectionsTab({
                   )}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
-                  <span className={`h-1.5 w-1.5 rounded-full ${statusDot(printer.state)}`} aria-hidden />
-                  {statusLabel(printer.state)} · {printer.connectionType}
+                  <span className={`h-1.5 w-1.5 rounded-full ${statusDot(printer.status)}`} aria-hidden />
+                  {statusLabel(printer.status)} · {printer.connectionType}
                   {printer.isDefault ? (
                     <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-amber-300">Default</span>
                   ) : null}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    className="text-xs"
-                    disabled={!selectedSection}
-                    onClick={() => assignSystemPrinter(printer)}
-                  >
-                    Use for {selectedSection?.name ?? "section"}
-                  </Button>
+                  {alreadyOnSection && linkedProfile && selectedSection ? (
+                    <Button
+                      type="button"
+                      className="text-xs"
+                      onClick={() => {
+                        togglePrinterForSection(
+                          branchCode,
+                          selectedSection.id,
+                          linkedProfile.id,
+                          false,
+                        );
+                        notify(`Removed ${printer.name} from ${selectedSection.name} only.`);
+                      }}
+                    >
+                      Remove from {selectedSection.name}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      className="text-xs"
+                      disabled={!selectedSection}
+                      onClick={() => assignSystemPrinter(printer)}
+                    >
+                      Use for {selectedSection?.name ?? "section"}
+                    </Button>
+                  )}
                   <button
                     type="button"
                     className="text-[11px] text-amber-400 hover:text-amber-300"
@@ -528,7 +570,8 @@ function PrinterSectionsTab({
                   </button>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -694,10 +737,13 @@ function PrinterSectionsTab({
                   ) : (
                     <ul className="py-1">
                       {selectableSystemPrinters.map((printer) => {
-                        const alreadyAdded = routing.printers.some(
-                          (p) =>
-                            p.systemPrinterName === printer.name ||
-                            p.name.toLowerCase() === printer.name.toLowerCase(),
+                        const linkedProfile =
+                          routing.printers.find((p) => p.systemPrinterName === printer.name) ??
+                          routing.printers.find(
+                            (p) => p.name.toLowerCase() === printer.name.toLowerCase(),
+                          );
+                        const alreadyAdded = Boolean(
+                          linkedProfile && assignedIds.includes(linkedProfile.id),
                         );
                         return (
                           <li key={printer.name}>
@@ -726,7 +772,9 @@ function PrinterSectionsTab({
                                     : "bg-amber-500/15 text-amber-300"
                                 }`}
                               >
-                                {alreadyAdded ? "Added" : "Select"}
+                                {alreadyAdded
+                                  ? `On ${selectedSection?.name ?? "section"}`
+                                  : "Select"}
                               </span>
                             </button>
                           </li>
@@ -739,8 +787,9 @@ function PrinterSectionsTab({
             </div>
 
             <p className="mt-1.5 text-[10px] text-slate-500">
-              Click Add printer, pick from the list, then it appears in the table below
-              {selectedSection ? ` and is assigned to ${selectedSection.name}` : ""}.
+              Table below shows printers for
+              {selectedSection ? ` ${selectedSection.name} only` : " the selected section"}
+              — assigning here never updates other sections.
             </p>
 
             <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
@@ -758,7 +807,9 @@ function PrinterSectionsTab({
                   {filteredPrinters.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-2.5 py-4 text-center text-slate-500">
-                        No printer profiles yet. Use Add printer above and select from the list.
+                        {selectedSection
+                          ? `No printers on ${selectedSection.name} yet. Use “Use for ${selectedSection.name}” above — other sections stay unchanged.`
+                          : "Select a section on the left, then assign a printer."}
                       </td>
                     </tr>
                   ) : (
@@ -831,11 +882,19 @@ function PrinterSectionsTab({
                             type="button"
                             className="text-red-400 hover:text-red-300"
                             onClick={() => {
-                              deletePrinterProfile(branchCode, printer.id);
-                              notify(`Printer "${printer.name}" removed.`);
+                              if (!selectedSection) return;
+                              togglePrinterForSection(
+                                branchCode,
+                                selectedSection.id,
+                                printer.id,
+                                false,
+                              );
+                              notify(
+                                `Removed "${printer.name}" from ${selectedSection.name} only. Other sections unchanged.`,
+                              );
                             }}
                           >
-                            Remove
+                            Remove from {selectedSection?.name ?? "section"}
                           </button>
                         </td>
                       </tr>
@@ -907,23 +966,100 @@ function PrinterSectionsTab({
                   Section enabled
                 </label>
 
-                <div>
-                  <div className="text-xs text-slate-400">Assigned printers (top = primary)</div>
-                  <div className="mt-1.5 space-y-1">
-                    {routing.printers.length === 0 ? (
-                      <p className="text-[11px] text-slate-500">Add or assign a printer first.</p>
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-2.5">
+                  <div className="text-xs font-semibold text-slate-200">
+                    Assign printer → {selectedSection.name} only
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-slate-500">
+                    This does not change Bar, Grill, Waiter, or other sections.
+                  </p>
+                  <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
+                    {displayedSystemPrinters.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">
+                        {systemPrintersLoading
+                          ? "Scanning Windows printers…"
+                          : "No Windows printers found. Click Refresh printers above."}
+                      </p>
                     ) : (
-                      routing.printers.map((printer) => {
-                        const assigned = assignedIds.includes(printer.id);
-                        const index = assignedIds.indexOf(printer.id);
+                      displayedSystemPrinters.map((printer) => {
+                        const linkedProfile =
+                          routing.printers.find((p) => p.systemPrinterName === printer.name) ??
+                          routing.printers.find(
+                            (p) => p.name.toLowerCase() === printer.name.toLowerCase(),
+                          );
+                        const alreadyOnSection = Boolean(
+                          linkedProfile && assignedIds.includes(linkedProfile.id),
+                        );
+                        return (
+                          <div
+                            key={`right-${printer.name}`}
+                            className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[11px] text-slate-200">
+                              {printer.name}
+                            </span>
+                            {alreadyOnSection ? (
+                              <button
+                                type="button"
+                                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10"
+                                onClick={() => {
+                                  if (!linkedProfile) return;
+                                  togglePrinterForSection(
+                                    branchCode,
+                                    selectedSection.id,
+                                    linkedProfile.id,
+                                    false,
+                                  );
+                                  notify(`Removed ${printer.name} from ${selectedSection.name}.`);
+                                }}
+                              >
+                                Remove
+                              </button>
+                            ) : (
+                              <Button
+                                type="button"
+                                className="shrink-0 text-[10px]"
+                                onClick={() => assignSystemPrinter(printer)}
+                              >
+                                Use for {selectedSection.name}
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-400">
+                    Assigned to {selectedSection.name} (top = primary)
+                  </div>
+                  <div className="mt-1.5 space-y-1">
+                    {assignedIds.length === 0 ? (
+                      <p className="text-[11px] text-slate-500">
+                        None yet — use “Use for {selectedSection.name}” above.
+                      </p>
+                    ) : (
+                      assignedIds.map((printerId, index) => {
+                        const printer = routing.printers.find((p) => p.id === printerId);
+                        if (!printer) return null;
                         const primary = index === 0;
                         return (
-                          <div key={printer.id} className="flex items-center gap-2 text-xs text-slate-300">
+                          <div
+                            key={printer.id}
+                            className="flex items-center gap-2 text-xs text-slate-300"
+                          >
                             <input
                               type="checkbox"
-                              checked={assigned}
-                              onChange={(e) =>
-                                togglePrinterForSection(branchCode, selectedSection.id, printer.id, e.target.checked)
+                              checked
+                              onChange={() =>
+                                togglePrinterForSection(
+                                  branchCode,
+                                  selectedSection.id,
+                                  printer.id,
+                                  false,
+                                )
                               }
                             />
                             <span className="min-w-0 flex-1 truncate">{printer.name}</span>
@@ -931,38 +1067,81 @@ function PrinterSectionsTab({
                               <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-300">
                                 Primary
                               </span>
-                            ) : assigned ? (
+                            ) : (
                               <span className="shrink-0 rounded-full bg-slate-700/60 px-1.5 py-0.5 text-[9px] text-slate-400">
                                 Backup
                               </span>
-                            ) : null}
-                            {assigned ? (
-                              <span className="flex shrink-0 gap-0.5">
-                                <button
-                                  type="button"
-                                  disabled={index === 0}
-                                  className="rounded px-1 text-slate-400 hover:text-white disabled:opacity-30"
-                                  onClick={() => movePrinterPriority(branchCode, selectedSection.id, printer.id, -1)}
-                                  aria-label="Move up"
-                                >
-                                  ▲
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={index === assignedIds.length - 1}
-                                  className="rounded px-1 text-slate-400 hover:text-white disabled:opacity-30"
-                                  onClick={() => movePrinterPriority(branchCode, selectedSection.id, printer.id, 1)}
-                                  aria-label="Move down"
-                                >
-                                  ▼
-                                </button>
-                              </span>
-                            ) : null}
+                            )}
+                            <span className="flex shrink-0 gap-0.5">
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                className="rounded px-1 text-slate-400 hover:text-white disabled:opacity-30"
+                                onClick={() =>
+                                  movePrinterPriority(
+                                    branchCode,
+                                    selectedSection.id,
+                                    printer.id,
+                                    -1,
+                                  )
+                                }
+                                aria-label="Move up"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === assignedIds.length - 1}
+                                className="rounded px-1 text-slate-400 hover:text-white disabled:opacity-30"
+                                onClick={() =>
+                                  movePrinterPriority(
+                                    branchCode,
+                                    selectedSection.id,
+                                    printer.id,
+                                    1,
+                                  )
+                                }
+                                aria-label="Move down"
+                              >
+                                ▼
+                              </button>
+                            </span>
                           </div>
                         );
                       })
                     )}
                   </div>
+                  {routing.printers.some((p) => !assignedIds.includes(p.id)) ? (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[10px] text-slate-500 hover:text-slate-300">
+                        Link an existing profile to {selectedSection.name}
+                      </summary>
+                      <div className="mt-1.5 space-y-1">
+                        {routing.printers
+                          .filter((p) => !assignedIds.includes(p.id))
+                          .map((printer) => (
+                            <label
+                              key={printer.id}
+                              className="flex items-center gap-2 text-[11px] text-slate-400"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={false}
+                                onChange={() =>
+                                  togglePrinterForSection(
+                                    branchCode,
+                                    selectedSection.id,
+                                    printer.id,
+                                    true,
+                                  )
+                                }
+                              />
+                              <span className="truncate">{printer.name}</span>
+                            </label>
+                          ))}
+                      </div>
+                    </details>
+                  ) : null}
                 </div>
 
                 <div>
@@ -1399,7 +1578,7 @@ function PrinterProfilesTab({
                 <th className="px-2.5 py-2">Assigned users</th>
                 <th className="px-2.5 py-2">Branch</th>
                 <th className="px-2.5 py-2">Status</th>
-                <th className="px-2.5 py-2">Copies / Paper</th>
+                <th className="px-2.5 py-2">Copies / Paper / Text</th>
                 <th className="px-2.5 py-2">Actions</th>
               </tr>
             </thead>
@@ -1553,6 +1732,22 @@ function PrinterProfilesTab({
                           <option value="custom">Custom (branch setting)</option>
                           <option value="A4">A4</option>
                         </select>
+                        <select
+                          value={printer.textScale ?? "M"}
+                          onChange={(e) =>
+                            updatePrinterProfile(branchCode, printer.id, {
+                              textScale: e.target.value as PrinterTextScale,
+                            })
+                          }
+                          className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          title="Slip text size"
+                        >
+                          {(Object.keys(PRINTER_TEXT_SCALE_LABELS) as PrinterTextScale[]).map((s) => (
+                            <option key={s} value={s}>
+                              Text {PRINTER_TEXT_SCALE_LABELS[s]}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </td>
                     <td className="px-2.5 py-2">
@@ -1667,12 +1862,20 @@ function PrinterAssignmentTab({
   const [filterType, setFilterType] = useState<PrinterType | "">("");
   const [filterPrinter, setFilterPrinter] = useState("");
   const [search, setSearch] = useState("");
+  const [sections, setSections] = useState(() => loadPrinterSections(branchCode));
   const counters = listAssignedCounters(branchCode);
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const typeOptions = printerTypesForSystem(isStore);
   const quickAssignTypes: PrinterType[] = isStore
     ? ["receipt", "counter", "warehouse"]
     : ["kitchen", "bar", "receipt"];
+
+  useEffect(() => {
+    const reload = () => setSections(loadPrinterSections(branchCode));
+    reload();
+    window.addEventListener(PRINTER_SECTIONS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(PRINTER_SECTIONS_CHANGED_EVENT, reload);
+  }, [branchCode]);
 
   const filteredUsers = users.filter((u) => {
     if (filterUser && u.id !== filterUser) return false;
@@ -1698,6 +1901,32 @@ function PrinterAssignmentTab({
     );
   }
 
+  function sectionBadgesForPrinter(printerId: string): JSX.Element {
+    const linked = listSectionsForPrinter(branchCode, printerId, sections);
+    if (linked.length === 0) {
+      return <span className="text-[10px] text-slate-600">No section yet</span>;
+    }
+    return (
+      <div className="flex flex-wrap gap-1">
+        {linked.map((s) => (
+          <span
+            key={s.id}
+            className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+              s.primary
+                ? "bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/40"
+                : "bg-slate-800 text-slate-300"
+            }`}
+            title={s.primary ? `${s.name} (primary)` : `${s.name} (backup)`}
+          >
+            {s.icon ? `${s.icon} ` : ""}
+            {s.name}
+            {s.primary ? " · Primary" : ""}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
@@ -1707,9 +1936,9 @@ function PrinterAssignmentTab({
             : "Assign printers to users / waiters / riders"}
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          {isStore
-            ? "When a cashier prints from Point of Sale, the slip goes to their assigned Receipt / Counter printer (OS-linked USB, network, or PDF). Set Default POS receipt printer under All Printers if nobody has a personal assignment. Branch: "
-            : "Jab waiter, rider, ya cashier Print dabaye, bill / KOT unke assigned printer se niklega (mobile / USB / network — jo OS printer profile se linked ho). Ek user ke paas Receipt + Kitchen + Bar ho sakte hain. Cashiers: POS → My printers. Waiters: Waiter page → Printer assignments. Branch: "}
+          Assign printers to a user, set roll + text size on the printer, and mark which{" "}
+          <span className="text-slate-300">section</span> that printer is primary for (Kitchen,
+          Bar…). PDF printers also show their section. Branch:{" "}
           <span className="font-mono text-slate-300">{branchCode}</span>
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -1795,12 +2024,12 @@ function PrinterAssignmentTab({
           {isStore ? "Staff → Assigned printers" : "User → Assigned printers"}
         </div>
         <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
-          <table className="w-full min-w-[40rem] text-left text-xs">
+          <table className="w-full min-w-[48rem] text-left text-xs">
             <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-2.5 py-2">{isStore ? "User / Cashier" : "User / Waiter"}</th>
                 <th className="px-2.5 py-2">Role</th>
-                <th className="px-2.5 py-2">Assigned printers</th>
+                <th className="px-2.5 py-2">Assigned printers · section</th>
                 <th className="px-2.5 py-2">Quick</th>
               </tr>
             </thead>
@@ -1817,60 +2046,103 @@ function PrinterAssignmentTab({
                   const assignedIds = new Set(assigned.map((p) => p.id));
                   return (
                     <tr key={u.id} className="align-top">
-                      <td className="px-2.5 py-2 font-medium text-slate-200">{u.email}</td>
-                      <td className="px-2.5 py-2 text-slate-400">{u.role}</td>
+                      <td className="px-2.5 py-2">
+                        <div className="font-medium text-slate-200">{u.email}</div>
+                        <div className="mt-0.5 text-[10px] text-slate-500">
+                          {u.email.includes("@") ? u.email.split("@")[0] : u.email}
+                        </div>
+                      </td>
+                      <td className="px-2.5 py-2">
+                        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">
+                          {u.role}
+                        </span>
+                      </td>
                       <td className="px-2.5 py-2">
                         {filteredPrinters.length === 0 ? (
                           <span className="text-slate-600">No printers match filters</span>
                         ) : (
-                          <div className="flex flex-wrap gap-1.5">
+                          <div className="flex flex-col gap-2">
                             {filteredPrinters.map((p) => {
                               const on = assignedIds.has(p.id);
+                              const linked = listSectionsForPrinter(branchCode, p.id, sections);
+                              const primarySec = linked.find((s) => s.primary);
                               return (
-                                <label
+                                <div
                                   key={p.id}
-                                  className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2 py-1 text-[10px] ring-1 transition ${
+                                  className={`rounded-lg border px-2 py-1.5 ${
                                     on
-                                      ? "bg-amber-500/20 text-amber-100 ring-amber-500/40"
-                                      : "bg-slate-900 text-slate-400 ring-slate-700 hover:ring-slate-500"
+                                      ? "border-amber-500/40 bg-amber-500/10"
+                                      : "border-slate-800 bg-slate-950/50"
                                   }`}
                                 >
-                                  <input
-                                    type="checkbox"
-                                    className="accent-amber-500"
-                                    checked={on}
-                                    onChange={(e) => {
-                                      toggleUserPrinter(branchCode, u.id, p.id, e.target.checked);
-                                      if (
-                                        e.target.checked &&
-                                        (p.printerType === "receipt" || p.printerType === "counter")
-                                      ) {
-                                        maybeSetDefaultPosPrinter(branchCode, p.id, p.printerType);
-                                      }
-                                      notify(
-                                        e.target.checked
-                                          ? `Assigned ${p.name} → ${u.email}`
-                                          : `Removed ${p.name} from ${u.email}`,
-                                      );
-                                    }}
-                                  />
-                                  <span>
-                                    {p.name}
-                                    <span className="ml-1 opacity-70">
-                                      · {printerTypeLabel(p.printerType, isStore)}
-                                      {p.assignedCounter ? ` · ${p.assignedCounter}` : ""}
+                                  <label className="flex cursor-pointer items-start gap-2">
+                                    <input
+                                      type="checkbox"
+                                      className="mt-0.5 accent-amber-500"
+                                      checked={on}
+                                      onChange={(e) => {
+                                        toggleUserPrinter(branchCode, u.id, p.id, e.target.checked);
+                                        if (
+                                          e.target.checked &&
+                                          (p.printerType === "receipt" || p.printerType === "counter")
+                                        ) {
+                                          maybeSetDefaultPosPrinter(branchCode, p.id, p.printerType);
+                                        }
+                                        notify(
+                                          e.target.checked
+                                            ? `Assigned ${p.name} → ${u.email}`
+                                            : `Removed ${p.name} from ${u.email}`,
+                                        );
+                                      }}
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-[11px] font-medium text-slate-100">
+                                        {p.name}
+                                        {p.systemPrinterName ? (
+                                          <span className="ml-1 text-[10px] text-sky-400">
+                                            → {p.systemPrinterName}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                      <span className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-400">
+                                        <span>
+                                          Role {printerTypeLabel(p.printerType, isStore)}
+                                        </span>
+                                        <span>·</span>
+                                        <span>
+                                          Text {PRINTER_TEXT_SCALE_LABELS[p.textScale ?? "M"]}
+                                        </span>
+                                        <span>·</span>
+                                        <span>{p.paperSize} roll</span>
+                                        {primarySec ? (
+                                          <>
+                                            <span>·</span>
+                                            <span className="text-amber-300">
+                                              {primarySec.icon ? `${primarySec.icon} ` : ""}
+                                              {primarySec.name} Primary
+                                            </span>
+                                          </>
+                                        ) : null}
+                                      </span>
                                     </span>
-                                  </span>
-                                </label>
+                                  </label>
+                                </div>
                               );
                             })}
                           </div>
                         )}
                         {assigned.length > 0 ? (
                           <p className="mt-1.5 text-[10px] text-slate-500">
-                            {assigned.length} assigned:{" "}
+                            {assigned.length} assigned for {u.email.split("@")[0]}:{" "}
                             {assigned
-                              .map((p) => `${p.name} (${printerTypeLabel(p.printerType, isStore)})`)
+                              .map((p) => {
+                                const sec = listSectionsForPrinter(branchCode, p.id, sections).find(
+                                  (s) => s.primary,
+                                );
+                                return sec
+                                  ? `${p.name} (${sec.name})`
+                                  : `${p.name} (${printerTypeLabel(p.printerType, isStore)})`;
+                              })
                               .join(", ")}
                           </p>
                         ) : null}
@@ -1909,15 +2181,21 @@ function PrinterAssignmentTab({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">Printer → Assigned users</div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+          Printer → Users · Section · Text size
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Pick a section to make this printer its <span className="text-amber-300">Primary</span>.
+          Change roll / text size here — applies when that printer prints.
+        </p>
         <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
-          <table className="w-full min-w-[36rem] text-left text-xs">
+          <table className="w-full min-w-[52rem] text-left text-xs">
             <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-2.5 py-2">Printer</th>
-                <th className="px-2.5 py-2">Type</th>
-                <th className="px-2.5 py-2">Counter</th>
-                <th className="px-2.5 py-2">Status</th>
+                <th className="px-2.5 py-2">Type / Role</th>
+                <th className="px-2.5 py-2">Section (primary)</th>
+                <th className="px-2.5 py-2">Roll · Text</th>
                 <th className="px-2.5 py-2">Assigned users</th>
               </tr>
             </thead>
@@ -1932,31 +2210,99 @@ function PrinterAssignmentTab({
                 filteredPrinters.map((p) => {
                   const userIds = getUserIdsForPrinter(branchCode, p.id);
                   return (
-                    <tr key={p.id}>
+                    <tr key={p.id} className="align-top">
                       <td className="px-2.5 py-2 font-medium text-slate-200">
                         {p.name}
                         {p.systemPrinterName ? (
-                          <div className="text-[10px] text-sky-400">{p.systemPrinterName}</div>
+                          <div className="text-[10px] text-sky-400">
+                            {/pdf|xps/i.test(p.systemPrinterName) ? "PDF/XPS · " : ""}
+                            {p.systemPrinterName}
+                          </div>
                         ) : null}
+                        <div className="mt-1">{sectionBadgesForPrinter(p.id)}</div>
                       </td>
-                      <td className="px-2.5 py-2 text-slate-400">
-                        {printerTypeLabel(p.printerType, isStore)}
-                      </td>
-                      <td className="px-2.5 py-2 text-slate-400">{p.assignedCounter || "—"}</td>
                       <td className="px-2.5 py-2">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] ${
-                            p.status === "online"
-                              ? "bg-emerald-500/15 text-emerald-300"
-                              : "bg-red-500/15 text-red-300"
-                          }`}
+                        <select
+                          className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          value={p.printerType}
+                          onChange={(e) => {
+                            const printerType = e.target.value as PrinterType;
+                            updatePrinterProfile(branchCode, p.id, { printerType });
+                            maybeSetDefaultPosPrinter(branchCode, p.id, printerType);
+                            notify(`Role → ${printerTypeLabel(printerType, isStore)}`);
+                          }}
                         >
-                          {p.status}
-                        </span>
+                          {typeOptions.map((type) => (
+                            <option key={type} value={type}>
+                              {printerTypeLabel(type, isStore)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-2.5 py-2">
+                        <select
+                          className="w-full max-w-[12rem] rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          value=""
+                          onChange={(e) => {
+                            const sectionId = e.target.value;
+                            if (!sectionId) return;
+                            setSectionPrimaryPrinter(branchCode, sectionId, p.id);
+                            const sec = sections.find((s) => s.id === sectionId);
+                            notify(
+                              `${p.name} is now Primary for ${sec?.name ?? sectionId}.`,
+                            );
+                          }}
+                        >
+                          <option value="">Set primary for section…</option>
+                          {sections
+                            .filter((s) => s.enabled)
+                            .map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.icon} {s.name}
+                              </option>
+                            ))}
+                        </select>
+                        <div className="mt-1.5">{sectionBadgesForPrinter(p.id)}</div>
+                      </td>
+                      <td className="px-2.5 py-2">
+                        <div className="flex flex-col gap-1">
+                          <select
+                            value={p.paperSize}
+                            onChange={(e) =>
+                              updatePrinterProfile(branchCode, p.id, {
+                                paperSize: e.target.value as PrinterPaperSize,
+                              })
+                            }
+                            className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          >
+                            <option value="58mm">58mm roll</option>
+                            <option value="80mm">80mm roll</option>
+                            <option value="100mm">100mm roll</option>
+                            <option value="custom">Custom</option>
+                            <option value="A4">A4</option>
+                          </select>
+                          <select
+                            value={p.textScale ?? "M"}
+                            onChange={(e) =>
+                              updatePrinterProfile(branchCode, p.id, {
+                                textScale: e.target.value as PrinterTextScale,
+                              })
+                            }
+                            className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                          >
+                            {(Object.keys(PRINTER_TEXT_SCALE_LABELS) as PrinterTextScale[]).map(
+                              (s) => (
+                                <option key={s} value={s}>
+                                  Text {PRINTER_TEXT_SCALE_LABELS[s]}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </div>
                       </td>
                       <td className="px-2.5 py-2">
                         {userIds.length === 0 ? (
-                          <span className="text-slate-600">Shared with nobody yet</span>
+                          <span className="text-slate-600">No users yet</span>
                         ) : (
                           <div className="flex flex-wrap gap-1">
                             {userIds.map((id) => {
@@ -1964,9 +2310,12 @@ function PrinterAssignmentTab({
                               return (
                                 <span
                                   key={id}
-                                  className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-200"
+                                  className="inline-flex flex-col rounded-lg bg-slate-800 px-2 py-1 text-[10px] text-slate-200"
                                 >
-                                  {u?.email ?? id}
+                                  <span className="font-medium">
+                                    {u?.email?.split("@")[0] ?? id.slice(0, 8)}
+                                  </span>
+                                  <span className="text-slate-400">{u?.role ?? "—"}</span>
                                 </span>
                               );
                             })}

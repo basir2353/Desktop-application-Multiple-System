@@ -140,8 +140,10 @@ export const popsCashMovementSchema = z.object({
   recordedBy: z.string().nullable(),
   createdAt: z.string(),
   employeeId: z.string().uuid().nullable().optional(),
-  partyKind: z.enum(["supplier", "customer", "employee"]).nullable().optional(),
+  partyKind: z.enum(["supplier", "customer", "employee", "expense"]).nullable().optional(),
   advanceId: z.string().uuid().nullable().optional(),
+  supplierId: z.string().uuid().nullable().optional(),
+  expenseId: z.string().uuid().nullable().optional(),
 });
 
 export const createPopsCashMovementSchema = z.object({
@@ -153,9 +155,13 @@ export const createPopsCashMovementSchema = z.object({
   recordedBy: z.string().optional(),
   /** When paying an employee, link to HR employee and optionally create a salary advance. */
   employeeId: z.string().uuid().optional(),
-  partyKind: z.enum(["supplier", "customer", "employee"]).optional(),
+  partyKind: z.enum(["supplier", "customer", "employee", "expense"]).optional(),
   /** Mark employee paid_out as salary advance (default true when partyKind=employee). */
   asAdvance: z.boolean().optional(),
+  /** Supplier pay-out: allocate against open vendor bills (ledger). */
+  supplierId: z.string().uuid().optional(),
+  /** Expense pay-out: category for auto-created Paid expense + ledger. */
+  expenseCategory: expenseCategorySchema.optional(),
   /** Offline/cloud sync idempotency — same id will not create a duplicate movement. */
   clientRequestId: z.string().min(8).max(80).optional(),
 });
@@ -361,6 +367,7 @@ export type AccountingDashboard = z.infer<typeof accountingDashboardSchema>;
 export type Account = z.infer<typeof accountSchema>;
 export type JournalEntry = z.infer<typeof journalEntrySchema>;
 export type Expense = z.infer<typeof expenseSchema>;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 export type BankAccount = z.infer<typeof bankAccountSchema>;
 export type BankTransaction = z.infer<typeof bankTransactionSchema>;
 export type CashSession = z.infer<typeof cashSessionSchema>;

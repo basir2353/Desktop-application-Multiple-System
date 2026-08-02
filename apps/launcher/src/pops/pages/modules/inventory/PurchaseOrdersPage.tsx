@@ -2,7 +2,7 @@ import { PO_STATUSES, type PoStatus, type PurchaseOrder } from "@platform/contra
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { createPurchaseOrder, fetchBranchInventory, updatePurchaseOrderStatus } from "../../../api/inventory";
+import { createPurchaseOrder, fetchBranchInventory, updatePurchaseOrder, updatePurchaseOrderStatus } from "../../../api/inventory";
 import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
+import { formatSelectBalance, formatSelectQty } from "../../../lib/selectMeta";
 import { SearchableSelect } from "../../../ui/SearchableSelect";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { InventoryError, InventoryLoading } from "./InventoryUi";
@@ -50,6 +51,8 @@ export function PurchaseOrdersPage(): JSX.Element {
     chef: "",
   });
   const [lines, setLines] = useState<PoLineRow[]>([]);
+  const [editingPoId, setEditingPoId] = useState<string | null>(null);
+  const [editingPoNumber, setEditingPoNumber] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
@@ -68,6 +71,32 @@ export function PurchaseOrdersPage(): JSX.Element {
   function resetForm(): void {
     setMeta({ supplierId: "", expectedDate: "", requestedBy: "", chef: "" });
     setLines([]);
+    setEditingPoId(null);
+    setEditingPoNumber(null);
+  }
+
+  function startEditPo(po: PurchaseOrder): void {
+    if (po.status !== "Draft" && po.status !== "Pending") {
+      setError("Only Draft or Pending kitchen demand vouchers can be edited.");
+      return;
+    }
+    setEditingPoId(po.id);
+    setEditingPoNumber(po.poNumber);
+    setMeta({
+      supplierId: po.supplierId,
+      expectedDate: po.expectedDate ?? "",
+      requestedBy: po.requestedBy ?? "",
+      chef: po.chef ?? "",
+    });
+    setLines(
+      (po.lines ?? []).map((l) => ({
+        ingredientId: l.ingredientId,
+        qty: String(l.qty),
+        unitCost: String(l.unitCost),
+      })),
+    );
+    setError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const validLines = lines.filter((line) => line.ingredientId && Number(line.qty) > 0);
@@ -75,7 +104,7 @@ export function PurchaseOrdersPage(): JSX.Element {
   const createMutation = useMutation({
     mutationFn: () => {
       const ingredients = query.data?.ingredients ?? [];
-      return createPurchaseOrder({
+      const body = {
         branchCode: branch!.code,
         supplierId: meta.supplierId,
         expectedDate: meta.expectedDate || undefined,
@@ -90,7 +119,17 @@ export function PurchaseOrdersPage(): JSX.Element {
             unitCost: Number(line.unitCost),
           };
         }),
-      });
+      };
+      if (editingPoId) {
+        return updatePurchaseOrder(editingPoId, {
+          supplierId: body.supplierId,
+          expectedDate: body.expectedDate ?? null,
+          requestedBy: body.requestedBy ?? null,
+          chef: body.chef ?? null,
+          lines: body.lines,
+        });
+      }
+      return createPurchaseOrder(body);
     },
     onSuccess: () => {
       invalidate();
@@ -129,7 +168,13 @@ export function PurchaseOrdersPage(): JSX.Element {
   }
 
   const supplierOptions = useMemo(
-    () => suppliers.map((s) => ({ value: s.id, label: s.name })),
+    () =>
+      suppliers.map((s) => ({
+        value: s.id,
+        label: s.name,
+        meta: formatSelectBalance(s.openingBalancePkr),
+        searchText: s.phone ?? "",
+      })),
     [suppliers],
   );
 
@@ -148,7 +193,7 @@ export function PurchaseOrdersPage(): JSX.Element {
     <div className="space-y-6">
       <PageHeader
         title="Kitchen demand"
-        subtitle="Create supplier purchase orders from kitchen demand, then receive goods with quantities."
+        subtitle="Create supplier purchase orders from kitchen demand, then receive goods with quantities. Draft/Pending vouchers can be edited."
         actions={
           <Link
             to="/pops/inventory/goods-receiving"
@@ -188,32 +233,47 @@ export function PurchaseOrdersPage(): JSX.Element {
         >
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/50">
             <div>
-              <h2 className="text-base font-semibold text-slate-900 dark:text-white">New kitchen demand / PO</h2>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                {editingPoId ? `Edit kitchen demand ${editingPoNumber ?? ""}` : "New kitchen demand / PO"}
+              </h2>
               <p className={`mt-0.5 text-xs ${mutedClass}`}>
-                Choose a supplier (e.g. Kitchen Fresh Pvt. Ltd.), add items and quantities, then approve and receive.
+                {editingPoId
+                  ? "Update supplier, quantities, and costs, then save."
+                  : "Choose a supplier (e.g. Kitchen Fresh Pvt. Ltd.), add items and quantities, then approve and receive."}
               </p>
             </div>
-            <button
-              type="button"
-              className="shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200"
-              onClick={() => {
-                const low = ingredients.filter((i) => i.currentStock <= i.reorderLevel);
-                if (low.length === 0) {
-                  setError("No low-stock ingredients to fill from kitchen demand.");
-                  return;
-                }
-                setLines(
-                  low.map((ing) => ({
-                    ingredientId: ing.id,
-                    qty: String(Math.max(1, ing.reorderLevel - ing.currentStock + ing.reorderLevel)),
-                    unitCost: String(ing.unitCost),
-                  })),
-                );
-                setError(null);
-              }}
-            >
-              Fill from low stock
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {editingPoId ? (
+                <button
+                  type="button"
+                  className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                  onClick={() => resetForm()}
+                >
+                  Cancel edit
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200"
+                onClick={() => {
+                  const low = ingredients.filter((i) => i.currentStock <= i.reorderLevel);
+                  if (low.length === 0) {
+                    setError("No low-stock ingredients to fill from kitchen demand.");
+                    return;
+                  }
+                  setLines(
+                    low.map((ing) => ({
+                      ingredientId: ing.id,
+                      qty: String(Math.max(1, ing.reorderLevel - ing.currentStock + ing.reorderLevel)),
+                      unitCost: String(ing.unitCost),
+                    })),
+                  );
+                  setError(null);
+                }}
+              >
+                Fill from low stock
+              </button>
+            </div>
           </div>
 
           <div className="space-y-6 p-5">
@@ -292,6 +352,7 @@ export function PurchaseOrdersPage(): JSX.Element {
                               <div className="text-[10px] text-slate-500">
                                 {ing.sku}
                                 {ing.categoryName ? ` · ${ing.categoryName}` : ""}
+                                {` · ${formatSelectQty(ing.currentStock, ing.unit)}`}
                               </div>
                             ) : null}
                           </td>
@@ -355,7 +416,13 @@ export function PurchaseOrdersPage(): JSX.Element {
               disabled={!meta.supplierId || validLines.length === 0 || createMutation.isPending}
               className="inline-flex items-center rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {createMutation.isPending ? "Creating…" : `Create purchase order`}
+              {createMutation.isPending
+                ? editingPoId
+                  ? "Saving…"
+                  : "Creating…"
+                : editingPoId
+                  ? "Save changes"
+                  : "Create purchase order"}
             </button>
           </div>
         </form>
@@ -414,6 +481,15 @@ export function PurchaseOrdersPage(): JSX.Element {
                       header: "Actions",
                       render: (r: PurchaseOrder) => (
                         <div className="flex flex-wrap items-center gap-2">
+                          {r.status === "Draft" || r.status === "Pending" ? (
+                            <button
+                              type="button"
+                              className="text-[11px] font-medium text-indigo-400 hover:text-indigo-300"
+                              onClick={() => startEditPo(r)}
+                            >
+                              {editingPoId === r.id ? "Editing…" : "Edit"}
+                            </button>
+                          ) : null}
                           <select
                             className={`${selectClass} py-1.5 text-xs`}
                             value={r.status}

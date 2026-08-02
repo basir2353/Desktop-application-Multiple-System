@@ -182,6 +182,7 @@ export function DeliveryPage(): JSX.Element {
   const [riderPin, setRiderPin] = useState("");
   const [riderBranchCode, setRiderBranchCode] = useState("");
   const [ridersBranchCode, setRidersBranchCode] = useState("");
+  const [riderSearch, setRiderSearch] = useState("");
   const [riderPhone, setRiderPhone] = useState("");
   const [riderCnic, setRiderCnic] = useState("");
   const [riderSalary, setRiderSalary] = useState("");
@@ -400,6 +401,18 @@ export function DeliveryPage(): JSX.Element {
   const isError = ordersQuery.isError || ticketsQuery.isError;
   const errorMessage = (ordersQuery.error ?? ticketsQuery.error) as Error | null;
   const riders = ridersQuery.data ?? [];
+  const filteredRiders = useMemo(() => {
+    const q = riderSearch.trim().toLowerCase();
+    if (!q) return riders;
+    return riders.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        (r.phone ?? "").toLowerCase().includes(q) ||
+        (r.email ?? "").toLowerCase().includes(q) ||
+        (r.cnic ?? "").toLowerCase().includes(q) ||
+        (r.fromArea ?? "").toLowerCase().includes(q),
+    );
+  }, [riders, riderSearch]);
   const branchRiders = branchRidersQuery.data ?? [];
   const branches = branchesQuery.data ?? [];
 
@@ -604,6 +617,12 @@ export function DeliveryPage(): JSX.Element {
           )}
 
           <ModuleFilterBar>
+            <input
+              className={`min-w-[12rem] flex-1 sm:max-w-xs ${fieldInputClass}`}
+              placeholder="Search rider name, phone, email…"
+              value={riderSearch}
+              onChange={(e) => setRiderSearch(e.target.value)}
+            />
             <label className={`flex items-center gap-2 text-xs ${mutedClass}`}>
               Branch
               <select
@@ -622,12 +641,16 @@ export function DeliveryPage(): JSX.Element {
 
           {ridersQuery.isLoading ? (
             <p className="text-xs text-slate-500">Loading riders…</p>
-          ) : riders.length === 0 ? (
-            <p className={emptyStateBoxClass}>No riders for this branch yet. Add a rider with branch login above.</p>
+          ) : filteredRiders.length === 0 ? (
+            <p className={emptyStateBoxClass}>
+              {riderSearch.trim()
+                ? "No riders match your search."
+                : "No riders for this branch yet. Add a rider with branch login above."}
+            </p>
           ) : (
             <SimpleTable
               rowKey={(r) => r.id}
-              rows={riders}
+              rows={filteredRiders}
               columns={[
                 { key: "name", header: "Name", render: (r) => <span className={tableCellPrimaryClass}>{r.name}</span> },
                 {

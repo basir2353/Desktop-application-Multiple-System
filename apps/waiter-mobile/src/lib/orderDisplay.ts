@@ -75,6 +75,6 @@ export function waiterDisplayName(email: string | null | undefined): string {
 export function kitchenStatusAccent(status: string): string {
   if (status === "ready") return "#22c55e";
   if (status === "cooking") return "#38bdf8";
-  if (status === "new") return "#f59e0b";
+  if (status === "new") return "#F59E0B";
   return "#94a3b8";
 }

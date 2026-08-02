@@ -11,16 +11,19 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export const colors = {
-  bg: "#0f172a",
-  card: "#1e293b",
-  border: "#334155",
-  text: "#f8fafc",
-  muted: "#94a3b8",
-  accent: "#f59e0b",
-  accentText: "#0f172a",
-  success: "#22c55e",
-  warning: "#fbbf24",
-  danger: "#ef4444",
+  bg: "#0B1220",
+  /** Deeper ink for inputs / nested surfaces */
+  bgDeep: "#070D18",
+  card: "#111827",
+  border: "#1E293B",
+  text: "#F8FAFC",
+  muted: "#94A3B8",
+  accent: "#0F766E",
+  accentSoft: "#14B8A6",
+  accentText: "#F0FDFA",
+  success: "#10B981",
+  warning: "#F59E0B",
+  danger: "#EF4444",
 };
 
 export function Screen({
@@ -470,8 +473,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   noticeWarning: {
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
-    borderColor: "rgba(245, 158, 11, 0.35)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
+    borderColor: "rgba(20, 184, 166, 0.35)",
   },
   noticeSuccess: {
     backgroundColor: "rgba(34, 197, 94, 0.12)",
@@ -518,10 +521,10 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
   input: {
-    backgroundColor: "#020617",
+    backgroundColor: colors.bgDeep,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: 12,
     color: colors.text,
     paddingHorizontal: 12,
     paddingVertical: 12,
@@ -541,8 +544,8 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minWidth: "30%",
-    backgroundColor: "#020617",
-    borderRadius: 12,
+    backgroundColor: colors.bgDeep,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 12,
@@ -579,7 +582,7 @@ const styles = StyleSheet.create({
   },
   actionTilePrimary: {
     backgroundColor: colors.accent,
-    borderColor: "#d97706",
+    borderColor: colors.accentSoft,
   },
   actionTilePressed: {
     opacity: 0.88,
@@ -610,7 +613,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   actionSubtitlePrimary: {
-    color: "rgba(15, 23, 42, 0.75)",
+    color: "rgba(240, 253, 250, 0.78)",
   },
   actionChevron: {
     color: colors.muted,
@@ -657,13 +660,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   chipSelected: {
     backgroundColor: colors.accent,
-    borderColor: "#d97706",
+    borderColor: colors.accentSoft,
   },
   chipSelectedLocked: {
     backgroundColor: "#dc2626",
@@ -715,13 +718,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     alignItems: "center",
     justifyContent: "center",
   },
   qtyBtnAccent: {
-    backgroundColor: "rgba(245, 158, 11, 0.15)",
-    borderColor: "rgba(245, 158, 11, 0.45)",
+    backgroundColor: "rgba(15, 118, 110, 0.2)",
+    borderColor: "rgba(20, 184, 166, 0.45)",
   },
   qtyBtnDisabled: {
     opacity: 0.35,
@@ -805,7 +808,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -814,7 +817,7 @@ const styles = StyleSheet.create({
   },
   pinKeyPressed: {
     opacity: 0.85,
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.card,
   },
   pinKeyText: {
     color: colors.text,
@@ -835,13 +838,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#020617",
+    backgroundColor: colors.bgDeep,
     alignItems: "center",
     gap: 4,
   },
   loginModeTabActive: {
-    borderColor: colors.accent,
-    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    borderColor: colors.accentSoft,
+    backgroundColor: "rgba(15, 118, 110, 0.2)",
   },
   loginModeLabel: {
     color: colors.muted,

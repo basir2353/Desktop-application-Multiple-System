@@ -130,9 +130,9 @@ export default function AdminOrdersScreen() {
               paddingHorizontal: 12,
               paddingVertical: 8,
               borderRadius: 10,
-              backgroundColor: "rgba(245, 158, 11, 0.15)",
+              backgroundColor: "rgba(15, 118, 110, 0.15)",
               borderWidth: 1,
-              borderColor: "rgba(245, 158, 11, 0.4)",
+              borderColor: "rgba(15, 118, 110, 0.4)",
             }}
           >
             <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 12 }}>Kitchen</Text>

@@ -4,13 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { OrgAlert } from "@platform/contracts";
 import { canManageOrgUsers } from "@platform/contracts";
-import { orgAlerts, type PlatformPgDb } from "@platform/database-pg";
+import { orgAlerts, organizations, type PlatformPgDb } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { isSuperAdmin } from "../auth/jwt.types";
+
+/** Hide month-end pay banners when licence still has more than this many days. */
+const MONTH_END_ALERT_MAX_DAYS = 30;
 
 @Injectable()
 export class OrgAlertsService {
@@ -27,8 +30,23 @@ export class OrgAlertsService {
     }
   }
 
+  private licenceDaysLeft(expiresAt: Date | null | undefined): number | null {
+    if (!expiresAt) return null;
+    const ms = expiresAt.getTime() - Date.now();
+    return Math.ceil(ms / (24 * 60 * 60 * 1000));
+  }
+
   async listActive(user: AccessJwtPayload): Promise<OrgAlert[]> {
     this.assertOrgAdmin(user);
+    const [org] = await this.db
+      .select({ licenceExpiresAt: organizations.licenceExpiresAt })
+      .from(organizations)
+      .where(eq(organizations.id, user.organizationId))
+      .limit(1);
+    const daysLeft = this.licenceDaysLeft(org?.licenceExpiresAt ?? null);
+    const hideMonthEnd =
+      daysLeft === null || daysLeft > MONTH_END_ALERT_MAX_DAYS;
+
     const rows = await this.db
       .select()
       .from(orgAlerts)
@@ -41,6 +59,21 @@ export class OrgAlertsService {
       )
       .orderBy(desc(orgAlerts.createdAt))
       .limit(20);
+
+    if (hideMonthEnd) {
+      const staleIds = rows
+        .filter((r) => r.kind === "licence_month_end")
+        .map((r) => r.id);
+      if (staleIds.length > 0) {
+        await this.db
+          .update(orgAlerts)
+          .set({ resolvedAt: new Date() })
+          .where(inArray(orgAlerts.id, staleIds));
+      }
+      return rows
+        .filter((r) => r.kind !== "licence_month_end")
+        .map((r) => this.toAlert(r));
+    }
 
     return rows.map((r) => this.toAlert(r));
   }

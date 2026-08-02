@@ -285,6 +285,9 @@ export function GoodsReceivingPage(): JSX.Element {
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
+                  {s.openingBalancePkr > 0
+                    ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
+                    : " · Bal —"}
                 </option>
               ))}
             </select>
@@ -387,7 +390,23 @@ export function GoodsReceivingPage(): JSX.Element {
               <SimpleTable
                 rowKey={(row) => row.id}
                 columns={[
-                  { key: "name", header: "Ingredient", render: (row) => row.ingredientName },
+                  {
+                    key: "name",
+                    header: "Ingredient",
+                    render: (row) => {
+                      const stock = ingredientById.get(row.ingredientId);
+                      return (
+                        <div>
+                          <div>{row.ingredientName}</div>
+                          {stock ? (
+                            <div className="text-[10px] text-slate-500">
+                              Qty {stock.currentStock} {stock.unit}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    },
+                  },
                   {
                     key: "ordered",
                     header: "Ordered",

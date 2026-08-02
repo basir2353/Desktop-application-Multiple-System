@@ -159,6 +159,7 @@ export class PrintingService {
     return {
       id: updated.id,
       branchCode: updated.branchCode,
+      userId: updated.userId ?? null,
       printerName: updated.printerName,
       orderId: updated.orderId,
       priority: updated.priority,

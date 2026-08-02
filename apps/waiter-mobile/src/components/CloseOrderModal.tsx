@@ -101,13 +101,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     paddingVertical: 12,
     alignItems: "center",
   },
   methodBtnActive: {
     backgroundColor: colors.accent,
-    borderColor: "#d97706",
+    borderColor: "#14B8A6",
   },
   methodText: {
     color: colors.text,

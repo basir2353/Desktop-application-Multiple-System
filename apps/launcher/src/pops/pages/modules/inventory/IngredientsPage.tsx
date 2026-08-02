@@ -5,9 +5,10 @@ import {
   createIngredient,
   deleteIngredient,
   fetchBranchInventory,
+  updateIngredient,
 } from "../../../api/inventory";
 import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
-import { accentValueClass, linkDangerClass } from "../../../lib/themeClasses";
+import { accentValueClass, linkActionClass, linkDangerClass } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
@@ -53,6 +54,8 @@ export function IngredientsPage(): JSX.Element {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<IngredientRow[]>([emptyRow()]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<IngredientRow>(emptyRow());
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
@@ -70,6 +73,24 @@ export function IngredientsPage(): JSX.Element {
 
   function removeRow(index: number): void {
     setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
+
+  function startEdit(ing: Ingredient): void {
+    setEditingId(ing.id);
+    setEditForm({
+      sku: ing.sku,
+      name: ing.name,
+      categoryId: ing.categoryId ?? "",
+      unit: (INGREDIENT_UNITS.includes(ing.unit as IngredientRow["unit"])
+        ? ing.unit
+        : "Kg") as IngredientRow["unit"],
+      currentStock: String(ing.currentStock),
+      minStock: String(ing.minStock),
+      reorderLevel: String(ing.reorderLevel),
+      maxStock: String(ing.maxStock),
+      unitCost: String(ing.unitCost),
+    });
+    setError(null);
   }
 
   const validRows = rows.filter((r) => r.sku.trim() && r.name.trim());
@@ -99,9 +120,40 @@ export function IngredientsPage(): JSX.Element {
     onError: (e: Error) => setError(e.message),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: () => {
+      if (!editingId) throw new Error("No ingredient selected");
+      return updateIngredient(editingId, {
+        sku: editForm.sku.trim(),
+        name: editForm.name.trim(),
+        categoryId: editForm.categoryId.trim() ? editForm.categoryId : null,
+        unit: editForm.unit,
+        currentStock: Number(editForm.currentStock) || 0,
+        minStock: Number(editForm.minStock) || 0,
+        reorderLevel: Number(editForm.reorderLevel) || 0,
+        maxStock: Number(editForm.maxStock) || 0,
+        unitCost: Number(editForm.unitCost) || 0,
+      });
+    },
+    onSuccess: () => {
+      invalidate();
+      setEditingId(null);
+      setEditForm(emptyRow());
+      setError(null);
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: deleteIngredient,
-    onSuccess: () => { invalidate(); setError(null); },
+    onSuccess: () => {
+      invalidate();
+      setError(null);
+      if (editingId) {
+        setEditingId(null);
+        setEditForm(emptyRow());
+      }
+    },
     onError: (e: Error) => setError(e.message),
   });
 
@@ -121,7 +173,103 @@ export function IngredientsPage(): JSX.Element {
 
       {error ? <InventoryError message={error} /> : null}
 
-      {canManage ? (
+      {canManage && editingId ? (
+        <InventoryFormPanel
+          title={`Edit ingredient · ${editForm.sku || "…"}`}
+          submitLabel={updateMutation.isPending ? "Saving…" : "Save changes"}
+          onSubmit={() => updateMutation.mutate()}
+          disabled={
+            updateMutation.isPending || !editForm.sku.trim() || !editForm.name.trim()
+          }
+        >
+          <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 sm:grid-cols-2 lg:grid-cols-4">
+            <input
+              className={inputClass}
+              placeholder="SKU"
+              value={editForm.sku}
+              onChange={(e) => setEditForm((f) => ({ ...f, sku: e.target.value }))}
+            />
+            <input
+              className={inputClass}
+              placeholder="Name"
+              value={editForm.name}
+              onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+            />
+            <select
+              className={selectClass}
+              value={editForm.categoryId}
+              onChange={(e) => setEditForm((f) => ({ ...f, categoryId: e.target.value }))}
+            >
+              <option value="">Category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className={selectClass}
+              value={editForm.unit}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, unit: e.target.value as IngredientRow["unit"] }))
+              }
+            >
+              {INGREDIENT_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+            <input
+              className={inputClass}
+              placeholder="Current stock"
+              type="number"
+              value={editForm.currentStock}
+              onChange={(e) => setEditForm((f) => ({ ...f, currentStock: e.target.value }))}
+            />
+            <input
+              className={inputClass}
+              placeholder="Min stock"
+              type="number"
+              value={editForm.minStock}
+              onChange={(e) => setEditForm((f) => ({ ...f, minStock: e.target.value }))}
+            />
+            <input
+              className={inputClass}
+              placeholder="Reorder level"
+              type="number"
+              value={editForm.reorderLevel}
+              onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))}
+            />
+            <input
+              className={inputClass}
+              placeholder="Max stock"
+              type="number"
+              value={editForm.maxStock}
+              onChange={(e) => setEditForm((f) => ({ ...f, maxStock: e.target.value }))}
+            />
+            <input
+              className={inputClass}
+              placeholder="Unit cost (Rs)"
+              type="number"
+              value={editForm.unitCost}
+              onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))}
+            />
+            <button
+              type="button"
+              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 sm:col-span-2 lg:col-span-3"
+              onClick={() => {
+                setEditingId(null);
+                setEditForm(emptyRow());
+              }}
+            >
+              Cancel edit
+            </button>
+          </div>
+        </InventoryFormPanel>
+      ) : null}
+
+      {canManage && !editingId ? (
         <InventoryFormPanel
           title="Add ingredients"
           submitLabel={createMutation.isPending ? "Saving…" : `Save ${validRows.length} ingredient${validRows.length === 1 ? "" : "s"}`}
@@ -188,14 +336,37 @@ export function IngredientsPage(): JSX.Element {
           { key: "reorderLevel", header: "Reorder at" },
           { key: "unitCost", header: "Unit cost", render: (r) => `Rs ${r.unitCost.toLocaleString()}` },
           { id: "status", key: "id", header: "Status", render: (r) => { const s = stockStatus(r); return <Badge tone={s.tone}>{s.label}</Badge>; } },
-          ...(canManage ? [{
-            id: "actions",
-            key: "id" as const,
-            header: "",
-            render: (r: Ingredient) => (
-              <button type="button" className={`text-xs ${linkDangerClass}`} onClick={() => deleteMutation.mutate(r.id)}>Delete</button>
-            ),
-          }] : []),
+          ...(canManage
+            ? [
+                {
+                  id: "actions",
+                  key: "id" as const,
+                  header: "",
+                  render: (r: Ingredient) => (
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        className={`text-xs ${linkActionClass}`}
+                        onClick={() => startEdit(r)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={`text-xs ${linkDangerClass}`}
+                        onClick={() => {
+                          if (window.confirm(`Delete ingredient “${r.name}”?`)) {
+                            deleteMutation.mutate(r.id);
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ),
+                },
+              ]
+            : []),
         ]}
         rows={ingredients}
       />

@@ -47,6 +47,21 @@ const CARD_ACCENT: Record<string, string> = {
   bankPos: "border-cyan-500/40 bg-cyan-500/10",
 };
 
+/** Core Cash Report metrics — shown first in the card grid. */
+const CASH_REPORT_CORE_ORDER = [
+  "serviceCharges",
+  "tax16",
+  "tax8",
+  "remainingCash",
+  "cashReceived",
+  "deliveryCharges",
+  "discount",
+  "canceledOrders",
+  "cardReceived",
+  "walletReceived",
+  "taxOther",
+] as const;
+
 function normalizeTime(value?: string, fallback = "00:00"): string {
   if (value && /^\d{2}:\d{2}$/.test(value)) return value;
   return fallback;
@@ -188,7 +203,16 @@ export function CashReportPanel({
     });
   }, [report.rows]);
 
-  const primaryCards = cards.filter((c) => !c.section.startsWith("bank:") && c.section !== "bankPos");
+  /** Highlight the core Cash Report metrics the shops ask for first. */
+  const primaryCards = useMemo(() => {
+    const nonBank = cards.filter((c) => !c.section.startsWith("bank:") && c.section !== "bankPos");
+    return [...nonBank].sort((a, b) => {
+      const ai = CASH_REPORT_CORE_ORDER.indexOf(a.section as (typeof CASH_REPORT_CORE_ORDER)[number]);
+      const bi = CASH_REPORT_CORE_ORDER.indexOf(b.section as (typeof CASH_REPORT_CORE_ORDER)[number]);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+  }, [cards]);
+
   const bankCards = cards.filter((c) => c.section.startsWith("bank:") || c.section === "bankPos");
 
   const billsQuery = useQuery({
@@ -229,13 +253,13 @@ export function CashReportPanel({
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-400">
-              Cash summary
+              Cash Report
             </p>
             <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
-              Click a card to open its bills / deposits
+              Service · 16% / 8% tax · remaining cash · bank accounts
             </h3>
             <p className="mt-1 text-xs text-slate-500">
-              Qty = number of bills or deposits in this range · Amount = total PKR
+              Click a card to open its bills or bank deposits for this date range
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white/70 px-3 py-2 text-right dark:border-slate-700 dark:bg-slate-900/60">
@@ -249,7 +273,7 @@ export function CashReportPanel({
 
       <div>
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-          Collections
+          Collections & cash
         </h4>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {primaryCards.map((card) => {
@@ -295,11 +319,11 @@ export function CashReportPanel({
         </div>
       </div>
 
-      {bankCards.length > 0 ? (
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Bank accounts received
-          </h4>
+      <div>
+        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Bank accounts received
+        </h4>
+        {bankCards.length > 0 ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {bankCards.map((card) => {
               const selected = activeSection === card.section;
@@ -340,8 +364,19 @@ export function CashReportPanel({
               );
             })}
           </div>
-        </div>
-      ) : null}
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700">
+            No bank accounts on this branch yet. Add them under{" "}
+            <Link
+              to="/pops/accounting/bank"
+              className="text-cyan-600 hover:underline dark:text-cyan-400"
+            >
+              Accounting → Bank
+            </Link>
+            , then deposits in this range will show here.
+          </div>
+        )}
+      </div>
 
       {activeSection && activeCard ? (
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/40">

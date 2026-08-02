@@ -1,6 +1,15 @@
-import type { MenuItem } from "@platform/contracts";
+import type { MenuItem, MenuItemVariant } from "@platform/contracts";
 
-export type CartLine = { item: MenuItem; qty: number; /** Qty already sent/printed — cannot go below this. */ printedQty?: number };
+export type CartLine = {
+  key: string;
+  item: MenuItem;
+  variant: MenuItemVariant | null;
+  qty: number;
+  unitPrice: number;
+  lineLabel: string;
+  /** Qty already sent/printed — cannot go below this. */
+  printedQty?: number;
+};
 
 export type TableDraft = {
   cart: CartLine[];

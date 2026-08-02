@@ -198,6 +198,84 @@ export function chargesReportFromOrders(orders: Bill[]): ChargesReport {
   };
 }
 
+/** Owner / admin home: sales mix + cash vs card tax for a bill set (usually today). */
+export type OwnerDashboardMetrics = {
+  totalSales: number;
+  totalDiscount: number;
+  totalServiceCharges: number;
+  totalDeliveryCharges: number;
+  cashPayments: number;
+  cardPayments: number;
+  cashTaxCollected: number;
+  cardTaxCollected: number;
+  orderCount: number;
+  otherPayments: number;
+};
+
+export function ownerDashboardFromOrders(orders: Bill[]): OwnerDashboardMetrics {
+  const completed = payableCompletedOrders(orders);
+  let totalSales = 0;
+  let totalDiscount = 0;
+  let totalServiceCharges = 0;
+  let totalDeliveryCharges = 0;
+  let cashPayments = 0;
+  let cardPayments = 0;
+  let otherPayments = 0;
+  let cashTaxCollected = 0;
+  let cardTaxCollected = 0;
+
+  for (const bill of completed) {
+    totalSales += bill.total ?? 0;
+    totalDiscount += bill.discount ?? 0;
+    totalServiceCharges += bill.service ?? 0;
+    totalDeliveryCharges += bill.deliveryChargePkr ?? 0;
+
+    let billCash = 0;
+    let billCard = 0;
+    let billOther = 0;
+    for (const p of bill.payments ?? []) {
+      const amount = Math.max(0, Math.round(Number(p.amount ?? 0)));
+      if (p.method === "cash") billCash += amount;
+      else if (p.method === "card") billCard += amount;
+      else billOther += amount;
+    }
+    // Legacy bills with no payment lines — treat whole total as cash.
+    if (billCash + billCard + billOther === 0 && (bill.total ?? 0) > 0) {
+      billCash = bill.total ?? 0;
+    }
+
+    cashPayments += billCash;
+    cardPayments += billCard;
+    otherPayments += billOther;
+
+    const tax = Math.max(0, bill.tax ?? 0);
+    const paidMix = billCash + billCard;
+    if (tax > 0 && paidMix > 0) {
+      cashTaxCollected += Math.round((tax * billCash) / paidMix);
+      cardTaxCollected += Math.round((tax * billCard) / paidMix);
+    } else if (tax > 0 && billCash > 0) {
+      cashTaxCollected += tax;
+    } else if (tax > 0 && billCard > 0) {
+      cardTaxCollected += tax;
+    } else if (tax > 0) {
+      cashTaxCollected += tax;
+    }
+  }
+
+  return {
+    totalSales,
+    totalDiscount,
+    totalServiceCharges,
+    totalDeliveryCharges,
+    cashPayments,
+    cardPayments,
+    cashTaxCollected,
+    cardTaxCollected,
+    orderCount: completed.length,
+    otherPayments,
+  };
+}
+
 export type DiscountRow = {
   ref: string;
   time: string;

@@ -113,7 +113,7 @@ export default function BranchScreen() {
                 router.replace(homeRoute);
               }}
               style={({ pressed }) => ({
-                backgroundColor: pressed ? "#334155" : "#020617",
+                backgroundColor: pressed ? colors.card : colors.bg,
                 borderRadius: 10,
                 borderWidth: 1,
                 borderColor: colors.border,

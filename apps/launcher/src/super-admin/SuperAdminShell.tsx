@@ -1,11 +1,24 @@
-import { Button } from "@platform/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { fetchPlatformBusinesses, fetchPlatformSettings, fetchPlatformUsers } from "../lib/platformApi";
 import { useSessionStore } from "../stores/sessionStore";
-import { mutedClass } from "../pops/lib/themeClasses";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { pageTitleForPath } from "./superAdminHelpers";
+import {
+  saBtnGhostClass,
+  saHeaderClass,
+  saInputClass,
+  saMainClass,
+  saMobileNavActiveClass,
+  saMobileNavIdleClass,
+  saNavActiveClass,
+  saNavIdleClass,
+  saPageTitleClass,
+  saRootClass,
+  saSidebarClass,
+} from "./superAdminTheme";
+import "./superAdmin.css";
 
 type NavItem = { to: string; end?: boolean; label: string };
 type NavGroup = { title: string; items: NavItem[] };
@@ -100,26 +113,29 @@ export function SuperAdminShell(): JSX.Element {
   const title = pageTitleForPath(location.pathname);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    [
-      "block rounded-lg px-3 py-2 text-sm font-medium transition",
-      isActive
-        ? "bg-amber-500 text-slate-950 shadow-sm"
-        : "text-slate-300 hover:bg-slate-800 hover:text-white",
-    ].join(" ");
+    isActive ? saNavActiveClass : saNavIdleClass;
 
   const sidebar = (
     <>
-      <div className="border-b border-slate-800 px-4 py-4">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-400">
-          Control plane
-        </p>
-        <h1 className="mt-1 text-lg font-semibold text-white">POPS Platform</h1>
-        <p className={`mt-1 text-xs ${mutedClass}`}>Super Admin</p>
+      <div className="border-b border-slate-200 px-5 py-5 dark:border-white/5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-teal-400 to-teal-700 text-sm font-bold text-white shadow-md shadow-teal-900/20">
+            P
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-teal-700 dark:text-teal-400/90">
+              Control plane
+            </p>
+            <h1 className="text-base font-semibold tracking-tight text-slate-900 dark:text-white">
+              POPS Platform
+            </h1>
+          </div>
+        </div>
       </div>
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
         {NAV_GROUPS.map((group) => (
           <div key={group.title}>
-            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
               {group.title}
             </p>
             <div className="space-y-0.5">
@@ -138,23 +154,31 @@ export function SuperAdminShell(): JSX.Element {
           </div>
         ))}
       </nav>
-      <div className="space-y-2 border-t border-slate-800 px-4 py-4">
-        {supportEmail ? <p className="truncate text-xs text-slate-500">{supportEmail}</p> : null}
-        <p className="truncate text-sm font-medium text-slate-200" title={userLabel}>
-          {userLabel}
-        </p>
-        <Button type="button" variant="ghost" onClick={logout}>
+      <div className="space-y-3 border-t border-slate-200 px-4 py-4 dark:border-white/5">
+        {supportEmail ? (
+          <p className="truncate text-xs text-slate-500 dark:text-slate-500">{supportEmail}</p>
+        ) : null}
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-bold text-teal-800 dark:text-teal-300">
+            {userLabel.slice(0, 1).toUpperCase()}
+          </div>
+          <p
+            className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-200"
+            title={userLabel}
+          >
+            {userLabel}
+          </p>
+        </div>
+        <button type="button" className={`${saBtnGhostClass} w-full`} onClick={logout}>
           Sign out
-        </Button>
+        </button>
       </div>
     </>
   );
 
   return (
-    <div className="flex min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-800 bg-slate-900 text-slate-100 lg:flex">
-        {sidebar}
-      </aside>
+    <div className={`${saRootClass} flex`}>
+      <aside className={`hidden lg:flex ${saSidebarClass}`}>{sidebar}</aside>
 
       {mobileOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
@@ -164,46 +188,45 @@ export function SuperAdminShell(): JSX.Element {
             aria-label="Close menu"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="relative z-10 flex h-full w-64 flex-col bg-slate-900 text-slate-100 shadow-xl">
-            {sidebar}
-          </aside>
+          <aside className={`relative z-10 flex h-full ${saSidebarClass} shadow-2xl`}>{sidebar}</aside>
         </div>
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
+        <header className={saHeaderClass}>
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:px-6">
             <button
               type="button"
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium lg:hidden dark:border-slate-700"
+              className={`${saBtnGhostClass} lg:hidden`}
               onClick={() => setMobileOpen(true)}
             >
               Menu
             </button>
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-base font-semibold sm:text-lg">{title}</h2>
+              <h2 className={`truncate ${saPageTitleClass}`}>{title}</h2>
             </div>
-            <div className="relative w-full sm:w-72">
+            <ThemeToggle />
+            <div className="relative w-full sm:w-80">
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Jump to business…"
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950"
+                className={saInputClass}
               />
               {searchHits.length > 0 ? (
-                <ul className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                <ul className="absolute left-0 right-0 z-30 mt-1.5 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl dark:border-white/10 dark:bg-[#111827]">
                   {searchHits.map((b) => (
                     <li key={b.id}>
                       <button
                         type="button"
-                        className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                        className="block w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 dark:hover:bg-white/5"
                         onClick={() => {
                           setSearch("");
                           navigate(`/super-admin/businesses/${b.id}`);
                         }}
                       >
-                        <span className="font-medium">{b.name}</span>
-                        <span className="mt-0.5 block text-xs text-slate-500">
+                        <span className="font-medium text-slate-900 dark:text-slate-100">{b.name}</span>
+                        <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
                           {b.status}
                           {b.adminEmail ? ` · ${b.adminEmail}` : ""}
                         </span>
@@ -214,18 +237,14 @@ export function SuperAdminShell(): JSX.Element {
               ) : null}
             </div>
           </div>
-          <nav className="flex gap-1 overflow-x-auto border-t border-slate-100 px-4 py-2 lg:hidden dark:border-slate-800">
+          <nav className="flex gap-1 overflow-x-auto border-t border-slate-100 px-4 py-2 lg:hidden dark:border-white/10">
             {NAV_GROUPS.flatMap((g) => g.items).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 end={item.end}
                 className={({ isActive }) =>
-                  `shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                    isActive
-                      ? "bg-amber-500 text-slate-950"
-                      : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                  }`
+                  isActive ? saMobileNavActiveClass : saMobileNavIdleClass
                 }
               >
                 {item.label}
@@ -233,7 +252,7 @@ export function SuperAdminShell(): JSX.Element {
             ))}
           </nav>
         </header>
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
+        <main className={saMainClass}>
           <Outlet context={{ email: sessionEmail ?? userLabel }} />
         </main>
       </div>

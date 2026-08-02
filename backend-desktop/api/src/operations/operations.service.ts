@@ -6,8 +6,8 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import type { CreatePopsBranch } from "@platform/contracts";
-import { and, eq, sql } from "drizzle-orm";
+import type { CreatePopsBranch, UpdatePopsBranch } from "@platform/contracts";
+import { and, eq, ne, sql } from "drizzle-orm";
 import {
   organizations,
   popsActiveOrders,
@@ -431,6 +431,65 @@ export class OperationsService implements OnModuleInit {
 
     if (!row) throw new BadRequestException("Failed to create branch");
     await this.accounting.ensureBranchChart(organizationId, row.id);
+    return row;
+  }
+
+  async updateBranch(organizationId: string, branchId: string, input: UpdatePopsBranch) {
+    const current =
+      (
+        await this.db
+          .select({
+            id: popsBranches.id,
+            code: popsBranches.code,
+            name: popsBranches.name,
+            city: popsBranches.city,
+          })
+          .from(popsBranches)
+          .where(and(eq(popsBranches.organizationId, organizationId), eq(popsBranches.id, branchId)))
+          .limit(1)
+      )[0] ?? null;
+    if (!current) throw new NotFoundException("Branch not found");
+
+    const nextName = input.name !== undefined ? input.name.trim() : current.name;
+    const nextCity = input.city !== undefined ? input.city.trim() : current.city;
+    if (!nextName) throw new BadRequestException("Branch name is required");
+    if (!nextCity) throw new BadRequestException("City is required");
+
+    let nextCode = current.code;
+    if (input.code !== undefined) {
+      const normalized = normalizeBranchCode(input.code);
+      if (!normalized) throw new BadRequestException("Branch code is invalid");
+      if (normalized !== current.code) {
+        const clash = await this.db
+          .select({ id: popsBranches.id })
+          .from(popsBranches)
+          .where(
+            and(
+              eq(popsBranches.organizationId, organizationId),
+              eq(popsBranches.code, normalized),
+              ne(popsBranches.id, branchId),
+            ),
+          )
+          .limit(1);
+        if (clash.length > 0) {
+          throw new ConflictException(`Branch code already exists: ${normalized}`);
+        }
+        nextCode = normalized;
+      }
+    }
+
+    const [row] = await this.db
+      .update(popsBranches)
+      .set({ name: nextName, city: nextCity, code: nextCode })
+      .where(and(eq(popsBranches.organizationId, organizationId), eq(popsBranches.id, branchId)))
+      .returning({
+        id: popsBranches.id,
+        code: popsBranches.code,
+        name: popsBranches.name,
+        city: popsBranches.city,
+      });
+
+    if (!row) throw new NotFoundException("Branch not found");
     return row;
   }
 

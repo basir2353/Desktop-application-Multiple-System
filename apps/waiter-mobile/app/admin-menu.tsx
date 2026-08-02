@@ -117,7 +117,7 @@ export default function AdminMenuScreen() {
           placeholder="Search items…"
           placeholderTextColor={colors.muted}
           style={{
-            backgroundColor: "#020617",
+            backgroundColor: colors.bg,
             borderWidth: 1,
             borderColor: colors.border,
             borderRadius: 12,

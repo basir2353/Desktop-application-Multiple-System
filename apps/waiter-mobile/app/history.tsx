@@ -51,12 +51,12 @@ import {
   unifiedOrderTotal,
   type UnifiedOrder,
 } from "../src/lib/orderHistory";
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, effectiveTaxPct } from "../src/lib/posTaxSettings";
 import { useBranchStore } from "../src/stores/branchStore";
 import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-const SERVICE_PCT = 10;
-const TAX_PCT = 15;
+const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
 
 type HistoryFilter = "today" | "all" | "held";
 
@@ -152,12 +152,22 @@ export default function HistoryScreen() {
   }
 
   const closeMutation = useMutation({
-    mutationFn: (payload: { billId: string; payments: BillPayment[] }) =>
-      completeBill(payload.billId, {
+    mutationFn: (payload: { billId: string; payments: BillPayment[] }) => {
+      const dominant = payload.payments.reduce((best, p) =>
+        !best || p.amount > best.amount ? p : best,
+      payload.payments[0]);
+      const method =
+        dominant?.method === "card"
+          ? "card"
+          : dominant?.method === "wallet" || dominant?.method === "bank"
+            ? "wallet"
+            : "cash";
+      return completeBill(payload.billId, {
         payments: payload.payments,
-        servicePct: SERVICE_PCT,
-        taxPct: TAX_PCT,
-      }),
+        servicePct: TAX_SETTINGS.servicePct,
+        taxPct: effectiveTaxPct(TAX_SETTINGS, method),
+      });
+    },
     onSuccess: async (bill) => {
       setCloseBill(null);
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
@@ -233,9 +243,7 @@ export default function HistoryScreen() {
       lines.length > 0
         ? lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0)
         : kitchenTicketTotal(ticket, menuItems) ?? 0;
-    const service = Math.round(subtotal * (SERVICE_PCT / 100));
-    const tax = Math.round((subtotal + service) * (TAX_PCT / 100));
-    const total = subtotal + service + tax;
+    const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
     const ok = await printCartBill({
       branchName: branch.name,
       branchCode: branch.code,
@@ -247,11 +255,17 @@ export default function HistoryScreen() {
           ? lines
           : [{ label: ticket.itemsSummary || "Order", qty: 1, unitPrice: subtotal }],
       subtotal,
-      service,
-      servicePct: SERVICE_PCT,
-      tax,
-      taxPct: TAX_PCT,
-      total,
+      service: totals.service,
+      servicePct: totals.servicePct,
+      tax: totals.tax,
+      taxPct: totals.taxPct,
+      total: totals.total,
+      cashTaxPct: totals.cashTaxPct,
+      cardTaxPct: totals.cardTaxPct,
+      cashTax: totals.cashTax,
+      cardTax: totals.cardTax,
+      cashTotal: totals.cashTotal,
+      cardTotal: totals.cardTotal,
     });
     setNotice(
       ok
@@ -565,14 +579,14 @@ const styles = StyleSheet.create({
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
   },
   searchIcon: {
-    color: "#64748b",
+    color: colors.muted,
     fontSize: 18,
     marginRight: 8,
   },
@@ -581,7 +595,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingHorizontal: 0,
-    color: "#0f172a",
+    color: colors.text,
   },
   clearSearch: {
     color: colors.accent,
@@ -644,7 +658,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   tablePill: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
@@ -716,8 +730,8 @@ const styles = StyleSheet.create({
   editBtn: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(245, 158, 11, 0.45)",
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderColor: "rgba(15, 118, 110, 0.45)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
     paddingHorizontal: 16,
     paddingVertical: 10,
     minWidth: 72,
@@ -738,7 +752,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     paddingHorizontal: 14,
     paddingVertical: 10,
     minWidth: 72,

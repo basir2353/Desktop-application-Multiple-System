@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   createAttendanceSchema,
+  createEmployeeAdvanceSchema,
   createEmployeeSchema,
   createHrPayrollRunSchema,
   createLeaveRequestSchema,
@@ -166,6 +167,16 @@ export class HrController {
       user.organizationId,
       branchCode?.trim() ?? "",
       status?.trim(),
+    );
+  }
+
+  @Post("advances")
+  @RequirePermissions("pops.hr.manage")
+  createAdvance(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.hr.createEmployeeAdvance(
+      user.organizationId,
+      user.sub,
+      createEmployeeAdvanceSchema.parse(body),
     );
   }
 

@@ -313,32 +313,39 @@ export async function buildClientRestaurantReport(
 
     const rows: { label: string; amount: number; qty: number; meta?: string; section: string }[] = [
       {
-        section: "deliveryCharges",
-        label: "Total delivery charges",
-        amount: deliveryCharges,
-        qty: deliveryQty,
-        meta: "Click to see delivery bills",
-      },
-      {
         section: "serviceCharges",
-        label: "Service charges collected",
+        label: "Total Service Charges collected",
         amount: serviceCharges,
         qty: serviceQty,
         meta: "Click to see bills",
       },
       {
         section: "tax16",
-        label: "16% tax collected",
+        label: "Total 16% tax collected",
         amount: tax16,
         qty: tax16Qty,
         meta: "Cash payment rate · click for bills",
       },
       {
         section: "tax8",
-        label: "8% tax collected",
+        label: "Total 8% tax collected",
         amount: tax8,
         qty: tax8Qty,
         meta: "Card / online / bank rate · click for bills",
+      },
+      {
+        section: "remainingCash",
+        label: "Remaining cash available",
+        amount: remainingCash,
+        qty: cashQty + paidInQty + paidOutQty,
+        meta: `Cash ${cashReceived} + paid in ${paidIn} − paid out ${paidOut}`,
+      },
+      {
+        section: "deliveryCharges",
+        label: "Total delivery charges",
+        amount: deliveryCharges,
+        qty: deliveryQty,
+        meta: "Click to see delivery bills",
       },
     ];
     if (taxOther > 0 || taxOtherQty > 0) {
@@ -371,13 +378,6 @@ export async function buildClientRestaurantReport(
         amount: cashReceived,
         qty: cashQty,
         meta: "Click to see cash bills",
-      },
-      {
-        section: "remainingCash",
-        label: "Remaining cash available",
-        amount: remainingCash,
-        qty: cashQty + paidInQty + paidOutQty,
-        meta: `Cash ${cashReceived} + paid in ${paidIn} − paid out ${paidOut}`,
       },
       {
         section: "cardReceived",

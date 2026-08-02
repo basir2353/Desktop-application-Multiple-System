@@ -1,7 +1,15 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Employee } from "@platform/contracts";
-import { createAttendance, fetchAttendance, fetchEmployees, updateAttendance } from "../../../api/hr";
+import {
+  createAttendance,
+  fetchAttendance,
+  fetchEmployeeAdvances,
+  fetchEmployees,
+  updateAttendance,
+} from "../../../api/hr";
+import { openAdvanceTotalsByEmployee } from "../../../lib/employeeAdvancesLocal";
+import { formatSelectBalance } from "../../../lib/selectMeta";
 import { hrInputClass, useHrAccess } from "../../../hooks/useHr";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
@@ -27,6 +35,25 @@ export function AttendancePage(): JSX.Element {
     enabled: Boolean(branch?.code),
     queryFn: () => fetchEmployees(branch!.code),
   });
+
+  const advancesQuery = useQuery({
+    queryKey: ["hr", "advances", branch?.code, "open"],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchEmployeeAdvances(branch!.code, "open"),
+  });
+
+  const openAdvanceById = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of advancesQuery.data ?? []) {
+      if (row.openAdvancePkr > 0) map.set(row.employeeId, row.openAdvancePkr);
+    }
+    if (branch?.code) {
+      for (const [id, amount] of openAdvanceTotalsByEmployee(branch.code)) {
+        if ((map.get(id) ?? 0) === 0) map.set(id, amount);
+      }
+    }
+    return map;
+  }, [advancesQuery.data, branch?.code]);
 
   const createMutation = useMutation({
     mutationFn: createAttendance,
@@ -83,7 +110,7 @@ export function AttendancePage(): JSX.Element {
               .filter((e: Employee) => e.employmentStatus === "active")
               .map((e: Employee) => (
                 <option key={e.id} value={e.id}>
-                  {e.employeeCode} — {e.displayName}
+                  {e.employeeCode} — {e.displayName} · {formatSelectBalance(openAdvanceById.get(e.id) ?? 0)}
                 </option>
               ))}
           </select>

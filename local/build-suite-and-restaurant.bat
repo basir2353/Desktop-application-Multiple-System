@@ -71,7 +71,7 @@ if errorlevel 1 exit /b 1
 echo.
 echo === BOTH BUILDS COMPLETE ===
 echo Update manifests: %OUT_DIR%\updates\
-echo Next: publish with local\publish-desktop-release.bat 0.2.6
+echo Next: publish with local\publish-desktop-release.bat 0.3.7
 exit /b 0
 
 :COPY_INSTALLERS

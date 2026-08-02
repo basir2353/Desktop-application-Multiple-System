@@ -18,6 +18,7 @@ import {
   updateBusinessSchema,
   updatePlatformSettingsSchema,
   updatePlatformUserSchema,
+  resetBusinessTransactionsSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -96,6 +97,19 @@ export class PlatformController {
   deleteBusiness(@CurrentUser() user: AccessJwtPayload, @Param("businessId") businessId: string) {
     this.platform.assertSuperAdmin(user);
     return this.platform.deleteBusiness(user, businessId);
+  }
+
+  @Post("businesses/:businessId/reset-transactions")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions("platform.businesses.manage")
+  resetBusinessTransactions(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("businessId") businessId: string,
+    @Body() body: unknown,
+  ) {
+    this.platform.assertSuperAdmin(user);
+    const input = resetBusinessTransactionsSchema.parse(body);
+    return this.platform.resetBusinessTransactions(user, businessId, input.confirmName);
   }
 
   @Post("businesses/:businessId/grant-licence")

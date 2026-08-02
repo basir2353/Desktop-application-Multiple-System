@@ -216,6 +216,7 @@ export async function submitSilentPrintJob(
         branchCode: job.branchCode,
         printerId: job.printerId,
         printerName: job.printerName,
+        userId: job.userId ?? null,
         orderId: job.orderId,
         priority: job.priority ?? 100,
         deviceLabel: job.deviceLabel ?? "waiter-mobile",
@@ -245,6 +246,8 @@ export async function trySilentBranchPrint(input: {
   branchCode: string;
   printerName?: string | null;
   orderId?: string | null;
+  /** Logged-in waiter / cashier — desktop routes bill to their assigned receipt printer only. */
+  userId?: string | null;
   payload: PrintJobPayload;
 }): Promise<boolean> {
   const { loadMobilePrinterSettings } = await import("./mobilePrinterSettings");
@@ -255,6 +258,10 @@ export async function trySilentBranchPrint(input: {
   const payload: PrintJobPayload = {
     ...input.payload,
     systemPrinterName: null,
+    meta: {
+      ...(input.payload.meta && typeof input.payload.meta === "object" ? input.payload.meta : {}),
+      userId: input.userId ?? null,
+    },
   };
 
   // Soft profile hint only (Kitchen 1 / Cashier) — desktop maps via POS routing.
@@ -268,6 +275,7 @@ export async function trySilentBranchPrint(input: {
         branchCode: input.branchCode,
         printerName,
         orderId: input.orderId ?? null,
+        userId: input.userId ?? null,
         payload,
         deviceLabel: "waiter-mobile",
       });
@@ -287,6 +295,7 @@ export async function trySilentBranchPrint(input: {
           branchCode: input.branchCode,
           printerName,
           orderId: input.orderId ?? null,
+          userId: input.userId ?? null,
           deviceLabel: "waiter-mobile-ip",
           payload,
         });
@@ -304,6 +313,7 @@ export async function trySilentBranchPrint(input: {
         branchCode: input.branchCode,
         printerName,
         orderId: input.orderId ?? null,
+        userId: input.userId ?? null,
         deviceLabel: "waiter-mobile-lan",
         payload,
       });

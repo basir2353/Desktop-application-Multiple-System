@@ -188,8 +188,11 @@ export function ManufacturingPage(): JSX.Element {
               className={`${inputClass} flex items-center justify-between text-left`}
             >
               <span className={form.outputIngredientId ? "truncate text-white" : "text-slate-500"}>
-                {ingredients.find((i) => i.id === form.outputIngredientId)?.name ??
-                  "Finished goods ingredient (optional)"}
+                {(() => {
+                  const ing = ingredients.find((i) => i.id === form.outputIngredientId);
+                  if (!ing) return "Finished goods ingredient (optional)";
+                  return `${ing.name} · Qty ${ing.currentStock} ${ing.unit}`;
+                })()}
               </span>
               <span className="text-slate-500" aria-hidden>▾</span>
             </button>

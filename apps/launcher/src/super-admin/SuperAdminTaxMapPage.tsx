@@ -74,7 +74,7 @@ export function SuperAdminTaxMapPage(): JSX.Element {
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder="Filter by name or admin email…"
-        className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+        className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#070D18]"
       />
 
       {message ? (
@@ -83,9 +83,9 @@ export function SuperAdminTaxMapPage(): JSX.Element {
         </p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white border-slate-200 bg-white">
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-800">
+          <thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-white/10">
             <tr>
               <th className="px-4 py-3 font-medium">Business</th>
               <th className="px-4 py-3 font-medium">FBR</th>
@@ -164,7 +164,7 @@ function TaxRow({
       <td className="px-4 py-3">
         <Link
           to={`/super-admin/businesses/${id}`}
-          className="font-medium text-amber-700 hover:underline dark:text-amber-400"
+          className="font-medium text-teal-700 hover:underline dark:text-teal-300"
         >
           {name}
         </Link>
@@ -210,7 +210,7 @@ function TaxRow({
 
 function Stat({ label, value }: { label: string; value: number }): JSX.Element {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+    <div className="rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
       <p className="text-sm text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-semibold">{value}</p>
     </div>

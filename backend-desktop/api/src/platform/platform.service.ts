@@ -52,6 +52,7 @@ import {
   isTombstoneEmail,
   tombstoneLoginEmail,
 } from "../lib/login-email";
+import { wipeBusinessTransactions } from "./business-reset.wipe";
 
 const LICENCE_TZ = "Asia/Karachi";
 
@@ -135,7 +136,7 @@ export class PlatformService {
           .where(eq(organizationMemberships.organizationId, row.id));
 
         const admin = await this.db
-          .select({ email: users.email })
+          .select({ email: users.email, status: users.status })
           .from(organizationMemberships)
           .innerJoin(users, eq(users.id, organizationMemberships.userId))
           .where(
@@ -144,10 +145,19 @@ export class PlatformService {
               sql`${organizationMemberships.role} in ('owner', 'admin')`,
             ),
           )
-          .limit(1);
+          .limit(20);
+
+        const liveAdmin =
+          admin.find(
+            (a) =>
+              a.status !== "deleted" &&
+              !String(a.email ?? "")
+                .toLowerCase()
+                .endsWith("@deleted.local"),
+          ) ?? null;
 
         return this.toBusiness(row, {
-          adminEmail: admin[0]?.email ?? null,
+          adminEmail: liveAdmin?.email ?? null,
           userCount: Number(userCountRow?.value ?? 0),
         });
       }),
@@ -171,7 +181,7 @@ export class PlatformService {
       .where(eq(organizationMemberships.organizationId, row.id));
 
     const admin = await this.db
-      .select({ email: users.email })
+      .select({ email: users.email, status: users.status })
       .from(organizationMemberships)
       .innerJoin(users, eq(users.id, organizationMemberships.userId))
       .where(
@@ -180,10 +190,19 @@ export class PlatformService {
           sql`${organizationMemberships.role} in ('owner', 'admin')`,
         ),
       )
-      .limit(1);
+      .limit(20);
+
+    const liveAdmin =
+      admin.find(
+        (a) =>
+          a.status !== "deleted" &&
+          !String(a.email ?? "")
+            .toLowerCase()
+            .endsWith("@deleted.local"),
+      ) ?? null;
 
     return this.toBusiness(row, {
-      adminEmail: admin[0]?.email ?? null,
+      adminEmail: liveAdmin?.email ?? null,
       userCount: Number(userCountRow?.value ?? 0),
     });
   }
@@ -193,9 +212,24 @@ export class PlatformService {
     // Login namespace only — customer / patient emails are separate tables.
     const existingUser = await findLiveLoginUserByEmail(this.db, adminEmail);
     if (existingUser) {
-      throw new ConflictException(
-        "This login email is already used by another user account. Customer emails are separate — pick a different login email for this business admin.",
-      );
+      if (existingUser.platformRole === "super_admin") {
+        throw new ConflictException(
+          "This login email belongs to the Super Admin account. Pick a different login email for this business admin.",
+        );
+      }
+      // Orphan / soft-deleted-org leftovers: email still on users but no live business
+      // (Users page hid them when their only org was deleted). Free the address.
+      const liveOrg = await this.findLiveOrgMembership(existingUser.id);
+      if (!liveOrg) {
+        this.logger.warn(
+          `Reclaiming orphan login email ${adminEmail} (user ${existingUser.id}) for new business`,
+        );
+        await this.tombstoneLoginUser(existingUser.id, existingUser.email);
+      } else {
+        throw new ConflictException(
+          `This login email is already used by “${liveOrg.businessName}” (${liveOrg.role}). Pick a different login email, or delete that user first.`,
+        );
+      }
     }
 
     const passwordHash = await bcrypt.hash(input.adminPassword, 12);
@@ -232,6 +266,7 @@ export class PlatformService {
         name: input.adminName.trim(),
         email: adminEmail,
         passwordHash,
+        lastSetPassword: input.adminPassword,
         status: "active",
         platformRole: null,
       })
@@ -561,15 +596,21 @@ export class PlatformService {
       ? new Set(input.organizationIds)
       : null;
 
+    /** Month-end pay banner only when licence is within ~1 month (not e.g. 366d left). */
+    const MONTH_END_ALERT_MAX_DAYS = 30;
     const candidates = status.unpaid.filter((row) => {
       if (idFilter && !idFilter.has(row.organizationId)) return false;
       const dueSoon =
         row.licenceExpired ||
         (row.licenceDaysLeft != null && row.licenceDaysLeft <= 5);
       const monthEndWindow = day >= 25 || day <= 3;
-      if (mode === "month_end") return monthEndWindow || dueSoon;
+      const nearLicenceEnd =
+        row.licenceDaysLeft != null &&
+        row.licenceDaysLeft <= MONTH_END_ALERT_MAX_DAYS;
       if (mode === "due") return dueSoon;
-      return true; // all unpaid
+      // month_end / all: never nag when plenty of licence time remains
+      if (dueSoon) return true;
+      return monthEndWindow && nearLicenceEnd;
     });
 
     const results: LicenceReminderResult["results"] = [];
@@ -710,6 +751,68 @@ export class PlatformService {
     const mode = hasDue && !monthEndWindow ? "due" : monthEndWindow && hasDue ? "all" : "month_end";
     this.logger.log(`Licence reminder automation running (mode=${mode}, day=${day})`);
     return this.sendLicenceReminders({ mode });
+  }
+
+  /**
+   * Wipe all transactional data for a business (sales, journals, stock movements, …).
+   * Keeps company setup: users, menu, catalog, chart of accounts, licence.
+   * Dashboard / P&L become zero after this.
+   */
+  async resetBusinessTransactions(
+    actor: AccessJwtPayload,
+    businessId: string,
+    confirmName: string,
+  ): Promise<{
+    ok: true;
+    businessId: string;
+    businessName: string;
+    deletedRows: number;
+    wipedTables: string[];
+  }> {
+    const orgRows = await this.db
+      .select()
+      .from(organizations)
+      .where(and(eq(organizations.id, businessId), ne(organizations.status, "deleted")))
+      .limit(1);
+    const org = orgRows[0];
+    if (!org) throw new NotFoundException("Business not found");
+
+    const expected = org.name.trim().toLowerCase();
+    const given = confirmName.trim().toLowerCase();
+    if (!given || given !== expected) {
+      throw new BadRequestException(
+        `Type the exact business name “${org.name}” to confirm company reset`,
+      );
+    }
+
+    const wipe = await wipeBusinessTransactions(this.db, businessId);
+
+    await this.db.insert(entityDeletionBackups).values({
+      entityType: "business_reset",
+      entityId: businessId,
+      originalEmail: null,
+      label: org.name,
+      deletedBy: actor.sub,
+      payload: {
+        organizationId: businessId,
+        businessName: org.name,
+        deletedRows: wipe.deletedRows,
+        wipedTables: wipe.wipedTables,
+        resetAt: new Date().toISOString(),
+      },
+    });
+
+    this.logger.warn(
+      `Company reset for ${org.name} (${businessId}) by ${actor.sub}: ${wipe.deletedRows} rows`,
+    );
+
+    return {
+      ok: true,
+      businessId,
+      businessName: org.name,
+      deletedRows: wipe.deletedRows,
+      wipedTables: wipe.wipedTables,
+    };
   }
 
   async deleteBusiness(actor: AccessJwtPayload, businessId: string): Promise<{ ok: true }> {
@@ -855,6 +958,28 @@ export class PlatformService {
       .where(eq(organizationMemberships.userId, userId));
   }
 
+  /** Live (non-deleted) org membership for a login user, if any. */
+  private async findLiveOrgMembership(
+    userId: string,
+  ): Promise<{ businessId: string; businessName: string; role: string } | null> {
+    const row =
+      (
+        await this.db
+          .select({
+            businessId: organizations.id,
+            businessName: organizations.name,
+            role: organizationMemberships.role,
+          })
+          .from(organizationMemberships)
+          .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+          .where(
+            and(eq(organizationMemberships.userId, userId), ne(organizations.status, "deleted")),
+          )
+          .limit(1)
+      )[0] ?? null;
+    return row;
+  }
+
   async listUsers(): Promise<PlatformUser[]> {
     const rows = await this.db
       .select({
@@ -864,6 +989,7 @@ export class PlatformService {
         platformRole: users.platformRole,
         status: users.status,
         createdAt: users.createdAt,
+        lastSetPassword: users.lastSetPassword,
         role: organizationMemberships.role,
         active: organizationMemberships.active,
         businessId: organizations.id,
@@ -876,32 +1002,50 @@ export class PlatformService {
       .leftJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
       .orderBy(desc(users.createdAt));
 
-    return rows
-      .filter((row) => {
-        if (isDeletedLoginUser(row)) return false;
-        if (row.businessStatus === "deleted") return false;
-        return true;
-      })
-      .map((row) => ({
-        id: row.id,
-        name: row.name,
-        email: row.email,
-        role: row.platformRole === "super_admin" ? "super_admin" : (row.role ?? "none"),
-        platformRole: row.platformRole === "super_admin" ? "super_admin" : null,
-        businessId: row.businessId,
-        businessName: row.businessName,
-        systemType: (row.systemType as SystemType | null) ?? null,
-        status: row.status,
-        active: row.active ?? row.status === "active",
-        createdAt: row.createdAt.toISOString(),
-      }));
+    // One row per live login user. Prefer a live business; if only deleted-org
+    // memberships exist, still list the user (orphan) so Super Admin can see / delete.
+    const byId = new Map<string, PlatformUser>();
+    for (const row of rows) {
+      if (isDeletedLoginUser(row)) continue;
+      const liveBusiness = row.businessStatus && row.businessStatus !== "deleted";
+      const prev = byId.get(row.id);
+      if (!prev) {
+        byId.set(row.id, {
+          id: row.id,
+          name: row.name,
+          email: row.email,
+          role: row.platformRole === "super_admin" ? "super_admin" : liveBusiness ? (row.role ?? "none") : "none",
+          platformRole: row.platformRole === "super_admin" ? "super_admin" : null,
+          businessId: liveBusiness ? row.businessId : null,
+          businessName: liveBusiness ? row.businessName : null,
+          systemType: liveBusiness ? ((row.systemType as SystemType | null) ?? null) : null,
+          status: row.status,
+          active: liveBusiness ? (row.active ?? row.status === "active") : row.status === "active",
+          createdAt: row.createdAt.toISOString(),
+          lastSetPassword: row.lastSetPassword ?? null,
+        });
+        continue;
+      }
+      if (liveBusiness && !prev.businessId) {
+        prev.role = row.platformRole === "super_admin" ? "super_admin" : (row.role ?? "none");
+        prev.businessId = row.businessId;
+        prev.businessName = row.businessName;
+        prev.systemType = (row.systemType as SystemType | null) ?? null;
+        prev.active = row.active ?? row.status === "active";
+      }
+    }
+
+    return [...byId.values()];
   }
 
   async resetUserPassword(userId: string, password: string): Promise<{ ok: true }> {
     const rows = await this.db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
     if (!rows[0]) throw new NotFoundException("User not found");
     const passwordHash = await bcrypt.hash(password, 12);
-    await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    await this.db
+      .update(users)
+      .set({ passwordHash, lastSetPassword: password })
+      .where(eq(users.id, userId));
     await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
     return { ok: true };
   }
@@ -968,6 +1112,7 @@ export class PlatformService {
       status: updated.status,
       active: updated.status === "active",
       createdAt: updated.createdAt.toISOString(),
+      lastSetPassword: null,
     };
   }
 

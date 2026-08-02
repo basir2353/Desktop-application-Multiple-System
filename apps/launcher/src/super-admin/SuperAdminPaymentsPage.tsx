@@ -52,7 +52,7 @@ export function SuperAdminPaymentsPage(): JSX.Element {
       </div>
 
       {msg ? (
-        <p className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+        <p className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-[#111827]">
           {msg}
         </p>
       ) : null}
@@ -65,8 +65,8 @@ export function SuperAdminPaymentsPage(): JSX.Element {
       </div>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
-          <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+        <div className="rounded-xl border border-slate-200 bg-white border-slate-200 bg-white">
+          <div className="border-b border-slate-200 px-4 py-3 dark:border-white/10">
             <h3 className="text-sm font-semibold">Unpaid this month</h3>
           </div>
           <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
@@ -77,7 +77,7 @@ export function SuperAdminPaymentsPage(): JSX.Element {
                 <li key={row.organizationId} className="px-4 py-3">
                   <Link
                     to={`/super-admin/businesses/${row.organizationId}`}
-                    className="font-medium text-amber-700 hover:underline dark:text-amber-400"
+                    className="font-medium text-teal-700 hover:underline dark:text-teal-300"
                   >
                     {row.businessName}
                   </Link>
@@ -90,8 +90,8 @@ export function SuperAdminPaymentsPage(): JSX.Element {
           </ul>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
-          <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+        <div className="rounded-xl border border-slate-200 bg-white border-slate-200 bg-white">
+          <div className="border-b border-slate-200 px-4 py-3 dark:border-white/10">
             <h3 className="text-sm font-semibold">Recent payments</h3>
           </div>
           <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
@@ -119,7 +119,7 @@ export function SuperAdminPaymentsPage(): JSX.Element {
 
       <p className={`text-xs ${mutedClass}`}>
         Full licence grant / module tools live under{" "}
-        <Link to="/super-admin/licences" className="text-amber-700 underline dark:text-amber-400">
+        <Link to="/super-admin/licences" className="text-teal-700 underline dark:text-teal-300">
           Licences
         </Link>
         .
@@ -142,7 +142,7 @@ function Stat({
       className={`rounded-xl border p-4 ${
         warn
           ? "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
-          : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"
+          : "border-slate-200 bg-white border-slate-200 bg-white"
       }`}
     >
       <p className="text-sm text-slate-500">{label}</p>

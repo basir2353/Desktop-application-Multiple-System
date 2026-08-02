@@ -109,7 +109,7 @@ export default function AdminInventoryScreen() {
           placeholder="Search SKU or name…"
           placeholderTextColor={colors.muted}
           style={{
-            backgroundColor: "#020617",
+            backgroundColor: colors.bg,
             borderWidth: 1,
             borderColor: colors.border,
             borderRadius: 12,

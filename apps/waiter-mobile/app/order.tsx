@@ -1,4 +1,11 @@
-import { formatMenuItemLabel, type Bill, type KitchenTicket, type MenuItem } from "@platform/contracts";
+import {
+  formatMenuItemLabel,
+  menuItemDisplayPrice,
+  type Bill,
+  type KitchenTicket,
+  type MenuItem,
+  type MenuItemVariant,
+} from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { DeliveryMap } from "../src/components/DeliveryMap";
+import { DishVariantModal } from "../src/components/DishVariantModal";
 import { createBill, fetchOrders, updateBill } from "../src/api/billing";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { fetchRiders } from "../src/api/delivery";
@@ -35,6 +43,12 @@ import {
 import { formatPkr, formatTimeAgo, kitchenStatusLabel } from "../src/lib/orderDisplay";
 import { matchesTable, newOrderRef, type CartLine, type TableDraft } from "../src/lib/orderDrafts";
 import {
+  buildCartLine,
+  pickDefaultVariant,
+  resolveSellableVariants,
+  shouldOpenVariantPicker,
+} from "../src/lib/cartVariants";
+import {
   canEditHeldBill,
   canEditKitchenTicket,
   cartFromBill,
@@ -56,9 +70,10 @@ import {
 } from "../src/lib/orderMode";
 import { resolveStaffRole, isCashierRole } from "../src/lib/roles";
 import { printBillReceipt, printCartBill, printCartOrder, printKitchenOrder } from "../src/lib/printBill";
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS } from "../src/lib/posTaxSettings";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-const SERVICE_PCT = 10;
+const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
 
 function emptyDraft(orderRef: string): TableDraft {
   return { cart: [], notes: "", orderRef };
@@ -97,6 +112,7 @@ export default function OrderScreen() {
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryRiderId, setDeliveryRiderId] = useState("");
   const [deliveryCharge, setDeliveryCharge] = useState("0");
+  const [variantPickerItem, setVariantPickerItem] = useState<MenuItem | null>(null);
   const appliedEditRef = useRef<string | null>(null);
   const sendLockRef = useRef(false);
   const billLockRef = useRef(false);
@@ -261,10 +277,15 @@ export default function OrderScreen() {
 
   function cartLines() {
     return cart.map((line) => ({
-      label: formatMenuItemLabel(line.item),
+      label: line.lineLabel || formatMenuItemLabel({
+        name: line.item.name,
+        portion: line.item.portion,
+        variantLabel: line.variant?.label ?? null,
+      }),
       qty: line.qty,
-      unitPrice: line.item.price,
+      unitPrice: line.unitPrice,
       menuItemId: line.item.id,
+      categoryId: line.item.categoryId,
     }));
   }
 
@@ -388,10 +409,13 @@ export default function OrderScreen() {
     activeTableId ? matchesTable(k.stationLabel, activeTableId) : false,
   );
 
-  const subtotal = cart.reduce((s, l) => s + l.item.price * l.qty, 0);
-  const service = Math.round(subtotal * (SERVICE_PCT / 100));
-  const tax = Math.round((subtotal + service) * 0.15);
-  const total = subtotal + service + tax;
+  const subtotal = cart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
+  const deliveryExtra =
+    orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0;
+  const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
+  const { service, servicePct, tax, taxPct, total: foodTotal, cashTaxPct, cardTaxPct, cashTax, cardTax, cashTotal, cardTotal } =
+    totals;
+  const total = foodTotal + deliveryExtra;
 
   const editTicketId = typeof params.editTicketId === "string" ? params.editTicketId : undefined;
   const editBillId = typeof params.editBillId === "string" ? params.editBillId : undefined;
@@ -473,7 +497,9 @@ export default function OrderScreen() {
       appliedEditRef.current = null;
       setShowMenu(false);
       invalidateOrderFeeds();
-      const printed = await printKitchenOrder(branch!.name, branch!.code, ticket, menuItems);
+      const printed = await printKitchenOrder(branch!.name, branch!.code, ticket, menuItems, {
+        isOrderUpdate: wasEdit,
+      });
       setNotice(
         wasEdit
           ? printed
@@ -519,18 +545,20 @@ export default function OrderScreen() {
       const lines = cartLines();
       const tableLabel = stationLabelForMode(orderMode, activeTableId);
       const payloadNotes = combinedOrderNotes();
-      const billSubtotal = cart.reduce((s, l) => s + l.item.price * l.qty, 0);
-      const billService = Math.round(billSubtotal * (SERVICE_PCT / 100));
-      const billTax = Math.round((billSubtotal + billService) * 0.15);
-      const billTotal = billSubtotal + billService + billTax;
+      const billSubtotal = cart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
+      const billTotals = calcServiceTaxTotals(billSubtotal, TAX_SETTINGS, "cash");
+      const billDelivery =
+        orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0;
+      const billTotal = billTotals.total + billDelivery;
       if (editingOrder?.kind === "bill") {
         return updateBill(editingOrder.billId, {
           tableLabel,
           lines,
           notes: payloadNotes ?? null,
-          servicePct: SERVICE_PCT,
+          servicePct: billTotals.servicePct,
+          taxPct: billTotals.taxPct,
           riderId: orderMode === "delivery" ? deliveryRiderId || null : null,
-          deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
+          deliveryChargePkr: orderMode === "delivery" ? billDelivery : 0,
         });
       }
       const bill = await createBill({
@@ -540,13 +568,14 @@ export default function OrderScreen() {
         waiterId: claims?.sub,
         lines,
         notes: payloadNotes,
-        servicePct: SERVICE_PCT,
+        servicePct: billTotals.servicePct,
+        taxPct: billTotals.taxPct,
         status: isCashierRole(claims) ? "completed" : "held",
         ...(isCashierRole(claims)
           ? { payments: [{ method: "cash" as const, amount: billTotal }] }
           : {}),
         riderId: orderMode === "delivery" ? deliveryRiderId || undefined : undefined,
-        deliveryChargePkr: orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : undefined,
+        deliveryChargePkr: orderMode === "delivery" ? billDelivery : undefined,
       });
       // Do not mark kitchen ticket done from waiter app — close only via cashier/POS payment.
       return bill;
@@ -598,31 +627,40 @@ export default function OrderScreen() {
     billMutation.mutate();
   }
 
-  function addToCart(item: MenuItem): void {
+  function addVariantToCart(item: MenuItem, variant: MenuItemVariant | null): void {
+    const built = buildCartLine(item, variant, 1, 0);
     updateDraft((current) => {
       const next = [...current.cart];
-      const i = next.findIndex((l) => l.item.id === item.id);
+      const i = next.findIndex((l) => l.key === built.key);
       if (i >= 0) next[i] = { ...next[i], qty: next[i].qty + 1 };
-      else next.push({ item, qty: 1, printedQty: 0 });
+      else next.push(built);
       return { cart: next };
     });
     setNotice(null);
   }
 
-  function setLineQty(itemId: string, qty: number): void {
+  function onDishClick(item: MenuItem): void {
+    if (shouldOpenVariantPicker(item)) {
+      setVariantPickerItem(item);
+      return;
+    }
+    addVariantToCart(item, pickDefaultVariant(item));
+  }
+
+  function setLineQty(lineKey: string, qty: number): void {
     let blocked = false;
     let floor = 0;
     updateDraft((current) => {
-      const line = current.cart.find((l) => l.item.id === itemId);
+      const line = current.cart.find((l) => l.key === lineKey);
       if (!line) return current;
       floor = Math.max(0, line.printedQty ?? 0);
       if (qty < floor) blocked = true;
       const nextQty = Math.max(floor, qty);
       if (nextQty <= 0 && floor <= 0) {
-        return { cart: current.cart.filter((l) => l.item.id !== itemId) };
+        return { cart: current.cart.filter((l) => l.key !== lineKey) };
       }
       return {
-        cart: current.cart.map((l) => (l.item.id === itemId ? { ...l, qty: nextQty } : l)),
+        cart: current.cart.map((l) => (l.key === lineKey ? { ...l, qty: nextQty } : l)),
       };
     });
     if (blocked) {
@@ -976,20 +1014,20 @@ export default function OrderScreen() {
           ) : (
             <View style={styles.cartList}>
               {cart.map((line: CartLine) => (
-                <View key={line.item.id} style={styles.cartLine}>
+                <View key={line.key} style={styles.cartLine}>
                   <View style={styles.cartLineCopy}>
                     <Text style={styles.cartLineName} numberOfLines={2}>
-                      {formatMenuItemLabel(line.item)}
+                      {line.lineLabel}
                     </Text>
                     <Text style={styles.cartLinePrice}>
-                      {formatPkr(line.item.price * line.qty)}
+                      {formatPkr(line.unitPrice * line.qty)}
                     </Text>
                   </View>
                   <QtyStepper
                     qty={line.qty}
                     minQty={line.printedQty ?? 0}
-                    onDecrement={() => setLineQty(line.item.id, line.qty - 1)}
-                    onIncrement={() => setLineQty(line.item.id, line.qty + 1)}
+                    onDecrement={() => setLineQty(line.key, line.qty - 1)}
+                    onIncrement={() => setLineQty(line.key, line.qty + 1)}
                   />
                 </View>
               ))}
@@ -1084,12 +1122,18 @@ export default function OrderScreen() {
                         })),
                         subtotal,
                         service,
-                        servicePct: SERVICE_PCT,
+                        servicePct,
                         tax,
-                        taxPct: 15,
+                        taxPct,
                         total,
                         deliveryChargePkr:
                           orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
+                        cashTaxPct,
+                        cardTaxPct,
+                        cashTax,
+                        cardTax,
+                        cashTotal: cashTotal + deliveryExtra,
+                        cardTotal: cardTotal + deliveryExtra,
                       });
                       setNotice(ok ? "Bill sent to printer." : "Could not print bill.");
                     })();
@@ -1167,35 +1211,48 @@ export default function OrderScreen() {
               <View key={section.categoryId} style={styles.menuSection}>
                 <CategoryHeading title={section.name} count={section.items.length} />
                 {section.items.map((item) => {
-                  const line = cart.find((l) => l.item.id === item.id);
-                  const inCart = line?.qty ?? 0;
-                  const printedFloor = line?.printedQty ?? 0;
+                  const itemLines = cart.filter((l) => l.item.id === item.id);
+                  const inCart = itemLines.reduce((s, l) => s + l.qty, 0);
+                  const variants = resolveSellableVariants(item);
+                  const displayPrice = menuItemDisplayPrice(item);
+                  const primaryLine = itemLines.length === 1 ? itemLines[0] : null;
                   return (
                     <View key={item.id} style={styles.menuItem}>
                       <Pressable
                         onPress={() => {
-                          if (inCart === 0) addToCart(item);
+                          if (inCart === 0 || shouldOpenVariantPicker(item)) onDishClick(item);
                         }}
                         style={({ pressed }) => [
                           styles.menuItemCopy,
-                          pressed && inCart === 0 && styles.menuItemPressed,
+                          pressed && styles.menuItemPressed,
                         ]}
                       >
                         <Text style={styles.menuItemName} numberOfLines={2}>
                           {formatMenuItemLabel(item)}
+                          {variants.length > 1 ? " · sizes" : ""}
                         </Text>
-                        <Text style={styles.menuItemPrice}>{formatPkr(item.price)}</Text>
+                        <Text style={styles.menuItemPrice}>
+                          {variants.length > 1 ? `From ${formatPkr(displayPrice)}` : formatPkr(displayPrice)}
+                        </Text>
                       </Pressable>
-                      {inCart > 0 ? (
+                      {primaryLine ? (
                         <QtyStepper
-                          qty={inCart}
-                          minQty={printedFloor}
-                          onDecrement={() => setLineQty(item.id, inCart - 1)}
-                          onIncrement={() => setLineQty(item.id, inCart + 1)}
+                          qty={primaryLine.qty}
+                          minQty={primaryLine.printedQty ?? 0}
+                          onDecrement={() => setLineQty(primaryLine.key, primaryLine.qty - 1)}
+                          onIncrement={() => setLineQty(primaryLine.key, primaryLine.qty + 1)}
                         />
+                      ) : inCart > 0 ? (
+                        <Pressable
+                          onPress={() => onDishClick(item)}
+                          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
+                          hitSlop={8}
+                        >
+                          <Text style={styles.addBtnText}>+</Text>
+                        </Pressable>
                       ) : (
                         <Pressable
-                          onPress={() => addToCart(item)}
+                          onPress={() => onDishClick(item)}
                           style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
                           hitSlop={8}
                         >
@@ -1259,8 +1316,7 @@ export default function OrderScreen() {
                           (sum, line) => sum + line.unitPrice * line.qty,
                           0,
                         );
-                        const kotService = Math.round(kotSubtotal * (SERVICE_PCT / 100));
-                        const kotTax = Math.round((kotSubtotal + kotService) * 0.15);
+                        const kotTotals = calcServiceTaxTotals(kotSubtotal, TAX_SETTINGS, "cash");
                         const ok = await printCartBill({
                           branchName: branch.name,
                           branchCode: branch.code,
@@ -1272,11 +1328,17 @@ export default function OrderScreen() {
                               ? lines
                               : [{ label: k.itemsSummary || "Order", qty: 1, unitPrice: kotSubtotal }],
                           subtotal: kotSubtotal,
-                          service: kotService,
-                          servicePct: SERVICE_PCT,
-                          tax: kotTax,
-                          taxPct: 15,
-                          total: kotSubtotal + kotService + kotTax,
+                          service: kotTotals.service,
+                          servicePct: kotTotals.servicePct,
+                          tax: kotTotals.tax,
+                          taxPct: kotTotals.taxPct,
+                          total: kotTotals.total,
+                          cashTaxPct: kotTotals.cashTaxPct,
+                          cardTaxPct: kotTotals.cardTaxPct,
+                          cashTax: kotTotals.cashTax,
+                          cardTax: kotTotals.cardTax,
+                          cashTotal: kotTotals.cashTotal,
+                          cardTotal: kotTotals.cardTotal,
                         });
                         setNotice(
                           ok
@@ -1318,15 +1380,27 @@ export default function OrderScreen() {
                 <Text style={styles.billValue}>{formatPkr(subtotal)}</Text>
               </View>
               <View style={styles.billRow}>
-                <Text style={styles.billLabel}>Service ({SERVICE_PCT}%)</Text>
+                <Text style={styles.billLabel}>Service ({servicePct}%)</Text>
                 <Text style={styles.billValue}>{formatPkr(service)}</Text>
               </View>
               <View style={styles.billRow}>
-                <Text style={styles.billLabel}>Tax (15%)</Text>
-                <Text style={styles.billValue}>{formatPkr(tax)}</Text>
+                <Text style={styles.billLabel}>Sales Tax cash ({cashTaxPct}%)</Text>
+                <Text style={styles.billValue}>{formatPkr(cashTax)}</Text>
+              </View>
+              <View style={styles.billRow}>
+                <Text style={styles.billLabel}>Sales Tax card ({cardTaxPct}%)</Text>
+                <Text style={styles.billValue}>{formatPkr(cardTax)}</Text>
+              </View>
+              <View style={styles.billRow}>
+                <Text style={styles.billLabel}>Total (cash)</Text>
+                <Text style={styles.billValue}>{formatPkr(cashTotal + deliveryExtra)}</Text>
+              </View>
+              <View style={styles.billRow}>
+                <Text style={styles.billLabel}>Total (card)</Text>
+                <Text style={styles.billValue}>{formatPkr(cardTotal + deliveryExtra)}</Text>
               </View>
               <View style={[styles.billRow, styles.billTotalRow]}>
-                <Text style={styles.billTotalLabel}>Total</Text>
+                <Text style={styles.billTotalLabel}>Preview total</Text>
                 <Text style={styles.billTotalValue}>{formatPkr(total)}</Text>
               </View>
             </View>
@@ -1375,6 +1449,17 @@ export default function OrderScreen() {
           </Pressable>
         </View>
       </ScrollView>
+      {variantPickerItem ? (
+        <DishVariantModal
+          item={variantPickerItem}
+          variants={resolveSellableVariants(variantPickerItem)}
+          onClose={() => setVariantPickerItem(null)}
+          onSelect={(variant) => {
+            addVariantToCart(variantPickerItem, variant);
+            setVariantPickerItem(null);
+          }}
+        />
+      ) : null}
     </Screen>
   );
 }
@@ -1408,7 +1493,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   refBadge: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
@@ -1465,7 +1550,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 20,
     gap: 6,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1486,7 +1571,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1518,7 +1603,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   notesInput: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
@@ -1542,15 +1627,15 @@ const styles = StyleSheet.create({
   },
   menuCard: {
     gap: 12,
-    borderColor: "rgba(245, 158, 11, 0.25)",
+    borderColor: "rgba(15, 118, 110, 0.25)",
   },
   menuCartSummary: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
     borderWidth: 1,
-    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderColor: "rgba(15, 118, 110, 0.35)",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1568,7 +1653,7 @@ const styles = StyleSheet.create({
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
@@ -1602,7 +1687,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1611,8 +1696,8 @@ const styles = StyleSheet.create({
   },
   menuItemPressed: {
     opacity: 0.9,
-    borderColor: "rgba(245, 158, 11, 0.55)",
-    backgroundColor: "rgba(245, 158, 11, 0.08)",
+    borderColor: "rgba(15, 118, 110, 0.55)",
+    backgroundColor: "rgba(15, 118, 110, 0.08)",
   },
   menuItemCopy: {
     flex: 1,
@@ -1635,7 +1720,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.card,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1647,7 +1732,7 @@ const styles = StyleSheet.create({
   },
   addBtnActive: {
     backgroundColor: colors.accent,
-    borderColor: "#d97706",
+    borderColor: "#14B8A6",
   },
   addBtnTextActive: {
     color: colors.accentText,
@@ -1655,7 +1740,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   kitchenEmpty: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1667,7 +1752,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   kitchenTicket: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1753,9 +1838,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
     borderWidth: 1,
-    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderColor: "rgba(15, 118, 110, 0.35)",
     borderRadius: 12,
     padding: 14,
   },
@@ -1779,7 +1864,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
   },
   editCancelText: {
     color: colors.text,
@@ -1787,7 +1872,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   kitchenTicketEditing: {
-    borderColor: "rgba(245, 158, 11, 0.45)",
+    borderColor: "rgba(15, 118, 110, 0.45)",
   },
   kitchenActions: {
     flexDirection: "row",
@@ -1813,8 +1898,8 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "rgba(245, 158, 11, 0.45)",
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderColor: "rgba(15, 118, 110, 0.45)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },

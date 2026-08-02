@@ -53,7 +53,7 @@ export function SuperAdminBroadcastPage(): JSX.Element {
         </p>
       ) : null}
 
-      <div className="max-w-xl space-y-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/60">
+      <div className="max-w-xl space-y-4 rounded-xl border border-slate-200 bg-white p-5 border-slate-200 bg-white">
         <label className="block text-sm">
           <span className="mb-1 block font-medium">Support email</span>
           <input
@@ -82,7 +82,7 @@ export function SuperAdminBroadcastPage(): JSX.Element {
 
       <p className={`text-xs ${mutedClass}`}>
         More keys (default licence plan, session notes) live under{" "}
-        <Link to="/super-admin/settings" className="text-amber-700 underline dark:text-amber-400">
+        <Link to="/super-admin/settings" className="text-teal-700 underline dark:text-teal-300">
           Settings
         </Link>
         .

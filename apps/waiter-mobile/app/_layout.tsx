@@ -5,6 +5,8 @@ import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { bootstrapSession, SessionExpiredError } from "../src/lib/authFetch";
 import { OfflineBanner } from "../src/components/OfflineBanner";
+import { MobileUpdateBanner } from "../src/components/MobileUpdateBanner";
+import { colors } from "../src/components/ui";
 import { warmApiConnection } from "../src/lib/warmApi";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -29,15 +31,15 @@ class RootErrorBoundary extends Component<
         <View
           style={{
             flex: 1,
-            backgroundColor: "#0f172a",
+            backgroundColor: colors.bg,
             alignItems: "center",
             justifyContent: "center",
             padding: 24,
             gap: 12,
           }}
         >
-          <Text style={{ color: "#f8fafc", fontSize: 18, fontWeight: "700" }}>Something went wrong</Text>
-          <Text style={{ color: "#94a3b8", fontSize: 13, textAlign: "center" }}>
+          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "700" }}>Something went wrong</Text>
+          <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center" }}>
             {this.state.error.message}
           </Text>
           <Pressable
@@ -48,13 +50,13 @@ class RootErrorBoundary extends Component<
             }}
             style={{
               marginTop: 8,
-              backgroundColor: "#f59e0b",
+              backgroundColor: colors.accent,
               paddingHorizontal: 16,
               paddingVertical: 10,
               borderRadius: 10,
             }}
           >
-            <Text style={{ color: "#0f172a", fontWeight: "700" }}>Back to login</Text>
+            <Text style={{ color: colors.accentText, fontWeight: "700" }}>Back to login</Text>
           </Pressable>
         </View>
       );
@@ -134,13 +136,14 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <StatusBar style="light" />
         <SessionGuard />
+        <MobileUpdateBanner />
         <OfflineBanner />
         <Stack
           screenOptions={{
-            headerStyle: { backgroundColor: "#0f172a" },
-            headerTintColor: "#f8fafc",
+            headerStyle: { backgroundColor: colors.bg },
+            headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: "600" },
-            contentStyle: { backgroundColor: "#0f172a" },
+            contentStyle: { backgroundColor: colors.bg },
           }}
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -165,7 +168,10 @@ export default function RootLayout() {
           <Stack.Screen name="admin-inventory" options={{ headerShown: false }} />
           <Stack.Screen name="admin-sales" options={{ title: "Sales" }} />
           <Stack.Screen name="admin-reports" options={{ title: "Reports" }} />
-          <Stack.Screen name="admin-payout" options={{ title: "Payout" }} />
+          <Stack.Screen name="admin-ledger" options={{ title: "Ledgers" }} />
+          <Stack.Screen name="admin-payout" options={{ title: "Pay out" }} />
+          <Stack.Screen name="admin-cash" options={{ title: "Cash drawer" }} />
+          <Stack.Screen name="admin-vendors" options={{ title: "Vendors" }} />
           <Stack.Screen name="admin-users" options={{ title: "User management" }} />
           <Stack.Screen name="admin-activity" options={{ title: "Activity & reports" }} />
           <Stack.Screen name="admin-pra" options={{ headerShown: false }} />

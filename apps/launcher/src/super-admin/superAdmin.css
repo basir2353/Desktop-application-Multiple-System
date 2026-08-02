@@ -1,0 +1,10 @@
+/* Super Admin scoped fonts + tokens */
+.sa-root {
+  --sa-font: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --sa-mono: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--sa-font);
+}
+
+.sa-root .sa-mono {
+  font-family: var(--sa-mono);
+}

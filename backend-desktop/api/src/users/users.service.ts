@@ -7,7 +7,7 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from "@nestjs/common";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import {
   POPS_CAPABILITIES,
   POPS_ROLE_TEMPLATES,
@@ -18,8 +18,10 @@ import {
   type UpdateOrgUser,
 } from "@platform/contracts";
 import {
+  entityDeletionBackups,
   organizationMemberships,
   organizations,
+  refreshTokens,
   userInvites,
   users,
   type PlatformPgDb,
@@ -29,7 +31,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { MailService } from "../mail/mail.service";
-import { findLiveLoginUserByEmail } from "../lib/login-email";
+import {
+  findLiveLoginUserByEmail,
+  isDeletedLoginUser,
+  isTombstoneEmail,
+  tombstoneLoginEmail,
+} from "../lib/login-email";
 
 const STAFF_SEEDS = [
   {
@@ -351,7 +358,12 @@ export class UsersService implements OnApplicationBootstrap {
         })
         .from(organizationMemberships)
         .innerJoin(users, eq(users.id, organizationMemberships.userId))
-        .where(eq(organizationMemberships.organizationId, organizationId));
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            ne(users.status, "deleted"),
+          ),
+        );
     } catch (err) {
       this.logger.warn(
         `listUsers full select failed; using core columns: ${err instanceof Error ? err.message : String(err)}`,
@@ -367,20 +379,27 @@ export class UsersService implements OnApplicationBootstrap {
         })
         .from(organizationMemberships)
         .innerJoin(users, eq(users.id, organizationMemberships.userId))
-        .where(eq(organizationMemberships.organizationId, organizationId));
+        .where(
+          and(
+            eq(organizationMemberships.organizationId, organizationId),
+            ne(users.status, "deleted"),
+          ),
+        );
     }
 
-    return rows.map((row) => ({
-      id: row.id,
-      email: row.email,
-      role: formatRoleLabel(row.role),
-      branchScope: row.branchScope === "all" ? "All" : row.branchScope,
-      pinRequired: row.pinRequired,
-      permissions: Array.isArray(row.permissions) ? row.permissions : [],
-      active: row.active !== false,
-      navAllowlist: Array.isArray(row.navAllowlist) ? row.navAllowlist : null,
-      lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
-    }));
+    return rows
+      .filter((row) => !isTombstoneEmail(row.email))
+      .map((row) => ({
+        id: row.id,
+        email: row.email,
+        role: formatRoleLabel(row.role),
+        branchScope: row.branchScope === "all" ? "All" : row.branchScope,
+        pinRequired: row.pinRequired,
+        permissions: Array.isArray(row.permissions) ? row.permissions : [],
+        active: row.active !== false,
+        navAllowlist: Array.isArray(row.navAllowlist) ? row.navAllowlist : null,
+        lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
+      }));
   }
 
   async createUser(organizationId: string, input: CreateOrgUser) {
@@ -393,7 +412,10 @@ export class UsersService implements OnApplicationBootstrap {
     }
 
     const passwordHash = await bcrypt.hash(input.password, 12);
-    const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+    const [user] = await this.db
+      .insert(users)
+      .values({ email, passwordHash, lastSetPassword: input.password })
+      .returning();
     if (!user) throw new BadRequestException("Failed to create user");
 
     const branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();
@@ -425,7 +447,10 @@ export class UsersService implements OnApplicationBootstrap {
 
     if (input.password) {
       const passwordHash = await bcrypt.hash(input.password, 12);
-      await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+      await this.db
+        .update(users)
+        .set({ passwordHash, lastSetPassword: input.password })
+        .where(eq(users.id, userId));
     }
 
     const patch: Partial<typeof organizationMemberships.$inferInsert> = {};
@@ -467,10 +492,105 @@ export class UsersService implements OnApplicationBootstrap {
     return this.getUser(organizationId, userId);
   }
 
+  /**
+   * Soft-delete from this org: frees login email when the user has no other live
+   * memberships (same tombstone pattern as Super Admin delete).
+   */
+  async deleteUser(organizationId: string, actorId: string, userId: string) {
+    if (actorId === userId) {
+      throw new BadRequestException("Cannot delete your own account");
+    }
+    const membership = await this.getMembership(organizationId, userId);
+    if (membership.role === "owner") {
+      throw new BadRequestException("Cannot delete the organization owner");
+    }
+
+    const [target] = await this.db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        platformRole: users.platformRole,
+        status: users.status,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!target || isDeletedLoginUser(target)) {
+      throw new NotFoundException("User not found");
+    }
+    if (target.platformRole === "super_admin") {
+      throw new BadRequestException("Cannot delete the Super Admin account");
+    }
+
+    await this.db.insert(entityDeletionBackups).values({
+      entityType: "user",
+      entityId: userId,
+      originalEmail: target.email,
+      label: target.name ?? target.email,
+      deletedBy: actorId,
+      payload: {
+        user: target,
+        organizationId,
+        membership,
+        deletedAt: new Date().toISOString(),
+      },
+    });
+
+    await this.db
+      .update(organizationMemberships)
+      .set({ active: false })
+      .where(
+        and(
+          eq(organizationMemberships.organizationId, organizationId),
+          eq(organizationMemberships.userId, userId),
+        ),
+      );
+
+    const otherLive = await this.db
+      .select({ organizationId: organizationMemberships.organizationId })
+      .from(organizationMemberships)
+      .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+      .where(
+        and(
+          eq(organizationMemberships.userId, userId),
+          ne(organizationMemberships.organizationId, organizationId),
+          eq(organizationMemberships.active, true),
+          ne(organizations.status, "deleted"),
+        ),
+      )
+      .limit(1);
+
+    if (otherLive.length === 0) {
+      if (isTombstoneEmail(target.email)) {
+        await this.db.update(users).set({ status: "deleted" }).where(eq(users.id, userId));
+      } else {
+        await this.db
+          .update(users)
+          .set({
+            status: "deleted",
+            email: tombstoneLoginEmail(userId),
+          })
+          .where(eq(users.id, userId));
+      }
+      await this.db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+      await this.db
+        .update(organizationMemberships)
+        .set({ active: false })
+        .where(eq(organizationMemberships.userId, userId));
+    }
+
+    return { ok: true as const };
+  }
+
   async resetPassword(organizationId: string, userId: string, password: string) {
     await this.getMembership(organizationId, userId);
     const passwordHash = await bcrypt.hash(password, 12);
-    await this.db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    await this.db
+      .update(users)
+      .set({ passwordHash, lastSetPassword: password })
+      .where(eq(users.id, userId));
     return { ok: true };
   }
 
@@ -592,7 +712,10 @@ export class UsersService implements OnApplicationBootstrap {
     if (existing) throw new ConflictException("An account with this login email already exists");
 
     const passwordHash = await bcrypt.hash(input.password, 12);
-    const [user] = await this.db.insert(users).values({ email, passwordHash }).returning();
+    const [user] = await this.db
+      .insert(users)
+      .values({ email, passwordHash, lastSetPassword: input.password })
+      .returning();
     if (!user) throw new BadRequestException("Failed to create account");
 
     await this.db.insert(organizationMemberships).values({

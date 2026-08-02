@@ -109,7 +109,7 @@ export default function RiderDeliveriesScreen() {
 const styles = StyleSheet.create({
   scroll: { gap: 12, paddingBottom: 24 },
   card: {
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.card,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,

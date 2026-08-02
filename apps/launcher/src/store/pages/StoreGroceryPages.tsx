@@ -190,7 +190,17 @@ export function StorePurchaseReturnsPage(): JSX.Element {
       <PageHeader title="Purchase returns" subtitle="Return damaged goods to suppliers — debit note / PRN." />
       <div className="rounded-xl border p-4 dark:border-slate-800">
         <div className="grid gap-2 sm:grid-cols-4">
-          <StoreSelect value={supplierId} onChange={(e) => setSupplierId(e.target.value)} required><option value="">Supplier</option>{(suppliersQuery.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</StoreSelect>
+          <StoreSelect value={supplierId} onChange={(e) => setSupplierId(e.target.value)} required>
+            <option value="">Supplier</option>
+            {(suppliersQuery.data ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.openingBalancePkr > 0
+                  ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
+                  : " · Bal —"}
+              </option>
+            ))}
+          </StoreSelect>
           <StoreSelect value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">Product</option>{(productsQuery.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</StoreSelect>
           <StoreInput type="number" min={1} value={qty} onChange={(e) => setQty(Number(e.target.value))} />
           <button type="button" onClick={() => { if (productId) setItems((p) => [...p, { productId, qty, unitPrice }]); }} className="rounded-lg border py-2 text-sm">Add line</button>

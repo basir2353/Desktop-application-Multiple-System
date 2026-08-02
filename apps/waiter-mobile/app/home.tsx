@@ -421,10 +421,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   branchBadge: {
-    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    backgroundColor: "rgba(15, 118, 110, 0.15)",
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderColor: "rgba(15, 118, 110, 0.35)",
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
@@ -471,7 +471,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
@@ -479,7 +479,7 @@ const styles = StyleSheet.create({
   },
   actionTilePrimary: {
     backgroundColor: colors.accent,
-    borderColor: "#d97706",
+    borderColor: "#14B8A6",
   },
   actionTilePressed: {
     opacity: 0.9,
@@ -488,7 +488,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: "center",
@@ -548,7 +548,7 @@ const styles = StyleSheet.create({
   },
   emptyPulse: {
     alignItems: "center",
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
@@ -588,7 +588,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   pulseItem: {
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
@@ -618,7 +618,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   tablePill: {
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.card,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,

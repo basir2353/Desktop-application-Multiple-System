@@ -18,6 +18,9 @@ const MORE_ROUTES = [
   "/admin-sales",
   "/admin-reports",
   "/admin-payout",
+  "/admin-cash",
+  "/admin-vendors",
+  "/admin-ledger",
   "/admin-users",
   "/admin-activity",
   "/admin-tables",
@@ -108,7 +111,7 @@ const styles = StyleSheet.create({
   wrap: {
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    backgroundColor: "#0b1220",
+    backgroundColor: colors.bg,
     paddingTop: 6,
   },
   row: {
@@ -132,7 +135,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   iconWrapActive: {
-    backgroundColor: "rgba(245, 158, 11, 0.18)",
+    backgroundColor: "rgba(15, 118, 110, 0.22)",
   },
   icon: {
     color: colors.muted,
@@ -140,7 +143,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   iconActive: {
-    color: colors.accent,
+    color: colors.accentSoft,
   },
   label: {
     color: colors.muted,
@@ -148,6 +151,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   labelActive: {
-    color: colors.accent,
+    color: colors.accentSoft,
   },
 });

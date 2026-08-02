@@ -12,6 +12,7 @@ import {
   fetchPlatformBusiness,
   fetchPlatformSettings,
   fetchPlatformUsers,
+  resetPlatformBusinessTransactions,
   resetPlatformUserPassword,
   updatePlatformBusiness,
   updatePlatformSettings,
@@ -19,6 +20,8 @@ import {
 } from "../lib/platformApi";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
 import { businessNotesKey, resolvePraFlags } from "./superAdminHelpers";
+import { SuperAdminUserViewModal } from "./SuperAdminUserViewModal";
+import type { PlatformUser } from "@platform/contracts";
 
 const STATUS_ACTIONS: { status: BusinessStatus; label: string }[] = [
   { status: "active", label: "Activate" },
@@ -49,6 +52,9 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
   const [password, setPassword] = useState("");
   const [notes, setNotes] = useState("");
   const [notesMsg, setNotesMsg] = useState<string | null>(null);
+  const [resetConfirmName, setResetConfirmName] = useState("");
+  const [showCompanyReset, setShowCompanyReset] = useState(false);
+  const [viewUser, setViewUser] = useState<PlatformUser | null>(null);
 
   const settings = useQuery({
     queryKey: ["platform", "settings"],
@@ -154,6 +160,19 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
     },
   });
 
+  const companyResetMut = useMutation({
+    mutationFn: () => resetPlatformBusinessTransactions(businessId, resetConfirmName),
+    onSuccess: async (result) => {
+      setShowCompanyReset(false);
+      setResetConfirmName("");
+      setMessage(
+        `Company reset done for “${result.businessName}”. ${result.deletedRows} rows cleared — dashboard & profit/loss are zero. Users, menu and catalogue kept.`,
+      );
+      await qc.invalidateQueries({ queryKey: ["platform"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Company reset failed"),
+  });
+
   const userStatusMut = useMutation({
     mutationFn: ({ userId, status }: { userId: string; status: "active" | "inactive" | "suspended" }) =>
       updatePlatformUser(userId, { status }),
@@ -170,6 +189,16 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
       setPassword("");
       setMessage("Password updated and sessions revoked.");
       await qc.invalidateQueries({ queryKey: ["platform", "users"] });
+      if (viewUser) {
+        const next = await qc.fetchQuery({
+          queryKey: ["platform", "users"],
+          queryFn: fetchPlatformUsers,
+        });
+        const refreshed = next.find(
+          (u) => u.id === viewUser.id && u.businessId === viewUser.businessId,
+        );
+        if (refreshed) setViewUser(refreshed);
+      }
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Reset failed"),
   });
@@ -193,7 +222,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         <p className="text-sm text-red-600">
           {business.error instanceof Error ? business.error.message : "Business not found"}
         </p>
-        <Link to="/super-admin/businesses" className="text-sm text-amber-700 hover:underline">
+        <Link to="/super-admin/businesses" className="text-sm font-medium text-teal-700 hover:underline dark:text-teal-300">
           ← Back to businesses
         </Link>
       </div>
@@ -223,7 +252,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
             <button
               key={a.status}
               type="button"
-              className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
               disabled={statusMut.isPending}
               onClick={() => statusMut.mutate(a.status)}
             >
@@ -232,7 +261,17 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
           ))}
           <button
             type="button"
-            className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+            className="rounded-xl border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-500/40 dark:text-amber-200 dark:hover:bg-amber-500/10"
+            onClick={() => {
+              setShowCompanyReset((v) => !v);
+              setResetConfirmName("");
+            }}
+          >
+            Company reset
+          </button>
+          <button
+            type="button"
+            className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-500/40 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-500/10"
             disabled={deleteMut.isPending}
             onClick={() => {
               if (window.confirm(`Delete business “${b.name}”? It is archived (backup kept) and removed from live lists. Login emails can be reused.`)) deleteMut.mutate();
@@ -242,6 +281,59 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
           </button>
         </div>
       </div>
+
+      {showCompanyReset ? (
+        <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
+          <h3 className={`text-base font-semibold ${headingClass}`}>Company reset</h3>
+          <p className={`text-sm ${mutedClass}`}>
+            Deletes every transaction (sales, bills, journals, payroll runs, stock movements, tax
+            invoices). Dashboard and profit &amp; loss become zero. Keeps users, menu, products,
+            employees, and licence settings.
+          </p>
+          <label className="block text-sm">
+            <span className="mb-1 block">
+              Type <span className="font-semibold">{b.name}</span> to confirm
+            </span>
+            <input
+              className={fieldInputClass}
+              value={resetConfirmName}
+              onChange={(e) => setResetConfirmName(e.target.value)}
+              placeholder={b.name}
+              autoComplete="off"
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              disabled={
+                companyResetMut.isPending ||
+                resetConfirmName.trim().toLowerCase() !== b.name.trim().toLowerCase()
+              }
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Reset “${b.name}”? All transactions will be permanently deleted. This cannot be undone.`,
+                  )
+                ) {
+                  companyResetMut.mutate();
+                }
+              }}
+            >
+              {companyResetMut.isPending ? "Resetting…" : "Reset all transactions"}
+            </Button>
+            <button
+              type="button"
+              className="text-sm text-slate-600 underline dark:text-slate-300"
+              onClick={() => {
+                setShowCompanyReset(false);
+                setResetConfirmName("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {message ? (
         <p
@@ -255,7 +347,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         </p>
       ) : null}
 
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
         <h3 className={`text-base font-semibold ${headingClass}`}>Business & licence</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">
@@ -294,13 +386,13 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         </Button>
       </section>
 
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
         <h3 className={`text-base font-semibold ${headingClass}`}>Tax authority (FBR / PRA)</h3>
         <p className={`text-sm ${mutedClass}`}>
           Show Tax sections for this business. Admins control Active / Inactive and credentials.
         </p>
         <div className="grid gap-3 sm:grid-cols-3">
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-white/15">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -314,7 +406,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
               </span>
             </span>
           </label>
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-white/15">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -328,7 +420,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
               </span>
             </span>
           </label>
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-white/15">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -348,7 +440,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         </Button>
       </section>
 
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 border-slate-200 bg-white">
         <h3 className={`text-base font-semibold ${headingClass}`}>Support notes</h3>
         <p className={`text-sm ${mutedClass}`}>
           Operator-only notes for this business (stored in platform settings, not visible to the client).
@@ -382,9 +474,9 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
 
       <section className="space-y-3">
         <h3 className={`text-base font-semibold ${headingClass}`}>Users in this business</h3>
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white border-slate-200 bg-white">
           <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+            <thead className="border-b border-slate-100 bg-slate-50/80 text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400">
               <tr>
                 <th className="px-4 py-3 font-medium">User</th>
                 <th className="px-4 py-3 font-medium">Role</th>
@@ -392,7 +484,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            <tbody className="divide-y divide-slate-100 dark:divide-white/10">
               {businessUsers.length === 0 ? (
                 <tr>
                   <td colSpan={4} className={`px-4 py-6 text-center ${mutedClass}`}>
@@ -410,10 +502,17 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                     <td className="px-4 py-3 capitalize">{u.status}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className="rounded-xl border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-900 hover:bg-teal-100"
+                          onClick={() => setViewUser(u)}
+                        >
+                          View
+                        </button>
                         {u.status !== "active" ? (
                           <button
                             type="button"
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                             disabled={userStatusMut.isPending}
                             onClick={() => userStatusMut.mutate({ userId: u.id, status: "active" })}
                           >
@@ -423,7 +522,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                           <>
                             <button
                               type="button"
-                              className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                               disabled={userStatusMut.isPending}
                               onClick={() => userStatusMut.mutate({ userId: u.id, status: "inactive" })}
                             >
@@ -431,7 +530,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                             </button>
                             <button
                               type="button"
-                              className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                               disabled={userStatusMut.isPending}
                               onClick={() => userStatusMut.mutate({ userId: u.id, status: "suspended" })}
                             >
@@ -467,7 +566,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                         ) : (
                           <button
                             type="button"
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
                             onClick={() => {
                               setResetFor(u.id);
                               setPassword("");
@@ -485,6 +584,15 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
           </table>
         </div>
       </section>
+
+      {viewUser ? (
+        <SuperAdminUserViewModal
+          user={viewUser}
+          onClose={() => setViewUser(null)}
+          resetPending={resetMut.isPending}
+          onResetPassword={(userId, pw) => resetMut.mutate({ userId, password: pw })}
+        />
+      ) : null}
     </div>
   );
 }

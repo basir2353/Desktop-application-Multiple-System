@@ -701,32 +701,39 @@ export class ReportsService {
       section: string;
     }[] = [
       {
-        section: "deliveryCharges",
-        label: "Total delivery charges",
-        amount: deliveryCharges,
-        qty: deliveryQty,
-        meta: "Click to see delivery bills",
-      },
-      {
         section: "serviceCharges",
-        label: "Service charges collected",
+        label: "Total Service Charges collected",
         amount: serviceCharges,
         qty: serviceQty,
         meta: "Click to see bills",
       },
       {
         section: "tax16",
-        label: "16% tax collected",
+        label: "Total 16% tax collected",
         amount: tax16,
         qty: tax16Qty,
         meta: "Cash payment rate · click for bills",
       },
       {
         section: "tax8",
-        label: "8% tax collected",
+        label: "Total 8% tax collected",
         amount: tax8,
         qty: tax8Qty,
         meta: "Card / online / bank rate · click for bills",
+      },
+      {
+        section: "remainingCash",
+        label: "Remaining cash available",
+        amount: remainingCash,
+        qty: cashQty + paidInQty + paidOutQty,
+        meta: `Cash ${cashReceived} + paid in ${paidIn} − paid out ${paidOut}`,
+      },
+      {
+        section: "deliveryCharges",
+        label: "Total delivery charges",
+        amount: deliveryCharges,
+        qty: deliveryQty,
+        meta: "Click to see delivery bills",
       },
     ];
     if (taxOther > 0 || taxOtherQty > 0) {
@@ -759,13 +766,6 @@ export class ReportsService {
         amount: cashReceived,
         qty: cashQty,
         meta: "Click to see cash bills",
-      },
-      {
-        section: "remainingCash",
-        label: "Remaining cash available",
-        amount: remainingCash,
-        qty: cashQty + paidInQty + paidOutQty,
-        meta: `Cash ${cashReceived} + paid in ${paidIn} − paid out ${paidOut}`,
       },
       {
         section: "cardReceived",
@@ -809,12 +809,7 @@ export class ReportsService {
       bankDepositQty += bankPosQty;
     }
 
-    const empty =
-      bills.length === 0 &&
-      voidBills.length === 0 &&
-      movements.length === 0 &&
-      bankDepositsTotal === 0 &&
-      accounts.length === 0;
+    const empty = false; // summary cards always returned
 
     return {
       rows,
@@ -843,6 +838,7 @@ export class ReportsService {
         walletQty,
         bankDepositQty,
       },
+      // Keep rows so Cash received method UI always renders the summary cards.
       empty,
     };
   }
@@ -1053,6 +1049,7 @@ export class ReportsService {
     branchId: string,
     range: { from: string; to: string; fromTime: string; toTime: string },
   ) {
+    // Full branch invoices (for open balances) + period payments.
     const invoices = await this.db
       .select()
       .from(popsCustomerInvoices)
@@ -1060,8 +1057,6 @@ export class ReportsService {
         and(
           eq(popsCustomerInvoices.organizationId, organizationId),
           eq(popsCustomerInvoices.branchId, branchId),
-          gte(popsCustomerInvoices.createdAt, this.rangeStart(range)),
-          lte(popsCustomerInvoices.createdAt, this.rangeEnd(range)),
         ),
       )
       .orderBy(desc(popsCustomerInvoices.createdAt));
@@ -1086,11 +1081,20 @@ export class ReportsService {
       )
       .orderBy(desc(popsCustomerPayments.paymentDate));
 
+    const start = this.rangeStart(range);
+    const end = this.rangeEnd(range);
+
     const map = new Map<
       string,
       { debit: number; credit: number; balance: number; qty: number; phone: string | null }
     >();
+
     for (const inv of invoices) {
+      const openBal = Math.max(0, inv.amountPkr - inv.paidPkr);
+      const createdInRange = inv.createdAt >= start && inv.createdAt <= end;
+      // Show customers with activity in range, or any open receivable.
+      if (!createdInRange && openBal <= 0) continue;
+
       const key = `${inv.customerName}|${inv.customerPhone ?? ""}`;
       const cur = map.get(key) ?? {
         debit: 0,
@@ -1099,16 +1103,18 @@ export class ReportsService {
         qty: 0,
         phone: inv.customerPhone,
       };
-      cur.debit += inv.amountPkr;
-      cur.credit += inv.paidPkr;
-      cur.balance += Math.max(0, inv.amountPkr - inv.paidPkr);
-      cur.qty += 1;
+      if (createdInRange) {
+        cur.debit += inv.amountPkr;
+        cur.credit += inv.paidPkr;
+        cur.qty += 1;
+      }
+      cur.balance += openBal;
       map.set(key, cur);
     }
-    // Include payments that may fall in range for invoices outside create range (credit only).
+
+    // Payments in range for invoices created outside the window.
     for (const p of payments) {
       const key = `${p.customerName}|${p.customerPhone ?? ""}`;
-      if (map.has(key)) continue;
       const cur = map.get(key) ?? {
         debit: 0,
         credit: 0,
@@ -1130,7 +1136,9 @@ export class ReportsService {
           balance: v.balance,
           amount: v.balance,
           qty: v.qty,
-          meta: [v.phone, `${v.qty} invoice(s)`, `outstanding ${v.balance}`].filter(Boolean).join(" · "),
+          meta: [v.phone, v.qty ? `${v.qty} invoice(s) in range` : "open balance", `outstanding ${v.balance}`]
+            .filter(Boolean)
+            .join(" · "),
         };
       })
       .sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));

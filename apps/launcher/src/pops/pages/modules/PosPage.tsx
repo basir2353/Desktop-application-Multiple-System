@@ -107,7 +107,9 @@ import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/
 import { PosPayOutModal } from "../../components/PosPayOutModal";
 import { PosMyPrintersModal } from "../../components/PosMyPrintersModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
-import { createStaffFoodRecord, fetchEmployees } from "../../api/hr";
+import { createStaffFoodRecord, fetchEmployeeAdvances, fetchEmployees } from "../../api/hr";
+import { openAdvanceTotalsByEmployee } from "../../lib/employeeAdvancesLocal";
+import { formatSelectBalance } from "../../lib/selectMeta";
 import { SearchableSelect } from "../../ui/SearchableSelect";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
@@ -421,10 +423,29 @@ export function PosPage(): JSX.Element {
     queryFn: () => fetchEmployees(branch!.code),
   });
 
+  const staffAdvancesQuery = useQuery({
+    queryKey: ["hr", "advances", branch?.code, "open"],
+    enabled: Boolean(branch?.code) && mode === "staff-food",
+    queryFn: () => fetchEmployeeAdvances(branch!.code, "open"),
+  });
+
   const activeStaffEmployees = useMemo(
     () => (staffEmployeesQuery.data ?? []).filter((e) => e.employmentStatus === "active"),
     [staffEmployeesQuery.data],
   );
+
+  const staffOpenAdvanceById = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of staffAdvancesQuery.data ?? []) {
+      if (row.openAdvancePkr > 0) map.set(row.employeeId, row.openAdvancePkr);
+    }
+    if (branch?.code) {
+      for (const [employeeId, amount] of openAdvanceTotalsByEmployee(branch.code)) {
+        if ((map.get(employeeId) ?? 0) === 0) map.set(employeeId, amount);
+      }
+    }
+    return map;
+  }, [staffAdvancesQuery.data, branch?.code]);
 
   const staffFoodPersonName = useMemo(() => {
     if (staffFoodConsumerType === "guest") return staffFoodGuestName.trim();
@@ -2578,6 +2599,7 @@ export function PosPage(): JSX.Element {
                           ? `${employee.displayName} · ${employee.jobTitle}`
                           : employee.displayName,
                         searchText: `${employee.displayName} ${employee.jobTitle ?? ""}`,
+                        meta: formatSelectBalance(staffOpenAdvanceById.get(employee.id) ?? 0),
                       }))}
                       placeholder={
                         staffEmployeesQuery.isLoading ? "Loading staff…" : "Select staff *"

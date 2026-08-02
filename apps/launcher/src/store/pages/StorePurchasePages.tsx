@@ -282,6 +282,9 @@ export function StorePurchaseOrdersPage(): JSX.Element {
                 {(suppliersQuery.data ?? []).map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
+                    {s.openingBalancePkr > 0
+                      ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
+                      : " · Bal —"}
                   </option>
                 ))}
               </StoreSelect>
@@ -739,6 +742,9 @@ export function StoreGrnPage(): JSX.Element {
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
+                  {s.openingBalancePkr > 0
+                    ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
+                    : " · Bal —"}
                 </option>
               ))}
             </StoreSelect>
@@ -771,7 +777,7 @@ export function StoreGrnPage(): JSX.Element {
                 <option value="">{productsQuery.isLoading ? "Loading…" : "Select product"}</option>
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}
+                    {p.name} · Qty {p.availableStock}
                   </option>
                 ))}
               </StoreSelect>

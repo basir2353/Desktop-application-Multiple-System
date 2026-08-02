@@ -1,19 +1,25 @@
 import {
   cashSessionLiveSchema,
   cashSessionSchema,
+  closeCashSessionSchema,
+  createCustomerInvoiceSchema,
   createPopsCashMovementSchema,
   customerInvoiceSchema,
   expenseSchema,
   openCashSessionSchema,
   popsCashMovementSchema,
+  recordPaymentSchema,
   vendorBillSchema,
   type CashSession,
   type CashSessionLive,
+  type CloseCashSession,
+  type CreateCustomerInvoice,
   type CreatePopsCashMovement,
   type CustomerInvoice,
   type Expense,
   type OpenCashSession,
   type PopsCashMovement,
+  type RecordPayment,
   type VendorBill,
 } from "@platform/contracts";
 import { authFetch } from "../lib/authFetch";
@@ -96,7 +102,80 @@ export async function recordCashMovement(input: CreatePopsCashMovement): Promise
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(err?.message ?? `Pay out failed: ${res.status}`);
+    throw new Error(err?.message ?? `Cash movement failed: ${res.status}`);
   }
   return popsCashMovementSchema.parse(await res.json());
+}
+
+export async function closeCashSession(
+  sessionId: string,
+  input: CloseCashSession,
+): Promise<unknown> {
+  const body = closeCashSessionSchema.parse(input);
+  const res = await authFetch(`/v1/accounting/cash-sessions/${sessionId}/close`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Close cash session failed: ${res.status}`);
+  }
+  return res.json().catch(() => ({ ok: true }));
+}
+
+export async function fetchCashMovements(sessionId: string): Promise<PopsCashMovement[]> {
+  const res = await authFetch(
+    `/v1/accounting/cash-movements?${new URLSearchParams({ sessionId })}`,
+  );
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Cash movements failed: ${res.status}`);
+  }
+  return popsCashMovementSchema.array().parse(await res.json());
+}
+
+export async function payVendorBill(billId: string, input: RecordPayment): Promise<unknown> {
+  const body = recordPaymentSchema.parse(input);
+  const res = await authFetch(`/v1/accounting/payable/${billId}/payment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Vendor payment failed: ${res.status}`);
+  }
+  return res.json().catch(() => ({ ok: true }));
+}
+
+export async function createCustomerInvoice(input: CreateCustomerInvoice): Promise<CustomerInvoice> {
+  const body = createCustomerInvoiceSchema.parse(input);
+  const res = await authFetch("/v1/accounting/receivable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Create invoice failed: ${res.status}`);
+  }
+  return customerInvoiceSchema.parse(await res.json());
+}
+
+export async function payCustomerInvoice(
+  invoiceId: string,
+  input: RecordPayment,
+): Promise<unknown> {
+  const body = recordPaymentSchema.parse(input);
+  const res = await authFetch(`/v1/accounting/receivable/${invoiceId}/payment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Customer payment failed: ${res.status}`);
+  }
+  return res.json().catch(() => ({ ok: true }));
 }

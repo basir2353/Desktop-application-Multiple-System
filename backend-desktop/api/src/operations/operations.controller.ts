@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
-import { createPopsBranchSchema } from "@platform/contracts";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { createPopsBranchSchema, updatePopsBranchSchema } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
@@ -22,6 +22,20 @@ export class OperationsController {
   @RequirePermissions("pops.menu.manage")
   createBranch(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.operations.createBranch(user.organizationId, createPopsBranchSchema.parse(body));
+  }
+
+  @Patch("branches/:branchId")
+  @RequirePermissions("pops.menu.manage")
+  updateBranch(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("branchId") branchId: string,
+    @Body() body: unknown,
+  ) {
+    return this.operations.updateBranch(
+      user.organizationId,
+      branchId,
+      updatePopsBranchSchema.parse(body),
+    );
   }
 
   @Get("dashboard")

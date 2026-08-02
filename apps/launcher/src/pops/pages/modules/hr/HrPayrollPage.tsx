@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Employee } from "@platform/contracts";
 import {
   approveHrPayrollRun,
+  createEmployeeAdvance,
   createHrPayrollRun,
   deleteHrPayrollRun,
   fetchEmployeeAdvances,
@@ -16,12 +17,14 @@ import { formatPkr, hrInputClass, useHrAccess } from "../../../hooks/useHr";
 import {
   listOpenLocalAdvances,
   openAdvanceTotalsByEmployee,
+  recordLocalEmployeeAdvance,
   settleLocalAdvancesForEmployees,
 } from "../../../lib/employeeAdvancesLocal";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { HrError, HrLoading } from "./HrUi";
+import { modalBackdropRaisedClass } from "../../../lib/themeClasses";
 
 const DEDUCTION_RATE = 0.0727;
 
@@ -87,6 +90,14 @@ export function HrPayrollPage(): JSX.Element {
   const [periodStart, setPeriodStart] = useState(defaultPeriodStart);
   const [periodEnd, setPeriodEnd] = useState(now.toISOString().slice(0, 10));
   const [staffLines, setStaffLines] = useState<StaffLine[]>([]);
+  const [advanceFor, setAdvanceFor] = useState<{
+    employeeId: string;
+    employeeName: string;
+    baseSalaryPkr: number;
+    openAdvancePkr: number;
+  } | null>(null);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceReason, setAdvanceReason] = useState("");
 
   const employeesQuery = useQuery({
     queryKey: ["hr", "employees", branch?.code],
@@ -232,6 +243,31 @@ export function HrPayrollPage(): JSX.Element {
     onError: (err: Error) => setError(err.message),
   });
 
+  const addAdvanceMutation = useMutation({
+    mutationFn: createEmployeeAdvance,
+    onSuccess: (advance) => {
+      if (branch?.code) {
+        recordLocalEmployeeAdvance({
+          branchCode: branch.code,
+          employeeId: advance.employeeId,
+          employeeName: advance.employeeName,
+          amountPkr: advance.amountPkr,
+          reason: advance.reason ?? "HR advance",
+          clientRequestId: advance.id,
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["hr", "advances"] });
+      setAdvanceFor(null);
+      setAdvanceAmount("");
+      setAdvanceReason("");
+      setNotice(
+        `Advance ${formatPkr(advance.amountPkr)} saved for ${advance.employeeName} — payroll pe auto deduct hoga.`,
+      );
+      setError(null);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
   function updateLine(employeeId: string, patch: Partial<StaffLine>): void {
     setStaffLines((lines) =>
       lines.map((l) => {
@@ -316,8 +352,9 @@ export function HrPayrollPage(): JSX.Element {
               <div className="text-sm font-medium text-white">New payroll run</div>
               <p className="mt-0.5 text-xs text-slate-500">
                 Pehle se liya hua advance auto deduct hota hai.{" "}
-                <span className="text-amber-300/90">Advance</span> = pehle Pay Out,{" "}
-                <span className="text-emerald-300/90">Baqaya</span> = final payable (salary + OT − statutory − advance).
+                <span className="text-amber-300/90">Advance</span> column pe{" "}
+                <span className="text-amber-300/90">+</span> se yahan bhi add kar sakte ho (ya POS Pay Out).{" "}
+                <span className="text-emerald-300/90">Baqaya</span> = salary + OT − statutory − advance.
               </p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
@@ -445,12 +482,37 @@ export function HrPayrollPage(): JSX.Element {
                           />
                         </td>
                         <td className="px-3 py-2">
-                          <div className="font-medium text-amber-300/90">{formatPkr(line.advancePkr)}</div>
-                          {line.advancePkr > 0 ? (
-                            <div className="text-[10px] text-slate-500">pehle se (Pay Out)</div>
-                          ) : (
-                            <div className="text-[10px] text-slate-600">koi advance nahi</div>
-                          )}
+                          <div className="flex items-start gap-1.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium text-amber-300/90">{formatPkr(line.advancePkr)}</div>
+                              {line.advancePkr > 0 ? (
+                                <div className="text-[10px] text-slate-500">pehle se</div>
+                              ) : (
+                                <div className="text-[10px] text-slate-600">koi advance nahi</div>
+                              )}
+                            </div>
+                            {canManage ? (
+                              <button
+                                type="button"
+                                title="Add advance"
+                                aria-label={`Add advance for ${emp.displayName}`}
+                                className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-amber-500/40 bg-amber-500/10 text-sm font-semibold leading-none text-amber-300 hover:border-amber-400 hover:bg-amber-500/20"
+                                onClick={() => {
+                                  setError(null);
+                                  setAdvanceAmount("");
+                                  setAdvanceReason("");
+                                  setAdvanceFor({
+                                    employeeId: emp.id,
+                                    employeeName: emp.displayName,
+                                    baseSalaryPkr: emp.baseSalaryPkr,
+                                    openAdvancePkr: line.advancePkr,
+                                  });
+                                }}
+                              >
+                                +
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="px-3 py-2">
                           <input
@@ -633,6 +695,86 @@ export function HrPayrollPage(): JSX.Element {
                 { key: "netPkr", header: "Baqaya", render: (r) => formatPkr(Number(r.netPkr)) },
               ]}
             />
+          </div>
+        </div>
+      ) : null}
+
+      {advanceFor && branch?.code ? (
+        <div className={modalBackdropRaisedClass} role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-xl border border-slate-700 bg-slate-950 p-4 shadow-xl">
+            <div className="text-sm font-medium text-white">Add advance</div>
+            <p className="mt-1 text-xs text-slate-400">
+              {advanceFor.employeeName} — max advance = base salary (
+              {formatPkr(advanceFor.baseSalaryPkr)}). Open: {formatPkr(advanceFor.openAdvancePkr)}.
+              Remaining:{" "}
+              {formatPkr(Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr))}.
+            </p>
+            <label className="mt-3 block text-xs text-slate-500">
+              Amount (PKR)
+              <input
+                type="number"
+                min={1}
+                max={Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr)}
+                step={1}
+                autoFocus
+                className={`${hrInputClass} mt-1 w-full`}
+                value={advanceAmount}
+                onChange={(e) => setAdvanceAmount(e.target.value)}
+                placeholder="e.g. 5000"
+              />
+            </label>
+            <label className="mt-2 block text-xs text-slate-500">
+              Reason (optional)
+              <input
+                className={`${hrInputClass} mt-1 w-full`}
+                value={advanceReason}
+                onChange={(e) => setAdvanceReason(e.target.value)}
+                placeholder="Salary advance"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                onClick={() => {
+                  setAdvanceFor(null);
+                  setAdvanceAmount("");
+                  setAdvanceReason("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-amber-500/90 px-3 py-1.5 text-xs font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                disabled={
+                  addAdvanceMutation.isPending ||
+                  !advanceAmount ||
+                  !(Number(advanceAmount) > 0) ||
+                  Number(advanceAmount) >
+                    Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr)
+                }
+                onClick={() => {
+                  const amount = Math.round(Number(advanceAmount));
+                  const remaining = Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr);
+                  if (!(amount > 0) || !branch?.code) return;
+                  if (amount > remaining) {
+                    setError(
+                      `Advance cannot exceed remaining salary cap (${remaining.toLocaleString()} PKR).`,
+                    );
+                    return;
+                  }
+                  addAdvanceMutation.mutate({
+                    branchCode: branch.code,
+                    employeeId: advanceFor.employeeId,
+                    amountPkr: amount,
+                    reason: advanceReason.trim() || undefined,
+                  });
+                }}
+              >
+                {addAdvanceMutation.isPending ? "Saving…" : "Save advance"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

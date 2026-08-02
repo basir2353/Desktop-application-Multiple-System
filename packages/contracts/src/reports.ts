@@ -4,7 +4,7 @@ import { z } from "zod";
 export const RESTAURANT_REPORT_DEFS = [
   { id: "sales-by-item", name: "Sales by item", category: "Sales" },
   { id: "cashier-out", name: "Cashier out", category: "Cash" },
-  { id: "cash-report", name: "Cash received method", category: "Cash" },
+  { id: "cash-report", name: "Cash Report", category: "Cash" },
   { id: "sales-by-kitchen", name: "Sales by kitchen", category: "Sales" },
   { id: "sales-by-employee", name: "Sales by employee", category: "Sales" },
   { id: "sales-by-order-type", name: "Sales by order type", category: "Sales" },

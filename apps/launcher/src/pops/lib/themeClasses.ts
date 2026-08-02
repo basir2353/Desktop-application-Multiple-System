@@ -1,7 +1,7 @@
 /** Shared Tailwind classes with light + dark support across POPS. */
 
 export const fieldInputClass =
-  "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-amber-500/50 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500";
+  "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-teal-500/60 focus:ring-1 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500";
 
 export const fieldSelectClass = fieldInputClass;
 

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
 
 const STATEMENTS = [
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_set_password text`,
   `ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true`,
   `ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS nav_allowlist jsonb`,
   `ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS last_activity_at timestamptz`,

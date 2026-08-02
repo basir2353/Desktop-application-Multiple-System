@@ -25,6 +25,7 @@ import {
   updateIngredientSchema,
   updateInventoryCategorySchema,
   updatePurchaseOrderStatusSchema,
+  updatePurchaseOrderSchema,
   updateRecipeSchema,
   updateStockCountLineSchema,
   updateSupplierSchema,
@@ -184,6 +185,21 @@ export class InventoryController {
       user.sub,
       poId,
       updatePurchaseOrderStatusSchema.parse(body),
+    );
+  }
+
+  @Patch("purchase-orders/:poId")
+  @RequirePermissions("pops.inventory.manage")
+  updatePurchaseOrder(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("poId") poId: string,
+    @Body() body: unknown,
+  ) {
+    return this.inventory.updatePurchaseOrder(
+      user.organizationId,
+      user.sub,
+      poId,
+      updatePurchaseOrderSchema.parse(body),
     );
   }
 

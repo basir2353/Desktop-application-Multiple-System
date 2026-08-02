@@ -133,6 +133,14 @@ export async function updateOrgUser(userId: string, input: UpdateOrgUser): Promi
   return normalizeOrgUser(json);
 }
 
+export async function deleteOrgUser(userId: string): Promise<void> {
+  const res = await authFetch(`/v1/users/${userId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Delete user failed: ${res.status}`);
+  }
+}
+
 export async function resetOrgUserPassword(userId: string, password: string): Promise<void> {
   const res = await authFetch(`/v1/users/${userId}/reset-password`, {
     method: "POST",
