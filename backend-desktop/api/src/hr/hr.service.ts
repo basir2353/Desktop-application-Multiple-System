@@ -6,7 +6,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type {
   CreateAttendance,
   CreateEmployee,
@@ -14,6 +14,7 @@ import type {
   CreateHrPayrollRun,
   CreateLeaveRequest,
   CreateStaffFood,
+  PayPayroll,
   UpdateAttendance,
   UpdateEmployee,
   UpdateLeaveRequest,
@@ -27,11 +28,13 @@ import {
   popsLeaveRequests,
   popsPayrollLines,
   popsPayrollRuns,
+  popsExpenses,
   popsStaffFood,
+  popsSuppliers,
   users,
   type PlatformPgDb,
 } from "@platform/database-pg";
-import { AccountingService } from "../accounting/accounting.service";
+import { AccountingService, resolvePayrollPaidAt } from "../accounting/accounting.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 
 const DEDUCTION_RATE = 0.0727;
@@ -82,6 +85,26 @@ export class HrService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     try {
+      await this.db.execute(sql`
+        ALTER TABLE pops_payroll_runs
+        ADD COLUMN IF NOT EXISTS paid_at timestamptz
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE pops_payroll_runs
+        ADD COLUMN IF NOT EXISTS paid_by text
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE pops_staff_food
+        ADD COLUMN IF NOT EXISTS supplier_id uuid
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE pops_staff_food
+        ADD COLUMN IF NOT EXISTS expense_category text NOT NULL DEFAULT 'Staff Meals'
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE pops_staff_food
+        ADD COLUMN IF NOT EXISTS expense_id uuid
+      `);
       await this.seedDefaultBranch();
     } catch (err) {
       this.logger.warn(
@@ -550,7 +573,8 @@ export class HrService implements OnModuleInit {
         statutory = statutoryDefault;
         deductions = statutory + advance;
       }
-      const net = Math.max(0, gross + overtime - deductions);
+      // Negative baqaya when advances exceed salary — show minus balance.
+      const net = gross + overtime - deductions;
       lines.push({
         employeeId: emp.id,
         gross,
@@ -659,18 +683,84 @@ export class HrService implements OnModuleInit {
     return this.getPayrollRun(organizationId, payrollId);
   }
 
-  async payPayroll(organizationId: string, userEmail: string, payrollId: string) {
-    await this.accounting.payPayroll(organizationId, userEmail, payrollId);
-    await this.db
-      .update(popsEmployeeAdvances)
-      .set({ status: "settled", settledAt: new Date() })
+  async payPayroll(
+    organizationId: string,
+    userEmail: string,
+    payrollId: string,
+    input?: PayPayroll,
+  ) {
+    const paidAt = resolvePayrollPaidAt(input?.paidAt);
+    await this.accounting.payPayroll(organizationId, userEmail, payrollId, {
+      paidAt: paidAt.toISOString(),
+    });
+    await this.settleAdvancesForPayroll(organizationId, payrollId, paidAt);
+    return this.getPayrollRun(organizationId, payrollId);
+  }
+
+  /**
+   * Settle advances up to each employee's earnable salary this run.
+   * Excess (advance > salary) stays open so next period still shows outstanding.
+   */
+  private async settleAdvancesForPayroll(
+    organizationId: string,
+    payrollId: string,
+    paidAt: Date,
+  ): Promise<void> {
+    const lineRows = await this.db
+      .select()
+      .from(popsPayrollLines)
+      .where(eq(popsPayrollLines.payrollRunId, payrollId));
+
+    const reserved = await this.db
+      .select()
+      .from(popsEmployeeAdvances)
       .where(
         and(
           eq(popsEmployeeAdvances.organizationId, organizationId),
           eq(popsEmployeeAdvances.payrollRunId, payrollId),
+          eq(popsEmployeeAdvances.status, "reserved"),
         ),
-      );
-    return this.getPayrollRun(organizationId, payrollId);
+      )
+      .orderBy(asc(popsEmployeeAdvances.createdAt));
+
+    const byEmployee = new Map<string, typeof reserved>();
+    for (const adv of reserved) {
+      const list = byEmployee.get(adv.employeeId) ?? [];
+      list.push(adv);
+      byEmployee.set(adv.employeeId, list);
+    }
+
+    for (const line of lineRows) {
+      const advances = byEmployee.get(line.employeeId) ?? [];
+      if (advances.length === 0) continue;
+      const advanceTotal = advances.reduce((s, a) => s + a.amountPkr, 0);
+      const statutory = Math.max(0, line.deductionsPkr - advanceTotal);
+      // Max advance this salary can clear.
+      const earnable = Math.max(0, line.grossPkr + line.overtimePkr - statutory);
+      let remaining = earnable;
+      for (const adv of advances) {
+        if (remaining <= 0) {
+          await this.db
+            .update(popsEmployeeAdvances)
+            .set({ status: "open", payrollRunId: null })
+            .where(eq(popsEmployeeAdvances.id, adv.id));
+          continue;
+        }
+        if (adv.amountPkr <= remaining) {
+          await this.db
+            .update(popsEmployeeAdvances)
+            .set({ status: "settled", settledAt: paidAt })
+            .where(eq(popsEmployeeAdvances.id, adv.id));
+          remaining -= adv.amountPkr;
+        } else {
+          // Partial: keep full advance open (simpler than splitting rows).
+          await this.db
+            .update(popsEmployeeAdvances)
+            .set({ status: "open", payrollRunId: null })
+            .where(eq(popsEmployeeAdvances.id, adv.id));
+        }
+      }
+    }
   }
 
   /**
@@ -702,26 +792,7 @@ export class HrService implements OnModuleInit {
     const reason = (input.reason?.trim() || `Employee advance: ${emp.displayName}`).slice(0, 500);
     const amountPkr = Math.round(input.amountPkr);
     if (amountPkr <= 0) throw new BadRequestException("Advance amount must be positive");
-
-    const openAdvances = await this.db
-      .select()
-      .from(popsEmployeeAdvances)
-      .where(
-        and(
-          eq(popsEmployeeAdvances.organizationId, organizationId),
-          eq(popsEmployeeAdvances.employeeId, emp.id),
-          inArray(popsEmployeeAdvances.status, ["open", "reserved"]),
-        ),
-      );
-    const alreadyOut = openAdvances.reduce((s, a) => s + a.amountPkr, 0);
-    const salaryCap = Math.max(0, emp.baseSalaryPkr);
-    if (alreadyOut + amountPkr > salaryCap) {
-      const remaining = Math.max(0, salaryCap - alreadyOut);
-      throw new BadRequestException(
-        `Advance cannot exceed base salary (${salaryCap.toLocaleString()} PKR). ` +
-          `Already outstanding ${alreadyOut.toLocaleString()} PKR — max new advance ${remaining.toLocaleString()} PKR.`,
-      );
-    }
+    // Advances may exceed base salary — payroll baqaya goes negative.
 
     if (input.sessionId) {
       const movement = await this.accounting.recordCashMovement(organizationId, userEmail, {
@@ -920,7 +991,10 @@ export class HrService implements OnModuleInit {
         .where(eq(popsPayrollLines.payrollRunId, run.id));
 
       const status = run.status as "draft" | "approved" | "paid";
-      const paidAt = status === "paid" ? run.createdAt.toISOString() : null;
+      const paidAt =
+        status === "paid"
+          ? (run.paidAt?.toISOString() ?? run.createdAt.toISOString())
+          : null;
 
       if (lineRows.length > 0) {
         for (const { line, employee } of lineRows) {
@@ -955,9 +1029,11 @@ export class HrService implements OnModuleInit {
       .select({
         record: popsStaffFood,
         employee: popsEmployees,
+        supplier: popsSuppliers,
       })
       .from(popsStaffFood)
       .leftJoin(popsEmployees, eq(popsEmployees.id, popsStaffFood.employeeId))
+      .leftJoin(popsSuppliers, eq(popsSuppliers.id, popsStaffFood.supplierId))
       .where(
         and(
           eq(popsStaffFood.organizationId, organizationId),
@@ -966,8 +1042,26 @@ export class HrService implements OnModuleInit {
       )
       .orderBy(desc(popsStaffFood.mealDate), desc(popsStaffFood.createdAt));
 
-    const records = rows.map(({ record, employee }) =>
-      this.mapStaffFood(record, branch.code, employee),
+    const expenseIds = [
+      ...new Set(rows.map((r) => r.record.expenseId).filter((id): id is string => Boolean(id))),
+    ];
+    const expenseRefById = new Map<string, string>();
+    if (expenseIds.length > 0) {
+      const expenseRows = await this.db
+        .select({ id: popsExpenses.id, expenseRef: popsExpenses.expenseRef })
+        .from(popsExpenses)
+        .where(inArray(popsExpenses.id, expenseIds));
+      for (const e of expenseRows) expenseRefById.set(e.id, e.expenseRef);
+    }
+
+    const records = rows.map(({ record, employee, supplier }) =>
+      this.mapStaffFood(
+        record,
+        branch.code,
+        employee,
+        supplier,
+        expenseRefById.get(record.expenseId ?? "") ?? null,
+      ),
     );
     const today = new Date().toISOString().slice(0, 10);
     const monthPrefix = today.slice(0, 7);
@@ -989,6 +1083,9 @@ export class HrService implements OnModuleInit {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     let personName = input.personName.trim();
     let employeeId: string | null = input.employeeId ?? null;
+    let supplierId: string | null = input.supplierId ?? null;
+    let supplierName: string | null = null;
+    const expenseCategory = input.expenseCategory ?? "Staff Meals";
 
     if (input.consumerType === "staff") {
       if (!employeeId) {
@@ -1006,6 +1103,25 @@ export class HrService implements OnModuleInit {
       }
     }
 
+    if (supplierId) {
+      const supplierRows = await this.db
+        .select()
+        .from(popsSuppliers)
+        .where(
+          and(
+            eq(popsSuppliers.id, supplierId),
+            eq(popsSuppliers.organizationId, organizationId),
+            eq(popsSuppliers.branchId, branch.id),
+          ),
+        )
+        .limit(1);
+      const supplier = supplierRows[0];
+      if (!supplier) {
+        throw new BadRequestException("Supplier not found for this branch.");
+      }
+      supplierName = supplier.name;
+    }
+
     const recordedBy = await this.resolveRecordedBy(userId);
     const [row] = await this.db
       .insert(popsStaffFood)
@@ -1013,6 +1129,8 @@ export class HrService implements OnModuleInit {
         organizationId,
         branchId: branch.id,
         employeeId,
+        supplierId,
+        expenseCategory,
         consumerType: input.consumerType,
         personName,
         mealDate: input.mealDate,
@@ -1023,8 +1141,45 @@ export class HrService implements OnModuleInit {
       })
       .returning();
 
+    let expenseId: string | null = null;
+    let expenseRef: string | null = null;
+    if (row && input.amountPkr > 0) {
+      try {
+        const expense = await this.accounting.createExpense(organizationId, recordedBy, {
+          branchCode: branch.code,
+          category: expenseCategory,
+          amount: input.amountPkr,
+          expenseDate: input.mealDate,
+          vendor: supplierName ?? personName,
+          description: `Staff food · ${personName} · ${input.itemsOrdered.trim()}`.slice(0, 500),
+          recurring: false,
+        });
+        expenseId = expense.id;
+        expenseRef = expense.expenseRef;
+        await this.db
+          .update(popsStaffFood)
+          .set({ expenseId })
+          .where(eq(popsStaffFood.id, row.id));
+      } catch (err) {
+        this.logger.warn(
+          `Staff food expense link skipped: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
     const employee = employeeId ? await this.getEmployee(organizationId, employeeId) : null;
-    return this.mapStaffFood(row, branch.code, employee);
+    const supplier =
+      supplierId != null
+        ? (
+            await this.db
+              .select()
+              .from(popsSuppliers)
+              .where(eq(popsSuppliers.id, supplierId))
+              .limit(1)
+          )[0] ?? null
+        : null;
+    const linked = expenseId && row ? { ...row, expenseId } : row;
+    return this.mapStaffFood(linked, branch.code, employee, supplier, expenseRef);
   }
 
   async deleteStaffFood(organizationId: string, recordId: string) {
@@ -1109,6 +1264,8 @@ export class HrService implements OnModuleInit {
       status: row.status as "draft" | "approved" | "paid",
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
+      paidAt: row.paidAt ? row.paidAt.toISOString() : null,
+      paidBy: row.paidBy ?? null,
     };
 
     if (!withLines) return base;
@@ -1201,7 +1358,21 @@ export class HrService implements OnModuleInit {
     record: typeof popsStaffFood.$inferSelect,
     branchCode: string,
     employee: typeof popsEmployees.$inferSelect | null,
+    supplier: typeof popsSuppliers.$inferSelect | null = null,
+    expenseRef: string | null = null,
   ) {
+    const category = (record.expenseCategory || "Staff Meals") as
+      | "Rent"
+      | "Utilities"
+      | "Gas"
+      | "Staff Meals"
+      | "Marketing"
+      | "Maintenance"
+      | "Internet"
+      | "Transportation"
+      | "Food Purchases"
+      | "Salaries"
+      | "Other";
     return {
       id: record.id,
       branchCode,
@@ -1210,6 +1381,11 @@ export class HrService implements OnModuleInit {
       personName: record.personName,
       employeeCode: employee?.employeeCode ?? null,
       jobTitle: employee?.jobTitle ?? null,
+      supplierId: record.supplierId ?? null,
+      supplierName: supplier?.name ?? null,
+      expenseCategory: category,
+      expenseId: record.expenseId ?? null,
+      expenseRef,
       mealDate: record.mealDate,
       itemsOrdered: record.itemsOrdered,
       amountPkr: record.amountPkr,

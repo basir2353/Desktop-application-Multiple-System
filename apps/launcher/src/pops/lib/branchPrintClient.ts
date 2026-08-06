@@ -594,7 +594,7 @@ export async function resolveSilentSystemPrinterName(input: {
   // Exact / fuzzy OS spooler name (when mobile sends a real Windows printer name).
   const hintLooksLikeSoftLabel =
     Boolean(hint) &&
-    /billing\s*printer|kitchen\s*printer|cashier\s*\/|pick one|any assigned|expo|cashier\s*\/\s*billing|^billing$|^cashier$/i.test(
+    /billing\s*printer|kitchen\s*printer|cashier\s*\/|pick one|any assigned|expo|cashier\s*\/\s*billing|^billing$|^cashier$|^kitchen(\s*\d+)?$|^bar(\s*\d+)?$/i.test(
       hint,
     );
 
@@ -613,11 +613,12 @@ export async function resolveSilentSystemPrinterName(input: {
       resolveKotPrinter,
       resolveDefaultPrinterByType,
       resolvePrinterForUser,
+      resolveReceiptPrinter,
     } = await import("./printerRouting");
     const routing = loadPrinterRouting(branchCode);
 
     if (isKot) {
-      // Section-scoped first (mobile + desktop parity).
+      // Same as cashier: Assign Users / section first — never let "Kitchen 1" steal the route.
       if (sectionId) {
         const sectionKot = resolveKotPrinter(branchCode, sectionId, userId, "kitchen");
         const sectionName =
@@ -627,8 +628,18 @@ export async function resolveSilentSystemPrinterName(input: {
         // Strict: do not fall through to another section's printer.
         return null;
       }
-      // Soft profile hint → section-safe KOT resolve (never steal Grill-only printers).
-      if (hint) {
+      const kitchenKot = resolveKotPrinter(branchCode, null, userId, "kitchen");
+      const kitchenName =
+        acceptPhysical(kitchenKot?.systemPrinterName) ??
+        acceptPdfFileTarget(kitchenKot?.systemPrinterName);
+      if (kitchenName) return kitchenName;
+      const barKot = resolveKotPrinter(branchCode, null, userId, "bar");
+      const barName =
+        acceptPhysical(barKot?.systemPrinterName) ??
+        acceptPdfFileTarget(barKot?.systemPrinterName);
+      if (barName) return barName;
+      // Soft profile hint only when this waiter has no Kitchen/Bar assignment.
+      if (hint && !hintLooksLikeSoftLabel) {
         const allowedTypes = new Set(["kitchen", "bar"]);
         const profile = routing.printers.find(
           (p) =>
@@ -643,20 +654,10 @@ export async function resolveSilentSystemPrinterName(input: {
           if (linkedPdf) return linkedPdf;
         }
       }
-      const kitchenKot = resolveKotPrinter(branchCode, null, userId, "kitchen");
-      const kitchenName =
-        acceptPhysical(kitchenKot?.systemPrinterName) ??
-        acceptPdfFileTarget(kitchenKot?.systemPrinterName);
-      if (kitchenName) return kitchenName;
-      const barKot = resolveKotPrinter(branchCode, null, userId, "bar");
-      const barName =
-        acceptPhysical(barKot?.systemPrinterName) ??
-        acceptPdfFileTarget(barKot?.systemPrinterName);
-      if (barName) return barName;
     } else {
-      // Receipt / bill — user-assigned bill printer first (mobile + desktop).
-      // Soft labels like "Cashier / Billing" must never override personal assignment.
+      // Receipt / bill — user-assigned bill printer first (cashier + waiter same path).
       const userBill =
+        resolveReceiptPrinter(branchCode, userId) ??
         resolvePrinterForUser(branchCode, userId, "receipt") ??
         resolvePrinterForUser(branchCode, userId, "counter");
       if (userBill) {
@@ -708,11 +709,8 @@ export async function resolveSilentSystemPrinterName(input: {
     // ignore routing errors
   }
 
-  // Receipt jobs: never fall back to Windows default / kitchen / first-imported printers.
+  // Receipt / KOT: never invent PDF or Windows default — caller must link an OS printer.
   if (!isKot) {
-    const pdfOnOs = os.find((p) => /print\s*to\s*pdf/i.test(p.name))?.name;
-    if (pdfOnOs) return pdfOnOs;
-    if (os.length > 0) return "Microsoft Print to PDF";
     return null;
   }
 
@@ -725,20 +723,26 @@ export async function resolveSilentSystemPrinterName(input: {
   if (defaultPhysical) return defaultPhysical;
   if (osNames[0]) return osNames[0];
 
-  const pdfOnOs = os.find((p) => /print\s*to\s*pdf/i.test(p.name))?.name;
-  if (pdfOnOs) return pdfOnOs;
-  if (os.length > 0) return "Microsoft Print to PDF";
   return null;
 }
 
 async function pngBytesFromPayload(
   payload: PrintJobPayload,
   paperOverride?: string | null,
+  branchCode?: string | null,
 ): Promise<{ bytes: Uint8Array; paperMm: number } | null> {
-  const raw = paperOverride?.trim() || payload.paperSize?.trim() || "80mm";
+  const { loadThermalPrintSettings, paperWidthMm } = await import("./thermalPrintSettings");
+  const thermal = loadThermalPrintSettings(branchCode);
+  const raw = (paperOverride?.trim() || payload.paperSize?.trim() || thermal.defaultPaperSize || "80mm") as string;
   const paper =
-    raw === "58mm" || raw === "80mm" || raw === "100mm" ? raw : "80mm";
-  const paperMm = paper === "58mm" ? 58 : paper === "100mm" ? 100 : 80;
+    raw === "58mm" || raw === "80mm" || raw === "100mm" || raw === "A4" || raw === "custom"
+      ? raw
+      : thermal.defaultPaperSize === "custom"
+        ? "custom"
+        : "80mm";
+  const metaMm = Number((payload.meta as { customPaperWidthMm?: unknown } | undefined)?.customPaperWidthMm);
+  const customMm = Number.isFinite(metaMm) && metaMm > 0 ? metaMm : thermal.customPaperWidthMm;
+  const paperMm = paperWidthMm(paper, customMm);
 
   if (payload.imageBase64?.trim()) {
     try {
@@ -753,7 +757,7 @@ async function pngBytesFromPayload(
   if (!html) return null;
 
   const { renderTicketHtmlToPngBytes } = await import("./printTicket");
-  const png = await renderTicketHtmlToPngBytes(html, paper as "58mm" | "80mm" | "100mm" | "A4" | "custom");
+  const png = await renderTicketHtmlToPngBytes(html, paper, customMm);
   if (!png?.length) return null;
   return { bytes: png, paperMm };
 }
@@ -774,6 +778,7 @@ type MobileTicketMeta = {
   notes?: string;
   isOrderUpdate?: boolean;
   orderRef?: string;
+  billRef?: string;
   lines?: MobileTicketLine[];
   subtotal?: number;
   discount?: number;
@@ -784,6 +789,13 @@ type MobileTicketMeta = {
   servicePct?: number;
   taxPct?: number;
   discountPct?: number;
+  payments?: Array<{ method: string; amount: number }>;
+  praFiscal?: {
+    mode?: string;
+    invoiceNumber?: string;
+    orderRef?: string;
+    qrPayload?: string;
+  } | null;
 };
 
 function readMobileTicketMeta(payload: PrintJobPayload): MobileTicketMeta | null {
@@ -818,8 +830,11 @@ async function printPngToResolvedPrinter(input: {
   }
 
   // Prefer paper size from the profile that owns this OS printer.
+  // Respect explicit job copies (mobile always sends 1) — do not re-apply profile.copies
+  // on top or one tap opens N PDF/Save dialogs.
   let paperSize = input.paperSize?.trim() || null;
-  let copies = input.copies ?? 1;
+  let copies = Math.max(1, Math.min(3, input.copies ?? 1));
+  const copiesExplicit = input.copies != null;
   try {
     const { loadPrinterRouting } = await import("./printerRouting");
     const routing = loadPrinterRouting(input.branchCode);
@@ -831,10 +846,17 @@ async function printPngToResolvedPrinter(input: {
     );
     if (profile) {
       paperSize = profile.paperSize || paperSize;
-      copies = profile.copies || copies;
+      if (!copiesExplicit) {
+        copies = Math.max(1, Math.min(3, profile.copies || copies));
+      }
     }
   } catch {
     // ignore
+  }
+
+  // PDF/XPS Save dialogs: one job → one window (profile copies would open N dialogs).
+  if (printer && isVirtualSystemPrinter(printer)) {
+    copies = 1;
   }
 
   if (!printer) {
@@ -865,6 +887,7 @@ async function printPngToResolvedPrinter(input: {
   const rendered = await pngBytesFromPayload(
     { kind: input.kind as PrintJobPayload["kind"], html: input.html, copies, paperSize: paperSize ?? undefined },
     paperSize,
+    input.branchCode,
   );
   if (!rendered) {
     return { ok: false, error: "Missing image/HTML payload for silent print" };
@@ -881,7 +904,43 @@ async function printPngToResolvedPrinter(input: {
   return { ok: false, error: result.error, printer };
 }
 
+/** Same cloud/local job id must never print twice (double claim / retry races). */
+const executedSilentJobIds = new Map<string, number>();
+const EXECUTED_JOB_TTL_MS = 60_000;
+/** Mobile Live+LAN races create two job ids for the same order — suppress the second. */
+const executedMobileOrderKeys = new Map<string, number>();
+const MOBILE_ORDER_DEDUPE_MS = 20_000;
+
+function markSilentJobExecuted(jobId: string): boolean {
+  const id = jobId.trim();
+  if (!id) return false;
+  const now = Date.now();
+  for (const [key, at] of executedSilentJobIds) {
+    if (now - at > EXECUTED_JOB_TTL_MS) executedSilentJobIds.delete(key);
+  }
+  if (executedSilentJobIds.has(id)) return true;
+  executedSilentJobIds.set(id, now);
+  return false;
+}
+
+/** Returns true when this mobile order+kind was already started/printed recently (skip). */
+function markMobileOrderPrintStarted(branchCode: string, kind: string, orderId: string): boolean {
+  const key = `${branchCode.trim().toUpperCase()}|${kind}|${orderId.trim()}`;
+  const now = Date.now();
+  for (const [k, at] of executedMobileOrderKeys) {
+    if (now - at > MOBILE_ORDER_DEDUPE_MS * 3) executedMobileOrderKeys.delete(k);
+  }
+  const prev = executedMobileOrderKeys.get(key);
+  if (prev != null && now - prev < MOBILE_ORDER_DEDUPE_MS) return true;
+  executedMobileOrderKeys.set(key, now);
+  return false;
+}
+
 async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolean; error?: string; printer?: string }> {
+  if (markSilentJobExecuted(job.id)) {
+    return { ok: true, printer: undefined };
+  }
+
   const payload = JSON.parse(job.payloadJson) as PrintJobPayload & { userId?: string | null };
   const userId =
     job.userId?.trim() ||
@@ -891,6 +950,14 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
   const kind = String(payload.kind ?? "receipt").toLowerCase();
   const ticket = readMobileTicketMeta(payload);
   const sectionId = payload.sectionId?.trim() || null;
+  const fromMobile = String(payload.meta?.source ?? "").toLowerCase() === "waiter-mobile";
+  const orderKey = (job.orderId?.trim() || payload.orderRef?.trim() || "").trim();
+  if (fromMobile && orderKey && markMobileOrderPrintStarted(job.branchCode, kind, orderKey)) {
+    return { ok: true, printer: undefined };
+  }
+  /** One mobile tap → one slip (never fan out profile copies into N PDF windows). */
+  const resolveJobCopies = (enrichedCopies?: number | null) =>
+    fromMobile ? 1 : Math.max(1, Math.min(3, enrichedCopies ?? payload.copies ?? 1));
 
   // Dynamic path: rebuild with desktop printTicket (paper size, text scale, KOT/bill settings).
   if (ticket?.lines && ticket.lines.length > 0) {
@@ -937,6 +1004,7 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
 
         const enabledSections = loadPrinterSections(job.branchCode).filter((s) => s.enabled);
         const enabledIds = new Set(enabledSections.map((s) => s.id));
+        // Mobile + EXE: split KOT by Kitchen/Bar/section so each assigned printer gets its lines.
         const groups =
           enabledSections.length > 0 && cartLines.some((l) => l.item.categoryId || l.item.id)
             ? groupCartLinesBySection(job.branchCode, cartLines, enabledIds)
@@ -948,10 +1016,14 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
             ? [{ sectionId: sectionId, lines: cartLines }]
             : groups;
 
-        let lastPrinter: string | undefined;
-        const errors: string[] = [];
-        let okCount = 0;
-
+        type KotFanout = {
+          sectionId: string | null;
+          lines: PosCartLine[];
+          profile: ReturnType<typeof resolveKotPrinter>;
+          preferredType: "kitchen" | "bar";
+          label: string;
+        };
+        const fanout: KotFanout[] = [];
         for (const group of printable) {
           if (!group.lines.length) continue;
           const section = group.sectionId
@@ -967,12 +1039,51 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
             userId,
             preferredType,
           );
-          const label = section ? `${section.icon} ${section.name}` : "Kitchen";
+          fanout.push({
+            sectionId: group.sectionId,
+            lines: group.lines,
+            profile,
+            preferredType,
+            label: section ? `${section.icon} ${section.name}` : "Kitchen",
+          });
+        }
+
+        // Same Windows printer → one slip (avoids N identical PDF dialogs). Different printers stay split.
+        const coalesced: KotFanout[] = [];
+        for (const jobPart of fanout) {
+          const key = (
+            jobPart.profile?.systemPrinterName?.trim() ||
+            jobPart.profile?.id ||
+            `section:${jobPart.sectionId ?? jobPart.preferredType}`
+          ).toLowerCase();
+          const existing = coalesced.find((m) => {
+            const mKey = (
+              m.profile?.systemPrinterName?.trim() ||
+              m.profile?.id ||
+              `section:${m.sectionId ?? m.preferredType}`
+            ).toLowerCase();
+            return mKey === key;
+          });
+          if (existing) {
+            existing.lines = [...existing.lines, ...jobPart.lines];
+            if (existing.label !== jobPart.label) {
+              existing.label = `${existing.label} + ${jobPart.label}`;
+            }
+          } else {
+            coalesced.push({ ...jobPart, lines: [...jobPart.lines] });
+          }
+        }
+
+        let lastPrinter: string | undefined;
+        const errors: string[] = [];
+        let okCount = 0;
+
+        for (const group of coalesced) {
           const base = {
             branchName,
             branchCode: job.branchCode,
             orderRef,
-            modeLabel: ticket.modeLabel?.trim() || label,
+            modeLabel: ticket.modeLabel?.trim() || group.label,
             tableLabel: ticket.tableLabel?.trim() || ticket.modeLabel?.trim() || undefined,
             waiterName: ticket.waiterName?.trim() || undefined,
             notes: ticket.notes?.trim() || undefined,
@@ -991,7 +1102,7 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
             discountPct: 0,
             kotSettings: loadKotPrintSettings(job.branchCode),
           };
-          const enriched = withPrinterProfile(base, profile);
+          const enriched = withPrinterProfile(base, group.profile);
           const html = buildTicketHtml({ ...enriched, kind: "kot" });
           const result = await printPngToResolvedPrinter({
             branchCode: job.branchCode,
@@ -1000,9 +1111,13 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
             jobId: job.id,
             userId,
             sectionId: group.sectionId,
-            printerHint: job.printerName ?? profile?.name ?? null,
+            printerHint:
+              group.profile?.systemPrinterName?.trim() ||
+              job.printerName ||
+              group.profile?.name ||
+              null,
             html,
-            copies: enriched.copies ?? 1,
+            copies: resolveJobCopies(enriched.copies),
             paperSize: enriched.paperSize ?? null,
           });
           if (result.ok) {
@@ -1021,7 +1136,7 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         };
       }
 
-      // Receipt — rebuild with bill customization + assigned receipt printer paper size.
+      // Receipt — rebuild with EXE bill design (customization, payments, PRA, paper size).
       const profile = resolveReceiptPrinter(job.branchCode, userId);
       const lines = ticket.lines.map((l) => ({
         label: l.label,
@@ -1031,10 +1146,45 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
       const subtotal =
         ticket.subtotal ??
         lines.reduce((sum, l) => sum + l.unitPrice * l.qty, 0);
+      const payments = (ticket.payments ?? [])
+        .map((p) => ({
+          method: String(p.method ?? "cash").toLowerCase(),
+          amount: Math.max(0, Number(p.amount) || 0),
+        }))
+        .filter(
+          (p) =>
+            p.amount > 0 &&
+            (p.method === "cash" ||
+              p.method === "card" ||
+              p.method === "wallet" ||
+              p.method === "bank"),
+        ) as Array<{ method: "cash" | "card" | "wallet" | "bank"; amount: number }>;
+
+      let praFiscal: import("./praReceiptFooter").PraReceiptFooter | null = null;
+      const praRaw = ticket.praFiscal;
+      if (praRaw?.invoiceNumber?.trim()) {
+        try {
+          const { preparePraReceiptFooter } = await import("./praReceiptFooter");
+          const mode =
+            praRaw.mode === "real" || praRaw.mode === "fake" ? praRaw.mode : "fake";
+          // Must await — sync assign left a Promise in praFiscal so invoice#/QR never printed.
+          praFiscal = await preparePraReceiptFooter({
+            mode,
+            invoiceNumber: praRaw.invoiceNumber.trim(),
+            orderRef: praRaw.orderRef?.trim() || orderRef,
+            qrPayload: praRaw.qrPayload?.trim() || praRaw.invoiceNumber.trim(),
+            branchCode: job.branchCode,
+          });
+        } catch {
+          praFiscal = null;
+        }
+      }
+
       const base = {
         branchName,
         branchCode: job.branchCode,
         orderRef,
+        billRef: ticket.billRef?.trim() || undefined,
         modeLabel: ticket.modeLabel?.trim() || "Staff",
         tableLabel: ticket.tableLabel?.trim() || undefined,
         waiterName: ticket.waiterName?.trim() || undefined,
@@ -1049,6 +1199,8 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         servicePct: ticket.servicePct ?? 0,
         taxPct: ticket.taxPct,
         discountPct: ticket.discountPct ?? 0,
+        payments: payments.length ? payments : undefined,
+        praFiscal,
         billPrintSettings: loadBillPrintSettings(job.branchCode),
       };
       const enriched = withPrinterProfile(base, profile);
@@ -1062,7 +1214,7 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         sectionId: null,
         printerHint: job.printerName ?? profile?.name ?? null,
         html,
-        copies: enriched.copies ?? 1,
+        copies: resolveJobCopies(enriched.copies),
         paperSize: enriched.paperSize ?? null,
       });
     } catch (err) {
@@ -1093,7 +1245,7 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
     sectionId,
     printerHint: job.printerName ?? payload.systemPrinterName ?? null,
     html: payload.html?.trim() || "",
-    copies: payload.copies ?? 1,
+    copies: resolveJobCopies(payload.copies),
     paperSize: paperOverride,
   });
 }

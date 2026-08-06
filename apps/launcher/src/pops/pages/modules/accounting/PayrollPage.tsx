@@ -14,7 +14,13 @@ import {
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
+import { modalBackdropRaisedClass } from "../../../lib/themeClasses";
 import { AccountingError, AccountingFormPanel, AccountingLoading } from "./AccountingUi";
+
+function toDatetimeLocalValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 export function PayrollPage(): JSX.Element {
   const { branch, canManage } = useAccountingAccess();
@@ -22,6 +28,8 @@ export function PayrollPage(): JSX.Element {
   const [gross, setGross] = useState("");
   const [deductions, setDeductions] = useState("0");
   const [staffCount, setStaffCount] = useState("");
+  const [payTarget, setPayTarget] = useState<{ id: string; ref: string } | null>(null);
+  const [payAtLocal, setPayAtLocal] = useState(() => toDatetimeLocalValue(new Date()));
 
   const payrollQuery = useQuery({
     queryKey: ["accounting", "payroll", branch?.code],
@@ -45,8 +53,12 @@ export function PayrollPage(): JSX.Element {
   });
 
   const payMutation = useMutation({
-    mutationFn: payPayrollRun,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["accounting"] }),
+    mutationFn: ({ id, paidAt }: { id: string; paidAt: string }) => payPayrollRun(id, { paidAt }),
+    onSuccess: () => {
+      setPayTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["accounting"] });
+      void queryClient.invalidateQueries({ queryKey: ["hr"] });
+    },
   });
 
   if (payrollQuery.isLoading) return <AccountingLoading />;
@@ -60,7 +72,7 @@ export function PayrollPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Payroll management"
-        subtitle="Accounting view of payroll journal entries. Create runs from HR → Payroll runs."
+        subtitle="Accounting view of payroll journal entries. Create runs from HR → Payroll runs. Pay posts bank JV with pay date/time."
       />
 
       {canManage ? (
@@ -94,8 +106,28 @@ export function PayrollPage(): JSX.Element {
             { key: "periodStart", header: "From" },
             { key: "periodEnd", header: "To" },
             { key: "totalGross", header: "Gross", render: (r) => formatPkr(Number(r.totalGross)) },
-            { key: "totalNet", header: "Net", render: (r) => formatPkr(Number(r.totalNet)) },
+            {
+              key: "totalNet",
+              header: "Baqaya",
+              render: (r) => {
+                const net = Number(r.totalNet);
+                return (
+                  <span className={net < 0 ? "text-red-400" : undefined}>{formatPkr(net)}</span>
+                );
+              },
+            },
             { key: "staffCount", header: "Staff" },
+            {
+              key: "paidAt",
+              header: "Paid at",
+              render: (r) =>
+                r.paidAt
+                  ? new Date(String(r.paidAt)).toLocaleString("en-PK", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })
+                  : "—",
+            },
             {
               key: "status",
               header: "Status",
@@ -117,7 +149,14 @@ export function PayrollPage(): JSX.Element {
                       </button>
                     ) : null}
                     {r.status === "approved" ? (
-                      <button type="button" className="text-xs text-emerald-400" onClick={() => payMutation.mutate(String(r.id))}>
+                      <button
+                        type="button"
+                        className="text-xs text-emerald-400"
+                        onClick={() => {
+                          setPayAtLocal(toDatetimeLocalValue(new Date()));
+                          setPayTarget({ id: String(r.id), ref: String(r.payrollRef) });
+                        }}
+                      >
                         Pay
                       </button>
                     ) : null}
@@ -128,6 +167,48 @@ export function PayrollPage(): JSX.Element {
           rows={payrollQuery.data! as unknown as Record<string, unknown>[]}
         />
       </div>
+
+      {payTarget ? (
+        <div className={modalBackdropRaisedClass} role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-xl border border-slate-700 bg-slate-950 p-4 shadow-xl">
+            <div className="text-sm font-medium text-white">Pay {payTarget.ref}</div>
+            <p className="mt-1 text-xs text-slate-400">
+              Date &amp; time ledger journal entry pe jayegi (Dr Salaries Payable / Cr Bank).
+            </p>
+            <label className="mt-3 block text-xs text-slate-500">
+              Paid at
+              <input
+                type="datetime-local"
+                className={`${accountingInputClass} mt-1 w-full`}
+                value={payAtLocal}
+                onChange={(e) => setPayAtLocal(e.target.value)}
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                onClick={() => setPayTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={payMutation.isPending || !payAtLocal}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                onClick={() =>
+                  payMutation.mutate({
+                    id: payTarget.id,
+                    paidAt: new Date(payAtLocal).toISOString(),
+                  })
+                }
+              >
+                {payMutation.isPending ? "Paying…" : "Confirm pay"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

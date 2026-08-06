@@ -7,7 +7,6 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -24,6 +23,7 @@ import {
   StatusBadge,
   colors,
 } from "../src/components/ui";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import {
   canTransferKitchenTicket,
   tableNumberFromStation,
@@ -41,6 +41,7 @@ import { useSessionStore } from "../src/stores/sessionStore";
 type Step = "order" | "section" | "table";
 
 export default function TableTransferScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { ticketId: ticketIdParam } = useLocalSearchParams<{ ticketId?: string }>();
@@ -400,33 +401,36 @@ export default function TableTransferScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   scroll: { gap: 14, paddingBottom: 28 },
-  subtitle: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  subtitle: { color: c.muted, fontSize: 13, lineHeight: 19 },
   selectedCard: { gap: 8, borderColor: "rgba(15, 118, 110, 0.35)" },
   selectedTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   selectedRef: {
-    color: colors.text,
+    color: c.text,
     fontFamily: "monospace",
     fontSize: 16,
     fontWeight: "700",
   },
-  selectedMeta: { color: colors.muted, fontSize: 12, marginTop: 4 },
-  selectedItems: { color: colors.muted, fontSize: 13, lineHeight: 18 },
+  selectedMeta: { color: c.muted, fontSize: 12, marginTop: 4 },
+  selectedItems: { color: c.muted, fontSize: 13, lineHeight: 18 },
   changeBtn: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
-  changeBtnText: { color: colors.accent, fontSize: 12, fontWeight: "700" },
+  changeBtnText: { color: c.accent, fontSize: 12, fontWeight: "700" },
   list: { gap: 8 },
   orderRow: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 12,
     gap: 4,
   },
@@ -437,37 +441,37 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   orderRef: {
-    color: colors.text,
+    color: c.text,
     fontFamily: "monospace",
     fontSize: 15,
     fontWeight: "700",
   },
-  orderStation: { color: colors.accent, fontSize: 13, fontWeight: "600" },
-  orderItems: { color: colors.muted, fontSize: 12 },
-  orderWhen: { color: colors.muted, fontSize: 11, marginTop: 2 },
+  orderStation: { color: c.accent, fontSize: 13, fontWeight: "600" },
+  orderItems: { color: c.muted, fontSize: 12 },
+  orderWhen: { color: c.muted, fontSize: 11, marginTop: 2 },
   sectionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   sectionCard: {
     width: "47%",
     flexGrow: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 14,
     gap: 4,
   },
   sectionCardDisabled: { opacity: 0.45 },
-  sectionName: { color: colors.text, fontSize: 15, fontWeight: "700" },
-  sectionMeta: { color: colors.muted, fontSize: 12 },
+  sectionName: { color: c.text, fontSize: 15, fontWeight: "700" },
+  sectionMeta: { color: c.muted, fontSize: 12 },
   tableGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tableBtn: {
     width: "30%",
     flexGrow: 1,
     minWidth: 96,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     paddingVertical: 14,
     paddingHorizontal: 10,
     alignItems: "center",
@@ -481,16 +485,19 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     borderColor: "rgba(248, 113, 113, 0.35)",
   },
-  tableLabel: { color: colors.text, fontSize: 16, fontWeight: "800" },
-  tableLabelCurrent: { color: colors.accent },
-  tableLabelMuted: { color: colors.muted },
-  tableMeta: { color: colors.muted, fontSize: 11, textAlign: "center" },
+  tableLabel: { color: c.text, fontSize: 16, fontWeight: "800" },
+  tableLabelCurrent: { color: c.accent },
+  tableLabelMuted: { color: c.muted },
+  tableMeta: { color: c.muted, fontSize: 11, textAlign: "center" },
   pendingRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     marginTop: 8,
   },
-  pendingText: { color: colors.muted, fontSize: 13 },
+  pendingText: { color: c.muted, fontSize: 13 },
   pressed: { opacity: 0.85 },
-});
+
+  }));
+}
+

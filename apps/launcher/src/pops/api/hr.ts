@@ -11,6 +11,7 @@ import {
   hrDashboardSchema,
   hrPayrollRunSchema,
   leaveRequestSchema,
+  payPayrollSchema,
   salarySlipSchema,
   staffFoodListSchema,
   staffFoodRecordSchema,
@@ -28,6 +29,7 @@ import {
   type EmployeeAdvance,
   type EmployeeAdvanceSummary,
   type LeaveRequest,
+  type PayPayroll,
   type SalarySlip,
   type StaffFoodList,
   type UpdateAttendance,
@@ -236,8 +238,13 @@ export async function approveHrPayrollRun(payrollId: string) {
   return hrPayrollRunSchema.parse(await res.json());
 }
 
-export async function payHrPayrollRun(payrollId: string) {
-  const res = await authFetch(`/v1/hr/payroll/${payrollId}/pay`, { method: "PATCH" });
+export async function payHrPayrollRun(payrollId: string, input?: PayPayroll) {
+  const body = payPayrollSchema.parse(input ?? {});
+  const res = await authFetch(`/v1/hr/payroll/${payrollId}/pay`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(await readError(res));
   return hrPayrollRunSchema.parse(await res.json());
 }

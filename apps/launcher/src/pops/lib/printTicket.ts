@@ -1,8 +1,16 @@
 import type { Bill, BillPayment, KitchenTicket, PaymentMethod } from "@platform/contracts";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
-import { computeTicketTotals } from "./posDiscount";
-import { loadPosSettings, effectiveTaxPct } from "./posSettings";
+import {
+  discountAmountFromTicketNotes,
+  parseCashReceivedFromNotes,
+  parseDeliveryFieldsFromNotes,
+  receiptNotesWithoutPackedDeliveryContact,
+  resolveTicketDeliveryNotes,
+} from "./posLoadOrder";
+import { computeTicketTotals, discountPctFromAmount } from "./posDiscount";
+import { loadPosSettings, effectiveServicePctForMode, effectiveTaxPctForMode } from "./posSettings";
+import { inferPosModeFromLabel } from "./posOrderMode";
 import { parseItemsSummary, type PosRecentOrder } from "./recentOrders";
 import {
   billReceiptFontSizes,
@@ -27,17 +35,17 @@ import type { PrinterPaperSize, PrinterProfile } from "./printerRouting";
 import { printerTextScaleFactor } from "./printerRouting";
 import { loadReceiptPoweredBy } from "./receiptBranding";
 import { resolveBusinessLogoSrc } from "./businessLogo";
-import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
+import { printImageToSystemPrinter, printToSystemPrinter, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter, isDesktopAppRuntime } from "./systemPrinters";
 import { buildPraReceiptFooterHtml, PRA_RECEIPT_FOOTER_CSS, type PraReceiptFooter } from "./praReceiptFooter";
 import { asPrinterName } from "./asPrinterName";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
   isNarrowPaperWidth,
-  isWidePaperWidth,
   loadThermalPrintSettings,
   normalizeThermalPrintSettings,
   paperWidthMm,
   receiptRenderWidthPx,
+  resolveThermalPaperSize,
   thermalCharsPerLine,
   thermalContentWidthMm,
   type ThermalPrintSettings,
@@ -71,6 +79,11 @@ export type PrintTicketInput = {
   /** Override branch thermal defaults (preview / unsaved draft). */
   thermal?: ThermalPrintSettings;
   notes?: string;
+  /** Delivery / customer contact — printed as labeled meta rows on receipts. */
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  riderName?: string;
   lines: PrintLine[];
   subtotal: number;
   discount: number;
@@ -83,6 +96,8 @@ export type PrintTicketInput = {
   discountPct: number;
   /** Settled payment lines (cash / card / …) for simple invoice footer. */
   payments?: BillPayment[];
+  /** Cash tendered by customer (when > total, receipt shows Change Due). */
+  cashReceived?: number;
   kotSettings?: KotPrintSettings;
   billPrintSettings?: BillPrintSettings;
   /**
@@ -98,6 +113,35 @@ export type PrintTicketInput = {
    */
   businessLogoSrc?: string | null;
 };
+
+function resolveDeliveryPrintContact(input: PrintTicketInput): {
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  riderName: string;
+} {
+  const parsed = parseDeliveryFieldsFromNotes(input.notes);
+  return {
+    customerName: input.customerName?.trim() || parsed.customer,
+    customerPhone: input.customerPhone?.trim() || parsed.phone,
+    customerAddress: input.customerAddress?.trim() || parsed.address,
+    riderName: input.riderName?.trim() || parsed.riderName,
+  };
+}
+
+function hasStructuredDeliveryContact(contact: {
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  riderName: string;
+}): boolean {
+  return Boolean(
+    contact.customerName ||
+      contact.customerPhone ||
+      contact.customerAddress ||
+      contact.riderName,
+  );
+}
 
 /** Apply a resolved printer profile onto a ticket payload. */
 export function withPrinterProfile<T extends Omit<PrintTicketInput, "kind">>(
@@ -186,14 +230,15 @@ function formatMoney(pkr: number, compact = false, showRs = false): string {
   return compact ? `Rs${digits}` : `Rs ${digits}`;
 }
 
+/**
+ * Prefer branch thermal Custom mm over a stale profile preset.
+ * Profile paperSize is used only when thermal is not set to custom.
+ */
 function resolvePaperSize(
   input: Pick<PrintTicketInput, "paperSize" | "branchCode">,
   thermal: ThermalPrintSettings,
 ): PrinterPaperSize {
-  // Custom mm must win over a stale profile "80mm" — otherwise the PNG stays 80mm-wide
-  // while GDI uses a wider page (or vice versa) and the slip looks stretched/zoomed.
-  if (thermal.defaultPaperSize === "custom") return "custom";
-  return input.paperSize ?? thermal.defaultPaperSize;
+  return resolveThermalPaperSize(input.paperSize, thermal);
 }
 
 function resolveThermalSettings(input: PrintTicketInput): ThermalPrintSettings {
@@ -413,6 +458,9 @@ function buildKotThermalPlainText(
   doubleDash();
   const title = input.isOrderUpdate ? kot.documentTitleUpdate : kot.documentTitle;
   if (fields.documentTitle) pushAligned(title.toUpperCase());
+  if (input.isOrderUpdate) {
+    pushAligned("*** UPDATE REVISED ***");
+  }
   pushCustomsBetween("documentTitle", "meta");
 
   const modeText = input.modeLabel.trim();
@@ -551,7 +599,8 @@ export function buildThermalPlainText(
   const showPrice =
     !useClearLayout &&
     Boolean(fields.itemAmount) &&
-    (thermal.showUnitPrice || isWidePaperWidth(paper, thermal.customPaperWidthMm));
+    Boolean(thermal.showUnitPrice) &&
+    !isNarrowPaperWidth(paper, thermal.customPaperWidthMm);
   const showAmt = Boolean(fields.itemAmount);
   const dash = "-".repeat(width);
   const equals = "=".repeat(width);
@@ -618,10 +667,27 @@ export function buildThermalPlainText(
   if (fields.waiterName !== false && printedBy) {
     out.push(plainLabelValueLine("CASHIER", printedBy, width));
   }
+  const deliveryContact = resolveDeliveryPrintContact(input);
+  if (deliveryContact.customerName) {
+    out.push(plainLabelValueLine("CUSTOMER", deliveryContact.customerName, width));
+  }
+  if (deliveryContact.customerPhone) {
+    out.push(plainLabelValueLine("PHONE", deliveryContact.customerPhone, width));
+  }
+  if (deliveryContact.customerAddress) {
+    for (const w of wrapWords(`ADDRESS: ${deliveryContact.customerAddress}`, width)) out.push(w);
+  }
+  if (deliveryContact.riderName) {
+    out.push(plainLabelValueLine("RIDER", deliveryContact.riderName, width));
+  }
   pushCustomsBetween("meta", "notes");
 
-  if (input.notes && fields.notes !== false) {
-    for (const w of wrapWords(`Note: ${input.notes}`, width)) out.push(w);
+  const plainNotes = receiptNotesWithoutPackedDeliveryContact(
+    input.notes,
+    hasStructuredDeliveryContact(deliveryContact),
+  );
+  if (plainNotes && fields.notes !== false) {
+    for (const w of wrapWords(`Note: ${plainNotes}`, width)) out.push(w);
   }
   pushCustomsBetween("notes", "timestamp");
 
@@ -702,7 +768,7 @@ export function buildThermalPlainText(
     if (fields.discount && input.discount > 0) {
       pushTotal(
         `Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}`,
-        `-${formatMoney(input.discount, compact)}`,
+        formatMoney(input.discount, compact),
       );
     }
     if (fields.service && input.service > 0) {
@@ -804,13 +870,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const useClearLayout =
     isReceipt && thermal.receiptLayout === "clear" && isNarrowPaperWidth(paperSize, thermal.customPaperWidthMm);
   const showAmtColEarly = isReceipt && Boolean(fields?.itemAmount);
+  // Columns: Qty | Item | [Price] | Amt — Price when user enables it (columns layout, not narrow).
+  const rollMm = paperWidthMm(paperSize, thermal.customPaperWidthMm);
   const showPriceCol =
     showAmtColEarly &&
     !useClearLayout &&
     !narrowPaper &&
-    (thermal.showUnitPrice ||
-      isWidePaperWidth(paperSize, thermal.customPaperWidthMm) ||
-      thermal.receiptLayout === "columns");
+    Boolean(thermal.showUnitPrice);
 
   const clearItemBlocks =
     useClearLayout && showAmtColEarly
@@ -840,13 +906,13 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       if (useClearLayout) return "";
       const showQty = fields!.itemQty;
       const showAmt = fields!.itemAmount;
-      const colCount = 1 + (showQty ? 1 : 0) + (showAmt ? (showPriceCol ? 2 : 1) : 0);
-      return `<tr>
-        ${showQty ? `<td class="qty">${line.qty}</td>` : ""}
-        <td class="item-name" colspan="${showQty || showAmt ? 1 : colCount}">${escapeHtml(line.label)}</td>
-        ${showPriceCol ? `<td class="price">${formatMoney(line.unitPrice, moneyCompact)}</td>` : ""}
-        ${showAmt ? `<td class="amt">${formatMoney(lineTotal, moneyCompact)}</td>` : ""}
-      </tr>`;
+      // Full-width grid row — column tracks sized from paper mm / user toggles (see itemGridCols).
+      return `<div class="item-row">
+        ${showQty ? `<span class="item-qty">${line.qty}</span>` : ""}
+        <span class="item-name">${escapeHtml(line.label)}</span>
+        ${showPriceCol ? `<span class="item-price">${formatMoney(line.unitPrice, moneyCompact)}</span>` : ""}
+        ${showAmt ? `<span class="item-amt">${formatMoney(lineTotal, moneyCompact)}</span>` : ""}
+      </div>`;
     })
     .join("");
 
@@ -855,8 +921,21 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         fields.subtotal
           ? `<div class="row"><span class="label">Subtotal</span><span class="value">${formatMoney(input.subtotal, moneyCompact)}</span></div>`
           : "",
-        fields.discount && input.discount > 0
-          ? `<div class="row"><span class="label">Discount${input.discountPct > 0 ? ` (${input.discountPct}%)` : ""}</span><span class="value discount">− ${formatMoney(input.discount, moneyCompact)}</span></div>`
+        fields.discount &&
+        ((input.discount > 0
+          ? input.discount
+          : discountAmountFromTicketNotes(input.notes, input.subtotal)) > 0)
+          ? (() => {
+              const disc =
+                input.discount > 0
+                  ? input.discount
+                  : discountAmountFromTicketNotes(input.notes, input.subtotal);
+              const pct =
+                input.discountPct > 0
+                  ? input.discountPct
+                  : discountPctFromAmount(disc, input.subtotal);
+              return `<div class="row"><span class="label">Discount${pct > 0 ? ` (${pct}%)` : ""}</span><span class="value discount">${formatMoney(disc, moneyCompact)}</span></div>`;
+            })()
           : "",
         fields.service && input.service > 0
           ? `<div class="row"><span class="label">Service (${input.servicePct}%)</span><span class="value">${formatMoney(input.service, moneyCompact)}</span></div>`
@@ -882,45 +961,70 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     const parts: string[] = [];
 
     if (!input.praFiscal) {
-      const cashGstPct = Math.max(0, Number(input.taxPct ?? 0));
-      const cardGstPct = cashGstPct >= 15 ? 5 : cashGstPct;
-      const taxable = Math.max(0, (input.subtotal ?? 0) - (input.discount ?? 0));
+      const settings = loadPosSettings(input.branchCode);
+      const mode = inferPosModeFromLabel(input.tableLabel || input.modeLabel || "");
+      // Always use Settings for the Card vs Cash preview (never hardcode card=5%).
+      const cashGstPct = effectiveTaxPctForMode(settings, mode, "cash");
+      const cardGstPct = effectiveTaxPctForMode(settings, mode, "card");
       const delivery = Math.max(0, input.deliveryCharge ?? 0);
-      const service = Math.max(0, input.service ?? 0);
-      const round2 = (n: number) => Math.round(n * 100) / 100;
-      const cardGst = round2((taxable * cardGstPct) / 100);
-      const cashGst = round2((taxable * cashGstPct) / 100);
-      const cardNet = round2(taxable + service + delivery + cardGst);
-      const cashNet = round2(taxable + service + delivery + cashGst);
+      const servicePct = effectiveServicePctForMode(settings, mode);
+      // DiscPct/DiscRs in notes must reduce Net — same as POS totals (Option 16).
+      const discount =
+        (input.discount ?? 0) > 0
+          ? input.discount
+          : discountAmountFromTicketNotes(input.notes, input.subtotal ?? 0);
+      const discountPct =
+        (input.discountPct ?? 0) > 0
+          ? input.discountPct
+          : discountPctFromAmount(discount, input.subtotal ?? 0);
+      const cashTotals = computeTicketTotals(
+        input.subtotal ?? 0,
+        discount,
+        servicePct,
+        cashGstPct,
+        delivery,
+      );
+      const cardTotals = computeTicketTotals(
+        input.subtotal ?? 0,
+        discount,
+        servicePct,
+        cardGstPct,
+        delivery,
+      );
       const money = (n: number) => formatMoney(n, moneyCompact);
-      const servicePct = Math.max(0, Number(input.servicePct ?? 0));
-      const midRows = (gstPct: number, gstAmt: number) =>
+      // Match reference: side-by-side Card/Cash on 80mm+; stack only on narrow 58mm.
+      const stackCompare = narrowPaper;
+      const cardTitle = stackCompare ? "CARD PAYMENT" : "On Card Payment";
+      const cashTitle = stackCompare ? "CASH PAYMENT" : "On Cash Payment";
+      const midRows = (gstPct: number, gstAmt: number, serviceAmt: number) =>
         [
           `<div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>`,
-          input.discount > 0
-            ? `<div class="row"><span class="label">Discount</span><span class="value discount">− ${money(input.discount)}</span></div>`
+          discount > 0
+            ? `<div class="row"><span class="label">Discount${discountPct > 0 ? ` (${discountPct}%)` : ""}</span><span class="value discount">${money(discount)}</span></div>`
             : "",
-          service > 0
-            ? `<div class="row"><span class="label">Service${servicePct > 0 ? ` (${servicePct}%)` : ""}</span><span class="value">${money(service)}</span></div>`
+          serviceAmt > 0
+            ? `<div class="row"><span class="label">Service${servicePct > 0 ? ` (${servicePct}%)` : ""}</span><span class="value">${money(serviceAmt)}</span></div>`
             : "",
           delivery > 0
             ? `<div class="row"><span class="label">Delivery</span><span class="value">${money(delivery)}</span></div>`
             : "",
-          `<div class="row"><span class="label">GST (${gstPct}%)</span><span class="value">${money(gstAmt)}</span></div>`,
+          gstPct > 0 || gstAmt > 0
+            ? `<div class="row"><span class="label">GST (${gstPct}%)</span><span class="value">${money(gstAmt)}</span></div>`
+            : "",
         ]
           .filter(Boolean)
           .join("");
       parts.push(`
-      <div class="pay-compare">
+      <div class="pay-compare${stackCompare ? " pay-compare-stack" : ""}">
         <div class="pay-compare-col">
-          <div class="pay-compare-title">On Card Payment</div>
-          ${midRows(cardGstPct, cardGst)}
-          <div class="row grand pay-net"><span class="label">Net</span><span class="value">${money(cardNet)}</span></div>
+          <div class="pay-compare-title">${cardTitle}</div>
+          ${midRows(cardGstPct, cardTotals.tax, cardTotals.service)}
+          <div class="row grand pay-net"><span class="label">Net Total</span><span class="value">${money(cardTotals.total)}</span></div>
         </div>
         <div class="pay-compare-col">
-          <div class="pay-compare-title">On Cash Payment</div>
-          ${midRows(cashGstPct, cashGst)}
-          <div class="row grand pay-net"><span class="label">Net</span><span class="value">${money(cashNet)}</span></div>
+          <div class="pay-compare-title">${cashTitle}</div>
+          ${midRows(cashGstPct, cashTotals.tax, cashTotals.service)}
+          <div class="row grand pay-net"><span class="label">Net Total</span><span class="value">${money(cashTotals.total)}</span></div>
         </div>
       </div>`);
     }
@@ -937,33 +1041,61 @@ export function buildTicketHtml(input: PrintTicketInput): string {
             `<div class="row"><span class="label">${escapeHtml(PAYMENT_METHOD_LABELS[method] ?? method)}</span><span class="value">${formatMoney(amount, moneyCompact)}</span></div>`,
         )
         .join("");
-      parts.push(`<div class="totals pay-settled"><div class="pay-settled-title">Payment</div>${rows}</div>`);
+      const billTotal = Math.max(0, input.total ?? 0);
+      const cashReceived = Math.max(
+        0,
+        input.cashReceived ?? parseCashReceivedFromNotes(input.notes) ?? 0,
+      );
+      const changeDue = cashReceived > billTotal ? cashReceived - billTotal : 0;
+      const changeRows =
+        cashReceived > billTotal
+          ? `<div class="row"><span class="label">Cash Received</span><span class="value">${formatMoney(cashReceived, moneyCompact)}</span></div>
+             <div class="row grand pay-change"><span class="label">Change Due</span><span class="value">${formatMoney(changeDue, moneyCompact)}</span></div>`
+          : "";
+      parts.push(
+        `<div class="totals pay-settled"><div class="pay-settled-title">Payment</div>${rows}${changeRows}</div>`,
+      );
     }
 
     return parts.join("");
   })();
 
-  const metaRow = (label: string, value: string, emphasize = false, extraClass = "") =>
-    `<div class="meta-row${emphasize ? " meta-row-strong" : ""}${extraClass ? ` ${extraClass}` : ""}"><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${escapeHtml(value)}</span></div>`;
+  const metaRow = (label: string, value: string, emphasize = false, extraClass = "") => {
+    const v = value.trim();
+    if (!v) return "";
+    return `<div class="meta-row${emphasize ? " meta-row-strong" : ""}${extraClass ? ` ${extraClass}` : ""}"><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${escapeHtml(v)}</span></div>`;
+  };
 
   const receiptCashier = isReceipt ? staffNameForReceipt(input) : "";
+  const deliveryContact = resolveDeliveryPrintContact(input);
+  const receiptNotes = receiptNotesWithoutPackedDeliveryContact(
+    input.notes,
+    hasStructuredDeliveryContact(deliveryContact),
+  );
   const metaRows = isReceipt && fields
     ? [
-        // Keep ORD-# on its own line — combining with type wraps under the label.
-        fields.orderRef ? metaRow("Order", input.orderRef, true) : null,
+        // PRA invoice first — large & bold (Option 15).
         input.praFiscal?.invoiceNumber
           ? metaRow("PRA Invoice #", input.praFiscal.invoiceNumber, true, "meta-pra-invoice")
-          : null,
-        fields.orderType && input.modeLabel.trim()
-          ? metaRow("Type", input.modeLabel.trim(), true)
-          : null,
+          : "",
+        // Order number on its own line — large & clear for thermal print.
+        fields.orderRef && input.orderRef?.trim()
+          ? `<div class="meta-order-solo"><span class="meta-order-solo-label">Order</span><span class="meta-order-solo-value">${escapeHtml(input.orderRef.trim())}</span></div>`
+          : "",
+        fields.orderType ? metaRow("Type", input.modeLabel ?? "", true) : "",
         fields.tableLabel &&
         input.tableLabel?.trim() &&
         input.tableLabel.trim().toLowerCase() !== input.modeLabel.trim().toLowerCase()
-          ? metaRow("Table", input.tableLabel.trim(), true)
-          : null,
-        fields.billRef && input.billRef ? metaRow("Bill", input.billRef) : null,
-        fields.waiterName && receiptCashier ? metaRow("Cashier", receiptCashier) : null,
+          ? metaRow("Table", input.tableLabel, true)
+          : "",
+        fields.billRef ? metaRow("Bill", input.billRef ?? "", false, "meta-row-plain") : "",
+        fields.waiterName ? metaRow("Cashier", receiptCashier, false, "meta-row-plain") : "",
+        deliveryContact.customerName ? metaRow("Customer", deliveryContact.customerName, true) : "",
+        deliveryContact.customerPhone ? metaRow("Phone", deliveryContact.customerPhone, true) : "",
+        deliveryContact.customerAddress
+          ? metaRow("Address", deliveryContact.customerAddress, true)
+          : "",
+        deliveryContact.riderName ? metaRow("Rider", deliveryContact.riderName, true) : "",
       ]
         .filter(Boolean)
         .join("")
@@ -971,19 +1103,39 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         const mode = input.modeLabel.trim();
         const table = input.tableLabel?.trim() || "";
         const showTable = Boolean(table) && table.toLowerCase() !== mode.toLowerCase();
-        return [
-          `<span class="meta-chip meta-primary">${escapeHtml(input.orderRef)}</span>`,
-          `<span class="meta-chip meta-primary">${escapeHtml(mode)}</span>`,
+        const orderRef = input.orderRef?.trim() || "";
+        const detailChips = [
+          mode ? `<span class="meta-chip meta-primary">${escapeHtml(mode)}</span>` : null,
           showTable ? `<span class="meta-chip meta-primary">${escapeHtml(table)}</span>` : null,
-          input.billRef ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef)}</span>` : null,
-          input.waiterName ? `<span class="meta-chip">By: ${escapeHtml(input.waiterName)}</span>` : null,
+          input.billRef?.trim()
+            ? `<span class="meta-chip bill-ref">Bill ${escapeHtml(input.billRef.trim())}</span>`
+            : null,
+          input.waiterName?.trim()
+            ? `<span class="meta-chip">By: ${escapeHtml(input.waiterName.trim())}</span>`
+            : null,
+          deliveryContact.customerName
+            ? `<span class="meta-chip">${escapeHtml(deliveryContact.customerName)}</span>`
+            : null,
+          deliveryContact.customerPhone
+            ? `<span class="meta-chip">${escapeHtml(deliveryContact.customerPhone)}</span>`
+            : null,
+          deliveryContact.riderName
+            ? `<span class="meta-chip">Rider: ${escapeHtml(deliveryContact.riderName)}</span>`
+            : null,
           isOrderUpdate ? `<span class="meta-chip meta-update">UPDATE</span>` : null,
         ]
           .filter(Boolean)
           .join("");
+        const orderLine = orderRef
+          ? `<div class="meta-order-line"><span class="meta-chip meta-order-ref">${escapeHtml(orderRef)}</span></div>`
+          : "";
+        const detailLine = detailChips
+          ? `<div class="meta-detail-line">${detailChips}</div>`
+          : "";
+        return `${orderLine}${detailLine}`;
       })();
   const kotUpdateBanner = isOrderUpdate
-    ? `<div class="kot-update-banner">*** UPDATE — REVISED ORDER ***</div>`
+    ? `<div class="kot-update-banner">*** UPDATE REVISED ***</div>`
     : "";
 
   const kotTotalsBlock =
@@ -1017,6 +1169,24 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   // Price/Amount are receipt-only — kitchen tickets never show pricing to kitchen staff.
   const showAmtCol = isReceipt && fields!.itemAmount;
   const showItemHeaders = !isReceipt || fields!.itemHeaders;
+  // Column proportions match the reference receipt (QTY | ITEM | PRICE | AMOUNT).
+  const itemColGapPx = narrowPaper ? 4 : 6;
+  const itemGridCols = (() => {
+    if (showPriceCol && showQtyCol && showAmtCol) {
+      // Reference look: compact money cols on the right, ITEM fills the middle.
+      return narrowPaper
+        ? "12% minmax(0,1fr) 22% 24%"
+        : rollMm >= 100
+          ? "9% minmax(0,1fr) 16% 18%"
+          : "10% minmax(0,1fr) 18% 20%";
+    }
+    if (showQtyCol && showAmtCol) {
+      return narrowPaper ? "14% minmax(0,1fr) 28%" : "12% minmax(0,1fr) 24%";
+    }
+    if (showAmtCol) return "minmax(0,1fr) 28%";
+    if (showQtyCol) return "12% minmax(0,1fr)";
+    return "minmax(0,1fr)";
+  })();
   const displayBusinessName =
     isReceipt && billSettings.headerBusinessName.trim()
       ? billSettings.headerBusinessName.trim()
@@ -1029,7 +1199,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       : resolveBusinessLogoSrc(input.branchCode)
     : null;
   const businessLogoHtml = businessLogoSrc
-    ? `<div class="business-logo-wrap" style="text-align:${headerAlign};"><img class="business-logo" src="${escapeHtml(businessLogoSrc)}" alt="" width="72" height="72" style="display:block;margin:4px auto 0;width:72px;height:72px;object-fit:contain;" /></div>`
+    ? `<div class="business-logo-wrap" style="text-align:${headerAlign};"><img class="business-logo" src="${escapeHtml(businessLogoSrc)}" alt="" width="72" height="72" style="display:block;margin:4px auto 0;width:72px;height:72px;object-fit:contain;" onerror="this.parentElement.style.display='none'" /></div>`
     : "";
   const showHeaderSubtitle =
     isReceipt && fields!.headerSubtitle && billSettings.headerSubtitle.trim().length > 0;
@@ -1048,14 +1218,24 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const itemsHtml = showClearItems
     ? `<div class="clear-items">${clearItemBlocks}</div>`
     : showItemTable
-      ? `<table class="items${showAmtCol ? " has-amounts" : ""}">
+      ? isReceipt
+        ? `<div class="items-list${showAmtCol ? " has-amounts" : ""}${showPriceCol ? " has-price" : ""}">
+    ${showItemHeaders
+      ? `<div class="item-row item-head">
+        ${showQtyCol ? '<span class="item-qty">QTY</span>' : ""}
+        <span class="item-name">ITEM</span>
+        ${showPriceCol ? '<span class="item-price">PRICE</span>' : ""}
+        ${showAmtCol ? '<span class="item-amt">AMOUNT</span>' : ""}
+      </div>`
+      : ""}
+    ${lineRows}
+  </div>`
+        : `<table class="items${showAmtCol ? " has-amounts" : ""}">
     ${showItemHeaders
       ? `<thead>
       <tr>
         ${showQtyCol ? '<th class="qty">QTY</th>' : ""}
         <th class="item">ITEM</th>
-        ${showPriceCol ? '<th class="price">PRICE</th>' : ""}
-        ${showAmtCol ? '<th class="amt">AMOUNT</th>' : ""}
       </tr>
     </thead>`
       : ""}
@@ -1091,26 +1271,30 @@ export function buildTicketHtml(input: PrintTicketInput): string {
                 : "";
             case "meta":
               return metaRows
-                ? `<div class="meta-block${blockInkClass(billSettings, "meta")}" style="${blockStyleInline(billSettings, "meta", receiptFonts.metaChip)}">${metaRows}</div>`
+                ? `<div class="meta-block${blockInkClass(billSettings, "meta")}">${metaRows}</div>`
                 : "";
-            case "notes":
-              return fields.notes && input.notes
-                ? `<p class="notes${blockInkClass(billSettings, "notes")}" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(input.notes)}</p>`
+            case "notes": {
+              const noteText = isReceipt ? receiptNotes : input.notes?.trim();
+              return fields.notes && noteText
+                ? `<p class="notes${blockInkClass(billSettings, "notes")}" style="${blockStyleInline(billSettings, "notes", receiptFonts.notes)}">${escapeHtml(noteText)}</p>`
                 : "";
+            }
             case "timestamp":
               return fields.timestamp
                 ? `<div class="timestamp${blockInkClass(billSettings, "timestamp")}" style="text-align:center;${blockStyleInline(billSettings, "timestamp", receiptFonts.timestamp)}">${escapeHtml(printedAt)}</div>`
                 : "";
             case "items":
+              // Do not put font-size on the wrapper — large block styles create a blank
+              // strut/gap above the table that shows on thermal PNG print but not preview.
               return itemsHtml
-                ? `<div class="items-wrap${blockInkClass(billSettings, "items")}" style="${blockStyleInline(billSettings, "items", receiptFonts.itemName)}">${itemsHtml}</div>`
+                ? `<div class="items-wrap${blockInkClass(billSettings, "items")}">${itemsHtml}</div>`
                 : "";
             case "totals": {
               const body = input.praFiscal
                 ? `${totalsBlock}${paymentSectionsHtml}`
                 : paymentSectionsHtml || totalsBlock;
               return body
-                ? `<div class="totals-wrap${blockInkClass(billSettings, "totals")}" style="${blockStyleInline(billSettings, "totals", receiptFonts.rowLabel)}">${body}</div>`
+                ? `<div class="totals-wrap${blockInkClass(billSettings, "totals")}">${body}</div>`
                 : "";
             }
             case "footer":
@@ -1152,7 +1336,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt .branch-name {
       font-size: ${receiptFonts.branchName}px;
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: -0.02em;
       line-height: 1.2;
       text-align: center;
@@ -1189,54 +1373,91 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       margin: 0;
       padding: 4px 0;
       font-size: ${receiptFonts.docType}px;
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: 0.12em;
       text-transform: uppercase;
       text-align: center;
       color: #000;
       border-bottom: 1.5px solid #000;
     }
-    body.ticket-receipt .meta-block { margin: 4px 0 2px; padding: 0; }
+    body.ticket-receipt .meta-block { margin: 2px 0 0; padding: 0; }
+    body.ticket-receipt .meta-order-solo {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin: 2px 0 6px;
+      padding: 4px 0 6px;
+      border-bottom: 1px dashed #000;
+    }
+    body.ticket-receipt .meta-order-solo-label {
+      flex: 0 0 auto;
+      font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: ${Math.max(13, receiptFonts.metaChip - 1)}px;
+      color: #000;
+    }
+    body.ticket-receipt .meta-order-solo-value {
+      flex: 1 1 auto;
+      text-align: right;
+      font-weight: 400;
+      font-size: ${Math.max(22, receiptFonts.metaChipBillRef + 4)}px;
+      letter-spacing: 0.03em;
+      color: #000;
+      white-space: nowrap;
+    }
     body.ticket-receipt .meta-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
       gap: 10px;
-      margin: 1px 0;
+      margin: 0;
+      padding: 2px 0;
       font-size: ${receiptFonts.metaChip}px;
       line-height: 1.25;
+      min-height: 0;
     }
     body.ticket-receipt .meta-label {
       flex: 0 0 auto;
-      font-weight: 700;
+      font-weight: 400;
       color: #000;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      font-size: ${Math.max(10, receiptFonts.metaChip - 1)}px;
+      font-size: ${Math.max(14, receiptFonts.metaChip - 1)}px;
     }
     body.ticket-receipt .meta-value {
       flex: 1 1 auto;
       text-align: right;
-      font-weight: 700;
+      font-weight: 400;
       color: #000;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    body.ticket-receipt .meta-row-plain .meta-label,
+    body.ticket-receipt .meta-row-plain .meta-value {
+      font-weight: 400;
+    }
     body.ticket-receipt .meta-row-strong .meta-value {
-      font-weight: 800;
+      font-weight: 400;
       font-size: ${receiptFonts.metaChipBillRef}px;
       white-space: nowrap;
     }
     body.ticket-receipt .meta-pra-invoice {
-      align-items: flex-start;
-      margin: 4px 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
+      margin: 2px 0 8px;
+      padding: 4px 0 6px;
+      border-bottom: 1px dashed #000;
     }
     body.ticket-receipt .meta-pra-invoice .meta-label {
-      font-size: ${Math.max(10, receiptFonts.metaChip)}px;
+      font-size: ${Math.max(14, receiptFonts.metaChip)}px;
       font-weight: 700;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
+      width: 100%;
     }
     body.ticket-receipt .meta-pra-invoice .meta-value {
       white-space: normal !important;
@@ -1245,9 +1466,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       word-break: break-all;
       overflow-wrap: anywhere;
       line-height: 1.25;
-      font-size: 11px !important;
-      font-weight: 800;
-      letter-spacing: 0.02em;
+      font-size: ${Math.max(26, receiptFonts.metaChipBillRef + 6)}px !important;
+      font-weight: 700;
+      letter-spacing: 0;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
+      width: 100%;
+      text-align: left;
+    }
+    body.ticket-receipt .pay-change .value {
+      font-weight: 700;
     }
     body.ticket-receipt .notes {
       text-align: center;
@@ -1258,62 +1485,112 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt .timestamp {
       text-align: center;
-      margin: 6px 0 0;
-      padding: 0 0 4px;
+      margin: 4px 0 0;
+      padding: 0 0 3px;
       border-bottom: 1px dashed #000;
       font-size: ${receiptFonts.timestamp}px;
       font-weight: 500;
       color: #000;
       letter-spacing: 0.02em;
       text-transform: uppercase;
+      line-height: 1.2;
     }
-    body.ticket-receipt .items-wrap { margin: 0 0 2px; }
-    body.ticket-receipt table.items {
-      margin: 4px 0 0;
+    body.ticket-receipt .items-wrap {
+      margin: 2px 0 0;
+      padding: 0;
       width: 100%;
-      border-collapse: collapse;
+      max-width: 100%;
+      overflow: hidden;
+      font-size: inherit;
+      line-height: 0; /* kill wrapper strut — list sets its own line-height */
     }
-    body.ticket-receipt thead th {
-      font-size: ${receiptFonts.th}px;
-      padding: 6px 0 5px;
-      border-bottom: 1px dashed #000;
-      color: #000;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      font-weight: 700;
+    body.ticket-receipt .totals-wrap {
+      margin: 2px 0 0;
+      padding: 0;
+      width: 100%;
+      max-width: 100%;
+      font-size: inherit;
+      line-height: 0;
     }
-    body.ticket-receipt thead th.price { color: #000; font-weight: 600; }
-    body.ticket-receipt tbody td {
+    body.ticket-receipt .totals-wrap > * {
+      line-height: 1.25;
+    }
+    /* Items: full paper width; QTY / PRICE / AMT tracks scale with assigned mm. */
+    body.ticket-receipt .items-list {
+      margin: 2px 0 0;
+      padding: 0;
+      width: 100%;
+      max-width: 100%;
+      line-height: 1.2;
+      font-size: ${receiptFonts.itemName}px;
+    }
+    body.ticket-receipt .item-row {
+      display: grid;
+      grid-template-columns: ${itemGridCols};
+      column-gap: ${itemColGapPx}px;
+      align-items: baseline;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
       padding: ${compact ? "3px 0" : "4px 0"};
       border-bottom: 1px dashed #000;
-      vertical-align: top;
+      line-height: 1.25;
     }
-    body.ticket-receipt tbody tr:last-child td { border-bottom: 1px solid #000; }
-    body.ticket-receipt td.item-name {
+    body.ticket-receipt .item-row:last-child {
+      border-bottom: 1px solid #000;
+    }
+    body.ticket-receipt .item-row.item-head {
+      padding: 6px 0 5px;
+      border-bottom: 1px dashed #000;
+      font-size: ${receiptFonts.th}px;
+      font-weight: 400;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #000;
+    }
+    body.ticket-receipt .item-qty {
+      font-size: ${receiptFonts.qty}px;
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
+      color: #000;
+      text-align: left;
+      white-space: nowrap;
+    }
+    body.ticket-receipt .item-row.item-head .item-qty {
+      font-size: ${receiptFonts.th}px;
+    }
+    body.ticket-receipt .item-name {
+      min-width: 0;
       font-size: ${receiptFonts.itemName}px;
-      font-weight: 700;
+      font-weight: 400;
       color: #000;
       overflow-wrap: break-word;
       word-break: normal;
+      text-align: left;
     }
-    body.ticket-receipt td.qty {
-      font-size: ${receiptFonts.qty}px;
-      font-weight: 700;
-      color: #000;
+    body.ticket-receipt .item-row.item-head .item-name {
+      font-size: ${receiptFonts.th}px;
+      font-weight: 400;
     }
-    body.ticket-receipt td.price {
-      font-size: ${receiptFonts.amt}px;
-      font-weight: 500;
-      color: #000;
-      text-align: right;
+    body.ticket-receipt .item-price,
+    body.ticket-receipt .item-amt {
       white-space: nowrap;
-    }
-    body.ticket-receipt td.amt {
-      font-size: ${receiptFonts.amt}px;
-      font-weight: 700;
-      color: #000;
+      font-variant-numeric: tabular-nums;
       text-align: right;
-      white-space: nowrap;
+      color: #000;
+    }
+    body.ticket-receipt .item-price {
+      font-size: ${receiptFonts.amt}px;
+      font-weight: 400;
+    }
+    body.ticket-receipt .item-amt {
+      font-size: ${receiptFonts.amt}px;
+      font-weight: 400;
+    }
+    body.ticket-receipt .item-row.item-head .item-price,
+    body.ticket-receipt .item-row.item-head .item-amt {
+      font-size: ${receiptFonts.th}px;
+      font-weight: 400;
     }
     body.ticket-receipt .totals { border-top: none; padding-top: 4px; margin-top: 0; }
     body.ticket-receipt .row {
@@ -1325,12 +1602,12 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt .row .label {
       font-size: ${receiptFonts.rowLabel}px;
-      font-weight: 500;
+      font-weight: 400;
       color: #000;
     }
     body.ticket-receipt .row .value {
       font-size: ${receiptFonts.rowValue}px;
-      font-weight: 700;
+      font-weight: 400;
       color: #000;
     }
     body.ticket-receipt .row.grand {
@@ -1344,7 +1621,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     body.ticket-receipt .row.grand .value {
       color: #000;
       font-size: ${receiptFonts.grandValue}px;
-      font-weight: 800;
+      font-weight: 400;
     }
     body.ticket-receipt .footer {
       margin-top: ${compact ? "6px" : "8px"};
@@ -1352,7 +1629,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       border-top: 1px dashed #000;
       border-bottom: 1px solid #000;
       font-size: ${receiptFonts.footer}px;
-      font-weight: 600;
+      font-weight: 400;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       color: #000;
@@ -1365,7 +1642,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       text-align: center;
     }
     body.ticket-receipt .custom-line { margin: 1px 0; font-size: ${receiptFonts.notes}px; color: #000; white-space: pre-wrap; }
-    body.ticket-receipt .custom-line-bold { font-weight: 700; color: #000; }
+    body.ticket-receipt .custom-line-bold { font-weight: 400; color: #000; }
     body.ticket-receipt .ink-custom,
     body.ticket-receipt .ink-custom .meta-label,
     body.ticket-receipt .ink-custom .meta-value,
@@ -1382,9 +1659,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     body.ticket-receipt .clear-item:last-child { border-bottom: 1px solid #000; }
     body.ticket-receipt .clear-item-main { flex: 1 1 auto; min-width: 0; }
-    body.ticket-receipt .clear-item-name { font-size: ${receiptFonts.itemName}px; font-weight: 700; color: #000; }
+    body.ticket-receipt .clear-item-name { font-size: ${receiptFonts.itemName}px; font-weight: 400; color: #000; }
     body.ticket-receipt .clear-item-qty { margin-top: 2px; font-size: ${receiptFonts.amt}px; color: #000; }
-    body.ticket-receipt .clear-item-amt { font-size: ${Math.max(receiptFonts.amt, 12)}px; font-weight: 700; color: #000; white-space: nowrap; }
+    body.ticket-receipt .clear-item-amt { font-size: ${Math.max(receiptFonts.amt, 12)}px; font-weight: 400; color: #000; white-space: nowrap; }
   `
     : "";
 
@@ -1453,9 +1730,22 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     .meta {
       margin: ${narrowPaper ? "6px 0 8px" : "12px 0 14px"};
       display: flex;
+      flex-direction: column;
+      flex-wrap: nowrap;
+      align-items: center;
+      gap: ${narrowPaper ? "6px" : "8px"};
+      justify-content: center;
+    }
+    .meta-order-line {
+      width: 100%;
+      text-align: center;
+    }
+    .meta-detail-line {
+      display: flex;
       flex-wrap: wrap;
       gap: ${narrowPaper ? "3px 4px" : "4px 6px"};
       justify-content: center;
+      width: 100%;
     }
     .meta-chip {
       display: inline-block;
@@ -1476,15 +1766,28 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       color: #000;
       background: transparent;
     }
+    .meta-chip.meta-order-ref {
+      font-size: ${isReceipt ? receiptFonts.metaChip : kotBase + (narrowPaper ? 7 : 10)}px;
+      font-weight: 400;
+      color: #000;
+      background: #facc15;
+      border: ${narrowPaper ? "1px" : "1.5px"} solid #000;
+      border-radius: 2px;
+      padding: ${narrowPaper ? "5px 12px" : "8px 16px"};
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: keep-all;
+    }
     .meta-chip.meta-primary {
       font-size: ${isReceipt ? (emphasizeMeta ? receiptFonts.metaChip + 2 : receiptFonts.metaChip) : kotMetaFont}px;
-      font-weight: 800;
+      font-weight: 700;
       color: #000;
       background: #facc15;
       border: ${narrowPaper ? "1px" : "1.5px"} solid #000;
       border-radius: 2px;
       padding: ${kotChipPad};
-      /* Keep ORD-2 / Takeaway on one line — never split after the hyphen. */
+      /* Keep Takeaway / Table on one line — never split after the hyphen. */
       white-space: nowrap;
       overflow-wrap: normal;
       word-break: keep-all;
@@ -1502,15 +1805,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${isReceipt ? receiptFonts.timestamp : Math.max(9, kotBase - 1)}px;
       font-weight: 500;
       color: #000;
-      margin-bottom: ${narrowPaper ? "6px" : "14px"};
+      margin-bottom: ${isReceipt ? "0" : narrowPaper ? "6px" : "14px"};
       letter-spacing: 0.02em;
     }
     table {
-      width: 100%;
+      width: ${isReceipt ? "auto" : "100%"};
       max-width: 100%;
       border-collapse: collapse;
       margin: 0 0 ${narrowPaper ? "6px" : "10px"};
-      table-layout: fixed;
+      table-layout: ${isReceipt ? "auto" : "fixed"};
     }
     thead th {
       font-size: ${isReceipt ? receiptFonts.th : Math.max(9, kotBase - 1)}px;
@@ -1523,18 +1826,18 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       text-align: left;
     }
     thead th.qty {
-      width: ${narrowPaper ? "14%" : "12%"};
+      width: 1%;
       text-align: left;
       padding-left: 0;
       padding-right: ${narrowPaper ? "6px" : "8px"};
       white-space: nowrap;
     }
     thead th.item { text-align: left; width: auto; padding-left: ${narrowPaper ? "2px" : "6px"}; }
-    thead th.price { width: ${showPriceCol ? "18%" : "0"}; text-align: right; padding-left: 4px; white-space: nowrap; }
+    thead th.price { width: ${showPriceCol ? "1%" : "0"}; text-align: right; padding-left: 8px; white-space: nowrap; }
     thead th.amt {
-      width: ${narrowPaper ? "28%" : "22%"};
+      width: 1%;
       text-align: right;
-      padding-left: 4px;
+      padding-left: 8px;
       white-space: nowrap;
     }
     tbody td {
@@ -1661,32 +1964,6 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       white-space: nowrap;
       vertical-align: top;
     }
-    /* Customer receipt: clear QTY | ITEM | AMT columns (never merge headers). */
-    body.ticket-receipt table.items {
-      table-layout: fixed;
-      width: 100%;
-      border-collapse: collapse;
-    }
-    body.ticket-receipt table.items.has-amounts thead th.item,
-    body.ticket-receipt table.items.has-amounts td.item-name {
-      text-align: left;
-      padding-left: ${narrowPaper ? "2px" : "6px"};
-      padding-right: 4px;
-    }
-    body.ticket-receipt table.items.has-amounts td.qty,
-    body.ticket-receipt table.items.has-amounts thead th.qty {
-      width: ${narrowPaper ? "14%" : "12%"};
-      text-align: left !important;
-      padding-left: 0;
-      padding-right: ${narrowPaper ? "6px" : "8px"};
-      white-space: nowrap;
-      vertical-align: top;
-    }
-    body.ticket-receipt table.items.has-amounts thead th.amt,
-    body.ticket-receipt table.items.has-amounts td.amt {
-      width: ${narrowPaper ? "28%" : "22%"};
-      vertical-align: top;
-    }
     td.price {
       text-align: right;
       white-space: nowrap;
@@ -1695,7 +1972,6 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-variant-numeric: tabular-nums;
       color: #000;
       padding-right: 2px;
-      width: ${showPriceCol ? "18%" : "0"};
       vertical-align: top;
     }
     td.amt {
@@ -1704,7 +1980,6 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${receiptFonts.amt}px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
-      width: ${narrowPaper ? "28%" : "22%"};
       padding-left: 4px;
       padding-right: 0;
       overflow: visible;
@@ -1718,24 +1993,50 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     .pay-compare {
       display: flex;
-      gap: 8px;
+      flex-direction: row;
+      gap: ${narrowPaper ? "6px" : "8px"};
       border-top: none;
       margin-top: 8px;
       padding-top: 0;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    /* Narrow 58mm only: stack full-width. 80mm+ keeps side-by-side like the reference. */
+    .pay-compare.pay-compare-stack {
+      flex-direction: column;
+      gap: 6px;
     }
     .pay-compare-col {
       flex: 1 1 50%;
       min-width: 0;
+      width: auto;
       border: 1px solid #000;
-      padding: 5px 4px 4px;
+      padding: ${narrowPaper ? "4px 3px 3px" : "5px 4px 4px"};
+      box-sizing: border-box;
+      overflow: visible;
+    }
+    .pay-compare.pay-compare-stack .pay-compare-col {
+      flex: 0 0 auto;
+      width: 100%;
     }
     .pay-compare-title {
-      font-size: ${Math.max(9, (isReceipt ? receiptFonts.rowLabel : kotBase) - 1)}px;
-      font-weight: 700;
+      font-size: ${Math.max(10, (isReceipt ? receiptFonts.rowLabel : kotBase) - (narrowPaper ? 1 : 1))}px;
+      font-weight: ${isReceipt ? 400 : 600};
       text-align: center;
       margin-bottom: 4px;
       border-bottom: 1px dashed #000;
       padding-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pay-compare.pay-compare-stack .pay-compare-title {
+      font-size: ${Math.max(12, isReceipt ? receiptFonts.rowLabel : kotBase)}px;
+      letter-spacing: 0.04em;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: unset;
     }
     .pay-compare-col .row {
       display: flex;
@@ -1744,6 +2045,9 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       flex-wrap: nowrap;
       gap: 6px;
       margin: 2px 0;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
     }
     .pay-compare-col .row .label {
       flex: 1 1 auto;
@@ -1757,6 +2061,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
       text-align: right;
+      max-width: 55%;
+      overflow: hidden;
     }
     .pay-compare-col .row.pay-net {
       margin-top: 4px;
@@ -1765,14 +2071,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       align-items: center;
     }
     .pay-compare-col .row.pay-net .label {
-      font-weight: 800;
+      font-weight: ${isReceipt ? 400 : 700};
       white-space: nowrap;
       flex: 0 0 auto;
     }
     .pay-compare-col .row.pay-net .value {
-      font-weight: 800;
-      font-size: ${Math.max(11, (isReceipt ? receiptFonts.rowValue : kotBase) + 1)}px;
+      font-weight: ${isReceipt ? 400 : 700};
+      font-size: ${Math.max(13, (isReceipt ? receiptFonts.rowValue : kotBase) + 2)}px;
       margin-left: auto;
+      max-width: none;
     }
     .pay-settled {
       margin-top: 8px;
@@ -1780,9 +2087,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       padding-top: 6px;
     }
     .pay-settled-title {
-      font-weight: 700;
-      margin-bottom: 2px;
+      font-weight: 400;
+      font-size: ${isReceipt ? receiptFonts.rowLabel : kotBase}px;
+      margin-bottom: 4px;
       text-align: center;
+    }
+    .pay-settled .row .label,
+    .pay-settled .row .value {
+      font-weight: 400;
+      font-size: ${isReceipt ? receiptFonts.rowValue : kotBase}px;
     }
     .row {
       display: flex;
@@ -1905,7 +2218,8 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         overflow-x: hidden;
         margin: 0 auto;
       }
-      .meta-chip.meta-primary {
+      .meta-chip.meta-primary,
+      .meta-chip.meta-order-ref {
         background: #facc15 !important;
         border: 1.5px solid #000 !important;
         -webkit-print-color-adjust: exact;
@@ -1955,7 +2269,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     : ""}
   ${kotTotalsBlock}
   <div class="footer"><div class="kot-banner${isOrderUpdate ? " kot-banner-update" : ""}">${
-    isOrderUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"
+    isOrderUpdate ? "Kitchen copy — UPDATE REVISED" : "Kitchen copy — order"
   }</div></div>`
   }
   ${isReceipt && input.praFiscal ? buildPraReceiptFooterHtml(input.praFiscal) : ""}
@@ -2372,19 +2686,35 @@ export async function renderTicketHtmlToPngBytes(
     body.style.setProperty("-webkit-font-smoothing", "none");
     body.style.setProperty("font-smooth", "never");
 
-    const height = Math.ceil(Math.max(body.scrollHeight, body.offsetHeight, 120));
+    const height = Math.ceil(
+      Math.max(
+        body.scrollHeight,
+        body.offsetHeight,
+        htmlEl.scrollHeight,
+        80,
+      ),
+    );
+    // Trim trailing blank canvas — scrollHeight can include collapsed-margin ghosts.
     iframe.style.height = `${height}px`;
     iframe.style.overflow = "hidden";
+    body.style.height = "auto";
+    body.style.minHeight = "0";
+
+    const measured = Math.ceil(
+      Math.max(body.scrollHeight, body.getBoundingClientRect().height, 80),
+    );
+    iframe.style.height = `${measured}px`;
 
     const dataUrl = await toPng(body, {
       width: widthPx,
-      height,
+      height: measured,
       pixelRatio,
       backgroundColor: "#ffffff",
       cacheBust: true,
       style: {
         width: `${widthPx}px`,
         maxWidth: `${widthPx}px`,
+        height: "auto",
         margin: "0",
         overflow: "hidden",
         background: "#ffffff",
@@ -2519,22 +2849,25 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
           imageBase64 += String.fromCharCode(...png.subarray(i, i + chunk));
         }
         imageBase64 = btoa(imageBase64);
-        const queued = await submitEnterprisePrintJob({
-          branchCode: input.branchCode || settings.branchCode,
-          branchName: input.branchName,
-          printerName: input.printerName,
-          systemPrinterName,
-          orderId: input.orderRef ?? null,
-          payload: {
-            kind: input.kind === "kot" ? "kot" : "receipt",
-            html: styledHtml,
-            imageBase64,
-            systemPrinterName,
-            copies,
-            paperSize: paper,
-            orderRef: input.orderRef ?? null,
-          },
-        });
+                        const queued = await submitEnterprisePrintJob({
+                          branchCode: input.branchCode || settings.branchCode,
+                          branchName: input.branchName,
+                          printerName: input.printerName,
+                          systemPrinterName,
+                          orderId: input.orderRef ?? null,
+                          payload: {
+                            kind: input.kind === "kot" ? "kot" : "receipt",
+                            html: styledHtml,
+                            imageBase64,
+                            systemPrinterName,
+                            copies,
+                            paperSize: paper,
+                            orderRef: input.orderRef ?? null,
+                            meta: {
+                              customPaperWidthMm: thermal.customPaperWidthMm,
+                            },
+                          },
+                        });
         if (queued.queued || queued.printedDirect) {
           if (queued.printedDirect) {
             const { announcePrintJobDone } = await import("./branchPrintClient");
@@ -2556,6 +2889,20 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
   }
 
   if (systemPrinterName) {
+    // Browser / non-Tauri: Windows spooler is unavailable — always open the print dialog
+    // (Simple invoice + Close/Pay Real PRA both use this path).
+    if (!isDesktopAppRuntime()) {
+      const opened = await printHtmlDocumentAndWait(styledHtml, docTitle);
+      if (!opened) {
+        return {
+          ok: false,
+          usedNamedPrinter: false,
+          error: "Could not open the print dialog. Hard-refresh and try Print again.",
+        };
+      }
+      return { ok: true, usedNamedPrinter: false };
+    }
+
     // Never open XPS/OpenXPS Save As — remap to Microsoft Print to PDF.
     const targetPrinter = preferPdfOverXpsPrinter(systemPrinterName) ?? systemPrinterName;
 
@@ -2583,11 +2930,16 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
 
     const png = await renderTicketHtmlToPngBytes(styledHtml, paper, thermal.customPaperWidthMm);
     if (!png?.length) {
-      return {
-        ok: false,
-        usedNamedPrinter: false,
-        error: "Could not render receipt image for the printer.",
-      };
+      // Raster failed — still offer the dialog so Close/Print is not a dead end.
+      const opened = await printHtmlDocumentAndWait(styledHtml, docTitle);
+      if (!opened) {
+        return {
+          ok: false,
+          usedNamedPrinter: false,
+          error: "Could not render receipt image for the printer.",
+        };
+      }
+      return { ok: true, usedNamedPrinter: false };
     }
     const imgResult = await printImageToSystemPrinter({
       printerName: targetPrinter,
@@ -2610,10 +2962,28 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
       // ignore
     }
     if (imgResult.ok) return { ok: true, usedNamedPrinter: true };
+
+    // Browser / Tauri bridge unavailable — open OS dialog so Print still works (PDF or physical).
+    if (imgResult.unsupported) {
+      const opened = await printHtmlDocumentAndWait(styledHtml, docTitle);
+      if (!opened) {
+        return {
+          ok: false,
+          usedNamedPrinter: false,
+          error: imgResult.error ?? "Could not open the print dialog.",
+        };
+      }
+      return { ok: true, usedNamedPrinter: false };
+    }
+
+    // Physical Auto printer failed — do NOT open Windows dialog (that defaults to PDF).
+    // Surface the error so staff can fix USB / offline / wrong assignment.
     return {
       ok: false,
       usedNamedPrinter: false,
-      error: imgResult.error ?? "Named printer job failed.",
+      error:
+        imgResult.error ??
+        `Printer "${targetPrinter}" failed. Check USB/power, or re-link in Printer → Use for section.`,
     };
   }
 
@@ -2638,6 +3008,8 @@ export async function printTestPageAsync(
     branchCode?: string;
     paperSize?: PrinterPaperSize;
     thermal?: ThermalPrintSettings;
+    /** Stamp paper settings on the slip for physical verification. */
+    completeTestLabel?: boolean;
   },
 ): Promise<boolean> {
   const branchCode = options?.branchCode?.trim() || "TEST";
@@ -2651,9 +3023,17 @@ export async function printTestPageAsync(
     resolveBillPrintSettingsForReceipt(branchCode) ?? loadBillPrintSettings(branchCode);
   const sample = sampleBillPrintInput("BuchaSoft", branchCode);
   const copies = Math.max(1, options?.copies ?? 1);
+  const rollMm = paperWidthMm(paper, thermal.customPaperWidthMm);
+  const notes =
+    options?.completeTestLabel === true
+      ? `TEST · ${paper === "custom" ? `${rollMm}mm custom` : paper} · margin ${thermal.marginMm} · ${
+          thermal.receiptLayout === "clear" ? "Stacked" : thermal.showUnitPrice ? "Columns+Price" : "Columns"
+        }`
+      : sample.notes;
 
   const result = await printTicketDetailed({
     ...sample,
+    notes,
     kind: "receipt",
     paperSize: paper,
     thermal,
@@ -2664,6 +3044,10 @@ export async function printTestPageAsync(
       ...billSettings,
       documentTitle: billSettings.documentTitle || "Receipt",
       footerText: billSettings.footerText || "Thank you — visit again",
+      fields: {
+        ...billSettings.fields,
+        notes: options?.completeTestLabel ? true : billSettings.fields.notes,
+      },
     },
   });
   return result.ok;
@@ -2674,16 +3058,22 @@ export function billToPrintInput(
   branchCode: string,
   bill: Bill,
 ): Omit<PrintTicketInput, "kind"> {
+  const contact = parseDeliveryFieldsFromNotes(bill.notes);
+  const cashReceived = parseCashReceivedFromNotes(bill.notes);
   return {
     branchName,
     branchCode,
     orderRef: bill.orderRef ?? bill.billRef,
     billRef: bill.billRef,
-    modeLabel: billChannelLabel(bill.tableLabel),
-    tableLabel: bill.tableLabel,
     // Never print raw user UUIDs — resolve to email-based display name.
     waiterName: resolveSessionPrintName(bill.waiterName) || undefined,
     notes: bill.notes ?? undefined,
+    customerName: contact.customer || undefined,
+    customerPhone: contact.phone || undefined,
+    customerAddress: contact.address || undefined,
+    riderName: bill.riderName?.trim() || contact.riderName || undefined,
+    modeLabel: billChannelLabel(bill.tableLabel),
+    tableLabel: bill.tableLabel,
     lines: bill.lines.map((line) => ({
       label: line.label,
       qty: line.qty,
@@ -2699,6 +3089,7 @@ export function billToPrintInput(
     taxPct: bill.taxPct,
     discountPct: bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0,
     payments: bill.payments?.length ? bill.payments : undefined,
+    cashReceived: cashReceived > bill.total ? cashReceived : undefined,
   };
 }
 
@@ -2783,6 +3174,8 @@ export function kitchenTicketToKotPrint(
   const by = resolveSessionPrintName(
     options?.printedByName?.trim() || ticket.createdByName?.trim() || undefined,
   );
+  const ticketNotes = resolveTicketDeliveryNotes(ticket) ?? ticket.notes ?? undefined;
+  const contact = parseDeliveryFieldsFromNotes(ticketNotes);
 
   return {
     branchName,
@@ -2791,7 +3184,11 @@ export function kitchenTicketToKotPrint(
     modeLabel: billChannelLabel(ticket.stationLabel),
     tableLabel: ticket.stationLabel,
     waiterName: by || undefined,
-    notes: ticket.notes ?? undefined,
+    notes: ticketNotes,
+    customerName: contact.customer || undefined,
+    customerPhone: contact.phone || undefined,
+    customerAddress: contact.address || undefined,
+    riderName: ticket.riderName?.trim() || contact.riderName || undefined,
     lines: lines.length > 0 ? lines : [{ label: ticket.itemsSummary || "Items", qty: 1, unitPrice: 0 }],
     subtotal: 0,
     discount: 0,
@@ -2815,7 +3212,8 @@ export function posRecentOrderToReceiptPrint(
   }
 
   const settings = loadPosSettings(branchCode);
-  const taxPct = effectiveTaxPct(settings);
+  const mode = inferPosModeFromLabel(order.stationLabel ?? order.orderMode ?? "");
+  const taxPct = effectiveTaxPctForMode(settings, mode);
   const rawLines =
     order.detail.kind === "pending"
       ? order.detail.lines
@@ -2831,13 +3229,22 @@ export function posRecentOrderToReceiptPrint(
   }));
   const subtotal = lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0);
   const deliveryCharge = order.kitchenTicket?.deliveryChargePkr ?? 0;
+  const notes =
+    order.bill?.notes ??
+    resolveTicketDeliveryNotes(order.kitchenTicket ?? {}) ??
+    order.kitchenTicket?.notes ??
+    undefined;
+  const discountFromNotes = discountAmountFromTicketNotes(notes, subtotal);
+  const servicePct = effectiveServicePctForMode(settings, mode);
   const totals = computeTicketTotals(
     subtotal,
-    0,
-    settings.servicePct,
+    discountFromNotes,
+    servicePct,
     taxPct,
     deliveryCharge,
   );
+
+  const contact = parseDeliveryFieldsFromNotes(notes);
 
   return {
     branchName,
@@ -2849,6 +3256,15 @@ export function posRecentOrderToReceiptPrint(
       resolveSessionPrintName(order.bill?.waiterName) ||
       resolveSessionPrintName(order.kitchenTicket?.createdByName) ||
       undefined,
+    notes,
+    customerName: contact.customer || undefined,
+    customerPhone: contact.phone || undefined,
+    customerAddress: contact.address || undefined,
+    riderName:
+      order.bill?.riderName?.trim() ||
+      order.kitchenTicket?.riderName?.trim() ||
+      contact.riderName ||
+      undefined,
     lines,
     subtotal: totals.subtotal,
     discount: totals.discount,
@@ -2856,7 +3272,7 @@ export function posRecentOrderToReceiptPrint(
     tax: totals.tax,
     deliveryCharge: totals.deliveryCharge > 0 ? totals.deliveryCharge : undefined,
     total: totals.total,
-    servicePct: settings.servicePct,
+    servicePct,
     taxPct,
     discountPct: totals.discountPct,
   };

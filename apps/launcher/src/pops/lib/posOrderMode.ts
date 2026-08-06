@@ -61,8 +61,13 @@ export function posDeliveryNotes(
   customerName: string,
   phone: string,
   address: string,
+  riderName?: string,
 ): string | undefined {
-  return posCustomerOrderNotes("Delivery", customerName, phone, address);
+  const base = posCustomerOrderNotes("Delivery", customerName, phone, address);
+  const rider = riderName?.trim();
+  if (!rider) return base;
+  if (!base) return `Delivery · Rider: ${rider}`;
+  return `${base} · Rider: ${rider}`;
 }
 
 /** Customer / phone / address notes for takeaway, delivery, online, etc. */
@@ -97,10 +102,9 @@ export const POS_CUSTOMER_PANEL_MODES: readonly PosOrderMode[] = [
 
 /**
  * Modes where confirming customer details auto-prints the invoice/receipt
- * (Training / Ready-style counter orders — takeaway & pickup channels).
+ * (counter pickup channels — not takeaway: takeaway only saves details).
  */
 export const POS_CUSTOMER_AUTOPRINT_MODES: readonly PosOrderMode[] = [
-  "takeaway",
   "online",
   "foodpanda",
 ];

@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { DELIVERY_STATUS_LABELS, type DeliveryStatus } from "@platform/contracts";
 import { fetchMyDeliveries } from "../src/api/delivery";
 import { fetchBranchMenu } from "../src/api/menu";
 import { EmptyState, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
@@ -12,6 +13,7 @@ import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 export default function RiderDeliveriesScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
@@ -106,22 +108,28 @@ export default function RiderDeliveriesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   scroll: { gap: 12, paddingBottom: 24 },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 14,
     gap: 6,
   },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerRight: { alignItems: "flex-end", gap: 6 },
-  ref: { color: colors.text, fontWeight: "700", fontSize: 15 },
-  customer: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  address: { color: colors.muted, fontSize: 13 },
-  items: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  total: { color: colors.accent, fontSize: 15, fontWeight: "800" },
-  meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
-});
+  ref: { color: c.text, fontWeight: "700", fontSize: 15 },
+  customer: { color: c.text, fontSize: 16, fontWeight: "600" },
+  address: { color: c.muted, fontSize: 13 },
+  items: { color: c.muted, fontSize: 12, marginTop: 2 },
+  total: { color: c.accent, fontSize: 15, fontWeight: "800" },
+  meta: { color: c.muted, fontSize: 12, marginTop: 4 },
+
+  }));
+}
+

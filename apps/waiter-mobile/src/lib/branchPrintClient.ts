@@ -236,11 +236,9 @@ export async function submitSilentPrintJob(
 }
 
 /**
- * Try silent print paths — each mode is independent; first success wins (no multi-path leak).
- * - Live: API only (EXE claims) — never uses LAN
- * - IP: preferred PC IP only (no discover)
- * - Server: LAN discover / preferred from discover
- * Returns true if a silent path accepted the job (no Expo dialog needed).
+ * Try silent print via exactly one transport (Live XOR IP XOR Server).
+ * Cascading Live→IP→Server caused duplicate EXE PDF dialogs when Live reached
+ * the API but the phone also fell through to LAN after a flaky response.
  */
 export async function trySilentBranchPrint(input: {
   branchCode: string;
@@ -251,24 +249,29 @@ export async function trySilentBranchPrint(input: {
   payload: PrintJobPayload;
 }): Promise<boolean> {
   const { loadMobilePrinterSettings } = await import("./mobilePrinterSettings");
+  const { resolveExclusivePrintTransport } = await import("./printDedupe");
   const settings = await loadMobilePrinterSettings();
   if (!settings.autoPrint) return false;
+
+  const transport = resolveExclusivePrintTransport(settings);
+  if (!transport) return false;
 
   // Strip any accidental OS/virtual printer names from mobile payload.
   const payload: PrintJobPayload = {
     ...input.payload,
+    copies: 1,
     systemPrinterName: null,
     meta: {
       ...(input.payload.meta && typeof input.payload.meta === "object" ? input.payload.meta : {}),
       userId: input.userId ?? null,
+      source: "waiter-mobile",
     },
   };
 
   // Soft profile hint only (Kitchen 1 / Cashier) — desktop maps via POS routing.
   const printerName = input.printerName?.trim() || null;
 
-  // 1) Live link — completely separate from IP / LAN
-  if (settings.modeLive) {
+  if (transport === "live") {
     try {
       const { createCloudPrintJob } = await import("../api/printing");
       const cloud = await createCloudPrintJob({
@@ -279,49 +282,41 @@ export async function trySilentBranchPrint(input: {
         payload,
         deviceLabel: "waiter-mobile",
       });
-      if (cloud.ok) return true;
+      return cloud.ok;
     } catch {
-      // Live failed — fall through only if other modes ON
+      return false;
     }
   }
 
-  // 2) IP attach — only the manually connected preferred PC (no LAN scan)
-  if (settings.modeIp) {
+  if (transport === "ip") {
     const preferred = await loadPreferredBranchServer();
-    if (preferred?.localIp) {
-      const probe = await probeBranchServer(preferred);
-      if (probe.ok) {
-        const result = await submitSilentPrintJob(preferred, {
-          branchCode: input.branchCode,
-          printerName,
-          orderId: input.orderId ?? null,
-          userId: input.userId ?? null,
-          deviceLabel: "waiter-mobile-ip",
-          payload,
-        });
-        if (result.ok) return true;
-      }
-    }
+    if (!preferred?.localIp) return false;
+    const probe = await probeBranchServer(preferred);
+    if (!probe.ok) return false;
+    const result = await submitSilentPrintJob(preferred, {
+      branchCode: input.branchCode,
+      printerName,
+      orderId: input.orderId ?? null,
+      userId: input.userId ?? null,
+      deviceLabel: "waiter-mobile-ip",
+      payload,
+    });
+    return result.ok;
   }
 
-  // 3) Computer as server — LAN discover only (separate from manual IP)
-  if (settings.modeServer) {
-    const found = await discoverBranchPrintServers({ branchCode: input.branchCode });
-    const server = found[0] ?? null;
-    if (server) {
-      const result = await submitSilentPrintJob(server, {
-        branchCode: input.branchCode,
-        printerName,
-        orderId: input.orderId ?? null,
-        userId: input.userId ?? null,
-        deviceLabel: "waiter-mobile-lan",
-        payload,
-      });
-      if (result.ok) return true;
-    }
-  }
-
-  return false;
+  // transport === "server"
+  const found = await discoverBranchPrintServers({ branchCode: input.branchCode });
+  const server = found[0] ?? null;
+  if (!server) return false;
+  const result = await submitSilentPrintJob(server, {
+    branchCode: input.branchCode,
+    printerName,
+    orderId: input.orderId ?? null,
+    userId: input.userId ?? null,
+    deviceLabel: "waiter-mobile-lan",
+    payload,
+  });
+  return result.ok;
 }
 
 /** Manually enroll a server by IP (settings UI). */

@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -40,6 +39,7 @@ import {
   StatusBadge,
   colors,
 } from "../src/components/ui";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import { formatPkr, formatTimeAgo, kitchenStatusLabel } from "../src/lib/orderDisplay";
 import { matchesTable, newOrderRef, type CartLine, type TableDraft } from "../src/lib/orderDrafts";
 import {
@@ -70,10 +70,15 @@ import {
 } from "../src/lib/orderMode";
 import { resolveStaffRole, isCashierRole } from "../src/lib/roles";
 import { printBillReceipt, printCartBill, printCartOrder, printKitchenOrder } from "../src/lib/printBill";
-import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS } from "../src/lib/posTaxSettings";
+import { cartToKotBaseline, diffKotLines, type KotBaselineLine } from "../src/lib/kotLineDelta";
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, posTaxSettingsFromApi } from "../src/lib/posTaxSettings";
+import { fetchTaxFeatures } from "../src/api/admin";
+import { fetchTaxSettings } from "../src/api/accounting";
+import { resolveAutoPraMode } from "../src/lib/praIssueFlow";
+import { releaseTableAfterBillClose } from "../src/lib/releaseTableAfterClose";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
+const EMPTY_TAX = DEFAULT_POS_TAX_SETTINGS;
 
 function emptyDraft(orderRef: string): TableDraft {
   return { cart: [], notes: "", orderRef };
@@ -86,6 +91,7 @@ function kitchenAccent(status: string): string {
 }
 
 export default function OrderScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const params = useLocalSearchParams<{ editTicketId?: string; editBillId?: string }>();
   const queryClient = useQueryClient();
@@ -116,7 +122,11 @@ export default function OrderScreen() {
   const appliedEditRef = useRef<string | null>(null);
   const sendLockRef = useRef(false);
   const billLockRef = useRef(false);
+  const printLockRef = useRef(false);
+  /** Cart snapshot when edit started — UPDATE KOT prints only the delta. */
+  const kotBaselineRef = useRef<KotBaselineLine[] | null>(null);
   const [orderWriteBusy, setOrderWriteBusy] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
@@ -152,6 +162,22 @@ export default function OrderScreen() {
     enabled: Boolean(branchCode) && orderMode === "delivery",
     queryFn: () => fetchRiders(branchCode),
   });
+
+  const taxQuery = useQuery({
+    queryKey: ["tax-features"],
+    queryFn: fetchTaxFeatures,
+    staleTime: 60_000,
+  });
+
+  const posTaxQuery = useQuery({
+    queryKey: ["pos-tax-settings", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchTaxSettings(branchCode!),
+    staleTime: 30_000,
+  });
+  const TAX_SETTINGS = posTaxQuery.data
+    ? posTaxSettingsFromApi(posTaxQuery.data)
+    : EMPTY_TAX;
 
   const tables = useMemo(() => {
     return (floorQuery.data?.tables ?? []).filter((t) => t.isActive);
@@ -243,7 +269,14 @@ export default function OrderScreen() {
   }
 
   function combinedOrderNotes(): string | undefined {
-    const delivery = orderMode === "delivery" ? deliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress) : undefined;
+    const riderName =
+      orderMode === "delivery" && deliveryRiderId
+        ? activeRiders.find((r) => r.id === deliveryRiderId)?.name
+        : undefined;
+    const delivery =
+      orderMode === "delivery"
+        ? deliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress, riderName)
+        : undefined;
     const kitchen = notes.trim();
     if (delivery && kitchen) return `${delivery} · ${kitchen}`;
     return delivery ?? (kitchen || undefined);
@@ -269,7 +302,7 @@ export default function OrderScreen() {
         : `Table ${activeTableId} is booked. Close or complete the current order first.`;
     }
     if (orderMode === "delivery") {
-      if (activeRiders.length === 0) return "Add an active rider in the desktop Delivery module first.";
+      if (activeRiders.length === 0) return "No active riders for this branch. Open the Delivery screen once or create a Rider user.";
       if (!deliveryRiderId) return "Select a rider for this delivery order.";
     }
     return null;
@@ -304,6 +337,7 @@ export default function OrderScreen() {
     setTableId(mode === "dine-in" ? tableKey : null);
     setDeliveryRiderId(ticket.riderId ?? "");
     setDeliveryCharge(String(ticket.deliveryChargePkr ?? 0));
+    kotBaselineRef.current = cartToKotBaseline(loadedCart);
     setDrafts((prev) => ({
       ...prev,
       [tableKey]: {
@@ -313,7 +347,7 @@ export default function OrderScreen() {
       },
     }));
     setShowMenu(true);
-    setNotice("Editing order — you can add items or increase qty. Printed qty cannot be reduced.");
+    setNotice("Editing order — change items, then update. Kitchen gets UPDATE REVISED with only changed lines.");
   }
 
   function applyBillEdit(bill: Bill): void {
@@ -321,6 +355,7 @@ export default function OrderScreen() {
     const loadedCart = cartFromBill(menuItems, bill);
     setEditingOrder({ kind: "bill", billId: bill.id });
     setTableId(tableKey);
+    kotBaselineRef.current = cartToKotBaseline(loadedCart);
     setDrafts((prev) => ({
       ...prev,
       [tableKey]: {
@@ -330,7 +365,7 @@ export default function OrderScreen() {
       },
     }));
     setShowMenu(true);
-    setNotice("Editing held bill — update items, then save changes.");
+    setNotice("Editing held bill — update items, then save. Receipt prints as UPDATE REVISED.");
   }
 
   function cancelEdit(): void {
@@ -412,7 +447,7 @@ export default function OrderScreen() {
   const subtotal = cart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
   const deliveryExtra =
     orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0;
-  const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
+  const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash", orderMode);
   const { service, servicePct, tax, taxPct, total: foodTotal, cashTaxPct, cardTaxPct, cashTax, cardTax, cashTotal, cardTotal } =
     totals;
   const total = foodTotal + deliveryExtra;
@@ -492,23 +527,41 @@ export default function OrderScreen() {
     },
     onSuccess: async (ticket) => {
       const wasEdit = editingOrder?.kind === "ticket";
+      const baseline = kotBaselineRef.current;
+      const deltaLines =
+        wasEdit && baseline
+          ? diffKotLines(baseline, cart).map((d) => ({
+              label: d.label,
+              qty: d.qty,
+              unitPrice: d.unitPrice,
+              menuItemId: d.menuItemId,
+              categoryId: d.categoryId,
+            }))
+          : null;
       updateDraft({ cart: [], notes: "" });
       setEditingOrder(null);
       appliedEditRef.current = null;
+      kotBaselineRef.current = null;
       setShowMenu(false);
       invalidateOrderFeeds();
-      const printed = await printKitchenOrder(branch!.name, branch!.code, ticket, menuItems, {
-        isOrderUpdate: wasEdit,
-      });
-      setNotice(
-        wasEdit
-          ? printed
-            ? "Order updated — print request sent (EXE will print)."
-            : "Order updated successfully."
-          : printed
-            ? "Order sent — print request to desktop (Live/IP/Server)."
-            : "Order sent to kitchen successfully.",
-      );
+      let printed = false;
+      if (wasEdit && deltaLines && deltaLines.length === 0) {
+        setNotice("Order updated (no item changes — kitchen not reprinted).");
+      } else {
+        printed = await printKitchenOrder(branch!.name, branch!.code, ticket, menuItems, {
+          isOrderUpdate: wasEdit,
+          ...(deltaLines && deltaLines.length > 0 ? { linesOverride: deltaLines } : {}),
+        });
+        setNotice(
+          wasEdit
+            ? printed
+              ? "Order updated — UPDATE REVISED sent (changed items only)."
+              : "Order updated successfully."
+            : printed
+              ? "Order sent — print request to desktop (Live/IP/Server)."
+              : "Order sent to kitchen successfully.",
+        );
+      }
       if (wasEdit) router.replace("/order");
     },
     onError: (err: Error) => setNotice(err.message),
@@ -546,7 +599,7 @@ export default function OrderScreen() {
       const tableLabel = stationLabelForMode(orderMode, activeTableId);
       const payloadNotes = combinedOrderNotes();
       const billSubtotal = cart.reduce((s, l) => s + l.unitPrice * l.qty, 0);
-      const billTotals = calcServiceTaxTotals(billSubtotal, TAX_SETTINGS, "cash");
+      const billTotals = calcServiceTaxTotals(billSubtotal, TAX_SETTINGS, "cash", orderMode);
       const billDelivery =
         orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0;
       const billTotal = billTotals.total + billDelivery;
@@ -588,16 +641,35 @@ export default function OrderScreen() {
       updateDraft({ cart: [], notes: "" });
       setEditingOrder(null);
       appliedEditRef.current = null;
+      const completed = bill.status === "completed";
+      if (completed && branchCode) {
+        await releaseTableAfterBillClose(branchCode, bill);
+      }
       invalidateOrderFeeds();
       const held = bill.status === "held";
       let message = wasEdit
         ? `Held bill ${bill.billRef} updated.`
         : held
           ? `Bill ${bill.billRef} saved on hold — cashier can close it.`
-          : `Bill ${bill.billRef} created and paid.`;
+          : `Bill ${bill.billRef} created and paid — table freed.`;
       if (branch) {
-        const printed = await printBillReceipt(branch.name, branch.code, bill);
-        if (printed) message = `${message} Receipt sent to printer.`;
+        const praOn = Boolean(
+          resolveAutoPraMode({
+            praFakeEnabled: taxQuery.data?.praFakeEnabled,
+            praRealEnabled: taxQuery.data?.praRealEnabled,
+          }),
+        );
+        // Cashier pay/create: Close semantics (PRA when Active). Held save: simple slip.
+        // Held bill edit: UPDATE REVISED banner like POS revised receipt.
+        const printed = await printBillReceipt(branch.name, branch.code, bill, {
+          embedPra: completed && praOn,
+          isOrderUpdate: wasEdit,
+        });
+        if (printed) {
+          message = wasEdit
+            ? `${message} UPDATE REVISED receipt sent.`
+            : `${message} Receipt sent to printer.`;
+        }
       }
       setNotice(message);
       if (wasEdit) router.replace("/order");
@@ -636,6 +708,7 @@ export default function OrderScreen() {
       else next.push(built);
       return { cart: next };
     });
+    setSearch("");
     setNotice(null);
   }
 
@@ -677,6 +750,24 @@ export default function OrderScreen() {
     }));
   }
 
+  /** Changed lines for UPDATE REVISED KOT while editing a kitchen ticket. */
+  function editKotDeltaLines(): Array<{
+    label: string;
+    qty: number;
+    unitPrice: number;
+    menuItemId?: string;
+    categoryId?: string;
+  }> | null {
+    if (editingOrder?.kind !== "ticket" || !kotBaselineRef.current) return null;
+    return diffKotLines(kotBaselineRef.current, cart).map((d) => ({
+      label: d.label,
+      qty: d.qty,
+      unitPrice: d.unitPrice,
+      menuItemId: d.menuItemId,
+      categoryId: d.categoryId,
+    }));
+  }
+
   function selectMode(mode: MobileOrderMode): void {
     if (editingOrder) return;
     setOrderMode(mode);
@@ -687,6 +778,8 @@ export default function OrderScreen() {
         ...prev,
         [mode]: prev[mode] ?? emptyDraft(newOrderRef()),
       }));
+      // Takeaway / delivery / etc. — jump straight into menu (no Browse menu tap).
+      setShowMenu(true);
     }
   }
 
@@ -694,21 +787,25 @@ export default function OrderScreen() {
     if (editingOrder) return;
     setSelectedSectionId(sectionId);
     setTableSearch("");
-    setShowMenu(false);
     setNotice(null);
     // Keep current table if it belongs to this section; otherwise pick first free table.
     const inSection = tables.filter((t) => t.sectionId === sectionId);
-    if (tableId && inSection.some((t) => t.tableNumber === tableId)) return;
+    if (tableId && inSection.some((t) => t.tableNumber === tableId)) {
+      setShowMenu(true);
+      return;
+    }
     const firstFree = inSection.find((t) => t.bookingStatus !== "booked");
     const next = firstFree?.tableNumber ?? inSection[0]?.tableNumber ?? null;
     if (next) selectTable(next);
-    else setTableId(null);
+    else {
+      setTableId(null);
+      setShowMenu(false);
+    }
   }
 
   function selectTable(tableNumber: string): void {
     if (editingOrder) return;
     setTableId(tableNumber);
-    setShowMenu(false);
     const floorTable = tables.find((t) => t.tableNumber === tableNumber);
     if (floorTable?.sectionId) {
       setSelectedSectionId(floorTable.sectionId);
@@ -721,6 +818,9 @@ export default function OrderScreen() {
     }
     const occ = occupancyForTable(tableOccupancy, tableNumber);
     const booked = floorTable?.bookingStatus === "booked" || Boolean(occ);
+    const lockedByOther = Boolean(occ && !occ.mine);
+    // Open menu automatically so staff can order without tapping Browse menu.
+    setShowMenu(!lockedByOther);
     if (!booked) {
       setNotice(`Table ${tableNumber} is free.`);
       return;
@@ -966,7 +1066,9 @@ export default function OrderScreen() {
             {ridersQuery.isLoading ? (
               <ActivityIndicator color={colors.accent} />
             ) : activeRiders.length === 0 ? (
-              <Muted>Add active riders in the desktop Delivery module for this branch.</Muted>
+              <Muted>
+                No active riders for this branch yet. Open Delivery on desktop once (or create a Rider user) — they will appear here automatically.
+              </Muted>
             ) : (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableRow}>
                 {activeRiders.map((rider) => (
@@ -1077,27 +1179,53 @@ export default function OrderScreen() {
               {editingOrder?.kind !== "bill" ? (
                 <View style={styles.actionHalf}>
                   <Button
-                    label="Print order"
+                    label={
+                      printBusy
+                        ? "Printing…"
+                        : editingOrder?.kind === "ticket"
+                          ? "Print UPDATE"
+                          : "Print order"
+                    }
                     variant="ghost"
-                    disabled={Boolean(validateOrderTarget())}
+                    disabled={Boolean(validateOrderTarget()) || printBusy}
                     onPress={() => {
+                      if (printLockRef.current || printBusy) return;
+                      printLockRef.current = true;
+                      setPrintBusy(true);
                       void (async () => {
-                        const ok = await printCartOrder({
-                          branchName: branch.name,
-                          branchCode: branch.code,
-                          orderRef,
-                          stationLabel: stationLabelForMode(orderMode, activeTableId),
-                          waiterName: waiterEmail,
-                          notes: combinedOrderNotes() ?? null,
-                          lines: cartLines(),
-                          total,
-                        });
-                        if (ok) markCartPrinted();
-                        setNotice(
-                          ok
-                            ? "Print order sent. Printed qty is locked — you can only increase."
-                            : "Could not print order.",
-                        );
+                        try {
+                          const isTicketEdit = editingOrder?.kind === "ticket";
+                          const deltaLines = isTicketEdit ? editKotDeltaLines() : null;
+                          if (isTicketEdit && deltaLines && deltaLines.length === 0) {
+                            setNotice("No item changes — kitchen not reprinted.");
+                            return;
+                          }
+                          const ok = await printCartOrder({
+                            branchName: branch.name,
+                            branchCode: branch.code,
+                            orderRef,
+                            stationLabel: stationLabelForMode(orderMode, activeTableId),
+                            waiterName: waiterEmail,
+                            notes: combinedOrderNotes() ?? null,
+                            lines:
+                              deltaLines && deltaLines.length > 0
+                                ? deltaLines
+                                : cartLines(),
+                            total,
+                            isOrderUpdate: isTicketEdit,
+                          });
+                          if (ok) markCartPrinted();
+                          setNotice(
+                            ok
+                              ? isTicketEdit
+                                ? "UPDATE REVISED sent (changed items only)."
+                                : "Print order sent. Printed qty is locked — you can only increase."
+                              : "Could not print order.",
+                          );
+                        } finally {
+                          printLockRef.current = false;
+                          setPrintBusy(false);
+                        }
                       })();
                     }}
                   />
@@ -1105,37 +1233,58 @@ export default function OrderScreen() {
               ) : null}
               <View style={editingOrder?.kind !== "bill" ? styles.actionHalf : undefined}>
                 <Button
-                  label="Print bill"
-                  disabled={Boolean(validateOrderTarget())}
+                  label={
+                    printBusy
+                      ? "Printing…"
+                      : editingOrder
+                        ? "Print UPDATE bill"
+                        : "Print bill"
+                  }
+                  disabled={Boolean(validateOrderTarget()) || printBusy}
                   onPress={() => {
+                    if (printLockRef.current || printBusy) return;
+                    printLockRef.current = true;
+                    setPrintBusy(true);
                     void (async () => {
-                      const ok = await printCartBill({
-                        branchName: branch.name,
-                        branchCode: branch.code,
-                        orderRef,
-                        tableLabel: stationLabelForMode(orderMode, activeTableId),
-                        waiterName: waiterEmail,
-                        lines: cartLines().map((l) => ({
-                          label: l.label,
-                          qty: l.qty,
-                          unitPrice: l.unitPrice ?? 0,
-                        })),
-                        subtotal,
-                        service,
-                        servicePct,
-                        tax,
-                        taxPct,
-                        total,
-                        deliveryChargePkr:
-                          orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
-                        cashTaxPct,
-                        cardTaxPct,
-                        cashTax,
-                        cardTax,
-                        cashTotal: cashTotal + deliveryExtra,
-                        cardTotal: cardTotal + deliveryExtra,
-                      });
-                      setNotice(ok ? "Bill sent to printer." : "Could not print bill.");
+                      try {
+                        const ok = await printCartBill({
+                          branchName: branch.name,
+                          branchCode: branch.code,
+                          orderRef,
+                          tableLabel: stationLabelForMode(orderMode, activeTableId),
+                          waiterName: waiterEmail,
+                          lines: cartLines().map((l) => ({
+                            label: l.label,
+                            qty: l.qty,
+                            unitPrice: l.unitPrice ?? 0,
+                          })),
+                          subtotal,
+                          service,
+                          servicePct,
+                          tax,
+                          taxPct,
+                          total,
+                          deliveryChargePkr:
+                            orderMode === "delivery" ? Math.max(0, Number(deliveryCharge) || 0) : 0,
+                          cashTaxPct,
+                          cardTaxPct,
+                          cashTax,
+                          cardTax,
+                          cashTotal: cashTotal + deliveryExtra,
+                          cardTotal: cardTotal + deliveryExtra,
+                          isOrderUpdate: Boolean(editingOrder),
+                        });
+                        setNotice(
+                          ok
+                            ? editingOrder
+                              ? "UPDATE REVISED bill sent to printer."
+                              : "Bill sent to printer."
+                            : "Could not print bill.",
+                        );
+                      } finally {
+                        printLockRef.current = false;
+                        setPrintBusy(false);
+                      }
                     })();
                   }}
                 />
@@ -1316,7 +1465,12 @@ export default function OrderScreen() {
                           (sum, line) => sum + line.unitPrice * line.qty,
                           0,
                         );
-                        const kotTotals = calcServiceTaxTotals(kotSubtotal, TAX_SETTINGS, "cash");
+                        const kotTotals = calcServiceTaxTotals(
+                          kotSubtotal,
+                          TAX_SETTINGS,
+                          "cash",
+                          orderMode,
+                        );
                         const ok = await printCartBill({
                           branchName: branch.name,
                           branchCode: branch.code,
@@ -1464,7 +1618,10 @@ export default function OrderScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   screen: {
     paddingBottom: 0,
   },
@@ -1484,18 +1641,18 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   branchName: {
-    color: colors.text,
+    color: c.text,
     fontSize: 18,
     fontWeight: "700",
   },
   branchMeta: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
   },
   refBadge: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
@@ -1503,14 +1660,14 @@ const styles = StyleSheet.create({
     minWidth: 88,
   },
   refLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 10,
     fontWeight: "600",
     letterSpacing: 0.6,
     textTransform: "uppercase",
   },
   refValue: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 12,
     fontWeight: "700",
     fontFamily: "monospace",
@@ -1519,12 +1676,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   sectionTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 16,
     fontWeight: "700",
   },
   sectionHint: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     marginTop: 2,
   },
@@ -1542,7 +1699,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   orderTotal: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 18,
     fontWeight: "700",
   },
@@ -1550,17 +1707,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 20,
     gap: 6,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderStyle: "dashed",
   },
   emptyCartIcon: {
     fontSize: 28,
   },
   emptyCartText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
   },
   cartList: {
@@ -1571,10 +1728,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 12,
   },
   cartLineCopy: {
@@ -1582,13 +1739,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   cartLineName: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "600",
     lineHeight: 20,
   },
   cartLinePrice: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     fontWeight: "500",
   },
@@ -1596,18 +1753,18 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   fieldLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.6,
     textTransform: "uppercase",
   },
   notesInput: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderRadius: 12,
-    color: colors.text,
+    color: c.text,
     padding: 14,
     minHeight: 80,
     fontSize: 15,
@@ -1641,26 +1798,26 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   menuCartSummaryText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 13,
     fontWeight: "600",
   },
   menuCartSummaryTotal: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 16,
     fontWeight: "800",
   },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderRadius: 12,
     paddingHorizontal: 12,
   },
   searchIcon: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 18,
     marginRight: 8,
   },
@@ -1669,7 +1826,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingHorizontal: 0,
-    color: colors.text,
+    color: c.text,
   },
   categoryRow: {
     gap: 8,
@@ -1687,10 +1844,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     paddingVertical: 12,
     paddingHorizontal: 14,
   },
@@ -1704,13 +1861,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   menuItemName: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "600",
     lineHeight: 20,
   },
   menuItemPrice: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -1719,43 +1876,43 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: c.border,
+    backgroundColor: c.card,
     alignItems: "center",
     justifyContent: "center",
   },
   addBtnText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 22,
     fontWeight: "600",
     lineHeight: 24,
   },
   addBtnActive: {
-    backgroundColor: colors.accent,
+    backgroundColor: c.accent,
     borderColor: "#14B8A6",
   },
   addBtnTextActive: {
-    color: colors.accentText,
+    color: c.accentText,
     fontSize: 15,
     fontWeight: "700",
   },
   kitchenEmpty: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 16,
   },
   kitchenEmptyText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
     textAlign: "center",
   },
   kitchenTicket: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderLeftWidth: 3,
     padding: 14,
     gap: 8,
@@ -1767,18 +1924,18 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   kitchenRef: {
-    color: colors.text,
+    color: c.text,
     fontSize: 14,
     fontWeight: "700",
     fontFamily: "monospace",
   },
   kitchenMeta: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 12,
     marginTop: 2,
   },
   kitchenItems: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -1795,11 +1952,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   billLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
   },
   billValue: {
-    color: colors.text,
+    color: c.text,
     fontSize: 14,
     fontWeight: "500",
   },
@@ -1807,15 +1964,15 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: c.border,
   },
   billTotalLabel: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "700",
   },
   billTotalValue: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 18,
     fontWeight: "700",
   },
@@ -1829,7 +1986,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   footerText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     fontWeight: "500",
   },
@@ -1849,25 +2006,25 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   editBannerTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 14,
     fontWeight: "700",
   },
   editBannerHint: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 12,
     lineHeight: 16,
   },
   editCancelBtn: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   editCancelText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 13,
     fontWeight: "600",
   },
@@ -1890,7 +2047,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   printBillBtnText: {
-    color: colors.success,
+    color: c.success,
     fontSize: 13,
     fontWeight: "700",
   },
@@ -1904,12 +2061,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   editOrderBtnText: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 13,
     fontWeight: "700",
   },
   editingLabel: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 12,
     fontWeight: "600",
     marginTop: 4,
@@ -1933,4 +2090,7 @@ const styles = StyleSheet.create({
   deliveryInput: {
     marginBottom: 10,
   },
-});
+
+  }));
+}
+

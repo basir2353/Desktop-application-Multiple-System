@@ -20,6 +20,7 @@ import { BillingService } from "../billing/billing.service";
 import { ClosingService } from "../closing/closing.service";
 import { DeliveryService } from "../delivery/delivery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { extractOrderNotesFromItemsSummary } from "../lib/order-notes-from-summary";
 import { assertDineInTableAvailable } from "../tables/table-booking";
 
 type StoredLine = { label: string; qty: number; unitPrice: number; menuItemId?: string };
@@ -515,10 +516,7 @@ export class KitchenService {
   }
 
   private extractNotesFromSummary(summary: string): string | null {
-    const idx = summary.lastIndexOf(" · ");
-    if (idx === -1) return null;
-    const notes = summary.slice(idx + 3).trim();
-    return notes || null;
+    return extractOrderNotesFromItemsSummary(summary);
   }
 
   private linesFromTicket(row: typeof popsKitchenTickets.$inferSelect): CreateBill["lines"] {

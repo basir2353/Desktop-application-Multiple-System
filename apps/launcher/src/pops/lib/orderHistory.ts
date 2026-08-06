@@ -12,7 +12,8 @@ import {
 import { DEFAULT_BUSINESS_DAY, type BusinessDaySettings } from "./businessDay";
 import { computeTicketTotals } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
-import { DEFAULT_POS_SETTINGS, effectiveTaxPct } from "./posSettings";
+import { DEFAULT_POS_SETTINGS, effectiveServicePctForMode, effectiveTaxPctForMode } from "./posSettings";
+import { inferPosModeFromLabel } from "./posOrderMode";
 
 export type UnifiedOrder =
   | { source: "bill"; id: string; createdAt: string; bill: Bill }
@@ -175,11 +176,13 @@ export function unifiedOrderAmounts(
   const subtotal = kitchenTicketSubtotal(order.ticket);
   if (subtotal <= 0) return null;
 
+  const mode = inferPosModeFromLabel(order.ticket.stationLabel);
+  const servicePct = effectiveServicePctForMode(settings, mode);
   const totals = computeTicketTotals(
     subtotal,
     0,
-    settings.servicePct,
-    effectiveTaxPct(settings),
+    servicePct,
+    effectiveTaxPctForMode(settings, mode),
     order.ticket.deliveryChargePkr ?? 0,
   );
 
@@ -187,7 +190,7 @@ export function unifiedOrderAmounts(
     subtotal: totals.subtotal,
     service: totals.service,
     total: totals.total,
-    servicePct: settings.servicePct,
+    servicePct,
   };
 }
 

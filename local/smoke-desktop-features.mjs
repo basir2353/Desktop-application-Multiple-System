@@ -66,6 +66,16 @@ assert(
 
 const branchPrint = read("apps/launcher/src/pops/lib/branchPrintClient.ts");
 assert(branchPrint.includes("resolveKotPrinter(branchCode, null"), "branchPrintClient uses section-safe KOT resolve");
+assert(branchPrint.includes("payments: payments.length"), "branchPrintClient rebuilds pay receipt payments");
+assert(branchPrint.includes("preparePraReceiptFooter"), "branchPrintClient rebuilds PRA on mobile pay receipt");
+assert(
+  read("apps/waiter-mobile/src/lib/printBill.ts").includes("receiptTicketFromBill"),
+  "mobile sends EXE-shaped receipt ticket meta",
+);
+assert(
+  read("apps/waiter-mobile/src/lib/printBill.ts").includes("payments: payments.length"),
+  "mobile receipt ticket includes payments",
+);
 
 const updateBanner = read("apps/launcher/src/components/DesktopUpdateBanner.tsx");
 assert(updateBanner.includes("check") || updateBanner.includes("updater"), "Desktop update banner present");

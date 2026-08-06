@@ -116,7 +116,7 @@ export const DEFAULT_KOT_PRINT_SETTINGS: KotPrintSettings = {
   headerBusinessName: "",
   headerSubtitle: "",
   documentTitle: "Kitchen Order",
-  documentTitleUpdate: "Kitchen Order — UPDATE",
+  documentTitleUpdate: "Kitchen Order — UPDATE REVISED",
   footerText: "KITCHEN COPY",
   footerSecondaryText: "",
   fields: DEFAULT_KOT_RECEIPT_FIELDS,
@@ -133,7 +133,7 @@ export const DEFAULT_STORE_SLIP_PRINT_SETTINGS: KotPrintSettings = {
   headerBusinessName: "",
   headerSubtitle: "",
   documentTitle: "Sales Receipt",
-  documentTitleUpdate: "Sales Receipt — UPDATE",
+  documentTitleUpdate: "Sales Receipt — UPDATE REVISED",
   footerText: "Thank you for shopping!",
   footerSecondaryText: "",
   fields: {

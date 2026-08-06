@@ -3,12 +3,19 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import type { CreatePopsBranch, UpdatePopsBranch } from "@platform/contracts";
+import type {
+  CreatePopsBranch,
+  DataResetScope,
+  OrgDataResetResult,
+  UpdatePopsBranch,
+} from "@platform/contracts";
 import { and, eq, ne, sql } from "drizzle-orm";
 import {
+  entityDeletionBackups,
   organizations,
   popsActiveOrders,
   popsAlerts,
@@ -23,6 +30,8 @@ import {
 import { AccountingService } from "../accounting/accounting.service";
 import { BillingService } from "../billing/billing.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import type { AccessJwtPayload } from "../auth/jwt.types";
+import { wipeBusinessDataByScope } from "../platform/business-reset.wipe";
 
 type CompletedOrder = Awaited<ReturnType<BillingService["listOrders"]>>["orders"][number];
 
@@ -222,6 +231,8 @@ const BRANCH_SEEDS: BranchSeed[] = [
 
 @Injectable()
 export class OperationsService implements OnModuleInit {
+  private readonly logger = new Logger(OperationsService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly billing: BillingService,
@@ -623,6 +634,75 @@ export class OperationsService implements OnModuleInit {
         payment: "Paid",
       })),
       alerts: mergedAlerts,
+    };
+  }
+
+  async getBusinessProfile(organizationId: string): Promise<{ name: string }> {
+    const rows = await this.db
+      .select({ name: organizations.name, status: organizations.status })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
+    const org = rows[0];
+    if (!org || org.status === "deleted") throw new NotFoundException("Business not found");
+    return { name: org.name };
+  }
+
+  /**
+   * Org Settings data wipe: HR, Restaurant (POS/kitchen/cash/journals), or All modules.
+   * Confirm with exact business name or the word RESET.
+   */
+  async resetOrgData(
+    actor: AccessJwtPayload,
+    input: { scope: DataResetScope; confirmText: string },
+  ): Promise<OrgDataResetResult> {
+    const orgRows = await this.db
+      .select()
+      .from(organizations)
+      .where(and(eq(organizations.id, actor.organizationId), ne(organizations.status, "deleted")))
+      .limit(1);
+    const org = orgRows[0];
+    if (!org) throw new NotFoundException("Business not found");
+
+    const given = input.confirmText.trim().toLowerCase();
+    const expectedName = org.name.trim().toLowerCase();
+    if (!given || (given !== "reset" && given !== expectedName)) {
+      throw new BadRequestException(
+        `Type the exact business name “${org.name}” or RESET to confirm`,
+      );
+    }
+
+    const wipe = await wipeBusinessDataByScope(this.db, org.id, input.scope);
+
+    await this.db.insert(entityDeletionBackups).values({
+      entityType: "org_data_reset",
+      entityId: org.id,
+      originalEmail: null,
+      label: org.name,
+      deletedBy: actor.sub,
+      payload: {
+        organizationId: org.id,
+        businessName: org.name,
+        scope: wipe.scope,
+        deletedRows: wipe.deletedRows,
+        wipedTables: wipe.wipedTables,
+        resetAt: new Date().toISOString(),
+      },
+    });
+
+    const scopeLabel =
+      input.scope === "hr" ? "HR" : input.scope === "restaurant" ? "Restaurant" : "All modules";
+    this.logger.warn(
+      `Data reset scope=${input.scope} org=${org.name} (${org.id}) by ${actor.sub}: ${wipe.deletedRows} rows`,
+    );
+
+    return {
+      ok: true,
+      scope: wipe.scope,
+      businessName: org.name,
+      deletedRows: wipe.deletedRows,
+      wipedTables: wipe.wipedTables,
+      message: `${scopeLabel} data reset complete. ${wipe.deletedRows} rows removed.`,
     };
   }
 

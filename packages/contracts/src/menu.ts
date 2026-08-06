@@ -38,12 +38,23 @@ export function formatMenuItemLabel(item: {
   name: string;
   portion?: MenuPortion | null;
   variantLabel?: string | null;
+  /** When true, never append size / Standard to the printed name. */
+  simplePrice?: boolean | null;
 }): string {
-  if (item.variantLabel?.trim()) {
-    return `${item.name} (${item.variantLabel.trim()})`;
+  if (item.simplePrice) return item.name;
+  const variant = item.variantLabel?.trim() ?? "";
+  // Generic single-price labels — do not show on POS / KOT / bill.
+  if (variant && !isSilentMenuVariantLabel(variant)) {
+    return `${item.name} (${variant})`;
   }
   if (!item.portion) return item.name;
   return `${item.name} (${menuPortionLabel(item.portion)})`;
+}
+
+/** Labels that mean "no real size" — hide on tickets when they are the only option. */
+export function isSilentMenuVariantLabel(label: string | null | undefined): boolean {
+  const t = (label ?? "").trim().toLowerCase();
+  return !t || t === "standard" || t === "regular" || t === "default" || t === "normal";
 }
 
 /** Kitchen ticket / bill print name — prefers Urdu secondary name when set. */
@@ -52,12 +63,14 @@ export function formatMenuItemPrintLabel(item: {
   secondaryName?: string | null;
   portion?: MenuPortion | null;
   variantLabel?: string | null;
+  simplePrice?: boolean | null;
 }): string {
   const printName = item.secondaryName?.trim() || item.name;
   return formatMenuItemLabel({
     name: printName,
     portion: item.portion,
     variantLabel: item.variantLabel,
+    simplePrice: item.simplePrice,
   });
 }
 
@@ -115,6 +128,10 @@ export const menuItemSchema = z.object({
   allowManualDiscount: z.boolean().default(false),
   /** Default line discount % applied when allowManualDiscount is enabled. */
   defaultDiscountPct: z.number().min(0).max(100).default(0),
+  /**
+   * Single flat price — no size picker on POS; tickets print name only (no Standard/Half).
+   */
+  simplePrice: z.boolean().default(false),
 });
 
 export function activeMenuVariants(item: Pick<MenuItem, "variants">): MenuItemVariant[] {
@@ -173,6 +190,7 @@ export const createMenuItemSchema = z.object({
   askForQty: z.boolean().optional(),
   allowManualDiscount: z.boolean().optional(),
   defaultDiscountPct: z.number().min(0).max(100).optional(),
+  simplePrice: z.boolean().optional(),
 }).refine(
   (data) => (data.variants?.length ?? 0) > 0 || data.price != null,
   { message: "Provide a price or at least one sub-category" },
@@ -198,6 +216,7 @@ export const updateMenuItemSchema = z.object({
   askForQty: z.boolean().optional(),
   allowManualDiscount: z.boolean().optional(),
   defaultDiscountPct: z.number().min(0).max(100).optional(),
+  simplePrice: z.boolean().optional(),
 });
 
 export type MenuCategory = z.infer<typeof menuCategorySchema>;

@@ -6,6 +6,7 @@ import {
   createHrPayrollRunSchema,
   createLeaveRequestSchema,
   createStaffFoodSchema,
+  payPayrollSchema,
   updateAttendanceSchema,
   updateEmployeeSchema,
   updateLeaveRequestSchema,
@@ -146,8 +147,13 @@ export class HrController {
 
   @Patch("payroll/:payrollId/pay")
   @RequirePermissions("pops.hr.manage", "pops.accounting.manage")
-  payPayroll(@CurrentUser() user: AccessJwtPayload, @Param("payrollId") payrollId: string) {
-    return this.hr.payPayroll(user.organizationId, user.sub, payrollId);
+  payPayroll(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("payrollId") payrollId: string,
+    @Body() body: unknown,
+  ) {
+    const input = payPayrollSchema.parse(body ?? {});
+    return this.hr.payPayroll(user.organizationId, user.sub, payrollId, input);
   }
 
   @Delete("payroll/:payrollId")

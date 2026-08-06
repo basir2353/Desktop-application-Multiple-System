@@ -1,9 +1,10 @@
 import type { Bill, KitchenTicket, KitchenTicketStatus } from "@platform/contracts";
 import { billChannelLabel, type OrderChannelLabel } from "./orderSales";
-import { computeTicketTotals } from "./posDiscount";
+import { computeTicketTotals, discountAmountFromPct } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
-import { DEFAULT_POS_SETTINGS, effectiveTaxPct } from "./posSettings";
-import type { PosOrderModeLabel } from "./posOrderMode";
+import { DEFAULT_POS_SETTINGS, effectiveServicePctForMode, effectiveTaxPctForMode } from "./posSettings";
+import { parseTicketDiscountFromNotes, resolveTicketDeliveryNotes } from "./posLoadOrder";
+import { inferPosModeFromLabel, type PosOrderModeLabel } from "./posOrderMode";
 
 export type PosOrderLine = {
   label: string;
@@ -118,11 +119,19 @@ export function posRecentOrderTotal(
   if (subtotal <= 0) return null;
 
   const delivery = order.kitchenTicket?.deliveryChargePkr ?? 0;
+  const mode = inferPosModeFromLabel(order.stationLabel ?? order.orderMode ?? "");
+  const notes = resolveTicketDeliveryNotes(order.kitchenTicket ?? {}) ?? order.kitchenTicket?.notes;
+  const savedDisc = parseTicketDiscountFromNotes(notes);
+  const discAmount = savedDisc
+    ? savedDisc.editedAs === "pct"
+      ? discountAmountFromPct(savedDisc.pct, subtotal)
+      : savedDisc.amount
+    : 0;
   return computeTicketTotals(
     subtotal,
-    0,
-    settings.servicePct,
-    effectiveTaxPct(settings),
+    discAmount,
+    effectiveServicePctForMode(settings, mode),
+    effectiveTaxPctForMode(settings, mode),
     delivery,
   ).total;
 }
@@ -135,13 +144,22 @@ function mapTicket(t: KitchenTicket, settings: PosSettings): PosRecentOrder {
   const resolvedLines =
     lines.length > 0 ? lines : [{ label: t.itemsSummary || "Items", qty: 1, unitPrice: null }];
   const subtotal = linesSubtotal(resolvedLines);
+  const servicePct = effectiveServicePctForMode(settings, inferPosModeFromLabel(t.stationLabel));
+  const mode = inferPosModeFromLabel(t.stationLabel);
+  const notes = resolveTicketDeliveryNotes(t) ?? t.notes;
+  const savedDisc = parseTicketDiscountFromNotes(notes);
+  const discAmount = savedDisc
+    ? savedDisc.editedAs === "pct"
+      ? discountAmountFromPct(savedDisc.pct, subtotal)
+      : savedDisc.amount
+    : 0;
   const total =
     subtotal > 0
       ? computeTicketTotals(
           subtotal,
-          0,
-          settings.servicePct,
-          effectiveTaxPct(settings),
+          discAmount,
+          servicePct,
+          effectiveTaxPctForMode(settings, mode),
           t.deliveryChargePkr ?? 0,
         ).total
       : null;
@@ -221,18 +239,29 @@ export function buildPosRecentOrders(
   const settings = options?.settings ?? DEFAULT_POS_SETTINGS;
   const paidBills = bills.filter((b) => !b.billRef.endsWith("-SEED"));
   const paid = paidBills.map(mapBill);
-  // Hide open KOTs only when a held/completed bill already covers the same ORD-#.
-  const settledOrderRefs = new Set(
-    paidBills
-      .filter((b) => b.status === "completed" || b.status === "held")
-      .map((b) => (b.orderRef ?? "").trim().toLowerCase())
-      .filter(Boolean),
-  );
+
+  // Hide an open KOT only when a held/completed bill for the same ORD-# was created
+  // at/after that ticket (same order paid). Do NOT hide newer tickets that reused an
+  // ORD-# after a local counter reset — those must stay visible in Latest orders.
+  const settledByRef = new Map<string, number>();
+  for (const bill of paidBills) {
+    if (bill.status !== "completed" && bill.status !== "held") continue;
+    const ref = (bill.orderRef ?? "").trim().toLowerCase();
+    if (!ref) continue;
+    const at = new Date(bill.createdAt).getTime();
+    const prev = settledByRef.get(ref);
+    if (prev == null || at > prev) settledByRef.set(ref, at);
+  }
+
   const pending = tickets
     .filter((t) => t.status !== "done")
     .filter((t) => {
       const ref = (t.orderRef ?? "").trim().toLowerCase();
-      return !ref || !settledOrderRefs.has(ref);
+      if (!ref) return true;
+      const settledAt = settledByRef.get(ref);
+      if (settledAt == null) return true;
+      const ticketAt = new Date(t.createdAt).getTime();
+      return ticketAt > settledAt;
     })
     .map((t) => mapTicket(t, settings));
 

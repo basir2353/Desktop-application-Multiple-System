@@ -12,6 +12,8 @@ import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
 import { ModuleFilterBar } from "../../ui/ModuleToolbar";
 import { CashReportPanel } from "./CashReportPanel";
+import { InOutReportPanel } from "./InOutReportPanel";
+import { UniversalLedgerPanel } from "./UniversalLedgerPanel";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -49,9 +51,11 @@ export function ReportsPage(): JSX.Element {
 
   const reportQuery = useQuery({
     queryKey: ["reports", branch?.code, activeId, from, to, fromTime, toTime],
-    enabled: Boolean(branch?.code && activeId),
+    enabled: Boolean(branch?.code && activeId && activeId !== "universal-ledger"),
     queryFn: () =>
       fetchRestaurantReport(branch!.code, activeId, { from, to, fromTime, toTime }),
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
 
   function exportActive(): void {
@@ -101,6 +105,8 @@ export function ReportsPage(): JSX.Element {
 
   const rows = reportQuery.data?.rows ?? [];
   const isCashReport = activeId === "cash-report";
+  const isInOutReport = activeId === "in-out";
+  const isUniversalLedger = activeId === "universal-ledger";
 
   const moneyTotalKeys = new Set([
     "amount",
@@ -129,6 +135,13 @@ export function ReportsPage(): JSX.Element {
     "debit",
     "credit",
     "balance",
+    "moneyIn",
+    "moneyOut",
+    "net",
+    "saleTotal",
+    "purchaseTotal",
+    "receivable",
+    "payable",
   ]);
 
   return (
@@ -229,13 +242,16 @@ export function ReportsPage(): JSX.Element {
                 {reportQuery.data?.title ?? activeMeta?.name}
               </h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                {activeMeta?.category}
-                {reportQuery.data?.from && reportQuery.data?.to
-                  ? ` · ${reportQuery.data.from} ${fromTime} → ${reportQuery.data.to} ${toTime}`
-                  : null}
+                {branch ? `${branch.name} (${branch.code})` : "No branch"}
+                {activeMeta?.category ? ` · ${activeMeta.category}` : null}
+                {isUniversalLedger
+                  ? ` · ${from} → ${to}`
+                  : reportQuery.data?.from && reportQuery.data?.to
+                    ? ` · ${reportQuery.data.from} ${fromTime} → ${reportQuery.data.to} ${toTime}`
+                    : null}
               </p>
             </div>
-            {reportQuery.data?.totals && !isCashReport ? (
+            {reportQuery.data?.totals && !isCashReport && !isInOutReport ? (
               <div className="flex flex-wrap gap-2">
                 {Object.entries(reportQuery.data.totals).map(([k, v]) => (
                   <div
@@ -254,7 +270,11 @@ export function ReportsPage(): JSX.Element {
             ) : null}
           </div>
 
-          {reportQuery.isLoading ? (
+          {isUniversalLedger && branch?.code ? (
+            <div className="mt-4">
+              <UniversalLedgerPanel branchCode={branch.code} from={from} to={to} />
+            </div>
+          ) : reportQuery.isLoading ? (
             <p className="mt-6 text-sm text-slate-500">Generating report…</p>
           ) : reportQuery.isError ? (
             <p className="mt-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
@@ -271,11 +291,16 @@ export function ReportsPage(): JSX.Element {
                 toTime={toTime}
               />
             </div>
+          ) : isInOutReport && reportQuery.data ? (
+            <div className="mt-4">
+              <InOutReportPanel report={reportQuery.data} />
+            </div>
           ) : rows.length === 0 || reportQuery.data?.empty ? (
             <div className="mt-6 space-y-2 rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">
               <p>
-                No data for this report in the selected range. New companies stay empty until sales, cash
-                sessions, or expenses are recorded.
+                No rows for <span className="font-medium text-slate-700 dark:text-slate-300">this branch</span>
+                {branch ? ` (${branch.name} · ${branch.code})` : ""} in the selected date/time range.
+                Live API data was loaded — empty means nothing was recorded here yet.
               </p>
               {activeId === "customer-ledger" ? (
                 <p className="text-xs text-slate-400">

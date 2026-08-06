@@ -320,8 +320,15 @@ export async function approvePayrollRun(payrollId: string): Promise<unknown> {
   return res.json();
 }
 
-export async function payPayrollRun(payrollId: string): Promise<unknown> {
-  const res = await authFetch(`/v1/accounting/payroll/${payrollId}/pay`, { method: "PATCH" });
+export async function payPayrollRun(
+  payrollId: string,
+  input?: { paidAt?: string },
+): Promise<unknown> {
+  const res = await authFetch(`/v1/accounting/payroll/${payrollId}/pay`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input ?? {}),
+  });
   if (!res.ok) await parseError(res, "Pay payroll failed");
   return res.json();
 }

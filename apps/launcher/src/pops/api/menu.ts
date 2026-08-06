@@ -31,6 +31,7 @@ const OPTION_KEYS = [
   "allowManualDiscount",
   "secondaryName",
   "defaultDiscountPct",
+  "simplePrice",
 ] as const;
 
 type OptionKey = (typeof OPTION_KEYS)[number];
@@ -170,6 +171,7 @@ function flagPayload(options: Partial<MenuItemOptions>): Record<string, unknown>
   if (options.askForPrice !== undefined) payload.askForPrice = options.askForPrice;
   if (options.askForQty !== undefined) payload.askForQty = options.askForQty;
   if (options.allowManualDiscount !== undefined) payload.allowManualDiscount = options.allowManualDiscount;
+  if (options.simplePrice !== undefined) payload.simplePrice = options.simplePrice;
   return payload;
 }
 

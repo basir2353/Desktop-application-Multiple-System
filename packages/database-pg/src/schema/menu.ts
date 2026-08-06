@@ -57,6 +57,8 @@ export const popsMenuItems = pgTable("pops_menu_items", {
   allowManualDiscount: boolean("allow_manual_discount").notNull().default(false),
   /** Default line discount % when allowManualDiscount is enabled. */
   defaultDiscountPct: integer("default_discount_pct").notNull().default(0),
+  /** Flat price item — no size picker; tickets omit Standard/size suffix. */
+  simplePrice: boolean("simple_price").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

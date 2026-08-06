@@ -1,18 +1,24 @@
-import type { Bill, BillPayment } from "@platform/contracts";
+import type { BillPayment } from "@platform/contracts";
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Button, Card, Muted, colors } from "./ui";
 import { formatPkr } from "../lib/orderDisplay";
 
+export type CloseOrderTarget = {
+  ref: string;
+  tableLabel: string;
+  total: number;
+};
+
 type Props = {
-  bill: Bill;
+  target: CloseOrderTarget;
   visible: boolean;
   loading?: boolean;
   onClose: () => void;
   onConfirm: (payments: BillPayment[]) => void;
 };
 
-export function CloseOrderModal({ bill, visible, loading, onClose, onConfirm }: Props) {
+export function CloseOrderModal({ target, visible, loading, onClose, onConfirm }: Props) {
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card">("cash");
 
   return (
@@ -21,9 +27,9 @@ export function CloseOrderModal({ bill, visible, loading, onClose, onConfirm }: 
         <Card style={styles.card}>
           <Text style={styles.title}>Close order</Text>
           <Muted>
-            {bill.billRef} · {bill.tableLabel}
+            {target.ref} · {target.tableLabel}
           </Muted>
-          <Text style={styles.total}>{formatPkr(bill.total)}</Text>
+          <Text style={styles.total}>{formatPkr(target.total)}</Text>
 
           <Text style={styles.label}>Payment method</Text>
           <View style={styles.methodRow}>
@@ -50,7 +56,7 @@ export function CloseOrderModal({ bill, visible, loading, onClose, onConfirm }: 
               <Button
                 label={loading ? "Closing…" : "Close & pay"}
                 onPress={() =>
-                  onConfirm([{ method: paymentMethod, amount: bill.total }])
+                  onConfirm([{ method: paymentMethod, amount: target.total }])
                 }
                 loading={loading}
                 disabled={loading}

@@ -28,7 +28,17 @@ export async function fetchKitchenTickets(branchCode: string): Promise<KitchenTi
     throw new Error(err?.message ?? `Kitchen tickets failed: ${res.status}`);
   }
   const json: unknown = await res.json();
-  return kitchenTicketListSchema.parse(json).tickets;
+  const listParsed = kitchenTicketListSchema.safeParse(json);
+  if (listParsed.success) return listParsed.data.tickets;
+  if (json && typeof json === "object" && Array.isArray((json as { tickets?: unknown }).tickets)) {
+    const tickets: KitchenTicket[] = [];
+    for (const row of (json as { tickets: unknown[] }).tickets) {
+      const one = kitchenTicketSchema.safeParse(row);
+      if (one.success) tickets.push(one.data);
+    }
+    return tickets;
+  }
+  throw new Error("Kitchen tickets response invalid");
 }
 
 /**

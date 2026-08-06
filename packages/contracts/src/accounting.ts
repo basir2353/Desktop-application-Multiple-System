@@ -202,6 +202,32 @@ export const taxSettingsSchema = z.object({
   taxRegistrationNo: z.string().nullable(),
   taxCollected: z.number(),
   taxPaid: z.number(),
+  /** Branch POS charges (service / cash-card tax). Synced for desktop + mobile. */
+  posCharges: z
+    .object({
+      servicePct: z.number(),
+      taxPct: z.number(),
+      taxByPaymentMethod: z.boolean(),
+      cashTaxPct: z.number(),
+      cardTaxPct: z.number(),
+      onlineTaxPct: z.number(),
+      taxEnabled: z.boolean(),
+      autoDiscountEnabled: z.boolean().optional(),
+      autoDiscountPct: z.number().optional(),
+      serviceOnDineIn: z.boolean().optional(),
+      serviceOnTakeaway: z.boolean(),
+      serviceOnDelivery: z.boolean(),
+      serviceOnOnline: z.boolean().optional(),
+      serviceOnFoodpanda: z.boolean().optional(),
+      serviceOnStaffFood: z.boolean().optional(),
+      taxOnDineIn: z.boolean().optional(),
+      taxOnTakeaway: z.boolean().optional(),
+      taxOnDelivery: z.boolean().optional(),
+      taxOnOnline: z.boolean().optional(),
+      taxOnFoodpanda: z.boolean().optional(),
+      taxOnStaffFood: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const payrollRunSchema = z.object({
@@ -211,11 +237,14 @@ export const payrollRunSchema = z.object({
   periodEnd: z.string(),
   totalGross: z.number(),
   totalDeductions: z.number(),
+  /** Can be negative when advances exceed salary. */
   totalNet: z.number(),
   staffCount: z.number(),
   status: z.enum(["draft", "approved", "paid"]),
   createdBy: z.string().nullable(),
   createdAt: z.string(),
+  paidAt: z.string().nullable().optional(),
+  paidBy: z.string().nullable().optional(),
 });
 
 export const inventoryAccountingSchema = z.object({
@@ -361,6 +390,31 @@ export const updateTaxSettingsSchema = z.object({
   salesTaxPct: z.number().min(0).max(100).optional(),
   serviceTaxPct: z.number().min(0).max(100).optional(),
   taxRegistrationNo: z.string().optional(),
+  posCharges: z
+    .object({
+      servicePct: z.number().min(0).max(100),
+      taxPct: z.number().min(0).max(100),
+      taxByPaymentMethod: z.boolean(),
+      cashTaxPct: z.number().min(0).max(100),
+      cardTaxPct: z.number().min(0).max(100),
+      onlineTaxPct: z.number().min(0).max(100),
+      taxEnabled: z.boolean(),
+      autoDiscountEnabled: z.boolean().optional(),
+      autoDiscountPct: z.number().min(0).max(100).optional(),
+      serviceOnDineIn: z.boolean().optional(),
+      serviceOnTakeaway: z.boolean(),
+      serviceOnDelivery: z.boolean(),
+      serviceOnOnline: z.boolean().optional(),
+      serviceOnFoodpanda: z.boolean().optional(),
+      serviceOnStaffFood: z.boolean().optional(),
+      taxOnDineIn: z.boolean().optional(),
+      taxOnTakeaway: z.boolean().optional(),
+      taxOnDelivery: z.boolean().optional(),
+      taxOnOnline: z.boolean().optional(),
+      taxOnFoodpanda: z.boolean().optional(),
+      taxOnStaffFood: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type AccountingDashboard = z.infer<typeof accountingDashboardSchema>;

@@ -7,7 +7,7 @@ import {
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
 import {
   buildPrintPreviewHtml,
-  printReceiptAsync,
+  printReceiptDetailed,
   type PrintTicketInput,
 } from "../lib/printTicket";
 
@@ -21,7 +21,7 @@ type Props = {
   title?: string;
   subtitle?: string;
   onClose: () => void;
-  onPrinted?: (ok: boolean) => void;
+  onPrinted?: (ok: boolean, error?: string) => void;
 };
 
 export function ReceiptPrintPreviewModal({
@@ -42,6 +42,7 @@ export function ReceiptPrintPreviewModal({
       loadBillPrintSettings(branchCode),
   );
   const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
 
   useEffect(() => {
     if (billPrintSettings) {
@@ -87,10 +88,18 @@ export function ReceiptPrintPreviewModal({
   async function handlePrint(): Promise<void> {
     if (printing) return;
     setPrinting(true);
+    setPrintError(null);
     try {
-      const ok = await printReceiptAsync(ticketInput);
-      onPrinted?.(ok);
-      if (ok) onClose();
+      const result = await printReceiptDetailed(ticketInput);
+      onPrinted?.(result.ok, result.error);
+      if (result.ok) {
+        onClose();
+        return;
+      }
+      const message =
+        result.error?.trim() ||
+        "Print failed. Link a receipt printer in Printer settings, or use the EXE for silent Auto print.";
+      setPrintError(message);
     } finally {
       setPrinting(false);
     }
@@ -147,7 +156,13 @@ export function ReceiptPrintPreviewModal({
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-3">
+        <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-3">
+          {printError ? (
+            <p className="rounded-md border border-red-500/40 bg-red-950/40 px-3 py-2 text-[11px] text-red-200">
+              {printError}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
@@ -164,6 +179,7 @@ export function ReceiptPrintPreviewModal({
           >
             {printing ? "Printing…" : "Print"}
           </button>
+          </div>
         </div>
       </div>
     </div>

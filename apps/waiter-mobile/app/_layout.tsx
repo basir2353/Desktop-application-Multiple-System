@@ -6,10 +6,12 @@ import { Pressable, Text, View } from "react-native";
 import { bootstrapSession, SessionExpiredError } from "../src/lib/authFetch";
 import { OfflineBanner } from "../src/components/OfflineBanner";
 import { MobileUpdateBanner } from "../src/components/MobileUpdateBanner";
-import { colors } from "../src/components/ui";
+import { useColors } from "../src/components/ui";
+import { getColors } from "../src/stores/themeStore";
 import { warmApiConnection } from "../src/lib/warmApi";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
+import { useThemeStore } from "../src/stores/themeStore";
 
 class RootErrorBoundary extends Component<
   { children: ReactNode },
@@ -27,6 +29,7 @@ class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.error) {
+      const colors = getColors();
       return (
         <View
           style={{
@@ -107,11 +110,65 @@ function SessionGuard() {
   return null;
 }
 
+function ThemedStack() {
+  const colors = useColors();
+  const mode = useThemeStore((s) => s.mode);
+
+  return (
+    <>
+      <StatusBar style={mode === "dark" ? "light" : "dark"} />
+      <SessionGuard />
+      <MobileUpdateBanner />
+      <OfflineBanner />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.bg },
+          headerTintColor: colors.text,
+          headerTitleStyle: { fontWeight: "600" },
+          contentStyle: { backgroundColor: colors.bg },
+        }}
+      >
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="branch" options={{ title: "Select branch" }} />
+        <Stack.Screen name="home" options={{ headerShown: false }} />
+        <Stack.Screen name="rider-home" options={{ headerShown: false }} />
+        <Stack.Screen name="rider-deliveries" options={{ title: "My deliveries" }} />
+        <Stack.Screen name="rider-delivery" options={{ title: "Delivery detail" }} />
+        <Stack.Screen name="order" options={{ title: "Take order" }} />
+        <Stack.Screen name="orders" options={{ title: "View orders" }} />
+        <Stack.Screen name="table-transfer" options={{ title: "Table transfer" }} />
+        <Stack.Screen name="history" options={{ title: "Order history" }} />
+        <Stack.Screen name="manage-pin" options={{ title: "Manage PIN" }} />
+        <Stack.Screen name="printers" options={{ title: "Printers" }} />
+        <Stack.Screen name="admin-home" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-orders" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-menu" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-tax" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-more" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-tables" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-kitchen" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-inventory" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-sales" options={{ title: "Sales" }} />
+        <Stack.Screen name="admin-reports" options={{ title: "Reports" }} />
+        <Stack.Screen name="admin-ledger" options={{ title: "Ledgers" }} />
+        <Stack.Screen name="admin-payout" options={{ title: "Pay out" }} />
+        <Stack.Screen name="admin-cash" options={{ title: "Cash drawer" }} />
+        <Stack.Screen name="admin-vendors" options={{ title: "Vendors" }} />
+        <Stack.Screen name="admin-users" options={{ title: "User management" }} />
+        <Stack.Screen name="admin-activity" options={{ title: "Activity & reports" }} />
+        <Stack.Screen name="admin-pra" options={{ headerShown: false }} />
+      </Stack>
+    </>
+  );
+}
+
 export default function RootLayout() {
   const hydrateSession = useSessionStore((s) => s.hydrate);
   const hydrateBranch = useBranchStore((s) => s.hydrate);
+  const hydrateTheme = useThemeStore((s) => s.hydrate);
   const sessionHydrated = useSessionStore((s) => s.hydrated);
   const branchHydrated = useBranchStore((s) => s.hydrated);
+  const themeHydrated = useThemeStore((s) => s.hydrated);
 
   useEffect(() => {
     void warmApiConnection();
@@ -120,62 +177,22 @@ export default function RootLayout() {
   useEffect(() => {
     void hydrateSession();
     void hydrateBranch();
-  }, [hydrateSession, hydrateBranch]);
+    void hydrateTheme();
+  }, [hydrateSession, hydrateBranch, hydrateTheme]);
 
   useEffect(() => {
     if (!sessionHydrated) return;
     void bootstrapSession();
   }, [sessionHydrated]);
 
-  if (!sessionHydrated || !branchHydrated) {
+  if (!sessionHydrated || !branchHydrated || !themeHydrated) {
     return null;
   }
 
   return (
     <RootErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <StatusBar style="light" />
-        <SessionGuard />
-        <MobileUpdateBanner />
-        <OfflineBanner />
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.bg },
-            headerTintColor: colors.text,
-            headerTitleStyle: { fontWeight: "600" },
-            contentStyle: { backgroundColor: colors.bg },
-          }}
-        >
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="branch" options={{ title: "Select branch" }} />
-          <Stack.Screen name="home" options={{ headerShown: false }} />
-          <Stack.Screen name="rider-home" options={{ headerShown: false }} />
-          <Stack.Screen name="rider-deliveries" options={{ title: "My deliveries" }} />
-          <Stack.Screen name="rider-delivery" options={{ title: "Delivery detail" }} />
-          <Stack.Screen name="order" options={{ title: "Take order" }} />
-          <Stack.Screen name="orders" options={{ title: "View orders" }} />
-          <Stack.Screen name="table-transfer" options={{ title: "Table transfer" }} />
-          <Stack.Screen name="history" options={{ title: "Order history" }} />
-          <Stack.Screen name="manage-pin" options={{ title: "Manage PIN" }} />
-          <Stack.Screen name="printers" options={{ title: "Printers" }} />
-          <Stack.Screen name="admin-home" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-orders" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-menu" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-tax" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-more" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-tables" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-kitchen" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-inventory" options={{ headerShown: false }} />
-          <Stack.Screen name="admin-sales" options={{ title: "Sales" }} />
-          <Stack.Screen name="admin-reports" options={{ title: "Reports" }} />
-          <Stack.Screen name="admin-ledger" options={{ title: "Ledgers" }} />
-          <Stack.Screen name="admin-payout" options={{ title: "Pay out" }} />
-          <Stack.Screen name="admin-cash" options={{ title: "Cash drawer" }} />
-          <Stack.Screen name="admin-vendors" options={{ title: "Vendors" }} />
-          <Stack.Screen name="admin-users" options={{ title: "User management" }} />
-          <Stack.Screen name="admin-activity" options={{ title: "Activity & reports" }} />
-          <Stack.Screen name="admin-pra" options={{ headerShown: false }} />
-        </Stack>
+        <ThemedStack />
       </QueryClientProvider>
     </RootErrorBoundary>
   );

@@ -14,6 +14,11 @@ async function parseError(res: Response, fallback: string): Promise<never> {
   throw new Error(msg ?? `${fallback}: ${res.status}`);
 }
 
+function isNetworkOrMissingReport(status: number, message: string): boolean {
+  if (status === 404 || status === 501 || status === 502) return true;
+  return /Cannot GET|404|Failed to fetch|NetworkError|Load failed|network/i.test(message);
+}
+
 export const RESTAURANT_REPORTS = RESTAURANT_REPORT_DEFS.map((r) => ({
   id: r.id,
   name: r.name,
@@ -64,29 +69,29 @@ export async function fetchRestaurantReport(
             r.section === "canceledOrders" ||
             /delivery charge|discount given|canceled orders/i.test(r.label),
         );
-      if (cashNeedsUpgrade) {
+      const inOutNeedsUpgrade =
+        reportId === "in-out" &&
+        !report.rows.some((r) => r.section === "cashIn" || r.section === "net");
+      if (cashNeedsUpgrade || inOutNeedsUpgrade) {
         try {
           return await buildClientRestaurantReport(branchCode, reportId, options);
         } catch {
           return report;
         }
       }
+      // HTTP 200 empty is real API data for this org/branch — do not replace with client zeros.
       return report;
     }
-    if (res.status === 404 || res.status === 501 || res.status === 502) {
+    if (isNetworkOrMissingReport(res.status, "")) {
       return buildClientRestaurantReport(branchCode, reportId, options);
     }
     await parseError(res, "Report failed");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (/Cannot GET|404|Failed to fetch|NetworkError/i.test(message)) {
+    if (isNetworkOrMissingReport(0, message)) {
       return buildClientRestaurantReport(branchCode, reportId, options);
     }
-    try {
-      return await buildClientRestaurantReport(branchCode, reportId, options);
-    } catch {
-      throw err instanceof Error ? err : new Error(message);
-    }
+    throw err instanceof Error ? err : new Error(message);
   }
 
   return buildClientRestaurantReport(branchCode, reportId, options);

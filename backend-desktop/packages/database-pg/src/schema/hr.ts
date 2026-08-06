@@ -1,5 +1,6 @@
 import { date, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { popsPayrollRuns } from "./accounting";
+import { popsExpenses, popsPayrollRuns } from "./accounting";
+import { popsSuppliers } from "./inventory";
 import { popsBranches } from "./operations";
 import { organizations } from "./organizations";
 import { users } from "./users";
@@ -91,6 +92,12 @@ export const popsStaffFood = pgTable("pops_staff_food", {
     .notNull()
     .references(() => popsBranches.id, { onDelete: "cascade" }),
   employeeId: uuid("employee_id").references(() => popsEmployees.id, { onDelete: "set null" }),
+  /** Optional vendor / catering supplier for the meal cost. */
+  supplierId: uuid("supplier_id").references(() => popsSuppliers.id, { onDelete: "set null" }),
+  /** Expense category (COA via Staff Meals → 5201, etc.). */
+  expenseCategory: text("expense_category").notNull().default("Staff Meals"),
+  /** Linked Pending/Approved expense created when amount > 0. */
+  expenseId: uuid("expense_id").references(() => popsExpenses.id, { onDelete: "set null" }),
   consumerType: text("consumer_type").notNull(), // staff | guest
   personName: text("person_name").notNull(),
   mealDate: date("meal_date").notNull(),

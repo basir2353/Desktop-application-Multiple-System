@@ -5,6 +5,7 @@ import {
   type MenuItem,
 } from "@platform/contracts";
 import { buildCartLine, matchVariantFromLabel } from "./cartVariants";
+import { resolveTicketDeliveryNotes } from "./orderMode";
 import type { CartLine } from "./orderDrafts";
 
 export type StoredOrderLine = {
@@ -61,6 +62,8 @@ export function ownsHeldBill(bill: Bill, userId: string | null | undefined): boo
 }
 
 export function extractKitchenNotes(ticket: KitchenTicket): string {
+  const resolved = resolveTicketDeliveryNotes(ticket);
+  if (resolved) return resolved;
   if (ticket.notes?.trim()) return ticket.notes.trim();
   const parts = ticket.itemsSummary.split(" · ");
   if (parts.length > 1) return parts.slice(1).join(" · ").trim();

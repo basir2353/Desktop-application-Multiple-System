@@ -18,6 +18,7 @@ import {
 } from "../lib/billPrintSettings";
 import {
   deleteBillPrintTemplate,
+  getBillPrintTemplate,
   loadBillPrintTemplates,
   saveBillPrintTemplate,
   starterBillPrintTemplates,
@@ -53,7 +54,8 @@ type Props = {
   branchCode: string;
   settings: BillPrintSettings;
   onChange: (settings: BillPrintSettings) => void;
-  onSave: () => void;
+  /** Receives the latest editor draft so Save never persists a stale parent copy. */
+  onSave: (settings: BillPrintSettings) => void;
   onNotice?: (message: string) => void;
 };
 
@@ -162,6 +164,53 @@ export function BillCustomizationPanel({
     onChange(next);
     saveActiveBillTemplateId(branchCode, null);
     setSelectedTemplateId("");
+  }
+
+  /**
+   * Persist live bill settings from the editor draft, and keep assigned templates
+   * in sync so POS Print (which prefers templates) matches what the user saved.
+   */
+  function handleSaveCustomization(): void {
+    const next = normalizeBillPrintSettings(draft);
+    try {
+      saveBillPrintSettings(branchCode, next);
+      onChange(next);
+
+      const assign = loadBillReceiptTemplateAssignments(branchCode);
+      const syncIds = new Set<string>();
+      const focusId = viewingTemplateId || selectedTemplateId || null;
+      if (focusId) {
+        // Editing a specific template — update that one (+ default if it is the default).
+        syncIds.add(focusId);
+        if (assign.branchDefaultTemplateId === focusId) {
+          syncIds.add(focusId);
+        }
+      } else {
+        // Live customization — push to every assigned print path so Print matches Save.
+        if (assign.branchDefaultTemplateId) syncIds.add(assign.branchDefaultTemplateId);
+        for (const tid of Object.values(assign.byPosAction)) {
+          if (tid) syncIds.add(tid);
+        }
+      }
+
+      let synced = 0;
+      for (const id of syncIds) {
+        const tpl = getBillPrintTemplate(branchCode, id);
+        if (!tpl) continue;
+        saveBillPrintTemplate(branchCode, tpl.name, next, id);
+        synced += 1;
+      }
+      refreshTemplates();
+
+      onSave(next);
+      onNotice?.(
+        synced > 0
+          ? `Customization saved for this branch (updated ${synced} print template${synced === 1 ? "" : "s"}).`
+          : "Customization saved for this branch.",
+      );
+    } catch (err) {
+      onNotice?.(err instanceof Error ? err.message : "Could not save customization.");
+    }
   }
 
   function addLine(): void {
@@ -639,7 +688,7 @@ export function BillCustomizationPanel({
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            <Button type="button" className="text-xs" onClick={onSave}>
+            <Button type="button" className="text-xs" onClick={handleSaveCustomization}>
               Save customization
             </Button>
             <Button type="button" variant="ghost" className="text-xs" onClick={resetDefaults}>

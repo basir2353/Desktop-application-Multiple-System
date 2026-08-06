@@ -4,7 +4,6 @@ import { BillCustomizationPanel } from "../../../components/BillCustomizationPan
 import { CashSlipCustomizationPanel } from "../../../components/CashSlipCustomizationPanel";
 import {
   loadBillPrintSettings,
-  saveBillPrintSettings,
   type BillPrintSettings,
 } from "../../../lib/billPrintSettings";
 import { mutedClass } from "../../../lib/themeClasses";
@@ -35,10 +34,7 @@ export function BillManagementCustomizationPanel({ onNotice }: Props): JSX.Eleme
         settings={settings}
         onChange={setSettings}
         onNotice={onNotice}
-        onSave={() => {
-          saveBillPrintSettings(branch.code, settings);
-          onNotice?.("Bill print layout saved for this branch.");
-        }}
+        onSave={(next) => setSettings(next)}
       />
       <CashSlipCustomizationPanel branchCode={branch.code} onNotice={onNotice} />
     </div>

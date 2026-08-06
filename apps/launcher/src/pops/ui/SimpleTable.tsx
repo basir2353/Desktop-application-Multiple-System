@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export type SimpleColumn<T> = {
   id?: string;
   key: keyof T | string;
-  header: string;
+  header: ReactNode;
   className?: string;
   render?: (row: T) => ReactNode;
 };

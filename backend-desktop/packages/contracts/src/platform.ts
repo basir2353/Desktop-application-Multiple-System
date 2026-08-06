@@ -376,6 +376,25 @@ export const resetBusinessTransactionsResultSchema = z.object({
   wipedTables: z.array(z.string()),
 });
 
+/** Org Settings: scoped data reset (HR / Restaurant / All). */
+export const dataResetScopeSchema = z.enum(["hr", "restaurant", "all"]);
+export type DataResetScope = z.infer<typeof dataResetScopeSchema>;
+
+export const orgDataResetSchema = z.object({
+  scope: dataResetScopeSchema,
+  /** Must match business name (case-insensitive) or the word RESET. */
+  confirmText: z.string().min(1),
+});
+
+export const orgDataResetResultSchema = z.object({
+  ok: z.literal(true),
+  scope: dataResetScopeSchema,
+  businessName: z.string(),
+  deletedRows: z.number().int().nonnegative(),
+  wipedTables: z.array(z.string()),
+  message: z.string(),
+});
+
 export const platformUserSchema = z.object({
   id: z.string().uuid(),
   name: z.string().nullable(),
@@ -388,12 +407,8 @@ export const platformUserSchema = z.object({
   status: z.string(),
   active: z.boolean(),
   createdAt: z.string(),
-  /**
-   * Last password written by Super Admin / staff-create flows.
-   * Null when unknown (user self-changed, or account older than this field).
-   * Super Admin View only — not used by tenant apps.
-   */
-  lastSetPassword: z.string().nullable().optional().default(null),
+  /** Plaintext last password set by Super Admin (support recovery). Null if unknown. */
+  lastSetPassword: z.string().nullable().optional(),
 });
 
 export const resetPlatformUserPasswordSchema = z.object({
@@ -457,6 +472,8 @@ export type ResetBusinessTransactions = z.infer<typeof resetBusinessTransactions
 export type ResetBusinessTransactionsResult = z.infer<
   typeof resetBusinessTransactionsResultSchema
 >;
+export type OrgDataReset = z.infer<typeof orgDataResetSchema>;
+export type OrgDataResetResult = z.infer<typeof orgDataResetResultSchema>;
 export type PlatformUser = z.infer<typeof platformUserSchema>;
 export type UpdatePlatformUser = z.infer<typeof updatePlatformUserSchema>;
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;

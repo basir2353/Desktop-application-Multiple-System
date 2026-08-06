@@ -1,11 +1,12 @@
 import { Button } from "@platform/ui";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_THERMAL_PRINT_SETTINGS,
   isNarrowPaperWidth,
   loadThermalPrintSettings,
   normalizeThermalPrintSettings,
   paperSizeLabel,
+  paperWidthMm,
   previewPaperWidthPx,
   saveThermalPrintSettings,
   THERMAL_PRINT_SETTINGS_CHANGED_EVENT,
@@ -13,6 +14,10 @@ import {
   type ThermalReceiptLayout,
 } from "../lib/thermalPrintSettings";
 import { buildPrintPreviewHtml, printTestPageAsync } from "../lib/printTicket";
+import {
+  runThermalPrintSelfTest,
+  type ThermalSelfTestResult,
+} from "../lib/thermalPrintSelfTest";
 import { sampleBillPrintInput } from "../lib/billSampleReceipt";
 import { listSystemPrintersDetailed } from "../lib/systemPrinters";
 import {
@@ -89,6 +94,7 @@ export function ThermalPrintSettingsPanel({
   const [testPrinter, setTestPrinter] = useState("");
   const [osPrinters, setOsPrinters] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [selfTest, setSelfTest] = useState<ThermalSelfTestResult | null>(null);
   const [billSettings, setBillSettings] = useState<BillPrintSettings>(() =>
     loadBillPrintSettings(branchCode),
   );
@@ -142,35 +148,7 @@ export function ThermalPrintSettingsPanel({
     });
   }, [branchCode, branchName, billSettings, draft]);
 
-  function patch(partial: Partial<ThermalPrintSettings>): void {
-    setDraft((prev) => {
-      const next = normalizeThermalPrintSettings({ ...prev, ...partial });
-      // Keep layout sensible for the effective roll width (including Custom mm).
-      if (partial.defaultPaperSize != null || partial.customPaperWidthMm != null) {
-        const narrow = isNarrowPaperWidth(next.defaultPaperSize, next.customPaperWidthMm);
-        if (narrow && partial.receiptLayout === undefined) {
-          return normalizeThermalPrintSettings({
-            ...next,
-            receiptLayout: "clear",
-            showUnitPrice: false,
-          });
-        }
-        if (!narrow && partial.receiptLayout === undefined) {
-          return normalizeThermalPrintSettings({
-            ...next,
-            receiptLayout: "columns",
-            showUnitPrice: true,
-          });
-        }
-      }
-      return next;
-    });
-    setDirty(true);
-  }
-
-  function saveThermal(): void {
-    const next = saveThermalPrintSettings(branchCode, draft);
-    // Live Auto-print uses each receipt printer profile's paperSize — keep them in sync.
+  function syncReceiptPrinterPaper(paperSize: ThermalPrintSettings["defaultPaperSize"]): void {
     const routing = loadPrinterRouting(branchCode);
     const receiptIds = new Set<string>();
     const primary = resolveReceiptPrinter(branchCode);
@@ -179,19 +157,66 @@ export function ThermalPrintSettingsPanel({
       if (p.printerType === "receipt") receiptIds.add(p.id);
     }
     for (const id of receiptIds) {
-      updatePrinterProfile(branchCode, id, { paperSize: next.defaultPaperSize });
+      updatePrinterProfile(branchCode, id, { paperSize });
     }
-    setDraft(next);
+  }
+
+  function persistPaperNow(next: ThermalPrintSettings, announce = true): ThermalPrintSettings {
+    const saved = saveThermalPrintSettings(branchCode, next);
+    syncReceiptPrinterPaper(saved.defaultPaperSize);
+    setDraft(saved);
     setDirty(false);
-    const widthLabel =
-      next.defaultPaperSize === "custom"
-        ? `${next.customPaperWidthMm}mm custom`
-        : next.defaultPaperSize;
-    notify?.(
-      receiptIds.size > 0
-        ? `Paper settings saved (${widthLabel}) — applied to ${receiptIds.size} receipt printer(s).`
-        : `Paper settings saved (${widthLabel}).`,
-    );
+    if (announce) {
+      const widthLabel =
+        saved.defaultPaperSize === "custom"
+          ? `${saved.customPaperWidthMm}mm custom`
+          : saved.defaultPaperSize;
+      notify?.(`Paper applied (${widthLabel}) — Auto print uses this width now.`);
+    }
+    return saved;
+  }
+
+  function buildNextDraft(
+    prev: ThermalPrintSettings,
+    partial: Partial<ThermalPrintSettings>,
+  ): ThermalPrintSettings {
+    let next = normalizeThermalPrintSettings({ ...prev, ...partial });
+    if (partial.defaultPaperSize != null || partial.customPaperWidthMm != null) {
+      const narrow = isNarrowPaperWidth(next.defaultPaperSize, next.customPaperWidthMm);
+      const wasNarrow = isNarrowPaperWidth(prev.defaultPaperSize, prev.customPaperWidthMm);
+      if (narrow && !wasNarrow && partial.receiptLayout === undefined) {
+        next = normalizeThermalPrintSettings({
+          ...next,
+          receiptLayout: "clear",
+          showUnitPrice: false,
+        });
+      } else if (!narrow && wasNarrow && partial.receiptLayout === undefined) {
+        next = normalizeThermalPrintSettings({
+          ...next,
+          receiptLayout: "columns",
+        });
+      }
+    }
+    return next;
+  }
+
+  function patch(partial: Partial<ThermalPrintSettings>): void {
+    // Paper preset buttons apply immediately so print matches preview.
+    if (partial.defaultPaperSize != null && partial.customPaperWidthMm == null) {
+      setDraft((prev) => {
+        const next = buildNextDraft(prev, partial);
+        queueMicrotask(() => persistPaperNow(next, true));
+        return next;
+      });
+      return;
+    }
+    // Custom mm: update preview live; persist on blur (see input onBlur).
+    setDraft((prev) => buildNextDraft(prev, partial));
+    setDirty(true);
+  }
+
+  function saveThermal(): void {
+    persistPaperNow(draft, true);
   }
 
   function resetDefaults(): void {
@@ -224,8 +249,71 @@ export function ThermalPrintSettingsPanel({
     }
   }
 
+  async function runCompleteTest(): Promise<void> {
+    // Persist current draft first so Auto print + self-test use the same settings.
+    const saved = persistPaperNow(draft, false);
+    const result = runThermalPrintSelfTest({
+      branchCode,
+      branchName,
+      thermal: saved,
+      profilePaperSize: "80mm", // prove Custom still wins over stale profile
+    });
+    setSelfTest(result);
+    notify?.(result.summary);
+
+    if (!testPrinter.trim()) {
+      notify?.(
+        result.ok
+          ? `${result.summary} — select a printer to also print a labeled test slip.`
+          : result.summary,
+      );
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const ok = await printTestPageAsync(testPrinter.trim(), {
+        branchCode,
+        paperSize: saved.defaultPaperSize,
+        thermal: saved,
+        copies: 1,
+        completeTestLabel: true,
+      });
+      notify?.(
+        ok
+          ? `${result.summary} · labeled test slip sent to ${testPrinter}.`
+          : `${result.summary} · print failed for ${testPrinter}.`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const paperLabel = paperSizeLabel(draft.defaultPaperSize, draft.customPaperWidthMm);
   const previewWidthPx = previewPaperWidthPx(draft.defaultPaperSize, draft.customPaperWidthMm);
+  const rollMm = paperWidthMm(draft.defaultPaperSize, draft.customPaperWidthMm);
+  const unitPricePrints =
+    draft.receiptLayout === "columns" &&
+    draft.showUnitPrice &&
+    !isNarrowPaperWidth(draft.defaultPaperSize, draft.customPaperWidthMm);
+  const previewBoxRef = useRef<HTMLDivElement>(null);
+  const [previewBoxW, setPreviewBoxW] = useState(320);
+  useEffect(() => {
+    const el = previewBoxRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (typeof w === "number" && w > 0) setPreviewBoxW(w);
+    });
+    ro.observe(el);
+    setPreviewBoxW(el.clientWidth || 320);
+    return () => ro.disconnect();
+  }, []);
+  const previewScale = Math.min(1, previewBoxW / Math.max(1, previewWidthPx));
+  const previewFrameH = Math.min(
+    typeof window !== "undefined" ? window.innerHeight * 0.7 : 560,
+    560,
+  );
 
   return (
     <div className="space-y-8">
@@ -281,7 +369,7 @@ export function ThermalPrintSettingsPanel({
         </ol>
       </div>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,1fr)]">
         <div className="space-y-6">
           <SectionCard
             step={1}
@@ -352,11 +440,34 @@ export function ThermalPrintSettingsPanel({
                           customPaperWidthMm: mm,
                         });
                       }}
+                      onBlur={() => {
+                        setDraft((current) => {
+                          const next = buildNextDraft(current, {
+                            defaultPaperSize: "custom",
+                            customPaperWidthMm: current.customPaperWidthMm,
+                          });
+                          queueMicrotask(() => persistPaperNow(next, true));
+                          return next;
+                        });
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.currentTarget.blur();
+                        }
+                      }}
                     />
                     <span className="mt-1 block text-[10px] text-slate-500">
-                      48–120 mm — preview updates live; click Save to apply to printers
+                      48–120 mm — applies on blur / Enter. Live Auto print uses this width.
                     </span>
                   </label>
+                ) : null}
+                {rollMm > 80 && draft.defaultPaperSize !== "A4" ? (
+                  <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100/90">
+                    Most POS thermal printers are <span className="font-semibold">80mm</span>. Layout
+                    wider than the physical roll will cut off amounts and CARD/CASH on the right —
+                    pick <span className="font-semibold">80mm</span> unless your printer roll is
+                    truly {rollMm}mm.
+                  </p>
                 ) : null}
               </div>
 
@@ -443,7 +554,9 @@ export function ThermalPrintSettingsPanel({
                       <span>
                         <span className="block text-sm text-slate-200">Show unit price column</span>
                         <span className="mt-0.5 block text-[11px] text-slate-500">
-                          Extra Price column next to Qty / Item / Amount
+                          {unitPricePrints
+                            ? "Prints Qty · Item · Price · Amount on this paper"
+                            : "Turn on with Columns on 80mm+ paper (hidden on narrow 58mm)"}
                         </span>
                       </span>
                     </label>
@@ -464,7 +577,7 @@ export function ThermalPrintSettingsPanel({
                   />
                 </label>
                 <p className="mt-1 text-[10px] text-slate-500">
-                  If the right edge is cut off, raise this to 2–3 mm, or switch paper to 58mm / Stacked.
+                  If the right edge is cut off, raise this to 2–3 mm, or switch to 80mm / Stacked.
                 </p>
               </div>
 
@@ -475,6 +588,11 @@ export function ThermalPrintSettingsPanel({
                 <Button type="button" variant="ghost" onClick={resetDefaults}>
                   Reset
                 </Button>
+                {dirty ? (
+                  <span className="text-[11px] text-amber-300/90">
+                    Auto print still uses the last saved settings until you Save.
+                  </span>
+                ) : null}
               </div>
             </div>
           </SectionCard>
@@ -482,7 +600,7 @@ export function ThermalPrintSettingsPanel({
           <SectionCard
             step={2}
             title="Test print"
-            subtitle="Send a sample bill with your current settings before editing the slip."
+            subtitle="Complete test checks Custom mm, layout, Card/Cash, then can print a labeled slip."
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <label className="min-w-0 flex-1 space-y-1.5">
@@ -500,15 +618,55 @@ export function ThermalPrintSettingsPanel({
                   ))}
                 </select>
               </label>
-              <Button
-                type="button"
-                disabled={busy || !testPrinter}
-                onClick={() => void runTestPrint()}
-                className="shrink-0"
-              >
-                {busy ? "Sending…" : "Send test bill"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void runCompleteTest()}
+                  className="shrink-0"
+                >
+                  {busy ? "Testing…" : "Complete test"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={busy || !testPrinter}
+                  onClick={() => void runTestPrint()}
+                  className="shrink-0"
+                >
+                  {busy ? "Sending…" : "Send test bill"}
+                </Button>
+              </div>
             </div>
+            {selfTest ? (
+              <div
+                className={`mt-4 rounded-xl border px-3 py-3 text-xs ${
+                  selfTest.ok
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                    : "border-red-500/40 bg-red-500/10 text-red-100"
+                }`}
+              >
+                <p className="font-semibold">{selfTest.summary}</p>
+                <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-[11px] leading-snug opacity-90">
+                  {selfTest.checks.map((c) => (
+                    <li key={c.id} className="flex gap-2">
+                      <span className={c.ok ? "text-emerald-300" : "text-red-300"}>
+                        {c.ok ? "✓" : "✗"}
+                      </span>
+                      <span>
+                        <span className="font-medium">{c.label}</span>
+                        <span className="text-slate-400"> — {c.detail}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="mt-3 text-[11px] text-slate-500">
+                Complete test verifies Custom roll width, @page mm, Card/Cash side-by-side, PRICE column, and
+                sample items — then prints a slip labeled with your paper settings.
+              </p>
+            )}
             {osPrinters.length === 0 ? (
               <p className="mt-3 text-[11px] text-slate-500">
                 No Windows printers found. In the browser, link Microsoft Print to PDF under All Printers — print
@@ -518,26 +676,42 @@ export function ThermalPrintSettingsPanel({
           </SectionCard>
         </div>
 
-        {/* Live preview */}
+        {/* Live preview — scales to fit so wide rolls (100/120mm) are not clipped */}
         <aside className="xl:sticky xl:top-4">
           <SectionCard
             title="Live preview"
             subtitle="Updates as you change paper or the slip below."
           >
             <div
-              className="mx-auto overflow-x-auto overflow-y-hidden rounded-xl border border-slate-700 bg-white shadow-inner"
+              ref={previewBoxRef}
+              className="mx-auto overflow-hidden rounded-xl border border-slate-700 bg-white shadow-inner"
               style={{ maxWidth: "100%" }}
             >
-              <iframe
-                title="Bill preview"
-                srcDoc={previewHtml}
-                className="block h-[min(70vh,560px)] border-0 bg-white"
-                style={{ width: previewWidthPx, maxWidth: "none" }}
-                sandbox="allow-same-origin"
-              />
+              <div
+                style={{
+                  width: "100%",
+                  height: previewFrameH * previewScale,
+                  position: "relative",
+                }}
+              >
+                <iframe
+                  title="Bill preview"
+                  srcDoc={previewHtml}
+                  className="absolute left-0 top-0 border-0 bg-white"
+                  style={{
+                    width: previewWidthPx,
+                    height: previewFrameH,
+                    transform: `scale(${previewScale})`,
+                    transformOrigin: "top left",
+                  }}
+                  sandbox="allow-same-origin"
+                />
+              </div>
             </div>
             <p className="mt-3 text-center text-[10px] text-slate-500">
-              Preview width follows paper mm ({paperLabel}) · same layout as Auto print
+              Preview width follows paper mm ({paperLabel})
+              {previewScale < 0.999 ? ` · scaled ${Math.round(previewScale * 100)}% to fit` : ""}{" "}
+              · same layout as Auto print
             </p>
           </SectionCard>
         </aside>
@@ -569,7 +743,7 @@ export function ThermalPrintSettingsPanel({
               branchCode={branchCode}
               settings={billSettings}
               onChange={setBillSettings}
-              onSave={() => persistBillSettings(billSettings)}
+              onSave={(next) => setBillSettings(next)}
               onNotice={notify}
             />
           </SectionCard>

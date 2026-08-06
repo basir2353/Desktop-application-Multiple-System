@@ -34,7 +34,8 @@ export const DEFAULT_THERMAL_PRINT_SETTINGS: ThermalPrintSettings = {
   /** Keep near zero so 80mm / 3" rolls fill edge-to-edge. */
   marginMm: 1,
   receiptLayout: "columns",
-  showUnitPrice: true,
+  /** Off by default — Price+Amt together clips on real 80mm printable width. */
+  showUnitPrice: false,
   compactMoney: true,
   showCurrencyPrefix: false,
   /**
@@ -108,6 +109,19 @@ export function paperSizeLabel(
   return `${paper} roll`;
 }
 
+/**
+ * Prefer branch thermal Custom mm over a stale profile preset.
+ * Profile paperSize is used only when thermal is not set to custom.
+ */
+export function resolveThermalPaperSize(
+  profilePaper: PrinterPaperSize | undefined,
+  thermal: Pick<ThermalPrintSettings, "defaultPaperSize">,
+): PrinterPaperSize {
+  if (thermal.defaultPaperSize === "custom") return "custom";
+  if (profilePaper === "custom") return "custom";
+  return profilePaper ?? thermal.defaultPaperSize;
+}
+
 export function normalizeThermalPrintSettings(
   input: Partial<ThermalPrintSettings> | null | undefined,
 ): ThermalPrintSettings {
@@ -158,19 +172,18 @@ export function loadThermalPrintSettings(branchCode: string | undefined | null):
       });
     }
     // Migrate old under-width 80mm (42) → standard 48 so rolls fill correctly.
+    // Do not rewrite showUnitPrice — that was overwriting user customization on every load.
     if (parsed.charsPerLine80 > 0 && parsed.charsPerLine80 < 48) {
-      return normalizeThermalPrintSettings({
+      const migrated = normalizeThermalPrintSettings({
         ...parsed,
         charsPerLine80: 48,
-        receiptLayout:
-          parsed.defaultPaperSize === "80mm" || parsed.defaultPaperSize === "100mm"
-            ? "columns"
-            : parsed.receiptLayout,
-        showUnitPrice:
-          parsed.defaultPaperSize === "80mm" || parsed.defaultPaperSize === "100mm"
-            ? true
-            : parsed.showUnitPrice,
       });
+      try {
+        localStorage.setItem(storageKey(branchCode), JSON.stringify(migrated));
+      } catch {
+        /* ignore */
+      }
+      return migrated;
     }
     if (parsed.charsPerLine58 > 0 && parsed.charsPerLine58 < 28) {
       return normalizeThermalPrintSettings({ ...parsed, charsPerLine58: 32 });
@@ -205,7 +218,8 @@ export function thermalContentWidthMm(
 ): number {
   const page = paper === "A4" ? 190 : paperWidthMm(paper, customPaperWidthMm);
   const edge = paper === "A4" ? 2 : isWidePaperWidth(paper, customPaperWidthMm) ? 0 : 1;
-  const m = Math.max(0, Math.min(2, marginMm));
+  // Match UI clamp (0–8mm). Previously capped at 2 so "Side margin 3" did nothing.
+  const m = Math.max(0, Math.min(8, marginMm));
   return Math.max(40, page - m * 2 - edge);
 }
 

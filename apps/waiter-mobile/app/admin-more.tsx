@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdminShell } from "../src/components/AdminBottomNav";
 import { ActionTile, Card, Subtitle, Title, colors } from "../src/components/ui";
+import { ThemeToggle } from "../src/components/ThemeToggle";
 import { getApiBaseUrl } from "../src/lib/apiBase";
 import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
@@ -36,21 +37,24 @@ export default function AdminMoreScreen() {
               Full admin tools{branch?.code ? ` · ${branch.code}` : ""}
             </Subtitle>
           </View>
-          <Pressable
-            onPress={() => {
-              clear();
-              router.replace("/");
-            }}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: colors.border,
-            }}
-          >
-            <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>Sign out</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <ThemeToggle size="sm" />
+            <Pressable
+              onPress={() => {
+                clear();
+                router.replace("/");
+              }}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>Sign out</Text>
+            </Pressable>
+          </View>
         </View>
 
         <Subtitle>Money</Subtitle>

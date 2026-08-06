@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
-import { createPopsBranchSchema, updatePopsBranchSchema } from "@platform/contracts";
+import {
+  createPopsBranchSchema,
+  orgDataResetSchema,
+  updatePopsBranchSchema,
+} from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AccessJwtPayload } from "../auth/jwt.types";
@@ -42,5 +46,18 @@ export class OperationsController {
   @RequirePermissions("pops.read")
   getDashboard(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.operations.getDashboard(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Get("business-profile")
+  @RequirePermissions("pops.read")
+  getBusinessProfile(@CurrentUser() user: AccessJwtPayload) {
+    return this.operations.getBusinessProfile(user.organizationId);
+  }
+
+  @Post("data-reset")
+  @RequirePermissions("pops.users.manage")
+  resetOrgData(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    const input = orgDataResetSchema.parse(body);
+    return this.operations.resetOrgData(user, input);
   }
 }

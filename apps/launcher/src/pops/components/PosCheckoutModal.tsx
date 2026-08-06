@@ -6,7 +6,6 @@ import {
   type PaymentMethod,
 } from "@platform/contracts";
 import { useEffect, useMemo, useState } from "react";
-import { fetchTaxSettings } from "../api/accounting";
 import {
   PKR_CASH_DENOMINATIONS,
   emptyDenominationQty,
@@ -22,7 +21,8 @@ import {
   paymentsShortfallMessage,
   taxPctForPayments,
 } from "../lib/posCheckout";
-import { loadPosSettings, type PosSettings } from "../lib/posSettings";
+import { loadPosSettings, POS_SETTINGS_CHANGED_EVENT, isTaxEnabledForOrderMode } from "../lib/posSettings";
+import type { PosOrderMode } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 
 /** Checkout labels: wallet = Online (user-facing). */
@@ -36,6 +36,8 @@ export type CheckoutModalMode = "pay" | "hold" | "invoice";
 
 type Props = {
   mode: CheckoutModalMode;
+  /** POS order channel — used so tax can be off for specific order types. */
+  orderMode?: PosOrderMode | string | null;
   title: string;
   subtotal: number;
   discount: number;
@@ -53,11 +55,14 @@ type Props = {
     taxPct: number;
     payments: BillPayment[];
     status: "completed" | "held";
+    /** Cash tendered when customer pays with larger note (Change Due on slip). */
+    cashReceived?: number;
   }) => void;
 };
 
 export function PosCheckoutModal({
   mode,
+  orderMode = null,
   title,
   subtotal,
   discount,
@@ -71,46 +76,19 @@ export function PosCheckoutModal({
 }: Props): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const [settingsTick, setSettingsTick] = useState(0);
-  const [apiTaxOverlay, setApiTaxOverlay] = useState<Partial<PosSettings> | null>(null);
   useEffect(() => {
     function refresh(): void {
       setSettingsTick((n) => n + 1);
     }
-    window.addEventListener("pops-pos-settings-changed", refresh);
-    return () => window.removeEventListener("pops-pos-settings-changed", refresh);
+    window.addEventListener(POS_SETTINGS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, refresh);
   }, []);
-  useEffect(() => {
-    if (!branch?.code) return;
-    let cancelled = false;
-    void fetchTaxSettings(branch.code)
-      .then((tax) => {
-        if (cancelled) return;
-        // Accounting API exposes one live sales tax %. Use it as default + cash baseline;
-        // card / online stay from POS settings (cash 16 / card 8 / online 8 pattern).
-        const sales = Math.max(0, Math.round(Number(tax.salesTaxPct) || 0));
-        setApiTaxOverlay({
-          taxPct: sales,
-          cashTaxPct: sales,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setApiTaxOverlay(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [branch?.code]);
 
-  const posSettings = useMemo(() => {
-    const local = loadPosSettings(branch?.code);
-    if (!apiTaxOverlay) return local;
-    // Live API rates win for tax %; keep taxByPaymentMethod / taxEnabled from local settings.
-    return {
-      ...local,
-      taxPct: apiTaxOverlay.taxPct ?? local.taxPct,
-      cashTaxPct: apiTaxOverlay.cashTaxPct ?? local.cashTaxPct,
-    };
-  }, [branch?.code, settingsTick, apiTaxOverlay]);
+  // Settings page is the source of truth for POS tax — do not overlay Accounting API rates.
+  const posSettings = useMemo(
+    () => loadPosSettings(branch?.code),
+    [branch?.code, settingsTick],
+  );
   const [taxPctInput, setTaxPctInput] = useState(initialTaxPct);
   const [payments, setPayments] = useState<BillPayment[]>([
     { method: "cash", amount: 0 },
@@ -120,26 +98,42 @@ export function PosCheckoutModal({
   const [showDenominations, setShowDenominations] = useState(false);
   const [denomQty, setDenomQty] = useState<Record<number, string>>(() => emptyDenominationQty());
 
+  // Keep checkout tax in sync with Settings whenever they change.
+  useEffect(() => {
+    if (!posSettings.taxEnabled) {
+      setTaxPctInput(0);
+      return;
+    }
+    if (posSettings.taxByPaymentMethod) return;
+    setTaxPctInput(posSettings.taxPct > 0 ? posSettings.taxPct : initialTaxPct);
+  }, [posSettings, initialTaxPct]);
+
   const effectiveTaxPct = useMemo(() => {
+    if (!isTaxEnabledForOrderMode(posSettings, orderMode)) return 0;
     if (posSettings.taxByPaymentMethod) {
       return taxPctForPayments(posSettings, payments);
     }
-    return posSettings.taxEnabled ? taxPctInput : 0;
-  }, [posSettings, payments, taxPctInput]);
+    return taxPctInput;
+  }, [posSettings, payments, taxPctInput, orderMode]);
+
+  const liveServicePct = useMemo(() => {
+    if (Number.isFinite(initialServicePct)) return Math.max(0, initialServicePct);
+    return Math.max(0, posSettings.servicePct);
+  }, [initialServicePct, posSettings.servicePct]);
 
   const totals = useMemo(
     () =>
       computeCheckoutTotals(
         [{ qty: 1, unitPrice: subtotal }],
         discount,
-        initialServicePct,
+        liveServicePct,
         effectiveTaxPct,
         deliveryCharge,
       ),
-    [subtotal, discount, initialServicePct, effectiveTaxPct, deliveryCharge],
+    [subtotal, discount, liveServicePct, effectiveTaxPct, deliveryCharge],
   );
 
-  // Keep the single auto payment row matched to live total (tax/API/method changes).
+  // Keep the single auto payment row matched to live total (tax/method changes).
   // Without this, Pay posts a stale amount → server 400 "Payments do not cover bill total".
   useEffect(() => {
     if (allowPartial) return;
@@ -155,12 +149,6 @@ export function PosCheckoutModal({
       setTaxPctInput(effectiveTaxPct);
     }
   }, [effectiveTaxPct, posSettings.taxByPaymentMethod]);
-
-  useEffect(() => {
-    if (!posSettings.taxByPaymentMethod && apiTaxOverlay?.taxPct != null) {
-      setTaxPctInput(apiTaxOverlay.taxPct);
-    }
-  }, [apiTaxOverlay, posSettings.taxByPaymentMethod]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -213,7 +201,7 @@ export function PosCheckoutModal({
   function handleConfirm(): void {
     if (isHold) {
       onConfirm({
-        servicePct: initialServicePct,
+        servicePct: liveServicePct,
         taxPct: effectiveTaxPct,
         payments: [],
         status: "held",
@@ -221,10 +209,29 @@ export function PosCheckoutModal({
       return;
     }
 
-    // Full pay: bump single payment to exact total so tax re-calc never underpays.
+    // Full pay: keep accounting payments at bill total, but remember cash tendered for Change Due.
     let finalPayments = payments.filter((p) => p.amount > 0);
+    const cashTendered = finalPayments
+      .filter((p) => p.method === "cash")
+      .reduce((sum, p) => sum + p.amount, 0);
+    const cashReceived = cashTendered > totals.total ? cashTendered : undefined;
     if (!allowPartial && finalPayments.length === 1) {
       finalPayments = [{ ...finalPayments[0], amount: totals.total }];
+    } else if (!allowPartial && cashReceived != null) {
+      // Cap cash line to bill share so books stay balanced; tendered kept separately.
+      finalPayments = finalPayments.map((p) =>
+        p.method === "cash" ? { ...p, amount: Math.min(p.amount, totals.total) } : p,
+      );
+      const paidNow = finalPayments.reduce((s, p) => s + p.amount, 0);
+      if (paidNow < totals.total) {
+        const cashIdx = finalPayments.findIndex((p) => p.method === "cash");
+        if (cashIdx >= 0) {
+          finalPayments[cashIdx] = {
+            ...finalPayments[cashIdx],
+            amount: finalPayments[cashIdx].amount + (totals.total - paidNow),
+          };
+        }
+      }
     }
 
     const err = paymentsShortfallMessage(finalPayments, totals.total, checkoutMode);
@@ -237,10 +244,11 @@ export function PosCheckoutModal({
     const partial = isPartialPayment(finalPayments, totals.total);
     setPaymentError(null);
     onConfirm({
-      servicePct: initialServicePct,
+      servicePct: liveServicePct,
       taxPct: effectiveTaxPct,
       payments: finalPayments,
       status: partial || allowPartial ? "held" : "completed",
+      cashReceived,
     });
   }
 
@@ -270,7 +278,7 @@ export function PosCheckoutModal({
             <div className="block text-slate-400">
               <span className="text-[11px]">Service charge</span>
               <div className="mt-1 rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5 text-sm text-slate-300">
-                {initialServicePct}%
+                {liveServicePct}%
               </div>
             </div>
             <label className="block text-slate-400">
@@ -289,9 +297,12 @@ export function PosCheckoutModal({
 
           {posSettings.taxByPaymentMethod ? (
             <p className="text-[10px] text-slate-500">
-              Live tax by payment: cash {posSettings.cashTaxPct}% · card {posSettings.cardTaxPct}% ·
-              online {posSettings.onlineTaxPct}%
-              {apiTaxOverlay ? " (from Accounting API)" : ""}
+              Live tax by payment (from Settings): cash {posSettings.cashTaxPct}% · card{" "}
+              {posSettings.cardTaxPct}% · online {posSettings.onlineTaxPct}%
+            </p>
+          ) : !posSettings.taxEnabled ? (
+            <p className="text-[10px] text-amber-600/90">
+              Tax is OFF in Settings — not added to this bill.
             </p>
           ) : null}
 
@@ -308,7 +319,7 @@ export function PosCheckoutModal({
             ) : null}
             {totals.service > 0 ? (
               <div className="flex justify-between text-slate-500">
-                <span>Service ({initialServicePct}%)</span>
+                <span>Service ({liveServicePct}%)</span>
                 <span>Rs {totals.service.toLocaleString()}</span>
               </div>
             ) : null}

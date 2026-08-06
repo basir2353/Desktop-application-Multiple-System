@@ -5,7 +5,7 @@ REM Usage: local\publish-desktop-release.bat [version]
 cd /d "%~dp0\.."
 
 set "VER=%~1"
-if "%VER%"=="" set "VER=0.3.7"
+if "%VER%"=="" set "VER=0.3.10"
 set "TAG=desktop-v%VER%"
 set "DIR=%CD%\dist-installers\updates\desktop-v%VER%"
 set "REPO=basir2353/pops-desktop-updates"

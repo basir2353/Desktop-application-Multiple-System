@@ -1,16 +1,45 @@
 import { Button } from "@platform/ui";
-import { useMutation } from "@tanstack/react-query";
+import type { DataResetScope } from "@platform/contracts";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
-import { updatePopsBranch } from "../../api/operations";
+import {
+  fetchBusinessProfile,
+  resetOrgData,
+  updatePopsBranch,
+} from "../../api/operations";
 import {
   DEFAULT_POS_SETTINGS,
   loadPosSettings,
   normalizePosSettings,
+  posSettingsFromTaxApi,
   savePosSettings,
+  savePosSettingsSynced,
   type PosSettings,
 } from "../../lib/posSettings";
+import { POS_ORDER_MODES, type PosOrderMode } from "../../lib/posOrderMode";
+import {
+  DEFAULT_POS_ORDER_MODE_VISIBILITY,
+  loadPosOrderModeVisibility,
+  normalizePosOrderModeVisibility,
+  POS_ORDER_MODE_VISIBILITY_KEYS,
+  savePosOrderModeVisibility,
+  type PosOrderModeVisibility,
+} from "../../lib/posOrderModeVisibility";
+import {
+  applyOrderNumberStart,
+  peekNextOrderRef,
+} from "../../lib/orderNumber";
+import {
+  defaultOrderNumberSettings,
+  loadOrderNumberSettings,
+  normalizeOrderNumberSettings,
+  previewOrderRef,
+  saveOrderNumberSettings,
+  type OrderNumberSettings,
+} from "../../lib/orderNumberSettings";
+import { fetchTaxSettings } from "../../api/accounting";
 import {
   loadBillPrintSettings,
   saveBillPrintSettings,
@@ -30,9 +59,151 @@ import {
 } from "../../hooks/useTaxAuthorityFeatures";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useThemeStore } from "../../../stores/themeStore";
+
+type OrderTypeChargeKey = {
+  service: keyof PosSettings;
+  tax: keyof PosSettings;
+};
+
+const ORDER_TYPE_CHARGE_KEYS: Record<PosOrderMode, OrderTypeChargeKey> = {
+  "dine-in": { service: "serviceOnDineIn", tax: "taxOnDineIn" },
+  takeaway: { service: "serviceOnTakeaway", tax: "taxOnTakeaway" },
+  delivery: { service: "serviceOnDelivery", tax: "taxOnDelivery" },
+  online: { service: "serviceOnOnline", tax: "taxOnOnline" },
+  foodpanda: { service: "serviceOnFoodpanda", tax: "taxOnFoodpanda" },
+  "staff-food": { service: "serviceOnStaffFood", tax: "taxOnStaffFood" },
+};
 import { hasAnyPermission, sessionCanManageUsers } from "../../lib/roleAccess";
 import { PageHeader } from "../../ui/PageHeader";
 import { fieldInputClass } from "../../lib/themeClasses";
+
+const DATA_RESET_OPTIONS: {
+  scope: DataResetScope;
+  title: string;
+  detail: string;
+}[] = [
+  {
+    scope: "hr",
+    title: "HR reset",
+    detail:
+      "Removes employees, payroll runs, advances, attendance, leave, and staff food. Users/login accounts stay.",
+  },
+  {
+    scope: "restaurant",
+    title: "Restaurant reset",
+    detail:
+      "Removes sales, bills, kitchen tickets, cash sessions, journals, expenses, inventory movements, and zeros stock balances. Menu and users stay.",
+  },
+  {
+    scope: "all",
+    title: "All data reset",
+    detail:
+      "Full wipe: restaurant + HR + store/pharmacy transactions. Users, menu, and catalogue stay. Dashboard and P&L go to zero.",
+  },
+];
+
+function DataResetPanel(props: {
+  onNotice: (message: string) => void;
+  onError: (message: string) => void;
+}): JSX.Element {
+  const [scope, setScope] = useState<DataResetScope>("restaurant");
+  const [confirmText, setConfirmText] = useState("");
+  const profile = useQuery({
+    queryKey: ["operations", "business-profile"],
+    queryFn: fetchBusinessProfile,
+  });
+  const businessName = profile.data?.name ?? "";
+
+  const resetMut = useMutation({
+    mutationFn: () => resetOrgData(scope, confirmText),
+    onSuccess: (result) => {
+      setConfirmText("");
+      props.onNotice(result.message);
+    },
+    onError: (err) => {
+      props.onError(err instanceof Error ? err.message : "Data reset failed");
+    },
+  });
+
+  const confirmOk =
+    confirmText.trim().toLowerCase() === "reset" ||
+    (businessName.length > 0 &&
+      confirmText.trim().toLowerCase() === businessName.trim().toLowerCase());
+
+  const selected = DATA_RESET_OPTIONS.find((o) => o.scope === scope)!;
+
+  return (
+    <section className="max-w-xl space-y-3 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+      <h3 className="text-sm font-semibold text-red-900 dark:text-red-100">Data reset</h3>
+      <p className="text-xs text-red-800/90 dark:text-red-200/90">
+        Permanently delete module data for this business. This cannot be undone. Type{" "}
+        <span className="font-semibold">RESET</span>
+        {businessName ? (
+          <>
+            {" "}
+            or the business name <span className="font-semibold">“{businessName}”</span>
+          </>
+        ) : null}{" "}
+        to confirm.
+      </p>
+
+      <div className="space-y-2">
+        {DATA_RESET_OPTIONS.map((opt) => (
+          <label
+            key={opt.scope}
+            className="flex cursor-pointer gap-2 rounded-lg border border-red-200/80 bg-white/70 px-3 py-2 dark:border-red-900/50 dark:bg-slate-950/40"
+          >
+            <input
+              type="radio"
+              name="data-reset-scope"
+              className="mt-1"
+              checked={scope === opt.scope}
+              onChange={() => setScope(opt.scope)}
+            />
+            <span>
+              <span className="block text-xs font-semibold text-slate-900 dark:text-white">
+                {opt.title}
+              </span>
+              <span className="mt-0.5 block text-[11px] text-slate-600 dark:text-slate-400">
+                {opt.detail}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      <label className="block text-xs font-medium text-red-900 dark:text-red-100">
+        Confirm
+        <input
+          className={`mt-1 w-full ${fieldInputClass}`}
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder={businessName || "RESET"}
+          autoComplete="off"
+        />
+      </label>
+
+      <Button
+        type="button"
+        variant="ghost"
+        className="text-xs text-red-700 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-900/40"
+        disabled={resetMut.isPending || !confirmOk}
+        onClick={() => {
+          if (
+            !window.confirm(
+              `Reset ${selected.title.replace(/ reset$/i, "")} data? Deleted rows cannot be recovered.`,
+            )
+          ) {
+            return;
+          }
+          resetMut.mutate();
+        }}
+      >
+        {resetMut.isPending ? "Resetting…" : `Run ${selected.title.toLowerCase()}`}
+      </Button>
+    </section>
+  );
+}
 
 export function SettingsPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
@@ -41,6 +212,12 @@ export function SettingsPage(): JSX.Element {
   const themeMode = useThemeStore((s) => s.mode);
   const [saved, setSaved] = useState<PosSettings>(DEFAULT_POS_SETTINGS);
   const [draft, setDraft] = useState<PosSettings>(DEFAULT_POS_SETTINGS);
+  const [modeVisibilityDraft, setModeVisibilityDraft] = useState<PosOrderModeVisibility>(
+    DEFAULT_POS_ORDER_MODE_VISIBILITY,
+  );
+  const [orderNumDraft, setOrderNumDraft] = useState<OrderNumberSettings>(() =>
+    defaultOrderNumberSettings(),
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [taxError, setTaxError] = useState<string | null>(null);
   const [branchDraft, setBranchDraft] = useState({ name: "", city: "", code: "" });
@@ -58,6 +235,7 @@ export function SettingsPage(): JSX.Element {
     "pops.multi_branch.manage",
     "*",
   ]);
+  const canResetData = sessionCanManageUsers(claims);
 
   const authorizedTerminals = useMemo(
     () => loadAuthorizedTerminals(branch?.code),
@@ -68,7 +246,35 @@ export function SettingsPage(): JSX.Element {
     const loaded = loadPosSettings(branch?.code);
     setSaved(loaded);
     setDraft(loaded);
+    setModeVisibilityDraft(loadPosOrderModeVisibility(branch?.code));
+    setOrderNumDraft(loadOrderNumberSettings(branch?.code));
   }, [branch?.code]);
+
+  const cloudTaxQuery = useQuery({
+    queryKey: ["accounting", "tax", "pos-charges", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchTaxSettings(branch!.code),
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!branch?.code || !cloudTaxQuery.data) return;
+    const local = loadPosSettings(branch.code);
+    const fromCloud = posSettingsFromTaxApi(cloudTaxQuery.data, {
+      showBillNotes: local.showBillNotes,
+    });
+    // Prefer cloud when it has explicit posCharges; otherwise keep local custom rates
+    // but push local → cloud once so mobile can see them.
+    if (cloudTaxQuery.data.posCharges) {
+      savePosSettings(branch.code, fromCloud);
+      setSaved(fromCloud);
+      setDraft(fromCloud);
+      return;
+    }
+    void savePosSettingsSynced(branch.code, local).catch(() => {
+      // Local still works if sync fails (permissions / offline).
+    });
+  }, [branch?.code, cloudTaxQuery.data]);
 
   useEffect(() => {
     if (!branch) return;
@@ -115,31 +321,59 @@ export function SettingsPage(): JSX.Element {
     return computeTicketTotals(sampleSubtotal, autoDisc, draft.servicePct, taxPct);
   }, [draft]);
 
-  function apply(): void {
+  async function apply(): Promise<void> {
     if (!branch?.code) return;
-    const next = normalizePosSettings(draft);
-    // If tax master toggle is off, force payment-method tax off too.
-    if (!next.taxEnabled) {
-      next.taxByPaymentMethod = false;
+    try {
+      const next = normalizePosSettings(draft);
+      // If tax master toggle is off, force payment-method tax off too.
+      if (!next.taxEnabled) {
+        next.taxByPaymentMethod = false;
+      }
+      let syncedToCloud = false;
+      let syncError: string | null = null;
+      try {
+        await savePosSettingsSynced(branch.code, next);
+        syncedToCloud = true;
+      } catch (err) {
+        // Still save locally so desktop POS works even if cloud sync is denied.
+        savePosSettings(branch.code, next);
+        syncError = err instanceof Error ? err.message : "Cloud sync failed";
+      }
+      // Keep bill print template in sync: off means hide Tax line on next prints.
+      const billPrint = loadBillPrintSettings(branch.code);
+      saveBillPrintSettings(branch.code, {
+        ...billPrint,
+        fields: { ...billPrint.fields, tax: next.taxEnabled },
+      });
+      setSaved(next);
+      setDraft(next);
+      const nextVisibility = normalizePosOrderModeVisibility(modeVisibilityDraft);
+      savePosOrderModeVisibility(branch.code, nextVisibility);
+      setModeVisibilityDraft(nextVisibility);
+      if (syncedToCloud) {
+        setTaxError(null);
+        setNotice(
+          next.taxEnabled
+            ? `POS charges saved & synced for mobile (service ${next.servicePct}%). Tax is ON for new tickets.`
+            : `POS charges saved & synced for mobile (service ${next.servicePct}%). Tax is OFF — new bills will not add or show tax.`,
+        );
+      } else {
+        setNotice(
+          `Saved on this PC only (service ${next.servicePct}%). Mobile will keep the old rate until cloud sync works.`,
+        );
+        setTaxError(
+          `Cloud sync failed — ${syncError ?? "unknown"}. Need permission pops.accounting.manage or pops.menu.manage, then Save again.`,
+        );
+      }
+    } catch (err) {
+      setTaxError(err instanceof Error ? err.message : "Could not save POS settings (storage full?).");
+      setNotice(null);
     }
-    savePosSettings(branch.code, next);
-    // Keep bill print template in sync: off means hide Tax line on next prints.
-    const billPrint = loadBillPrintSettings(branch.code);
-    saveBillPrintSettings(branch.code, {
-      ...billPrint,
-      fields: { ...billPrint.fields, tax: next.taxEnabled },
-    });
-    setSaved(next);
-    setDraft(next);
-    setNotice(
-      next.taxEnabled
-        ? "POS charges saved. Tax is ON for new tickets."
-        : "POS charges saved. Tax is OFF — new bills will not add or show tax.",
-    );
   }
 
   function reset(): void {
     setDraft(DEFAULT_POS_SETTINGS);
+    setModeVisibilityDraft(DEFAULT_POS_ORDER_MODE_VISIBILITY);
   }
 
   if (!branch?.code) {
@@ -180,6 +414,19 @@ export function SettingsPage(): JSX.Element {
             tax for this business).
           </p>
         )}
+
+        {canResetData ? (
+          <DataResetPanel
+            onNotice={(m) => {
+              setTaxError(null);
+              setNotice(m);
+            }}
+            onError={(m) => {
+              setNotice(null);
+              setTaxError(m);
+            }}
+          />
+        ) : null}
       </div>
     );
   }
@@ -280,7 +527,26 @@ export function SettingsPage(): JSX.Element {
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">POS charges & tax</div>
         <p className="mt-1 text-xs text-slate-500">
-          Current: service {saved.servicePct}%, tax {saved.taxEnabled ? `${saved.taxPct}%` : "off"}
+          Current: service {saved.servicePct}%
+          {(() => {
+            const serviceModes = POS_ORDER_MODES.filter(
+              (m) => Boolean(saved[ORDER_TYPE_CHARGE_KEYS[m.id].service]),
+            ).map((m) => m.label);
+            return serviceModes.length
+              ? ` on ${serviceModes.join(", ")}`
+              : " (off for all order types)";
+          })()}
+          , tax{" "}
+          {saved.taxEnabled
+            ? (() => {
+                const taxModes = POS_ORDER_MODES.filter(
+                  (m) => Boolean(saved[ORDER_TYPE_CHARGE_KEYS[m.id].tax]),
+                ).map((m) => m.label);
+                return taxModes.length
+                  ? `${saved.taxPct}% on ${taxModes.join(", ")}`
+                  : "off for all order types";
+              })()
+            : "off"}
           {saved.autoDiscountEnabled ? `, auto discount ${saved.autoDiscountPct}%` : ""}.
         </p>
 
@@ -317,6 +583,19 @@ export function SettingsPage(): JSX.Element {
           Original item prices stay visible; the discounted amount shows separately in the totals.
         </p>
 
+        <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={draft.showBillNotes}
+            onChange={(e) => setDraft((prev) => ({ ...prev, showBillNotes: e.target.checked }))}
+          />
+          Show bill note on POS ticket
+        </label>
+        <p className="mt-1 text-[10px] text-slate-500">
+          On: bill note / item note fields appear on New order. Off: those fields are hidden.
+        </p>
+
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="block text-xs text-slate-400">
             Service charge (%)
@@ -347,6 +626,79 @@ export function SettingsPage(): JSX.Element {
               className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
             />
           </label>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-700/60 bg-slate-950/40 p-3">
+          <div className="text-xs font-medium text-slate-300">Charges by order type</div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Show = tab appears on POS. Service / Tax = whether those charges apply. At least one
+            order type must stay on.
+          </p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[320px] text-left text-xs text-slate-400">
+              <thead>
+                <tr className="border-b border-slate-700/80 text-[10px] uppercase tracking-wide text-slate-500">
+                  <th className="pb-2 pr-2 font-medium">Order type</th>
+                  <th className="pb-2 px-2 font-medium text-center">Show</th>
+                  <th className="pb-2 px-2 font-medium text-center">Service</th>
+                  <th className="pb-2 pl-2 font-medium text-center">Tax</th>
+                </tr>
+              </thead>
+              <tbody>
+                {POS_ORDER_MODES.map(({ id, label }) => {
+                  const keys = ORDER_TYPE_CHARGE_KEYS[id];
+                  const showKey = POS_ORDER_MODE_VISIBILITY_KEYS[id];
+                  const showChecked = Boolean(modeVisibilityDraft[showKey]);
+                  const enabledCount = Object.values(modeVisibilityDraft).filter(Boolean).length;
+                  return (
+                    <tr key={id} className="border-b border-slate-800/80 last:border-0">
+                      <td className="py-2 pr-2 text-slate-300">{label}</td>
+                      <td className="py-2 px-2 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Show ${label} on POS`}
+                          checked={showChecked}
+                          disabled={showChecked && enabledCount <= 1}
+                          onChange={(e) =>
+                            setModeVisibilityDraft((prev) =>
+                              normalizePosOrderModeVisibility({
+                                ...prev,
+                                [showKey]: e.target.checked,
+                              }),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Service on ${label}`}
+                          checked={Boolean(draft[keys.service])}
+                          onChange={(e) =>
+                            setDraft((prev) => ({ ...prev, [keys.service]: e.target.checked }))
+                          }
+                        />
+                      </td>
+                      <td className="py-2 pl-2 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Tax on ${label}`}
+                          checked={Boolean(draft[keys.tax])}
+                          disabled={!draft.taxEnabled}
+                          onChange={(e) =>
+                            setDraft((prev) => ({ ...prev, [keys.tax]: e.target.checked }))
+                          }
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="block text-xs text-slate-400">
             Default sales tax (%)
             <input
@@ -421,6 +773,205 @@ export function SettingsPage(): JSX.Element {
       </div>
 
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">Order numbering</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Control how POS order numbers start, how many digits show, and whether each order type
+          (Dine-in, Takeaway, Delivery…) has its own sequence.
+        </p>
+
+        <label className="mt-4 flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            className="accent-amber-500"
+            checked={orderNumDraft.separateByOrderType}
+            onChange={(e) =>
+              setOrderNumDraft((prev) => ({ ...prev, separateByOrderType: e.target.checked }))
+            }
+          />
+          Separate sequence per order type
+        </label>
+
+        {!orderNumDraft.separateByOrderType ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <label className="block text-xs text-slate-400">
+              Prefix
+              <input
+                value={orderNumDraft.prefix}
+                maxLength={8}
+                onChange={(e) =>
+                  setOrderNumDraft((prev) => ({ ...prev, prefix: e.target.value.toUpperCase() }))
+                }
+                className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+                placeholder="ORD"
+              />
+            </label>
+            <label className="block text-xs text-slate-400">
+              Start from
+              <input
+                type="number"
+                min={1}
+                max={999999999}
+                value={orderNumDraft.startAt}
+                onChange={(e) =>
+                  setOrderNumDraft((prev) => ({
+                    ...prev,
+                    startAt: Number(e.target.value) || 1,
+                  }))
+                }
+                className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+              />
+            </label>
+            <label className="block text-xs text-slate-400">
+              Digits to show
+              <input
+                type="number"
+                min={0}
+                max={8}
+                value={orderNumDraft.digitCount}
+                onChange={(e) =>
+                  setOrderNumDraft((prev) => ({
+                    ...prev,
+                    digitCount: Number(e.target.value) || 0,
+                  }))
+                }
+                className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+              />
+              <span className="mt-1 block text-[10px] text-slate-500">
+                0 = no padding. 4 → 0007
+              </span>
+            </label>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <label className="block text-xs text-slate-400 sm:max-w-[10rem]">
+              Digits to show (all types)
+              <input
+                type="number"
+                min={0}
+                max={8}
+                value={orderNumDraft.digitCount}
+                onChange={(e) =>
+                  setOrderNumDraft((prev) => ({
+                    ...prev,
+                    digitCount: Number(e.target.value) || 0,
+                  }))
+                }
+                className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+              />
+            </label>
+            <div className="overflow-x-auto rounded-lg border border-slate-700/60">
+              <table className="w-full min-w-[360px] text-left text-xs text-slate-400">
+                <thead>
+                  <tr className="border-b border-slate-700/80 text-[10px] uppercase tracking-wide text-slate-500">
+                    <th className="px-3 py-2 font-medium">Order type</th>
+                    <th className="px-2 py-2 font-medium">Prefix</th>
+                    <th className="px-2 py-2 font-medium">Start from</th>
+                    <th className="px-3 py-2 font-medium">Next preview</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {POS_ORDER_MODES.map(({ id, label }) => {
+                    const row = orderNumDraft.byMode[id];
+                    const nextPreview = previewOrderRef(
+                      orderNumDraft,
+                      Math.max(row.startAt, 1),
+                      id,
+                    );
+                    return (
+                      <tr key={id} className="border-b border-slate-800/80 last:border-0">
+                        <td className="px-3 py-2 text-slate-300">{label}</td>
+                        <td className="px-2 py-2">
+                          <input
+                            value={row.prefix}
+                            maxLength={8}
+                            onChange={(e) =>
+                              setOrderNumDraft((prev) => ({
+                                ...prev,
+                                byMode: {
+                                  ...prev.byMode,
+                                  [id]: {
+                                    ...prev.byMode[id],
+                                    prefix: e.target.value.toUpperCase(),
+                                  },
+                                },
+                              }))
+                            }
+                            className="w-20 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-white outline-none focus:border-amber-500/50"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            type="number"
+                            min={1}
+                            value={row.startAt}
+                            onChange={(e) =>
+                              setOrderNumDraft((prev) => ({
+                                ...prev,
+                                byMode: {
+                                  ...prev.byMode,
+                                  [id]: {
+                                    ...prev.byMode[id],
+                                    startAt: Number(e.target.value) || 1,
+                                  },
+                                },
+                              }))
+                            }
+                            className="w-24 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-white outline-none focus:border-amber-500/50"
+                          />
+                        </td>
+                        <td className="px-3 py-2 font-mono text-amber-300/90">{nextPreview}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-slate-500">
+          Next on this terminal
+          {orderNumDraft.separateByOrderType
+            ? `: e.g. ${previewOrderRef(orderNumDraft, orderNumDraft.byMode["dine-in"].startAt, "dine-in")} (Dine-in start)`
+            : `: ${previewOrderRef(orderNumDraft, orderNumDraft.startAt)}`}
+          {branch?.code ? ` · live peek ${peekNextOrderRef(branch.code, "dine-in")}` : ""}.
+        </p>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            className="text-xs"
+            onClick={() => {
+              const savedNum = saveOrderNumberSettings(branch?.code, orderNumDraft);
+              setOrderNumDraft(savedNum);
+              if (savedNum.separateByOrderType) {
+                for (const { id } of POS_ORDER_MODES) {
+                  applyOrderNumberStart(branch?.code, savedNum, id);
+                }
+              } else {
+                applyOrderNumberStart(branch?.code, savedNum);
+              }
+              setNotice(
+                savedNum.separateByOrderType
+                  ? "Order numbering saved (per order type)."
+                  : `Order numbering saved. Next starts from ${savedNum.prefix}-${savedNum.startAt}.`,
+              );
+            }}
+          >
+            Save order numbering
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-xs"
+            onClick={() => setOrderNumDraft(normalizeOrderNumberSettings(null))}
+          >
+            Reset numbering defaults
+          </Button>
+        </div>
+      </div>
+
+      <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">Authorized terminals</div>
         <p className="mt-1 text-xs text-slate-500">
           Restrict POS access to registered devices. This terminal: <code>{terminalId}</code>
@@ -463,6 +1014,19 @@ export function SettingsPage(): JSX.Element {
       <div className="max-w-xl">
         <DashboardBusinessDaySettings branchCode={branch.code} />
       </div>
+
+      {canResetData ? (
+        <DataResetPanel
+          onNotice={(m) => {
+            setTaxError(null);
+            setNotice(m);
+          }}
+          onError={(m) => {
+            setNotice(null);
+            setTaxError(m);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

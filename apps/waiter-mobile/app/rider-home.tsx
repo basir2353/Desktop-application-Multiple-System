@@ -6,7 +6,6 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -24,6 +23,8 @@ import {
   StatusBadge,
   colors,
 } from "../src/components/ui";
+import { ThemeToggle } from "../src/components/ThemeToggle";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
 import { isRiderRole, resolveStaffRole } from "../src/lib/roles";
@@ -35,6 +36,7 @@ function activeDeliveries(orders: DeliveryOrder[]): DeliveryOrder[] {
 }
 
 export default function RiderHomeScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
@@ -123,6 +125,7 @@ export default function RiderHomeScreen() {
               {waiterEmail?.split("@")[0] ?? "Rider"} · {branch.name}
             </Text>
           </View>
+          <ThemeToggle size="sm" />
           <Pressable
             onPress={() => {
               clearBranch();
@@ -210,30 +213,36 @@ export default function RiderHomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   scroll: { gap: 16, paddingBottom: 32 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  greeting: { color: colors.text, fontSize: 24, fontWeight: "700" },
-  title: { color: colors.text, fontSize: 20, fontWeight: "700", marginBottom: 8 },
-  subtitle: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 4 },
-  link: { color: colors.accent, fontSize: 13, fontWeight: "600" },
+  greeting: { color: c.text, fontSize: 24, fontWeight: "700" },
+  title: { color: c.text, fontSize: 20, fontWeight: "700", marginBottom: 8 },
+  subtitle: { color: c.muted, fontSize: 14, lineHeight: 20, marginTop: 4 },
+  link: { color: c.accent, fontSize: 13, fontWeight: "600" },
   statsRow: { flexDirection: "row", gap: 10 },
   orderCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 14,
     gap: 6,
   },
   orderCardPressed: { opacity: 0.85 },
   orderHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   orderHeaderRight: { alignItems: "flex-end", gap: 6 },
-  orderRef: { color: colors.text, fontSize: 15, fontWeight: "700" },
-  customer: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  address: { color: colors.muted, fontSize: 13, lineHeight: 18 },
-  orderTotal: { color: colors.accent, fontSize: 15, fontWeight: "800" },
-  meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
+  orderRef: { color: c.text, fontSize: 15, fontWeight: "700" },
+  customer: { color: c.text, fontSize: 16, fontWeight: "600" },
+  address: { color: c.muted, fontSize: 13, lineHeight: 18 },
+  orderTotal: { color: c.accent, fontSize: 15, fontWeight: "800" },
+  meta: { color: c.muted, fontSize: 12, marginTop: 4 },
   footer: { gap: 16, marginTop: 8 },
-  signOut: { color: colors.muted, textAlign: "center", fontSize: 13 },
-});
+  signOut: { color: c.muted, textAlign: "center", fontSize: 13 },
+
+  }));
+}
+

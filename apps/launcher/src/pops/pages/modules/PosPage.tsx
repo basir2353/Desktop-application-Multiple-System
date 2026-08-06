@@ -3,11 +3,13 @@ import {
   formatMenuItemPrintLabel,
   menuItemDisplayPrice,
   type Bill,
+  type ExpenseCategory,
   type KitchenTicket,
   type MenuItem as ApiMenuItem,
   type MenuItemVariant,
   type PraFiscalInvoice,
   type PraInvoiceMode,
+  EXPENSE_CATEGORIES,
 } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +45,7 @@ import {
   parseStaffFoodPersonFromStation,
   posBillTableLabel,
   posCustomerOrderNotes,
+  posDeliveryNotes,
   posModeAutoPrintsOnCustomer,
   posModeShowsCustomerPanel,
   posOrderModeLabel,
@@ -54,6 +57,8 @@ import {
 } from "../../lib/posOrderMode";
 import {
   buildCartLine,
+  cartLinePrintLabel,
+  cartLineGross,
   canEditLineDiscount,
   cartLineManualDiscountPkr,
   cartLineNet,
@@ -70,6 +75,12 @@ import {
   type LineDiscountMode,
   type PosCartLine,
 } from "../../lib/posCart";
+import {
+  cartLinesToKotBaseline,
+  diffKotLines,
+  kotDeltasToCartLines,
+  type KotBaselineLine,
+} from "../../lib/kotLineDelta";
 import {
   formatSessionPrintName,
   printKotDetailed,
@@ -92,7 +103,13 @@ import {
   cartFromBill,
   cartFromKitchenTicket,
   inferPosModeFromStation,
+  packOrderNotesWithDiscount,
+  packOrderNotesWithCashReceived,
+  packOrderNotesWithKitchenNote,
   parseDeliveryFieldsFromNotes,
+  parseKitchenFreeNoteFromNotes,
+  parseTicketDiscountFromNotes,
+  resolveTicketDeliveryNotes,
   tableNumberFromStation,
 } from "../../lib/posLoadOrder";
 import {
@@ -105,9 +122,21 @@ import { PosCheckoutModal, type CheckoutModalMode } from "../../components/PosCh
 import { PosSplitBillModal, type SplitBillPart } from "../../components/PosSplitBillModal";
 import { ChangeOrderTableModal, type ChangeTableTicket } from "../../components/ChangeOrderTableModal";
 import { PosPayOutModal } from "../../components/PosPayOutModal";
+import { PosCreateAccountModal } from "../../components/PosCreateAccountModal";
+import { PosTeamChangeModal } from "../../components/PosTeamChangeModal";
 import { PosMyPrintersModal } from "../../components/PosMyPrintersModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
+import {
+  loadPosCustomerDiscountDraft,
+  savePosCustomerDiscountDraft,
+  clearPosCustomerDiscountDraft,
+} from "../../lib/posCustomerDiscountDraft";
+import {
+  loadPosShiftTeam,
+  POS_SHIFT_TEAM_CHANGED_EVENT,
+} from "../../lib/posShiftTeam";
 import { createStaffFoodRecord, fetchEmployeeAdvances, fetchEmployees } from "../../api/hr";
+import { fetchBranchInventory } from "../../api/inventory";
 import { openAdvanceTotalsByEmployee } from "../../lib/employeeAdvancesLocal";
 import { formatSelectBalance } from "../../lib/selectMeta";
 import { SearchableSelect } from "../../ui/SearchableSelect";
@@ -120,7 +149,8 @@ import {
   type DeliverySettings,
 } from "../../lib/deliverySettings";
 import {
-  effectiveTaxPct,
+  effectiveServicePctForMode,
+  effectiveTaxPctForMode,
   loadPosSettings,
   POS_SETTINGS_CHANGED_EVENT,
   type PosSettings,
@@ -136,11 +166,14 @@ import {
 } from "../../lib/posTopExperience";
 import {
   DEFAULT_POS_ORDER_MODE_VISIBILITY,
+  firstVisiblePosOrderMode,
+  isPosOrderModeVisible,
   loadPosOrderModeVisibility,
   POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT,
   type PosOrderModeVisibility,
 } from "../../lib/posOrderModeVisibility";
-import { nextOrderRef, peekNextOrderRef } from "../../lib/orderNumber";
+import { ensureOrderSeqAtLeast, nextOrderRef, parseOrderRefSeq, peekNextOrderRef } from "../../lib/orderNumber";
+import { ORDER_NUMBER_SETTINGS_CHANGED_EVENT } from "../../lib/orderNumberSettings";
 import { loadPrinterSections } from "../../lib/printerSections";
 import {
   groupCartLinesBySection,
@@ -190,13 +223,19 @@ const POS_MODE_BTN = (active: boolean) =>
 const POS_CART_COLS = 3;
 const POS_CART_VISIBLE_ROWS = 2;
 const POS_CART_CARD_ROW_PX = 112;
+const POS_CART_LIST_ROW_PX = 52;
 const POS_CART_GRID_GAP_PX = 8;
 const POS_CART_VISIBLE_COUNT = POS_CART_COLS * POS_CART_VISIBLE_ROWS;
+const POS_CART_LIST_VISIBLE_COUNT = 5;
 const POS_CART_LIST_MAX_PX =
   POS_CART_CARD_ROW_PX * POS_CART_VISIBLE_ROWS + POS_CART_GRID_GAP_PX * (POS_CART_VISIBLE_ROWS - 1);
 
-function posCartListHeightPx(itemCount: number): number {
+function posCartListHeightPx(itemCount: number, layout: "grid" | "list"): number {
   if (itemCount <= 0) return 0;
+  if (layout === "list") {
+    const rows = Math.min(POS_CART_LIST_VISIBLE_COUNT, itemCount);
+    return POS_CART_LIST_ROW_PX * rows + POS_CART_GRID_GAP_PX * Math.max(0, rows - 1);
+  }
   const rows = Math.min(POS_CART_VISIBLE_ROWS, Math.ceil(itemCount / POS_CART_COLS));
   return POS_CART_CARD_ROW_PX * rows + POS_CART_GRID_GAP_PX * Math.max(0, rows - 1);
 }
@@ -224,15 +263,35 @@ export function PosPage(): JSX.Element {
   const [deliveryDetailsOpen, setDeliveryDetailsOpen] = useState(false);
   const [deliveryCustomerPickerOpen, setDeliveryCustomerPickerOpen] = useState(false);
   const [deliveryCustomerSearch, setDeliveryCustomerSearch] = useState("");
+  const [kitchenNote, setKitchenNote] = useState("");
   const [staffFoodConsumerType, setStaffFoodConsumerType] = useState<StaffFoodConsumerType>("staff");
   const [staffFoodEmployeeId, setStaffFoodEmployeeId] = useState("");
   const [staffFoodGuestName, setStaffFoodGuestName] = useState("");
   const [staffFoodPendingName, setStaffFoodPendingName] = useState("");
   const [staffFoodExtraNotes, setStaffFoodExtraNotes] = useState("");
+  const [staffFoodExpenseCategory, setStaffFoodExpenseCategory] =
+    useState<ExpenseCategory>("Staff Meals");
+  const [staffFoodSupplierId, setStaffFoodSupplierId] = useState("");
   const [selectedFloorSectionId, setSelectedFloorSectionId] = useState<string | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [menuView, setMenuView] = useState<"all" | "category" | "featured">("all");
+  const [categoryLayout, setCategoryLayout] = useState<"list" | "icon">(() => {
+    try {
+      const raw = localStorage.getItem("pops-pos-category-layout");
+      return raw === "icon" ? "icon" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  const [cartLayout, setCartLayout] = useState<"grid" | "list">(() => {
+    try {
+      const raw = localStorage.getItem("pops-pos-cart-layout");
+      return raw === "list" ? "list" : "grid";
+    } catch {
+      return "grid";
+    }
+  });
   const [search, setSearch] = useState("");
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState(0);
@@ -319,20 +378,27 @@ export function PosPage(): JSX.Element {
   const [tableTransferTicket, setTableTransferTicket] = useState<ChangeTableTicket | null>(null);
   const [tableTransferPickerOpen, setTableTransferPickerOpen] = useState(false);
   const [payOutModalOpen, setPayOutModalOpen] = useState(false);
+  const [createAccountModalOpen, setCreateAccountModalOpen] = useState(false);
+  const [teamChangeModalOpen, setTeamChangeModalOpen] = useState(false);
+  const [shiftTeam, setShiftTeam] = useState(() => loadPosShiftTeam(branch?.code));
   const [myPrintersOpen, setMyPrintersOpen] = useState(false);
   const [cashierModal, setCashierModal] = useState<PosCashierMode | null>(null);
   const [headerVisible, setHeaderVisible] = useState(loadPosHeaderVisible);
   /** After Close → Pay succeeds, open Closed + PRA for this bill id. */
   const [closeAfterPayBillId, setCloseAfterPayBillId] = useState<string | null>(null);
   const pendingCloseAfterPayRef = useRef(false);
+  const latestOrdersQuickPrintRef = useRef<(() => boolean) | null>(null);
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
   const deliveryCustomerFieldRef = useRef<HTMLDivElement>(null);
   const deliveryCustomerInputRef = useRef<HTMLInputElement>(null);
+  const customerPanelRef = useRef<HTMLDivElement>(null);
   const deliveryPhoneInputRef = useRef<HTMLInputElement>(null);
   const pendingEditRef = useRef<PosEditLocationState | null>(
     (location.state as PosEditLocationState | null) ?? null,
   );
+  /** Lines as loaded when editing a kitchen ticket — used for UPDATE delta KOT. */
+  const kotBaselineRef = useRef<KotBaselineLine[] | null>(null);
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
@@ -370,10 +436,6 @@ export function PosPage(): JSX.Element {
   }, [branch?.code]);
 
   useEffect(() => {
-    if (!editingOrder) setOrderRef(peekNextOrderRef(branch?.code));
-  }, [branch?.code, editingOrder]);
-
-  useEffect(() => {
     function onPosSettingsChanged(event: Event): void {
       const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
       if (!branch?.code || detail?.branchCode === branch.code) {
@@ -384,8 +446,8 @@ export function PosPage(): JSX.Element {
     return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
   }, [branch?.code]);
 
-  const { servicePct: defaultServicePct } = posSettings;
-  const taxPct = effectiveTaxPct(posSettings);
+  const taxPct = effectiveTaxPctForMode(posSettings, mode);
+  const defaultServicePct = effectiveServicePctForMode(posSettings, mode);
 
   useEffect(() => {
     setTicketServicePct(defaultServicePct);
@@ -406,9 +468,22 @@ export function PosPage(): JSX.Element {
     return () => window.removeEventListener(DELIVERY_SETTINGS_CHANGED_EVENT, onDeliverySettingsChanged);
   }, [branch?.code]);
 
+  const shiftWaiterId = shiftTeam.waiterId;
+  const shiftWaiterName = shiftTeam.waiterName;
+
+  useEffect(() => {
+    setShiftTeam(loadPosShiftTeam(branch?.code));
+  }, [branch?.code]);
+
+  useEffect(() => {
+    const onTeam = () => setShiftTeam(loadPosShiftTeam(branch?.code));
+    window.addEventListener(POS_SHIFT_TEAM_CHANGED_EVENT, onTeam);
+    return () => window.removeEventListener(POS_SHIFT_TEAM_CHANGED_EVENT, onTeam);
+  }, [branch?.code]);
+
   const ridersQuery = useQuery({
     queryKey: ["delivery-riders", branch?.code],
-    enabled: Boolean(branch?.code) && mode === "delivery",
+    enabled: Boolean(branch?.code) && (mode === "delivery" || teamChangeModalOpen),
     queryFn: () => fetchRiders(branch!.code),
   });
 
@@ -428,6 +503,17 @@ export function PosPage(): JSX.Element {
     enabled: Boolean(branch?.code) && mode === "staff-food",
     queryFn: () => fetchEmployeeAdvances(branch!.code, "open"),
   });
+
+  const staffFoodSuppliersQuery = useQuery({
+    queryKey: ["inventory", "branch", branch?.code, "staff-food-suppliers"],
+    enabled: Boolean(branch?.code) && mode === "staff-food",
+    queryFn: () => fetchBranchInventory(branch!.code),
+  });
+
+  const activeStaffFoodSuppliers = useMemo(
+    () => (staffFoodSuppliersQuery.data?.suppliers ?? []).filter((s) => s.active),
+    [staffFoodSuppliersQuery.data],
+  );
 
   const activeStaffEmployees = useMemo(
     () => (staffEmployeesQuery.data ?? []).filter((e) => e.employmentStatus === "active"),
@@ -527,9 +613,42 @@ export function PosPage(): JSX.Element {
     refetchInterval: 20_000,
   });
 
+  useEffect(() => {
+    if (!branch?.code) return;
+    const maxByMode = new Map<string, number>();
+    let maxShared = 0;
+    for (const ticket of kitchenQuery.data ?? []) {
+      const n = parseOrderRefSeq(ticket.orderRef);
+      if (n == null) continue;
+      const ticketMode = inferPosModeFromStation(ticket.stationLabel ?? "");
+      maxByMode.set(ticketMode, Math.max(maxByMode.get(ticketMode) ?? 0, n));
+      maxShared = Math.max(maxShared, n);
+    }
+    for (const bill of ordersQuery.data ?? []) {
+      const n = parseOrderRefSeq(bill.orderRef) ?? parseOrderRefSeq(bill.billRef);
+      if (n == null) continue;
+      const billMode = inferPosModeFromStation(bill.tableLabel ?? "");
+      maxByMode.set(billMode, Math.max(maxByMode.get(billMode) ?? 0, n));
+      maxShared = Math.max(maxShared, n);
+    }
+    if (maxShared > 0) ensureOrderSeqAtLeast(branch.code, maxShared);
+    for (const [modeKey, seq] of maxByMode) {
+      if (seq > 0) ensureOrderSeqAtLeast(branch.code, seq, modeKey as PosOrderMode);
+    }
+    if (!editingOrder) setOrderRef(peekNextOrderRef(branch.code, mode));
+  }, [branch?.code, kitchenQuery.data, ordersQuery.data, editingOrder, mode]);
+
+  useEffect(() => {
+    function onNumberingChanged(): void {
+      if (!editingOrder) setOrderRef(peekNextOrderRef(branch?.code, mode));
+    }
+    window.addEventListener(ORDER_NUMBER_SETTINGS_CHANGED_EVENT, onNumberingChanged);
+    return () => window.removeEventListener(ORDER_NUMBER_SETTINGS_CHANGED_EVENT, onNumberingChanged);
+  }, [branch?.code, mode, editingOrder]);
+
   const customerInvoicesQuery = useQuery({
     queryKey: ["accounting", "receivable", branch?.code],
-    enabled: Boolean(branch?.code) && deliveryCustomerPickerOpen,
+    enabled: Boolean(branch?.code) && (deliveryCustomerPickerOpen || deliveryDetailsOpen),
     queryFn: () => fetchCustomerInvoices(branch!.code),
   });
 
@@ -573,8 +692,10 @@ export function PosPage(): JSX.Element {
     if (triggerIndex !== -1) {
       setDeliveryCustomerPickerOpen(true);
       setDeliveryCustomerSearch(value.slice(triggerIndex + 1));
-    } else {
-      setDeliveryCustomerPickerOpen(false);
+      return;
+    }
+    if (deliveryCustomerPickerOpen) {
+      setDeliveryCustomerSearch(value);
     }
   }
 
@@ -673,34 +794,60 @@ export function PosPage(): JSX.Element {
   }, [kitchenQuery.data, ordersQuery.data, editingOrder]);
 
   const visiblePosOrderModes = useMemo(
-    () =>
-      POS_ORDER_MODES.filter((m) => {
-        if (m.id === "online") return orderModeVisibility.onlineEnabled;
-        if (m.id === "foodpanda") return orderModeVisibility.foodpandaEnabled;
-        if (m.id === "staff-food") return orderModeVisibility.staffFoodEnabled;
-        return true;
-      }),
+    () => POS_ORDER_MODES.filter((m) => isPosOrderModeVisible(m.id, orderModeVisibility)),
     [orderModeVisibility],
   );
 
   useEffect(() => {
     if (!visiblePosOrderModes.some((m) => m.id === mode)) {
-      setMode("dine-in");
+      setMode(firstVisiblePosOrderMode(orderModeVisibility));
     }
-  }, [visiblePosOrderModes, mode]);
+  }, [visiblePosOrderModes, mode, orderModeVisibility]);
 
   function switchMode(nextMode: PosOrderMode): void {
     if (nextMode === "staff-food" && editingOrder) {
       setEditingOrder(null);
       setCart([]);
+      kotBaselineRef.current = null;
       setDiscountPctInput(0);
       setDiscountAmountInput(0);
       setDiscountEditedAs("pct");
-      setOrderRef(peekNextOrderRef(branch?.code));
     }
     setMode(nextMode);
+    if (!editingOrder) {
+      setOrderRef(peekNextOrderRef(branch?.code, nextMode));
+    }
     if (posModeShowsCustomerPanel(nextMode)) {
       setDeliveryDetailsOpen(true);
+      // Restore Apply draft only while the same open ticket still has cart lines —
+      // never paste last order's customer onto a blank new order.
+      if (!editingOrder && branch?.code && cart.length > 0) {
+        const draft = loadPosCustomerDiscountDraft(branch.code);
+        if (
+          draft &&
+          (draft.mode === nextMode ||
+            nextMode === "takeaway" ||
+            nextMode === "delivery" ||
+            nextMode === "online" ||
+            nextMode === "foodpanda")
+        ) {
+          if (!deliveryCustomer.trim() && draft.customer) setDeliveryCustomer(draft.customer);
+          if (!deliveryPhone.trim() && draft.phone) setDeliveryPhone(draft.phone);
+          if (nextMode === "delivery" && !deliveryAddress.trim() && draft.address) {
+            setDeliveryAddress(draft.address);
+          }
+          if (!autoDiscountEnabled && discountPctInput === 0 && discountAmountInput === 0) {
+            if (draft.discountPctInput > 0 || draft.discountAmountInput > 0) {
+              setDiscountEditedAs(draft.discountEditedAs);
+              setDiscountPctInput(draft.discountPctInput);
+              setDiscountAmountInput(draft.discountAmountInput);
+            }
+          }
+        }
+      }
+    }
+    if (nextMode === "delivery" && !deliveryRiderId && shiftTeam.riderId) {
+      setDeliveryRiderId(shiftTeam.riderId);
     }
   }
 
@@ -848,15 +995,16 @@ export function PosPage(): JSX.Element {
   function addVariantToCart(
     item: ApiMenuItem,
     variant: MenuItemVariant | null,
-    opts?: { qty?: number; unitPrice?: number },
+    opts?: { qty?: number; unitPrice?: number; lineNote?: string },
   ): void {
     const qty = opts?.qty ?? 1;
     const unitPrice = opts?.unitPrice;
+    const lineNote = opts?.lineNote?.trim();
     setCart((prev) => {
       const sortOrder = nextCartSortOrder(prev);
-      const line = buildCartLine(item, variant, qty, sortOrder, unitPrice);
-      // Open-price / custom qty lines should not silently merge with catalog lines.
-      const canMerge = unitPrice == null && qty === 1;
+      const line = buildCartLine(item, variant, qty, sortOrder, unitPrice, lineNote);
+      // Open-price / custom qty / noted lines should not silently merge with catalog lines.
+      const canMerge = unitPrice == null && qty === 1 && !lineNote;
       const i = canMerge ? prev.findIndex((l) => l.key === line.key) : -1;
       if (i >= 0) {
         const key = line.key;
@@ -1031,11 +1179,9 @@ export function PosPage(): JSX.Element {
       setDiscountAmountInput(autoDiscountAmount);
       return;
     }
-    if (!showTicketDiscount) {
-      setDiscountPctInput(0);
-      setDiscountAmountInput(0);
-      return;
-    }
+    // Do NOT wipe restored/manual discount when the selected line hides the disc panel
+    // (e.g. non-discountable item selected) — totals already skip disc when !showTicketDiscount.
+    if (!showTicketDiscount) return;
     setDiscountAmountInput((prev) => clampDiscountPkr(prev, itemEligibility.discountableSubtotal));
   }, [
     autoDiscountEnabled,
@@ -1100,9 +1246,13 @@ export function PosPage(): JSX.Element {
   }
 
   const modeLabel = posOrderModeLabel(mode);
+  const selectedRiderName =
+    mode === "delivery" && deliveryRiderId
+      ? activeRiders.find((r) => r.id === deliveryRiderId)?.name?.trim() || ""
+      : "";
   const orderNotes =
     mode === "delivery"
-      ? posCustomerOrderNotes("Delivery", deliveryCustomer, deliveryPhone, deliveryAddress)
+      ? posDeliveryNotes(deliveryCustomer, deliveryPhone, deliveryAddress, selectedRiderName)
       : mode === "takeaway"
         ? posCustomerOrderNotes("Takeaway", deliveryCustomer, deliveryPhone)
         : mode === "dine-in"
@@ -1114,6 +1264,21 @@ export function PosPage(): JSX.Element {
               : mode === "staff-food"
                 ? posStaffFoodNotes(staffFoodConsumerType, staffFoodPersonName, staffFoodExtraNotes)
                 : undefined;
+
+  /** Customer + optional kitchen instruction (no Disc markers). */
+  const notesWithKitchen = packOrderNotesWithKitchenNote(orderNotes, kitchenNote);
+
+  /** Kitchen notes include DiscPct/DiscRs so Edit restores DISC % / DISC RS. */
+  const kitchenOrderNotes = packOrderNotesWithDiscount(
+    notesWithKitchen,
+    !autoDiscountEnabled && (discountPctInput > 0 || discountAmountInput > 0)
+      ? {
+          editedAs: discountEditedAs,
+          pct: discountPctInput,
+          amount: discountAmountInput,
+        }
+      : null,
+  );
   const stationLabel = posStationLabel(mode, tableLabel, staffFoodPersonName, staffFoodConsumerType);
   const billTableLabel = posBillTableLabel(
     mode,
@@ -1134,18 +1299,17 @@ export function PosPage(): JSX.Element {
       orderRef,
       modeLabel,
       tableLabel: posPrintTableLabel(mode, tableLabel, staffFoodPersonName, staffFoodConsumerType),
-      notes: orderNotes,
+      notes: notesWithKitchen,
+      customerName: deliveryCustomer.trim() || undefined,
+      customerPhone: deliveryPhone.trim() || undefined,
+      customerAddress: mode === "delivery" ? deliveryAddress.trim() || undefined : undefined,
+      riderName: selectedRiderName || undefined,
       waiterName:
         mode === "staff-food" && staffFoodPersonName
           ? staffFoodPersonName
-          : staffName || "POS Counter",
+          : shiftWaiterName || staffName || "POS Counter",
       lines: lines.map((line) => ({
-        label: formatMenuItemPrintLabel({
-          name: line.item.name,
-          secondaryName: line.item.secondaryName,
-          portion: line.item.portion,
-          variantLabel: line.variant?.label ?? null,
-        }),
+        label: cartLinePrintLabel(line),
         qty: line.qty,
         unitPrice: line.unitPrice,
       })),
@@ -1163,14 +1327,18 @@ export function PosPage(): JSX.Element {
 
   const kitchenLines = () =>
     printOrderedCart().map((line) => ({
-      label:
-        line.lineLabel?.trim() ||
-        formatMenuItemPrintLabel({
-          name: line.item.name,
-          secondaryName: line.item.secondaryName,
-          portion: line.item.portion,
-          variantLabel: line.variant?.label ?? null,
-        }),
+      label: cartLinePrintLabel({
+        lineLabel:
+          line.lineLabel?.trim() ||
+          formatMenuItemPrintLabel({
+            name: line.item.name,
+            secondaryName: line.item.secondaryName,
+            portion: line.item.portion,
+            variantLabel: line.variant?.label ?? null,
+            simplePrice: line.item.simplePrice,
+          }),
+        lineNote: line.lineNote,
+      }),
       qty: line.qty,
       unitPrice: line.unitPrice,
       // Only attach real catalog ids — orphan edit lines must not send fake UUIDs.
@@ -1188,11 +1356,14 @@ export function PosPage(): JSX.Element {
     setStaffFoodGuestName("");
     setStaffFoodPendingName("");
     setStaffFoodExtraNotes("");
+    setStaffFoodExpenseCategory("Staff Meals");
+    setStaffFoodSupplierId("");
   }
 
   function resetAfterKitchenOrder(): void {
-    setOrderRef(peekNextOrderRef(branch?.code));
+    setOrderRef(peekNextOrderRef(branch?.code, mode));
     setCart([]);
+    kotBaselineRef.current = null;
     setDeliveryCustomer("");
     setDeliveryPhone("");
     setDeliveryAddress("");
@@ -1200,6 +1371,9 @@ export function PosPage(): JSX.Element {
     setDeliveryChargePkr(loadDeliverySettings(branch?.code).defaultChargePkr);
     setDeliveryDetailsOpen(false);
     resetStaffFoodFields();
+    setKitchenNote("");
+    // Do not carry last customer/discount into the next new order.
+    clearPosCustomerDiscountDraft(branch?.code);
     beginNextOrderCycle();
   }
 
@@ -1215,6 +1389,8 @@ export function PosPage(): JSX.Element {
         branchCode: branch.code,
         consumerType: staffFoodConsumerType,
         employeeId: staffFoodConsumerType === "staff" ? staffFoodEmployeeId || undefined : undefined,
+        supplierId: staffFoodSupplierId || undefined,
+        expenseCategory: staffFoodExpenseCategory,
         personName: staffFoodPersonName,
         mealDate: new Date().toISOString().slice(0, 10),
         itemsOrdered,
@@ -1222,6 +1398,7 @@ export function PosPage(): JSX.Element {
         notes: staffFoodExtraNotes.trim() || undefined,
       });
       void queryClient.invalidateQueries({ queryKey: ["hr", "staff-food"] });
+      void queryClient.invalidateQueries({ queryKey: ["accounting", "expenses"] });
     } catch {
       // Order already succeeded — don't block POS on HR log failure.
     }
@@ -1276,19 +1453,38 @@ export function PosPage(): JSX.Element {
     setEditingOrder({ kind: "ticket", ticketId: ticket.id });
     setOrderRef(ticket.orderRef ?? ticket.ticketRef);
     setMode(inferPosModeFromStation(ticket.stationLabel));
-    setCart(stripComplimentaryLines(cartFromKitchenTicket(menuItems, ticket)));
-    setDiscountPctInput(0);
-    setDiscountAmountInput(0);
-    setDiscountEditedAs("pct");
+    const loaded = stripComplimentaryLines(cartFromKitchenTicket(menuItems, ticket));
+    setCart(loaded);
+    kotBaselineRef.current = cartLinesToKotBaseline(loaded);
+    const ticketNotes = resolveTicketDeliveryNotes(ticket) ?? ticket.notes ?? null;
+    const savedDiscount = parseTicketDiscountFromNotes(ticketNotes);
+    if (savedDiscount) {
+      setDiscountEditedAs(savedDiscount.editedAs);
+      setDiscountPctInput(savedDiscount.pct);
+      setDiscountAmountInput(savedDiscount.amount);
+    } else {
+      setDiscountPctInput(0);
+      setDiscountAmountInput(0);
+      setDiscountEditedAs("pct");
+    }
     setDeliveryRiderId(ticket.riderId ?? "");
     setDeliveryChargePkr(ticket.deliveryChargePkr ?? 0);
     applyStaffFoodFromStation(ticket.stationLabel);
-    const delivery = parseDeliveryFieldsFromNotes(ticket.notes ?? null);
+    const delivery = parseDeliveryFieldsFromNotes(ticketNotes);
     setDeliveryCustomer(delivery.customer);
     setDeliveryPhone(delivery.phone);
     setDeliveryAddress(delivery.address);
+    setKitchenNote(parseKitchenFreeNoteFromNotes(ticketNotes));
     applyTableFromStation(ticket.stationLabel);
-    if (inferPosModeFromStation(ticket.stationLabel) === "delivery") {
+    const loadedMode = inferPosModeFromStation(ticket.stationLabel);
+    if (
+      loadedMode === "delivery" ||
+      loadedMode === "takeaway" ||
+      loadedMode === "online" ||
+      loadedMode === "foodpanda" ||
+      delivery.customer ||
+      delivery.phone
+    ) {
       setDeliveryDetailsOpen(true);
     }
     setPrintNotice({ message: `Editing ${ticket.orderRef ?? ticket.ticketRef}. Add or remove items, then update.`, tone: "success" });
@@ -1305,6 +1501,12 @@ export function PosPage(): JSX.Element {
     setDiscountAmountInput(bill.discount);
     setDiscountPctInput(bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0);
     setDiscountEditedAs("amount");
+    const noteDisc = parseTicketDiscountFromNotes(bill.notes);
+    if ((!bill.discount || bill.discount <= 0) && noteDisc) {
+      setDiscountEditedAs(noteDisc.editedAs);
+      setDiscountPctInput(noteDisc.pct);
+      setDiscountAmountInput(noteDisc.amount);
+    }
     setDeliveryRiderId(bill.riderId ?? "");
     setDeliveryChargePkr(bill.deliveryChargePkr ?? 0);
     applyStaffFoodFromStation(bill.tableLabel);
@@ -1312,8 +1514,17 @@ export function PosPage(): JSX.Element {
     setDeliveryCustomer(delivery.customer);
     setDeliveryPhone(delivery.phone);
     setDeliveryAddress(delivery.address);
+    setKitchenNote(parseKitchenFreeNoteFromNotes(bill.notes));
     applyTableFromStation(bill.tableLabel);
-    if (inferPosModeFromStation(bill.tableLabel) === "delivery") {
+    const loadedMode = inferPosModeFromStation(bill.tableLabel);
+    if (
+      loadedMode === "delivery" ||
+      loadedMode === "takeaway" ||
+      loadedMode === "online" ||
+      loadedMode === "foodpanda" ||
+      delivery.customer ||
+      delivery.phone
+    ) {
       setDeliveryDetailsOpen(true);
     }
     setPrintNotice({ message: `Editing held bill ${bill.orderRef ?? bill.billRef}.`, tone: "success" });
@@ -1496,7 +1707,7 @@ export function PosPage(): JSX.Element {
           return await updateKitchenTicket(editingOrder.ticketId, {
             stationLabel,
             lines: kitchenLines(),
-            notes: orderNotes ?? null,
+            notes: kitchenOrderNotes ?? null,
             ...deliveryExtras(),
           });
         } catch (updateErr) {
@@ -1504,25 +1715,26 @@ export function PosPage(): JSX.Element {
           if (!isKitchenTicketMissingError(updateErr)) throw updateErr;
           return createKitchenTicket({
             branchCode: branch!.code,
-            orderRef: orderRef || nextOrderRef(branch!.code),
+            orderRef: orderRef || nextOrderRef(branch!.code, mode),
             stationLabel,
             lines: kitchenLines(),
-            notes: orderNotes,
+            notes: kitchenOrderNotes,
             ...deliveryExtras(),
           });
         }
       }
       return createKitchenTicket({
         branchCode: branch!.code,
-        orderRef: nextOrderRef(branch!.code),
+        orderRef: nextOrderRef(branch!.code, mode),
         stationLabel,
         lines: kitchenLines(),
-        notes: orderNotes,
+        notes: kitchenOrderNotes,
         ...deliveryExtras(),
       });
     },
     onSuccess: async (ticket) => {
       const wasTicketEdit = editingOrder?.kind === "ticket";
+      // Always silent-print to assigned OS printers (never force Windows dialog / PDF).
       const printed = await printKitchenKotsOnPay(ticket.orderRef ?? orderRef);
       const kotOk = printed.errors.length === 0;
       const printErrors = printed.errors;
@@ -1533,12 +1745,17 @@ export function PosPage(): JSX.Element {
       // Always clear the ticket panel after Order / Update / Print order.
       setEditingOrder(null);
       resetAfterKitchenOrder();
-      if (kotOk) {
+      if (printed.skippedNoChanges) {
+        setPrintNotice({
+          tone: "success",
+          message: `${modeLabel} order updated (no item changes — kitchen not reprinted).`,
+        });
+      } else if (kotOk) {
         setPrintNotice(
           noticeFromPrintResult(
             true,
             wasTicketEdit
-              ? `${modeLabel} order updated and sent to kitchen.`
+              ? `${modeLabel} order updated — kitchen got UPDATE REVISED (changed items only).`
               : `${modeLabel} order saved and sent to kitchen.`,
           ),
         );
@@ -1562,7 +1779,7 @@ export function PosPage(): JSX.Element {
       return updateBill(editingOrder.billId, {
         tableLabel: billTableLabel,
         lines: cartToBillLines(effectiveCart),
-        notes: orderNotes ?? null,
+        notes: kitchenOrderNotes ?? null,
         discountPkr: discount,
         servicePct: ticketServicePct,
         taxPct,
@@ -1584,15 +1801,30 @@ export function PosPage(): JSX.Element {
       taxPct: checkoutTaxPct,
       payments,
       status,
+      cashReceived,
     }: {
       intent: "pay" | "invoice" | "hold";
       servicePct: number;
       taxPct: number;
       payments: { method: "cash" | "card" | "wallet" | "bank"; amount: number }[];
       status: "completed" | "held";
+      cashReceived?: number;
     }) => {
       const err = validateBillCheckout();
       if (err) throw new Error(err);
+
+      const checkoutTotal = computeTicketTotals(
+        subtotal,
+        discount,
+        checkoutServicePct,
+        checkoutTaxPct,
+        mode === "delivery" ? deliveryChargePkr : 0,
+      ).total;
+      const billNotesWithTender = packOrderNotesWithCashReceived(
+        kitchenOrderNotes,
+        cashReceived,
+        checkoutTotal,
+      );
 
       /**
        * Direct Pay / Invoice (no prior "Order"): create + print KOT first so kitchen
@@ -1610,7 +1842,7 @@ export function PosPage(): JSX.Element {
       let kotSent = false;
 
       if (needsKotOnPay) {
-        sharedOrderRef = sharedOrderRef || nextOrderRef(branch!.code);
+        sharedOrderRef = sharedOrderRef || nextOrderRef(branch!.code, mode);
 
         try {
           await createKitchenTicket({
@@ -1618,7 +1850,7 @@ export function PosPage(): JSX.Element {
             orderRef: sharedOrderRef,
             stationLabel,
             lines: kitchenLines(),
-            notes: orderNotes,
+            notes: kitchenOrderNotes,
             ...deliveryExtras(),
           });
           kotSent = true;
@@ -1647,7 +1879,7 @@ export function PosPage(): JSX.Element {
         const updated = await updateBill(editingOrder.billId, {
           tableLabel: billTableLabel,
           lines: cartToBillLines(effectiveCart),
-          notes: orderNotes ?? null,
+          notes: billNotesWithTender ?? null,
           discountPkr: discount,
           servicePct: checkoutServicePct,
           taxPct: checkoutTaxPct,
@@ -1682,15 +1914,17 @@ export function PosPage(): JSX.Element {
         orderRef:
           sharedOrderRef ||
           (orderRef && orderRef.trim() ? orderRef.trim() : undefined) ||
-          nextOrderRef(branch!.code),
+          nextOrderRef(branch!.code, mode),
         tableLabel: billTableLabel,
+        waiterId: shiftWaiterId || undefined,
         waiterName:
           mode === "staff-food" && staffFoodPersonName
             ? staffFoodPersonName
-            : formatSessionPrintName(useSessionStore.getState().claims?.sub) ||
+            : shiftWaiterName ||
+              formatSessionPrintName(useSessionStore.getState().claims?.sub) ||
               sessionUserLabel ||
               "POS Counter",
-        notes: orderNotes,
+        notes: billNotesWithTender,
         lines: cartToBillLines(effectiveCart),
         discountPct: discount > 0 ? discountPct : undefined,
         discountPkr: discount > 0 ? discount : undefined,
@@ -1776,7 +2010,7 @@ export function PosPage(): JSX.Element {
     mutationFn: async (splits: SplitBillPart[]) => {
       const err = validateBillCheckout();
       if (err) throw new Error(err);
-      const groupRef = nextOrderRef(branch!.code);
+      const groupRef = nextOrderRef(branch!.code, mode);
 
       // Same as direct Pay: kitchen must get a KOT even when splitting payment.
       if (editingOrder?.kind !== "ticket") {
@@ -1785,7 +2019,7 @@ export function PosPage(): JSX.Element {
           orderRef: groupRef,
           stationLabel,
           lines: kitchenLines(),
-          notes: orderNotes,
+          notes: kitchenOrderNotes,
           ...deliveryExtras(),
         });
         await printKitchenKotsOnPay(groupRef);
@@ -1809,7 +2043,7 @@ export function PosPage(): JSX.Element {
             formatSessionPrintName(useSessionStore.getState().claims?.sub) ||
             sessionUserLabel ||
             "POS Counter",
-          notes: orderNotes ? `${orderNotes} · ${split.label}` : split.label,
+          notes: notesWithKitchen ? `${notesWithKitchen} · ${split.label}` : split.label,
           lines: cartToBillLines(split.lines),
           discountPkr: shareDiscount > 0 ? shareDiscount : undefined,
           servicePct: split.servicePct,
@@ -1845,36 +2079,60 @@ export function PosPage(): JSX.Element {
 
   function buildKotPrintPayload(orderRefOverride?: string): Omit<PrintTicketInput, "kind"> {
     const payload = buildPrintPayload();
+    const isUpdate = editingOrder?.kind === "ticket";
+    let lines = payload.lines.map((line) => ({ ...line, unitPrice: 0 }));
+    if (isUpdate && kotBaselineRef.current) {
+      const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
+      lines = deltas.map((delta) => ({
+        label: delta.printLabel,
+        qty: delta.qty,
+        unitPrice: 0,
+      }));
+    }
     return {
       ...payload,
       orderRef: orderRefOverride ?? payload.orderRef,
-      lines: payload.lines.map((line) => ({ ...line, unitPrice: 0 })),
+      lines,
+      // Kitchen slip: free-text instruction (also saved on the ticket for Edit).
+      notes: kitchenNote.trim()
+        ? `Note: ${kitchenNote.trim()}`
+        : notesWithKitchen,
       subtotal: 0,
       discount: 0,
       service: 0,
       tax: 0,
       total: 0,
       // Edited kitchen tickets print as UPDATE so kitchen can spot revisions.
-      isOrderUpdate: editingOrder?.kind === "ticket",
+      isOrderUpdate: isUpdate,
     };
   }
 
   /**
    * Kitchen KOT jobs for Order / Pay:
-   * - Real OS printers: one silent job per section
-   * - Anything without a real OS printer: ONE dialog KOT with those lines
-   *   (section splits into multiple dialogs were dropping items + needing 2–3 Cancels)
+   * - Sections with a linked OS printer → silent Auto print (no dialog, never PDF)
+   * - Sections without a linked OS printer → one Windows dialog for those lines only
+   * - Never force the dialog when an assigned printer exists
    */
   async function printKitchenKotsOnPay(
     orderRefOverride?: string,
-  ): Promise<{ errors: string[] }> {
+    _opts?: { forceDialog?: boolean },
+  ): Promise<{ errors: string[]; skippedNoChanges?: boolean }> {
     const errors: string[] = [];
     const sessionUserId = useSessionStore.getState().claims?.sub;
     const routed = buildRoutedKotPrintPayloads(orderRefOverride);
+    if (
+      editingOrder?.kind === "ticket" &&
+      kotBaselineRef.current &&
+      routed.every((p) => p.lines.length === 0)
+    ) {
+      return { errors: [], skippedNoChanges: true };
+    }
+
     const named = routed.filter((p) => Boolean(asPrinterName(p.systemPrinterName)));
-    const dialogParts = routed.filter((p) => !asPrinterName(p.systemPrinterName));
+    const unassigned = routed.filter((p) => !asPrinterName(p.systemPrinterName));
 
     for (const payload of named) {
+      if (payload.lines.length === 0) continue;
       const result = await printKotDetailed({
         ...payload,
         copies: Math.max(1, payload.copies ?? 1),
@@ -1891,21 +2149,28 @@ export function PosPage(): JSX.Element {
       }
     }
 
-    if (dialogParts.length > 0 || named.length === 0) {
+    const unassignedLines = unassigned.flatMap((p) => p.lines);
+    const namedHadLines = named.some((p) => p.lines.length > 0);
+    // Dialog only when nothing is OS-linked, or leftover lines have no assignment.
+    // Never open dialog after silent success just because a named job failed (that became PDF).
+    if (!namedHadLines || unassignedLines.length > 0) {
       const profile = resolveKotPrinter(branch?.code, null, sessionUserId, "kitchen");
-      // Full cart when nothing has an OS printer — never lose lines across sections.
-      const lines =
-        named.length === 0
-          ? buildKotPrintPayload(orderRefOverride).lines
-          : dialogParts.flatMap((p) => p.lines);
+      const lines = !namedHadLines
+        ? buildKotPrintPayload(orderRefOverride).lines
+        : unassignedLines;
+      if (lines.length === 0) {
+        return { errors, skippedNoChanges: editingOrder?.kind === "ticket" };
+      }
+      const linkedName = asPrinterName(profile?.systemPrinterName);
       const dialogPayload = {
         ...withPrinterProfile(buildKotPrintPayload(orderRefOverride), profile),
         lines,
         copies: 1 as const,
-        systemPrinterName: undefined,
+        // Prefer linked OS name when profile has one; otherwise dialog (user picks).
+        systemPrinterName: linkedName || undefined,
       };
       const result = await printKotDetailed(dialogPayload);
-      const target = dialogPayload.printerName ?? "Kitchen";
+      const target = dialogPayload.systemPrinterName ?? dialogPayload.printerName ?? "Kitchen";
       logPrintEvent(branch?.code, {
         kind: "kot",
         printerName: target,
@@ -1939,12 +2204,18 @@ export function PosPage(): JSX.Element {
       return withPrinterProfile(payload, profile);
     };
 
+    const updateCart =
+      editingOrder?.kind === "ticket" && kotBaselineRef.current
+        ? kotDeltasToCartLines(diffKotLines(kotBaselineRef.current, printOrderedCart()))
+        : null;
+    const cartForRouting = updateCart ?? printOrderedCart();
+
     if (enabledSections.length === 0) {
       return [attachKotProfile(basePayload, null, "kitchen")];
     }
 
     const enabledSectionIds = new Set(enabledSections.map((s) => s.id));
-    const groups = groupCartLinesBySection(branch?.code, printOrderedCart(), enabledSectionIds);
+    const groups = groupCartLinesBySection(branch?.code, cartForRouting, enabledSectionIds);
     if (groups.length <= 1 && groups[0]?.sectionId == null) {
       return [attachKotProfile(basePayload, null, "kitchen")];
     }
@@ -1961,12 +2232,17 @@ export function PosPage(): JSX.Element {
         {
           ...basePayload,
           lines: orderedLines.map((line) => ({
-            label: formatMenuItemPrintLabel({
-              name: line.item.name,
-              secondaryName: line.item.secondaryName,
-              portion: line.item.portion,
-              variantLabel: line.variant?.label ?? null,
-            }),
+            // Update deltas already bake + ADD / ↑ EXTRA / etc into lineLabel.
+            label:
+              updateCart != null
+                ? line.lineLabel
+                : formatMenuItemPrintLabel({
+                    name: line.item.name,
+                    secondaryName: line.item.secondaryName,
+                    portion: line.item.portion,
+                    variantLabel: line.variant?.label ?? null,
+                    simplePrice: line.item.simplePrice,
+                  }),
             qty: line.qty,
             unitPrice: 0,
           })),
@@ -1992,22 +2268,94 @@ export function PosPage(): JSX.Element {
   }
 
   function openCustomerShortcut(): void {
-    if (editingOrder) return;
+    // Staff-food has no customer panel — switch to takeaway so details can be entered.
     if (!posModeShowsCustomerPanel(mode)) {
       switchMode("takeaway");
     }
     setDeliveryDetailsOpen(true);
+    setDeliveryCustomerPickerOpen(true);
+    setDeliveryCustomerSearch(deliveryCustomer.trim());
     window.setTimeout(() => {
+      customerPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       deliveryCustomerInputRef.current?.focus();
       deliveryCustomerInputRef.current?.select();
-    }, 0);
+    }, 50);
   }
 
   function applyCustomerDetails(): void {
     setDeliveryDetailsOpen(false);
     setDeliveryCustomerPickerOpen(false);
+
+    // Persist customer details immediately when editing an existing order.
+    if (editingOrder?.kind === "ticket" && branch?.code) {
+      void updateKitchenTicket(editingOrder.ticketId, {
+        notes: kitchenOrderNotes ?? null,
+        ...deliveryExtras(),
+      })
+        .then(() => {
+          invalidateOrderFeeds();
+          setPrintNotice({
+            tone: "success",
+            message: "Customer details & discount saved.",
+          });
+        })
+        .catch((err) => {
+          setPrintNotice({
+            tone: "error",
+            message: err instanceof Error ? err.message : "Could not save customer details.",
+          });
+        });
+      return;
+    }
+    if (editingOrder?.kind === "held-bill" && branch?.code) {
+      void updateBill(editingOrder.billId, {
+        notes: kitchenOrderNotes ?? null,
+        discountPkr: discount > 0 ? discount : 0,
+        discountPct: discount > 0 ? discountPct : undefined,
+        ...deliveryExtras(),
+      })
+        .then(() => {
+          invalidateOrderFeeds();
+          setPrintNotice({
+            tone: "success",
+            message: "Customer details & discount saved.",
+          });
+        })
+        .catch((err) => {
+          setPrintNotice({
+            tone: "error",
+            message: err instanceof Error ? err.message : "Could not save customer details.",
+          });
+        });
+      return;
+    }
+
+    // New ticket: remember last customer + discount for this branch so reopen / next edit restores.
+    if (branch?.code) {
+      savePosCustomerDiscountDraft(branch.code, {
+        customer: deliveryCustomer,
+        phone: deliveryPhone,
+        address: deliveryAddress,
+        discountEditedAs,
+        discountPctInput,
+        discountAmountInput,
+        mode,
+      });
+    }
+
     if (posModeAutoPrintsOnCustomer(mode) && cart.length > 0 && !checkoutMutation.isPending) {
       runPrintInvoice();
+    } else if (
+      deliveryCustomer.trim() ||
+      deliveryPhone.trim() ||
+      deliveryAddress.trim() ||
+      discountPctInput > 0 ||
+      discountAmountInput > 0
+    ) {
+      setPrintNotice({
+        tone: "success",
+        message: "Customer details & discount applied — Order/Pay pe save ho jayega.",
+      });
     }
   }
 
@@ -2028,6 +2376,8 @@ export function PosPage(): JSX.Element {
     Boolean(checkoutModal) ||
     Boolean(cashierModal) ||
     payOutModalOpen ||
+    createAccountModalOpen ||
+    teamChangeModalOpen ||
     myPrintersOpen ||
     splitModalOpen ||
     orderTypeModalOpen ||
@@ -2047,6 +2397,7 @@ export function PosPage(): JSX.Element {
     payOut: () => {},
     theme: () => {},
     customer: () => {},
+    quickPrint: () => {},
   });
 
   posShortcutActionsRef.current = {
@@ -2092,6 +2443,15 @@ export function PosPage(): JSX.Element {
     payOut: () => setPayOutModalOpen(true),
     theme: () => useThemeStore.getState().toggle(),
     customer: () => openCustomerShortcut(),
+    quickPrint: () => {
+      const ok = latestOrdersQuickPrintRef.current?.();
+      if (!ok) {
+        setPrintNotice({
+          message: "Latest orders se bill select karein, phir P dabayein (quick print).",
+          tone: "error",
+        });
+      }
+    },
   };
 
   useEffect(() => {
@@ -2230,7 +2590,36 @@ export function PosPage(): JSX.Element {
           <button
             type="button"
             className={POS_TOOLBAR_BTN}
-            title={`${POS_SHORTCUTS.customer.label} (${POS_SHORTCUTS.customer.key})`}
+            title="Create supplier or expense account"
+            onClick={() => setCreateAccountModalOpen(true)}
+          >
+            New account
+          </button>
+          <button
+            type="button"
+            className={POS_TOOLBAR_BTN}
+            title={
+              shiftWaiterName || shiftTeam.riderName
+                ? `Team: ${[shiftWaiterName, shiftTeam.riderName].filter(Boolean).join(" · ")}`
+                : "Change waiter / rider team for this shift"
+            }
+            onClick={() => setTeamChangeModalOpen(true)}
+          >
+            Team
+            {shiftWaiterName || shiftTeam.riderName ? (
+              <span className="ml-1 max-w-[5.5rem] truncate text-[9px] opacity-80">
+                {shiftWaiterName || shiftTeam.riderName}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className={`${POS_TOOLBAR_BTN}${
+              deliveryDetailsOpen && posModeShowsCustomerPanel(mode)
+                ? " bg-slate-800 text-white dark:bg-slate-800"
+                : ""
+            }`}
+            title={`${POS_SHORTCUTS.customer.label} (${POS_SHORTCUTS.customer.key}) — open customer details`}
             onClick={() => openCustomerShortcut()}
           >
             Customer
@@ -2318,10 +2707,11 @@ export function PosPage(): JSX.Element {
           item={itemPrompt.item}
           variant={itemPrompt.variant}
           defaultPrice={itemPrompt.variant?.price ?? itemPrompt.item.price}
-          onConfirm={({ price, qty }) => {
+          onConfirm={({ price, qty, lineNote }) => {
             addVariantToCart(itemPrompt.item, itemPrompt.variant, {
               qty,
               unitPrice: itemPrompt.item.askForPrice ? price : undefined,
+              lineNote,
             });
             setItemPrompt(null);
           }}
@@ -2333,66 +2723,216 @@ export function PosPage(): JSX.Element {
       <div className="grid flex-1 grid-cols-12 gap-3 lg:items-start">
         {/* Menu column */}
         <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
-          {/* Category pills — bar background only; amber on selected */}
+          {/* Category pills — list or icon tiles */}
           {categories.length > 0 ? (
-            <div className="mb-2.5 grid shrink-0 grid-cols-4 gap-2 rounded-xl bg-amber-50 p-2 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuView("all");
-                  setCategoryId(null);
-                }}
-                className={`min-w-0 rounded-full px-2 py-1.5 text-center text-[11px] font-semibold leading-tight transition ${
-                  showAllItems
-                    ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
-                    : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"
-                }`}
-              >
-                All
-              </button>
-              <button
-                type="button"
-                onClick={() => setMenuView("featured")}
-                className={`inline-flex min-w-0 items-center justify-center gap-1 rounded-full px-2 py-1.5 text-[11px] font-semibold leading-tight transition ${
-                  showFeaturedOnly
-                    ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
-                    : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-amber-200"
-                }`}
-              >
-                <span className={showFeaturedOnly ? "text-slate-950" : "text-amber-500"} aria-hidden>
-                  ★
+            <div className="mb-2.5 shrink-0 rounded-xl bg-amber-50 p-2 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
+              <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/70 dark:text-amber-200/60">
+                  Categories
                 </span>
-                <span className="truncate">Featured</span>
-                {featuredCount > 0 ? (
-                  <span
-                    className={`shrink-0 rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
-                      showFeaturedOnly
-                        ? "bg-slate-950/15 text-slate-950"
-                        : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
+                <div
+                  className="inline-flex rounded-md border border-amber-300/60 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-950/80"
+                  role="group"
+                  aria-label="Category layout"
+                >
+                  <button
+                    type="button"
+                    title="List view"
+                    aria-pressed={categoryLayout === "list"}
+                    onClick={() => {
+                      setCategoryLayout("list");
+                      try {
+                        localStorage.setItem("pops-pos-category-layout", "list");
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className={`rounded px-1.5 py-1 transition ${
+                      categoryLayout === "list"
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
                     }`}
                   >
-                    {featuredCount}
-                  </span>
-                ) : null}
-              </button>
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  title={c.name}
-                  onClick={() => {
-                    setMenuView("category");
-                    setCategoryId(c.id);
-                  }}
-                  className={`min-w-0 break-words rounded-full px-2 py-1.5 text-center text-[11px] font-semibold leading-tight transition ${
-                    menuView === "category" && activeCategoryId === c.id
-                      ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
-                      : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700 dark:hover:text-white"
-                  }`}
-                >
-                  {c.name}
-                </button>
-              ))}
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    title="Icon view"
+                    aria-pressed={categoryLayout === "icon"}
+                    onClick={() => {
+                      setCategoryLayout("icon");
+                      try {
+                        localStorage.setItem("pops-pos-category-layout", "icon");
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className={`rounded px-1.5 py-1 transition ${
+                      categoryLayout === "icon"
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                    }`}
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <rect x="3" y="3" width="7" height="7" rx="1" />
+                      <rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" />
+                      <rect x="14" y="14" width="7" height="7" rx="1" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {categoryLayout === "list" ? (
+                <div className="flex max-h-36 flex-col gap-1 overflow-y-auto pr-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuView("all");
+                      setCategoryId(null);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold transition ${
+                      showAllItems
+                        ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                        : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                    }`}
+                  >
+                    <span>All</span>
+                    <span className="tabular-nums opacity-70">{menuItems.filter((m) => m.isActive).length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMenuView("featured")}
+                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold transition ${
+                      showFeaturedOnly
+                        ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                        : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <span className={showFeaturedOnly ? "text-slate-950" : "text-amber-500"} aria-hidden>
+                        ★
+                      </span>
+                      Featured
+                    </span>
+                    {featuredCount > 0 ? (
+                      <span className="tabular-nums opacity-70">{featuredCount}</span>
+                    ) : null}
+                  </button>
+                  {categories.map((c) => {
+                    const count = menuItems.filter((m) => m.isActive && m.categoryId === c.id).length;
+                    const active = menuView === "category" && activeCategoryId === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        title={c.name}
+                        onClick={() => {
+                          setMenuView("category");
+                          setCategoryId(c.id);
+                        }}
+                        className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold transition ${
+                          active
+                            ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                            : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                        }`}
+                      >
+                        <span className="truncate">{c.name}</span>
+                        <span className="ml-2 shrink-0 tabular-nums opacity-70">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid max-h-44 grid-cols-4 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuView("all");
+                      setCategoryId(null);
+                    }}
+                    className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center transition ${
+                      showAllItems
+                        ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                        : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-bold ${
+                        showAllItems ? "bg-slate-950/15" : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
+                      }`}
+                    >
+                      All
+                    </span>
+                    <span className="line-clamp-2 w-full text-[10px] font-semibold leading-tight">All</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMenuView("featured")}
+                    className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center transition ${
+                      showFeaturedOnly
+                        ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                        : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-md text-base ${
+                        showFeaturedOnly ? "bg-slate-950/15" : "bg-amber-100 text-amber-600 dark:bg-slate-950/60 dark:text-amber-300"
+                      }`}
+                      aria-hidden
+                    >
+                      ★
+                    </span>
+                    <span className="line-clamp-2 w-full text-[10px] font-semibold leading-tight">
+                      Featured{featuredCount > 0 ? ` (${featuredCount})` : ""}
+                    </span>
+                  </button>
+                  {categories.map((c) => {
+                    const active = menuView === "category" && activeCategoryId === c.id;
+                    const img = resolveMenuImageUrl(c.imageUrl);
+                    const initial = (c.name.trim().charAt(0) || "?").toUpperCase();
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        title={c.name}
+                        onClick={() => {
+                          setMenuView("category");
+                          setCategoryId(c.id);
+                        }}
+                        className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center transition ${
+                          active
+                            ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
+                            : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                        }`}
+                      >
+                        {img ? (
+                          <img
+                            src={img}
+                            alt=""
+                            className="h-9 w-9 rounded-md object-cover ring-1 ring-black/5"
+                          />
+                        ) : (
+                          <span
+                            className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-bold ${
+                              active
+                                ? "bg-slate-950/15"
+                                : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
+                            }`}
+                          >
+                            {initial}
+                          </span>
+                        )}
+                        <span className="line-clamp-2 w-full text-[10px] font-semibold leading-tight">
+                          {c.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ) : null}
 
@@ -2621,6 +3161,38 @@ export function PosPage(): JSX.Element {
                     />
                   )}
                 </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <select
+                    value={staffFoodExpenseCategory}
+                    onChange={(e) =>
+                      setStaffFoodExpenseCategory(e.target.value as ExpenseCategory)
+                    }
+                    className={`${TICKET_INPUT_CLASS} py-1.5`}
+                    aria-label="Expense account"
+                  >
+                    {EXPENSE_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                  <SearchableSelect
+                    value={staffFoodSupplierId}
+                    onChange={setStaffFoodSupplierId}
+                    options={activeStaffFoodSuppliers.map((supplier) => ({
+                      value: supplier.id,
+                      label: supplier.name,
+                      searchText: `${supplier.name} ${supplier.phone ?? ""}`,
+                      meta: supplier.phone ?? undefined,
+                    }))}
+                    placeholder={
+                      staffFoodSuppliersQuery.isLoading ? "Loading…" : "Supplier (optional)"
+                    }
+                    searchPlaceholder="Search supplier…"
+                    allowEmpty
+                    aria-label="Supplier"
+                  />
+                </div>
                 <input
                   placeholder="Notes (optional)"
                   value={staffFoodExtraNotes}
@@ -2630,6 +3202,8 @@ export function PosPage(): JSX.Element {
                 {staffFoodPersonName ? (
                   <p className="text-[10px] text-slate-500 dark:text-slate-400">
                     Ticket will show Staff Food · {staffFoodPersonName}
+                    {" · "}
+                    Expense: {staffFoodExpenseCategory}
                   </p>
                 ) : (
                   <p className="text-[10px] text-amber-700 dark:text-amber-300">
@@ -2640,10 +3214,24 @@ export function PosPage(): JSX.Element {
             ) : null}
 
             {posModeShowsCustomerPanel(mode) ? (
-              <div className="mt-2">
+              <div className="mt-2" ref={customerPanelRef}>
                 <button
                   type="button"
-                  onClick={() => setDeliveryDetailsOpen((open) => !open)}
+                  onClick={() => {
+                    setDeliveryDetailsOpen((open) => {
+                      const next = !open;
+                      if (next) {
+                        setDeliveryCustomerPickerOpen(true);
+                        setDeliveryCustomerSearch(deliveryCustomer.trim());
+                        window.setTimeout(() => {
+                          deliveryCustomerInputRef.current?.focus();
+                        }, 0);
+                      } else {
+                        setDeliveryCustomerPickerOpen(false);
+                      }
+                      return next;
+                    });
+                  }}
                   aria-expanded={deliveryDetailsOpen}
                   className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
                     deliveryDetailsOpen
@@ -2667,34 +3255,35 @@ export function PosPage(): JSX.Element {
                       <div className="relative min-w-0" ref={deliveryCustomerFieldRef}>
                         <input
                           ref={deliveryCustomerInputRef}
-                          placeholder="Customer (type * or # to search)"
+                          placeholder="Customer — type to search"
                           value={deliveryCustomer}
                           onChange={(e) => handleDeliveryCustomerChange(e.target.value)}
                           onFocus={() => {
-                            if (Math.max(deliveryCustomer.lastIndexOf("*"), deliveryCustomer.lastIndexOf("#")) !== -1) {
-                              setDeliveryCustomerPickerOpen(true);
-                            }
+                            setDeliveryCustomerPickerOpen(true);
+                            setDeliveryCustomerSearch(deliveryCustomer.trim());
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
                               deliveryPhoneInputRef.current?.focus();
                             }
+                            if (e.key === "Escape") {
+                              setDeliveryCustomerPickerOpen(false);
+                            }
                           }}
                           className={`${TICKET_INPUT_CLASS} py-1.5`}
                         />
                         {deliveryCustomerPickerOpen ? (
-                          <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
+                          <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
                             {customerInvoicesQuery.isLoading ? (
                               <p className="px-2.5 py-2 text-xs text-slate-500">Loading customers…</p>
                             ) : customerInvoicesQuery.isError ? (
-                              <p className="px-2.5 py-2 text-xs text-red-400">
+                              <p className="px-2.5 py-2 text-xs text-red-600 dark:text-red-400">
                                 Could not load accounts: {(customerInvoicesQuery.error as Error).message}
                               </p>
                             ) : filteredDeliveryCustomers.length === 0 ? (
                               <p className="px-2.5 py-2 text-xs text-slate-500">
-                                No existing customers yet — fill in Customer/Phone once, or add one from Accounts,
-                                and it&apos;ll show up here next time.
+                                No saved customers yet — type a name/phone, or add from Accounts.
                               </p>
                             ) : (
                               filteredDeliveryCustomers.map((customer) => (
@@ -2703,11 +3292,13 @@ export function PosPage(): JSX.Element {
                                   type="button"
                                   onMouseDown={(e) => e.preventDefault()}
                                   onClick={() => selectKnownDeliveryCustomer(customer)}
-                                  className="flex w-full flex-col items-start gap-0 px-2.5 py-1.5 text-left text-xs text-slate-200 hover:bg-slate-800"
+                                  className="flex w-full flex-col items-start gap-0 px-2.5 py-1.5 text-left text-xs text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
                                 >
                                   <span className="font-medium">{customer.name}</span>
                                   {customer.phone ? (
-                                    <span className="text-[10px] text-slate-400">{customer.phone}</span>
+                                    <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                      {customer.phone}
+                                    </span>
                                   ) : null}
                                 </button>
                               ))
@@ -2748,7 +3339,15 @@ export function PosPage(): JSX.Element {
                               !deliveryRiderId ? "border-amber-400 dark:border-amber-500/40" : ""
                             }`}
                           >
-                            <option value="">Rider *</option>
+                            <option value="">
+                              {ridersQuery.isLoading
+                                ? "Loading riders…"
+                                : ridersQuery.isError
+                                  ? "Could not load riders"
+                                  : activeRiders.length === 0
+                                    ? "No riders for this branch"
+                                    : "Rider *"}
+                            </option>
                             {activeRiders.map((rider) => (
                               <option key={rider.id} value={rider.id}>
                                 {rider.name}
@@ -2774,13 +3373,117 @@ export function PosPage(): JSX.Element {
                       onClick={() => applyCustomerDetails()}
                       className="rounded-md border border-amber-500/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-500/25 dark:text-amber-100"
                     >
-                      {posModeAutoPrintsOnCustomer(mode) && cart.length > 0
-                        ? "Apply & print receipt"
-                        : "Apply customer"}
+                      {mode === "takeaway"
+                        ? "Apply"
+                        : posModeAutoPrintsOnCustomer(mode) && cart.length > 0
+                          ? "Apply & print receipt"
+                          : "Apply customer"}
                     </button>
                   </div>
                 ) : null}
               </div>
+            ) : null}
+
+            <div className="mt-2 flex items-center justify-end gap-2">
+              <div
+                className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-950"
+                role="group"
+                aria-label="Cart layout"
+              >
+                <button
+                  type="button"
+                  title="List view"
+                  aria-pressed={cartLayout === "list"}
+                  onClick={() => {
+                    setCartLayout("list");
+                    try {
+                      localStorage.setItem("pops-pos-cart-layout", "list");
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  className={`rounded px-1.5 py-1 transition ${
+                    cartLayout === "list"
+                      ? "bg-amber-500 text-slate-950"
+                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  title="Grid view"
+                  aria-pressed={cartLayout === "grid"}
+                  onClick={() => {
+                    setCartLayout("grid");
+                    try {
+                      localStorage.setItem("pops-pos-cart-layout", "grid");
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  className={`rounded px-1.5 py-1 transition ${
+                    cartLayout === "grid"
+                      ? "bg-amber-500 text-slate-950"
+                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {posSettings.showBillNotes ? (
+              <>
+                <input
+                  type="text"
+                  value={kitchenNote}
+                  onChange={(e) => setKitchenNote(e.target.value.slice(0, 200))}
+                  placeholder="Bill note (optional) — whole order, e.g. birthday table"
+                  maxLength={200}
+                  className={`mt-1.5 ${TICKET_INPUT_CLASS} py-1.5`}
+                  title="General note for this bill / kitchen"
+                />
+
+                {selectedCartLine && !selectedCartLine.isComplimentary ? (
+                  <input
+                    type="text"
+                    value={selectedCartLine.lineNote ?? ""}
+                    onChange={(e) => {
+                      const note = e.target.value.slice(0, 80);
+                      setCart((prev) =>
+                        prev.map((l) => {
+                          if (l.key !== selectedCartLine.key) return l;
+                          const nextNote = note.trim() || undefined;
+                          const baseKey = `${l.item.id}${l.variant?.id ? `:${l.variant.id}` : ""}`;
+                          const nextKey = nextNote ? `${baseKey}::note:${nextNote}` : baseKey;
+                          return { ...l, lineNote: nextNote, key: nextKey };
+                        }),
+                      );
+                      const baseKey = `${selectedCartLine.item.id}${
+                        selectedCartLine.variant?.id ? `:${selectedCartLine.variant.id}` : ""
+                      }`;
+                      const nextKey = note.trim() ? `${baseKey}::note:${note.trim()}` : baseKey;
+                      setSelectedCartKey(nextKey);
+                    }}
+                    placeholder={`Item note — e.g. بدون مرچ (${selectedCartLine.lineLabel})`}
+                    maxLength={80}
+                    className={`mt-1.5 ${TICKET_INPUT_CLASS} py-1.5`}
+                    title="Note for selected item only (KOT + bill)"
+                  />
+                ) : (
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                    Select an item below to add an item note.
+                  </p>
+                )}
+              </>
             ) : null}
 
             {happyHourLive && happyHourActiveSlot ? (
@@ -2822,21 +3525,112 @@ export function PosPage(): JSX.Element {
               <div
                 ref={cartListRef}
                 className={
-                  displayCart.length > POS_CART_VISIBLE_COUNT
+                  displayCart.length >
+                  (cartLayout === "list" ? POS_CART_LIST_VISIBLE_COUNT : POS_CART_VISIBLE_COUNT)
                     ? "overflow-y-auto overscroll-contain pr-1"
                     : "overflow-hidden"
                 }
                 style={{
-                  height: `${posCartListHeightPx(displayCart.length)}px`,
-                  maxHeight: `${POS_CART_LIST_MAX_PX}px`,
+                  height: `${posCartListHeightPx(displayCart.length, cartLayout)}px`,
+                  maxHeight: `${
+                    cartLayout === "list"
+                      ? POS_CART_LIST_ROW_PX * POS_CART_LIST_VISIBLE_COUNT +
+                        POS_CART_GRID_GAP_PX * (POS_CART_LIST_VISIBLE_COUNT - 1)
+                      : POS_CART_LIST_MAX_PX
+                  }px`,
                 }}
               >
               <ul
-                className="grid grid-cols-3 gap-2"
-                style={{ gridAutoRows: `${POS_CART_CARD_ROW_PX}px` }}
+                className={
+                  cartLayout === "list"
+                    ? "flex flex-col gap-1.5"
+                    : "grid grid-cols-3 gap-2"
+                }
+                style={
+                  cartLayout === "grid"
+                    ? { gridAutoRows: `${POS_CART_CARD_ROW_PX}px` }
+                    : undefined
+                }
               >
                 {displayCart.map((line) => {
                   const isSelected = selectedCartLine?.key === line.key;
+                  if (cartLayout === "list") {
+                    return (
+                      <li
+                        key={line.key}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelectedCartKey(line.key)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedCartKey(line.key);
+                          }
+                        }}
+                        className={`flex min-h-[48px] cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 transition ${
+                          line.isComplimentary
+                            ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
+                            : isSelected
+                              ? "border-amber-400 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-amber-500/10 dark:ring-amber-500/30"
+                              : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[11px] font-medium text-slate-900 dark:text-slate-100">
+                            {cartLinePrintLabel(line)}
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] tabular-nums text-slate-500">
+                            {line.isComplimentary ? (
+                              <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
+                            ) : (
+                              <span>Rs {line.unitPrice.toLocaleString()}</span>
+                            )}
+                            {line.lineNote?.trim() ? (
+                              <span className="truncate text-amber-700 dark:text-amber-300">
+                                · {line.lineNote.trim()}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        {line.isComplimentary ? (
+                          <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
+                            FREE
+                          </span>
+                        ) : (
+                          <div
+                            className="flex shrink-0 items-center gap-0.5 rounded-md bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="flex h-6 w-6 items-center justify-center rounded text-sm text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800"
+                              onClick={() => {
+                                setSelectedCartKey(line.key);
+                                setQty(line.key, line.qty - 1);
+                              }}
+                              aria-label="Decrease quantity"
+                            >
+                              −
+                            </button>
+                            <span className="min-w-[1.1rem] text-center text-[11px] font-semibold tabular-nums text-slate-900 dark:text-white">
+                              {line.qty}
+                            </span>
+                            <button
+                              type="button"
+                              className="flex h-6 w-6 items-center justify-center rounded text-sm text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800"
+                              onClick={() => {
+                                setSelectedCartKey(line.key);
+                                setQty(line.key, line.qty + 1);
+                              }}
+                              aria-label="Increase quantity"
+                            >
+                              +
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  }
                   return (
                   <li
                     key={line.key}
@@ -2859,8 +3653,13 @@ export function PosPage(): JSX.Element {
                   >
                     <div className="min-h-0 min-w-0 flex-1 overflow-hidden leading-snug">
                       <div className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-900 dark:text-slate-100">
-                        {line.lineLabel}
+                        {cartLinePrintLabel(line)}
                       </div>
+                      {line.lineNote?.trim() ? (
+                        <div className="mt-0.5 line-clamp-1 text-[9px] text-amber-700 dark:text-amber-300">
+                          Note: {line.lineNote.trim()}
+                        </div>
+                      ) : null}
                       <div className="mt-1 text-[10px] tabular-nums text-slate-500">
                         {line.isComplimentary ? (
                           <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
@@ -3166,6 +3965,7 @@ export function PosPage(): JSX.Element {
             closeAfterPayBillId={closeAfterPayBillId}
             onCloseAfterPayHandled={() => setCloseAfterPayBillId(null)}
             onNotice={(message, tone = "success") => setPrintNotice({ message, tone })}
+            quickPrintRef={latestOrdersQuickPrintRef}
           />
         </div>
       </div>
@@ -3173,6 +3973,7 @@ export function PosPage(): JSX.Element {
       {checkoutModal ? (
         <PosCheckoutModal
           mode={checkoutModal}
+          orderMode={mode}
           title={
             checkoutModal === "hold"
               ? "Hold bill"
@@ -3194,13 +3995,20 @@ export function PosPage(): JSX.Element {
             setCheckoutModal(null);
           }}
           onValidationError={(message) => setPrintNotice({ message, tone: "error" })}
-          onConfirm={({ servicePct: checkoutServicePct, taxPct: checkoutTaxPct, payments, status }) =>
+          onConfirm={({
+            servicePct: checkoutServicePct,
+            taxPct: checkoutTaxPct,
+            payments,
+            status,
+            cashReceived,
+          }) =>
             checkoutMutation.mutate({
               intent: checkoutModal,
               servicePct: checkoutServicePct,
               taxPct: checkoutTaxPct,
               payments,
               status,
+              cashReceived,
             })
           }
         />
@@ -3247,6 +4055,27 @@ export function PosPage(): JSX.Element {
         <PosPayOutModal
           onClose={() => setPayOutModalOpen(false)}
           onSuccess={(message) => setPrintNotice({ message, tone: "success" })}
+        />
+      ) : null}
+
+      {createAccountModalOpen ? (
+        <PosCreateAccountModal
+          onClose={() => setCreateAccountModalOpen(false)}
+          onSuccess={(message) => setPrintNotice({ message, tone: "success" })}
+        />
+      ) : null}
+
+      {teamChangeModalOpen ? (
+        <PosTeamChangeModal
+          onClose={() => setTeamChangeModalOpen(false)}
+          onSuccess={(message) => {
+            setShiftTeam(loadPosShiftTeam(branch?.code));
+            setPrintNotice({ message, tone: "success" });
+            if (mode === "delivery") {
+              const team = loadPosShiftTeam(branch?.code);
+              if (team.riderId && !deliveryRiderId) setDeliveryRiderId(team.riderId);
+            }
+          }}
         />
       ) : null}
 

@@ -1,4 +1,5 @@
 /** Printer sections (Kitchen, Bar, Grill, ...) — per-branch, localStorage-backed. */
+import { KITCHEN_SALE_PRINT_SECTIONS } from "./kitchenSaleReport";
 
 export type PrinterSection = {
   id: string;
@@ -12,15 +13,16 @@ export type PrinterSection = {
 };
 
 export const DEFAULT_PRINTER_SECTIONS: PrinterSection[] = [
-  { id: "kitchen", name: "Kitchen", icon: "🍳", color: "#f59e0b", enabled: true, isSystem: true, sortOrder: 0 },
-  { id: "bar", name: "Bar", icon: "🍸", color: "#8b5cf6", enabled: true, isSystem: true, sortOrder: 1 },
-  { id: "waiter", name: "Waiter", icon: "🧑‍🍳", color: "#38bdf8", enabled: true, isSystem: true, sortOrder: 2 },
-  { id: "grill", name: "Grill", icon: "🔥", color: "#ef4444", enabled: true, isSystem: true, sortOrder: 3 },
-  { id: "dessert", name: "Dessert", icon: "🍰", color: "#f472b6", enabled: true, isSystem: true, sortOrder: 4 },
-  { id: "drinks", name: "Drinks", icon: "🥤", color: "#22d3ee", enabled: true, isSystem: true, sortOrder: 5 },
-  { id: "cashier", name: "Cashier", icon: "🧾", color: "#a3e635", enabled: true, isSystem: true, sortOrder: 6 },
-  { id: "pickup", name: "Pickup", icon: "📦", color: "#fb923c", enabled: true, isSystem: true, sortOrder: 7 },
-  { id: "delivery", name: "Delivery", icon: "🛵", color: "#34d399", enabled: true, isSystem: true, sortOrder: 8 },
+  ...KITCHEN_SALE_PRINT_SECTIONS.map((s) => ({ ...s })),
+  { id: "kitchen", name: "Kitchen", icon: "🍳", color: "#f59e0b", enabled: true, isSystem: true, sortOrder: 3 },
+  { id: "bar", name: "Bar", icon: "🍸", color: "#8b5cf6", enabled: true, isSystem: true, sortOrder: 4 },
+  { id: "waiter", name: "Waiter", icon: "🧑‍🍳", color: "#38bdf8", enabled: true, isSystem: true, sortOrder: 5 },
+  { id: "grill", name: "Grill", icon: "🔥", color: "#ef4444", enabled: true, isSystem: true, sortOrder: 6 },
+  { id: "dessert", name: "Dessert", icon: "🍰", color: "#f472b6", enabled: true, isSystem: true, sortOrder: 7 },
+  { id: "drinks", name: "Drinks", icon: "🥤", color: "#22d3ee", enabled: true, isSystem: true, sortOrder: 8 },
+  { id: "cashier", name: "Cashier", icon: "🧾", color: "#a3e635", enabled: true, isSystem: true, sortOrder: 9 },
+  { id: "pickup", name: "Pickup", icon: "📦", color: "#fb923c", enabled: true, isSystem: true, sortOrder: 10 },
+  { id: "delivery", name: "Delivery", icon: "🛵", color: "#34d399", enabled: true, isSystem: true, sortOrder: 11 },
 ];
 
 /** General Store defaults — same printer workflow, retail-oriented sections. */
@@ -72,17 +74,33 @@ export function loadPrinterSections(
   const stored = all[branchCode];
   if (!stored || stored.length === 0) return defaults;
 
+  // Ensure Kitchen Sale Report sections exist on older branches.
+  const missingSale = KITCHEN_SALE_PRINT_SECTIONS.filter(
+    (sale) => !stored.some((s) => s.id === sale.id),
+  );
+  let merged = stored;
+  if (missingSale.length > 0) {
+    merged = [
+      ...missingSale.map((s, i) => ({
+        ...s,
+        sortOrder: Math.min(...stored.map((x) => x.sortOrder), 0) - missingSale.length + i,
+      })),
+      ...stored,
+    ];
+    savePrinterSections(branchCode, merged);
+  }
+
   // General Store: replace leftover restaurant Kitchen/Bar defaults with store sections.
   if (
     preset === "general-store" &&
-    stored.some((s) => s.id === "kitchen" || s.id === "bar") &&
-    !stored.some((s) => s.id === "receipt")
+    merged.some((s) => s.id === "kitchen" || s.id === "bar") &&
+    !merged.some((s) => s.id === "receipt")
   ) {
     savePrinterSections(branchCode, defaults);
     return defaults;
   }
 
-  return [...stored].sort((a, b) => a.sortOrder - b.sortOrder);
+  return [...merged].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 export function savePrinterSections(branchCode: string, sections: PrinterSection[]): void {

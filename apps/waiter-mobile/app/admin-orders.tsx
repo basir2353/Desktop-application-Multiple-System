@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { AdminShell } from "../src/components/AdminBottomNav";
+import { filterActiveKitchenTickets } from "../src/lib/orderHistory";
 import {
   Card,
   Chip,
@@ -83,10 +84,10 @@ export default function AdminOrdersScreen() {
   }, [ordersQuery.data, filter]);
 
   const kitchen = useMemo(() => {
-    return [...(kitchenQuery.data ?? [])]
-      .filter((t) => t.status !== "done")
+    return filterActiveKitchenTickets(kitchenQuery.data ?? [], ordersQuery.data ?? [])
+      .slice()
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [kitchenQuery.data]);
+  }, [kitchenQuery.data, ordersQuery.data]);
 
   if (!allowed) return <Redirect href="/" />;
 

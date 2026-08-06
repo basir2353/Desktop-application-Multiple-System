@@ -58,6 +58,32 @@ export function buildUnifiedOrders(bills: Bill[], tickets: KitchenTicket[]): Uni
   return rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+/**
+ * Kitchen tickets still shown on Waiter Active / Home.
+ * Hides `done` tickets and any ticket whose orderRef already has a completed/void bill
+ * (covers lag before backend marks the KOT done).
+ */
+export function filterActiveKitchenTickets(
+  tickets: KitchenTicket[],
+  bills: Bill[] = [],
+): KitchenTicket[] {
+  const closedRefs = new Set(
+    bills
+      .filter(
+        (bill) =>
+          (bill.status === "completed" || bill.status === "void") &&
+          Boolean(bill.orderRef?.trim()),
+      )
+      .map((bill) => bill.orderRef!.trim().toLowerCase()),
+  );
+  return tickets.filter((ticket) => {
+    if (ticket.status === "done") return false;
+    const ref = (ticket.orderRef ?? "").trim().toLowerCase();
+    if (ref && closedRefs.has(ref)) return false;
+    return true;
+  });
+}
+
 export function unifiedOrderRef(order: UnifiedOrder): string {
   if (order.source === "bill") return orderRefFromBill(order.bill);
   return orderRefFromTicket(order.ticket);
@@ -80,10 +106,8 @@ export function unifiedOrderStatus(order: UnifiedOrder): string {
   return kitchenStatusLabel(order.ticket.status);
 }
 
-import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS } from "./posTaxSettings";
-
-/** Matches the service/tax rates used when taking a new order in app/order.tsx. */
-const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, type PosTaxSettings } from "./posTaxSettings";
+import { inferOrderModeFromStation, type MobileOrderMode } from "./orderMode";
 
 function normalizeLabel(label: string): string {
   return label.toLowerCase().replace(/\s+/g, " ").trim();
@@ -146,6 +170,8 @@ function estimatedLinesTotal(
   lines: PricedLine[] | undefined,
   menuItems?: MenuItem[],
   summaryFallback?: string,
+  orderMode?: MobileOrderMode | null,
+  taxSettings: PosTaxSettings = DEFAULT_POS_TAX_SETTINGS,
 ): number | null {
   let resolved = withResolvedPrices(lines ?? [], menuItems);
   let subtotal = linesSubtotal(resolved);
@@ -161,30 +187,38 @@ function estimatedLinesTotal(
   }
 
   if (subtotal <= 0) return null;
-  const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
+  const totals = calcServiceTaxTotals(subtotal, taxSettings, "cash", orderMode);
   return totals.total;
 }
 
 export function unifiedOrderTotal(
   order: UnifiedOrder,
   menuItems?: MenuItem[],
+  taxSettings?: PosTaxSettings,
 ): number | null {
   if (order.source === "bill") {
     const billTotal = Number(order.bill.total);
     if (Number.isFinite(billTotal) && billTotal > 0) return billTotal;
-    const fromLines = estimatedLinesTotal(order.bill.lines, menuItems);
+    const fromLines = estimatedLinesTotal(order.bill.lines, menuItems, undefined, null, taxSettings);
     if (fromLines == null) return null;
     return fromLines + (order.bill.deliveryChargePkr ?? 0);
   }
-  return kitchenTicketTotal(order.ticket, menuItems);
+  return kitchenTicketTotal(order.ticket, menuItems, taxSettings);
 }
 
 /** Full bill total for a rider's delivery order — food + service + tax + delivery fee. */
 export function deliveryOrderTotal(
   order: DeliveryOrder,
   menuItems?: MenuItem[],
+  taxSettings?: PosTaxSettings,
 ): number | null {
-  const foodTotal = estimatedLinesTotal(order.lines, menuItems, order.itemsSummary);
+  const foodTotal = estimatedLinesTotal(
+    order.lines,
+    menuItems,
+    order.itemsSummary,
+    null,
+    taxSettings,
+  );
   const deliveryFee = Math.max(0, Number(order.deliveryChargePkr) || 0);
   if (foodTotal == null) return deliveryFee > 0 ? deliveryFee : null;
   return foodTotal + deliveryFee;
@@ -196,10 +230,21 @@ export function kitchenTicketTotal(
     lines?: PricedLine[];
     itemsSummary?: string;
     deliveryChargePkr?: number | null;
+    stationLabel?: string | null;
   },
   menuItems?: MenuItem[],
+  taxSettings?: PosTaxSettings,
 ): number | null {
-  const food = estimatedLinesTotal(ticket.lines, menuItems, ticket.itemsSummary);
+  const mode = ticket.stationLabel
+    ? inferOrderModeFromStation(ticket.stationLabel)
+    : null;
+  const food = estimatedLinesTotal(
+    ticket.lines,
+    menuItems,
+    ticket.itemsSummary,
+    mode,
+    taxSettings,
+  );
   if (food == null) return null;
   return food + Math.max(0, Number(ticket.deliveryChargePkr) || 0);
 }

@@ -1,7 +1,8 @@
 import { useRouter, usePathname } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "./ui";
+import { useThemedStyleSheet } from "../theme/useThemedStyleSheet";
 
 export type AdminTab = "home" | "orders" | "menu" | "tax" | "more";
 
@@ -40,6 +41,7 @@ export function resolveAdminTab(pathname: string): AdminTab {
 }
 
 export function AdminBottomNav({ active }: { active?: AdminTab }) {
+  const styles = useScreenStyles();
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
@@ -89,6 +91,7 @@ export function AdminShell({
   /** When true, leave horizontal padding to the screen itself. */
   noPadding?: boolean;
 }) {
+  const styles = useScreenStyles();
   return (
     <View style={styles.shell}>
       <View style={[styles.body, noPadding ? null : styles.bodyPad]}>{children}</View>
@@ -97,10 +100,13 @@ export function AdminShell({
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   shell: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   body: {
     flex: 1,
@@ -110,8 +116,8 @@ const styles = StyleSheet.create({
   },
   wrap: {
     borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    borderTopColor: c.border,
+    backgroundColor: c.bg,
     paddingTop: 6,
   },
   row: {
@@ -138,19 +144,22 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15, 118, 110, 0.22)",
   },
   icon: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 16,
     fontWeight: "700",
   },
   iconActive: {
-    color: colors.accentSoft,
+    color: c.accentSoft,
   },
   label: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 10,
     fontWeight: "600",
   },
   labelActive: {
-    color: colors.accentSoft,
+    color: c.accentSoft,
   },
-});
+
+  }));
+}
+

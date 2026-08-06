@@ -1,9 +1,10 @@
 import { Redirect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import type { BranchPrintServer } from "@platform/contracts";
 import { fetchBranchPrintServers } from "../src/api/printing";
 import { Button, Card, Input, Muted, Notice, Screen, SectionHeader, colors } from "../src/components/ui";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import {
   discoverBranchPrintServers,
   enrollBranchServerByIp,
@@ -23,6 +24,7 @@ import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 export default function PrintersScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
@@ -370,7 +372,10 @@ export default function PrintersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   content: {
     padding: 16,
     gap: 14,
@@ -380,7 +385,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   cardTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "700",
   },
@@ -388,7 +393,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   label: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 12,
     fontWeight: "600",
     textTransform: "uppercase",
@@ -407,25 +412,25 @@ const styles = StyleSheet.create({
   },
   serverCard: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderRadius: 12,
     padding: 12,
     gap: 8,
   },
   serverCardActive: {
-    borderColor: colors.accent,
+    borderColor: c.accent,
   },
   serverMain: {
     gap: 4,
     flex: 1,
   },
   serverTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 14,
     fontWeight: "700",
   },
   online: {
-    color: colors.accent,
+    color: c.accent,
     fontWeight: "700",
   },
   emptyBox: {
@@ -433,7 +438,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   emptyText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 13,
   },
-});
+
+  }));
+}
+

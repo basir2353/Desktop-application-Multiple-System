@@ -5,7 +5,7 @@ import {
 } from "./printTicket";
 import { buildPraFiscalHtml } from "./praFiscalPrint";
 import { asPrinterName } from "./asPrinterName";
-import { isVirtualSystemPrinter, printImageToSystemPrinter } from "./systemPrinters";
+import { isDesktopAppRuntime, isVirtualSystemPrinter, printImageToSystemPrinter } from "./systemPrinters";
 
 /**
  * Print using the same POS order-slip HTML (bill print settings + PRA footer).
@@ -25,7 +25,7 @@ export async function printPraFiscalSlip(
       branchCode: options?.branchCode,
     });
     const printer = asPrinterName(options?.systemPrinterName);
-    if (printer && !isVirtualSystemPrinter(printer)) {
+    if (printer && !isVirtualSystemPrinter(printer) && isDesktopAppRuntime()) {
       const png = await renderTicketHtmlToPngBytes(html, "80mm");
       if (png?.length) {
         const img = await printImageToSystemPrinter({
@@ -36,6 +36,9 @@ export async function printPraFiscalSlip(
           paperWidthMm: options?.paperWidthMm ?? 80,
         });
         if (img.ok) return { ok: true };
+        if (!img.unsupported) {
+          return { ok: false, error: img.error ?? `Printer "${printer}" failed.` };
+        }
       }
     }
     const opened = await printHtmlDocumentAndWait(html, `Invoice ${fiscal.invoiceNumber}`);

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -9,22 +10,27 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colorsForMode, getColors, useThemeStore } from "../stores/themeStore";
+import type { AppColors } from "../theme/palettes";
+export type { AppColors } from "../theme/palettes";
+export { useThemedStyleSheet } from "../theme/useThemedStyleSheet";
 
-export const colors = {
-  bg: "#0B1220",
-  /** Deeper ink for inputs / nested surfaces */
-  bgDeep: "#070D18",
-  card: "#111827",
-  border: "#1E293B",
-  text: "#F8FAFC",
-  muted: "#94A3B8",
-  accent: "#0F766E",
-  accentSoft: "#14B8A6",
-  accentText: "#F0FDFA",
-  success: "#10B981",
-  warning: "#F59E0B",
-  danger: "#EF4444",
-};
+/** Live palette — reads current theme (works for inline style objects on re-render). */
+export const colors: AppColors = new Proxy({} as AppColors, {
+  get(_t, prop: string | symbol) {
+    return getColors()[prop as keyof AppColors];
+  },
+});
+
+export function useColors(): AppColors {
+  const mode = useThemeStore((s) => s.mode);
+  return colorsForMode(mode);
+}
+
+function useUiStyles() {
+  const mode = useThemeStore((s) => s.mode);
+  return useMemo(() => makeStyles(colorsForMode(mode)), [mode]);
+}
 
 export function Screen({
   children,
@@ -36,6 +42,7 @@ export function Screen({
   /** Extra top inset for screens without a stack header (e.g. home). */
   safeTop?: boolean;
 }) {
+  const styles = useUiStyles();
   const insets = useSafeAreaInsets();
   return (
     <View
@@ -51,26 +58,32 @@ export function Screen({
 }
 
 export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
+  const styles = useUiStyles();
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
 export function Title({ children }: { children: React.ReactNode }) {
+  const styles = useUiStyles();
   return <Text style={styles.title}>{children}</Text>;
 }
 
 export function Subtitle({ children }: { children: React.ReactNode }) {
+  const styles = useUiStyles();
   return <Text style={styles.subtitle}>{children}</Text>;
 }
 
 export function Label({ children }: { children: React.ReactNode }) {
+  const styles = useUiStyles();
   return <Text style={styles.label}>{children}</Text>;
 }
 
 export function Muted({ children }: { children: React.ReactNode }) {
+  const styles = useUiStyles();
   return <Text style={styles.muted}>{children}</Text>;
 }
 
 export function Notice({ children, tone = "warning" }: { children: React.ReactNode; tone?: "warning" | "success" }) {
+  const styles = useUiStyles();
   return (
     <View style={[styles.notice, tone === "success" ? styles.noticeSuccess : styles.noticeWarning]}>
       <Text style={styles.noticeText}>{children}</Text>
@@ -91,6 +104,7 @@ export function Button({
   variant?: "primary" | "ghost" | "danger";
   loading?: boolean;
 }) {
+  const styles = useUiStyles();
   return (
     <Pressable
       onPress={onPress}
@@ -121,6 +135,7 @@ export function Button({
 }
 
 export function Input({ style, ...props }: TextInputProps) {
+  const styles = useUiStyles();
   return (
     <TextInput
       placeholderTextColor={colors.muted}
@@ -131,6 +146,7 @@ export function Input({ style, ...props }: TextInputProps) {
 }
 
 export function StatusBadge({ status }: { status: string }) {
+  const styles = useUiStyles();
   const tone =
     status === "ready" || status === "completed" || status === "Paid"
       ? colors.success
@@ -157,6 +173,7 @@ export function StatCard({
   hint?: string;
   accent?: string;
 }) {
+  const styles = useUiStyles();
   const text = String(value);
   const compact = text.length > 8;
   return (
@@ -188,6 +205,7 @@ export function ActionTile({
   icon: string;
   variant?: "default" | "primary";
 }) {
+  const styles = useUiStyles();
   return (
     <Pressable
       onPress={onPress}
@@ -214,6 +232,7 @@ export function SectionHeader({ title, actionLabel, onAction }: {
   actionLabel?: string;
   onAction?: () => void;
 }) {
+  const styles = useUiStyles();
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -227,6 +246,7 @@ export function SectionHeader({ title, actionLabel, onAction }: {
 }
 
 export function EmptyState({ title, message }: { title: string; message: string }) {
+  const styles = useUiStyles();
   return (
     <View style={styles.emptyState}>
       <Text style={styles.emptyTitle}>{title}</Text>
@@ -251,6 +271,7 @@ export function Chip({
   sublabel?: string;
   disabled?: boolean;
 }) {
+  const styles = useUiStyles();
   return (
     <Pressable
       onPress={onPress}
@@ -306,6 +327,7 @@ export function QtyStepper({
   minQty?: number;
   decrementDisabled?: boolean;
 }) {
+  const styles = useUiStyles();
   const locked = Boolean(decrementDisabled) || qty <= minQty;
   return (
     <View style={styles.qtyStepper}>
@@ -332,6 +354,7 @@ export function LoginModeTabs({
   mode: "password" | "pin";
   onChange: (mode: "password" | "pin") => void;
 }) {
+  const styles = useUiStyles();
   const options: { id: "password" | "pin"; label: string; hint: string }[] = [
     { id: "password", label: "Email", hint: "Email & password" },
     { id: "pin", label: "PIN", hint: "4-digit branch PIN" },
@@ -374,6 +397,7 @@ export function PinPad({
   onSubmit?: () => void;
   disabled?: boolean;
 }) {
+  const styles = useUiStyles();
   const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"];
 
   function press(key: string): void {
@@ -422,6 +446,7 @@ export function PinPad({
 }
 
 export function CategoryHeading({ title, count }: { title: string; count?: number }) {
+  const styles = useUiStyles();
   return (
     <View style={styles.categoryHeading}>
       <View style={styles.categoryAccent} />
@@ -431,40 +456,41 @@ export function CategoryHeading({ title, count }: { title: string; count?: numbe
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: AppColors) {
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     padding: 16,
     gap: 12,
   },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 14,
     gap: 8,
   },
   title: {
-    color: colors.text,
+    color: c.text,
     fontSize: 24,
     fontWeight: "700",
   },
   subtitle: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
     lineHeight: 20,
   },
   label: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.8,
     textTransform: "uppercase",
   },
   muted: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
   },
   notice: {
@@ -481,11 +507,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(34, 197, 94, 0.35)",
   },
   noticeText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 13,
   },
   button: {
-    backgroundColor: colors.accent,
+    backgroundColor: c.accent,
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -496,12 +522,12 @@ const styles = StyleSheet.create({
   buttonGhost: {
     backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
   },
   buttonDanger: {
     backgroundColor: "rgba(239, 68, 68, 0.15)",
     borderWidth: 1,
-    borderColor: colors.danger,
+    borderColor: c.danger,
   },
   buttonDisabled: {
     opacity: 0.45,
@@ -510,22 +536,22 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   buttonText: {
-    color: colors.accentText,
+    color: c.accentText,
     fontSize: 15,
     fontWeight: "600",
   },
   buttonTextGhost: {
-    color: colors.text,
+    color: c.text,
   },
   buttonTextDanger: {
-    color: colors.danger,
+    color: c.danger,
   },
   input: {
-    backgroundColor: colors.bgDeep,
+    backgroundColor: c.bgDeep,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderRadius: 12,
-    color: colors.text,
+    color: c.text,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 15,
@@ -544,22 +570,22 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minWidth: "30%",
-    backgroundColor: colors.bgDeep,
+    backgroundColor: c.bgDeep,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 12,
     gap: 4,
   },
   statLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 10,
     fontWeight: "600",
     letterSpacing: 0.6,
     textTransform: "uppercase",
   },
   statValue: {
-    color: colors.text,
+    color: c.text,
     fontSize: 22,
     fontWeight: "700",
   },
@@ -567,22 +593,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   statHint: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
   },
   actionTile: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 16,
   },
   actionTilePrimary: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accentSoft,
+    backgroundColor: c.accent,
+    borderColor: c.accentSoft,
   },
   actionTilePressed: {
     opacity: 0.88,
@@ -593,22 +619,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   actionIconPrimary: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   actionCopy: {
     flex: 1,
     gap: 2,
   },
   actionTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 16,
     fontWeight: "700",
   },
   actionTitlePrimary: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   actionSubtitle: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -616,12 +642,12 @@ const styles = StyleSheet.create({
     color: "rgba(240, 253, 250, 0.78)",
   },
   actionChevron: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 24,
     fontWeight: "300",
   },
   actionChevronPrimary: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -630,12 +656,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sectionTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "700",
   },
   sectionAction: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 13,
     fontWeight: "600",
   },
@@ -646,12 +672,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   emptyTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "600",
   },
   emptyMessage: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     textAlign: "center",
     lineHeight: 18,
@@ -659,14 +685,14 @@ const styles = StyleSheet.create({
   chip: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bg,
+    borderColor: c.border,
+    backgroundColor: c.bg,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   chipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accentSoft,
+    backgroundColor: c.accent,
+    borderColor: c.accentSoft,
   },
   chipSelectedLocked: {
     backgroundColor: "#dc2626",
@@ -687,12 +713,12 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   chipText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 14,
     fontWeight: "600",
   },
   chipTextSelected: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   chipTextMine: {
     color: "#4ade80",
@@ -703,7 +729,7 @@ const styles = StyleSheet.create({
   chipSublabel: {
     fontSize: 10,
     fontWeight: "600",
-    color: colors.muted,
+    color: c.muted,
     marginTop: 2,
     maxWidth: 110,
   },
@@ -717,8 +743,8 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bg,
+    borderColor: c.border,
+    backgroundColor: c.bg,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -730,19 +756,19 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   qtyBtnText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 18,
     fontWeight: "500",
     lineHeight: 20,
   },
   qtyBtnTextDisabled: {
-    color: colors.muted,
+    color: c.muted,
   },
   qtyBtnTextAccent: {
-    color: colors.accent,
+    color: c.accent,
   },
   qtyValue: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "700",
     minWidth: 20,
@@ -759,18 +785,18 @@ const styles = StyleSheet.create({
     width: 3,
     height: 16,
     borderRadius: 2,
-    backgroundColor: colors.accent,
+    backgroundColor: c.accent,
   },
   categoryTitle: {
     flex: 1,
-    color: colors.text,
+    color: c.text,
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0.4,
     textTransform: "uppercase",
   },
   categoryCount: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 12,
     fontWeight: "600",
   },
@@ -788,12 +814,12 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 999,
     borderWidth: 2,
-    borderColor: colors.border,
+    borderColor: c.border,
     backgroundColor: "transparent",
   },
   pinDotFilled: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: c.accent,
+    borderColor: c.accent,
   },
   pinGrid: {
     flexDirection: "row",
@@ -807,8 +833,8 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bg,
+    borderColor: c.border,
+    backgroundColor: c.bg,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -817,10 +843,10 @@ const styles = StyleSheet.create({
   },
   pinKeyPressed: {
     opacity: 0.85,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
   },
   pinKeyText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 22,
     fontWeight: "600",
   },
@@ -837,30 +863,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bgDeep,
+    borderColor: c.border,
+    backgroundColor: c.bgDeep,
     alignItems: "center",
     gap: 4,
   },
   loginModeTabActive: {
-    borderColor: colors.accentSoft,
+    borderColor: c.accentSoft,
     backgroundColor: "rgba(15, 118, 110, 0.2)",
   },
   loginModeLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 15,
     fontWeight: "700",
     textAlign: "center",
   },
   loginModeLabelActive: {
-    color: colors.text,
+    color: c.text,
   },
   loginModeHint: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
     textAlign: "center",
   },
   loginModeHintActive: {
-    color: colors.accent,
+    color: c.accent,
   },
 });
+}

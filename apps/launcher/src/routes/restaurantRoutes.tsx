@@ -126,6 +126,9 @@ const HrPayrollPage = lazy(() =>
 const SalarySlipsPage = lazy(() =>
   import("../pops/pages/modules/hr/SalarySlipsPage").then((m) => ({ default: m.SalarySlipsPage })),
 );
+const StaffFoodPage = lazy(() =>
+  import("../pops/pages/modules/hr/StaffFoodPage").then((m) => ({ default: m.StaffFoodPage })),
+);
 const DeliveryPage = lazy(() =>
   import("../pops/pages/modules/DeliveryPage").then((m) => ({ default: m.DeliveryPage })),
 );
@@ -187,6 +190,7 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="accounting/audit-logs" element={<AccountingAuditLogsPage />} />
       <Route path="hr" element={<HrDashboardPage />} />
       <Route path="hr/employees" element={<EmployeesPage />} />
+      <Route path="hr/staff-food" element={<StaffFoodPage />} />
       <Route path="hr/attendance" element={<AttendancePage />} />
       <Route path="hr/leave" element={<LeavePage />} />
       <Route path="hr/payroll" element={<HrPayrollPage />} />

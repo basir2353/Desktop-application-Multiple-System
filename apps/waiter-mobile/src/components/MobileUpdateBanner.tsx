@@ -17,6 +17,9 @@ type BannerState =
   | { kind: "error"; message: string };
 
 function currentVersionCode(): number {
+  // Must use native Android versionCode — not expoConfig alone.
+  // Fast builds used to leave Gradle at versionCode 1 while app.json said 1.1.x;
+  // comparing expoConfig hid the update and / or looped forever against the feed.
   const native = Number(Constants.nativeBuildVersion ?? 0);
   if (Number.isFinite(native) && native > 0) return native;
   const configured = Number(Constants.expoConfig?.android?.versionCode ?? 0);
@@ -126,7 +129,10 @@ export function MobileUpdateBanner(): JSX.Element | null {
       }}
     >
       <Text style={{ color: colors.accent, fontWeight: "800", fontSize: 13 }}>
-        Update available · v{feed.version}
+        Update available · v{feed.version} ({feed.versionCode})
+      </Text>
+      <Text style={{ color: colors.muted, fontSize: 11 }}>
+        Installed build {currentVersionCode()} → install this APK, then reopen the app.
       </Text>
       {feed.notes ? (
         <Text style={{ color: colors.muted, fontSize: 11 }} numberOfLines={2}>

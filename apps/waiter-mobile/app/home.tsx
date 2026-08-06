@@ -5,7 +5,6 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -21,6 +20,8 @@ import {
   StatusBadge,
   colors,
 } from "../src/components/ui";
+import { ThemeToggle } from "../src/components/ThemeToggle";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import {
   formatPkr,
   formatTimeAgo,
@@ -31,8 +32,8 @@ import {
   orderRefFromTicket,
   waiterDisplayName,
 } from "../src/lib/orderDisplay";
-import { buildUnifiedOrders, kitchenTicketTotal } from "../src/lib/orderHistory";
-import { resolveStaffRole, canCloseOrders, isWaiterRole } from "../src/lib/roles";
+import { buildUnifiedOrders, filterActiveKitchenTickets, kitchenTicketTotal } from "../src/lib/orderHistory";
+import { resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -43,10 +44,10 @@ type QuickAction = {
   icon: string;
   route: "/order" | "/orders" | "/history" | "/table-transfer";
   primary?: boolean;
-  historyFilter?: "held";
 };
 
 export default function HomeScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
@@ -101,7 +102,7 @@ export default function HomeScreen() {
   const bills = ordersQuery.data ?? [];
   const menuItems = menuQuery.data?.items ?? [];
   const unified = buildUnifiedOrders(bills, tickets);
-  const activeTickets = tickets.filter((t) => t.status !== "done");
+  const activeTickets = filterActiveKitchenTickets(tickets, bills);
   const readyCount = activeTickets.filter((t) => t.status === "ready").length;
   const cookingCount = activeTickets.filter((t) => t.status === "cooking").length;
   const todayOrders = unified.filter((order) => isToday(order.createdAt));
@@ -115,9 +116,6 @@ export default function HomeScreen() {
 
   const refreshing = kitchenQuery.isFetching || ordersQuery.isFetching;
   const displayName = waiterDisplayName(waiterEmail);
-
-  const heldBills = bills.filter((b) => b.status === "held");
-  const cashierMode = canCloseOrders(claims) && !isWaiterRole(claims);
 
   function refreshAll(): void {
     void kitchenQuery.refetch();
@@ -155,18 +153,6 @@ export default function HomeScreen() {
       icon: "◷",
       route: "/history",
     },
-    ...(cashierMode
-      ? [
-          {
-            id: "close",
-            title: "Close orders",
-            subtitle: `${heldBills.length} on hold · collect payment`,
-            icon: "₨",
-            route: "/history" as const,
-            historyFilter: "held" as const,
-          },
-        ]
-      : []),
     {
       id: "tables",
       title: "Floor tables",
@@ -199,6 +185,7 @@ export default function HomeScreen() {
             </View>
           </View>
           <View style={styles.liveDotWrap}>
+            <ThemeToggle size="sm" />
             <View style={styles.liveDot} />
             <Text style={styles.liveLabel}>Live</Text>
           </View>
@@ -230,13 +217,7 @@ export default function HomeScreen() {
             {quickActions.map((action) => (
               <Pressable
                 key={action.id}
-                onPress={() =>
-                  router.push(
-                    action.historyFilter
-                      ? { pathname: "/history", params: { filter: action.historyFilter } }
-                      : action.route,
-                  )
-                }
+                onPress={() => router.push(action.route)}
                 style={({ pressed }) => [
                   styles.actionTile,
                   action.primary && styles.actionTilePrimary,
@@ -385,7 +366,10 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   screen: {
     paddingBottom: 0,
   },
@@ -404,12 +388,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   greeting: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
     fontWeight: "500",
   },
   waiterName: {
-    color: colors.text,
+    color: c.text,
     fontSize: 26,
     fontWeight: "700",
     letterSpacing: -0.3,
@@ -429,13 +413,13 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   branchBadgeText: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.5,
   },
   branchName: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     flex: 1,
   },
@@ -448,10 +432,10 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 999,
-    backgroundColor: colors.success,
+    backgroundColor: c.success,
   },
   liveLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 10,
     fontWeight: "600",
     letterSpacing: 0.6,
@@ -471,14 +455,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     padding: 14,
   },
   actionTilePrimary: {
-    backgroundColor: colors.accent,
+    backgroundColor: c.accent,
     borderColor: "#14B8A6",
   },
   actionTilePressed: {
@@ -488,9 +472,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -499,27 +483,27 @@ const styles = StyleSheet.create({
     borderColor: "rgba(15, 23, 42, 0.15)",
   },
   actionIcon: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 18,
     fontWeight: "700",
   },
   actionIconPrimary: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   actionCopy: {
     flex: 1,
     gap: 2,
   },
   actionTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 16,
     fontWeight: "700",
   },
   actionTitlePrimary: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   actionSubtitle: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 12,
     lineHeight: 17,
   },
@@ -527,12 +511,12 @@ const styles = StyleSheet.create({
     color: "rgba(15, 23, 42, 0.72)",
   },
   actionChevron: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 22,
     fontWeight: "300",
   },
   actionChevronPrimary: {
-    color: colors.accentText,
+    color: c.accentText,
   },
   pulseCard: {
     gap: 12,
@@ -543,44 +527,44 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
   },
   loadingText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
   },
   emptyPulse: {
     alignItems: "center",
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderStyle: "dashed",
     paddingVertical: 28,
     paddingHorizontal: 20,
     gap: 8,
   },
   emptyPulseIcon: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 22,
   },
   emptyPulseTitle: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: "700",
   },
   emptyPulseText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     textAlign: "center",
     lineHeight: 18,
   },
   emptyPulseBtn: {
     marginTop: 6,
-    backgroundColor: colors.accent,
+    backgroundColor: c.accent,
     borderRadius: 10,
     paddingHorizontal: 18,
     paddingVertical: 10,
   },
   emptyPulseBtnText: {
-    color: colors.accentText,
+    color: c.accentText,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -588,10 +572,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   pulseItem: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderLeftWidth: 3,
     padding: 14,
     gap: 8,
@@ -606,7 +590,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   pulseRef: {
-    color: colors.text,
+    color: c.text,
     fontFamily: "monospace",
     fontSize: 15,
     fontWeight: "700",
@@ -618,25 +602,25 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   tablePill: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   tablePillText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 12,
     fontWeight: "600",
   },
   pulseTime: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 12,
     fontWeight: "500",
   },
   pulseItems: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -645,7 +629,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   pulseTotal: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 15,
     fontWeight: "800",
   },
@@ -659,7 +643,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   footerText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
     fontWeight: "500",
   },
@@ -668,4 +652,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
   },
-});
+
+  }));
+}
+

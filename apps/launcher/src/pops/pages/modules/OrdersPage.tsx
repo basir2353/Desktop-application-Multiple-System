@@ -1,16 +1,17 @@
 import { Button } from "@platform/ui";
 import type { Bill, PraFiscalInvoice, PraInvoiceMode } from "@platform/contracts";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchPraFiscalForSource } from "../../../lib/praApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { sessionCanManageFloor } from "../../lib/roleAccess";
-import { fetchCompletedOrders, completeBill } from "../../api/billing";
+import { fetchCompletedOrders, completeBill, deleteBill } from "../../api/billing";
+import { confirmDeleteBill } from "../../lib/confirmDeleteBill";
 import { fetchKitchenTickets } from "../../api/kitchen";
 import { loadBusinessDaySettings } from "../../lib/businessDay";
-import { loadPosSettings } from "../../lib/posSettings";
+import { loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../../lib/posSettings";
 import { karachiYear } from "../../lib/orderSales";
 import {
   buildUnifiedOrders,
@@ -52,10 +53,19 @@ import {
 import { billToPrintInput, type PrintTicketInput } from "../../lib/printTicket";
 import { resolvePraFooterForPaidBill } from "../../lib/praPaidPrint";
 import { resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRouting";
+import { loadBillPrintSettings } from "../../lib/billPrintSettings";
+import { resolveBillPrintSettingsForReceipt } from "../../lib/billReceiptTemplateAssignments";
+import { isTypingTarget } from "../../lib/posShortcuts";
 import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
-import { linkActionClass, linkSuccessClass, linkWarningClass, tableOrderRefClass } from "../../lib/themeClasses";
+import {
+  linkActionClass,
+  linkDangerClass,
+  linkSuccessClass,
+  linkWarningClass,
+  tableOrderRefClass,
+} from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import {
   ModuleCountBadge,
@@ -109,6 +119,7 @@ function OrdersSummaryCard({
 
 export function OrdersPage(): JSX.Element {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const canManageTables = sessionCanManageFloor(claims);
@@ -116,10 +127,23 @@ export function OrdersPage(): JSX.Element {
     () => loadBusinessDaySettings(branch?.code),
     [branch?.code],
   );
+  const [posSettingsTick, setPosSettingsTick] = useState(0);
   const posSettings = useMemo(
     () => loadPosSettings(branch?.code),
-    [branch?.code],
+    [branch?.code, posSettingsTick],
   );
+
+  useEffect(() => {
+    function onPosSettingsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setPosSettingsTick((n) => n + 1);
+      }
+    }
+    window.addEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+    return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+  }, [branch?.code]);
+
   const [search, setSearch] = useState("");
   const [praFilter, setPraFilter] = useState<"all" | "fake" | "real" | "none">("all");
   const [filterYear, setFilterYear] = useState("all");
@@ -127,6 +151,9 @@ export function OrdersPage(): JSX.Element {
   const [filterTimeFrom, setFilterTimeFrom] = useState("");
   const [filterTimeTo, setFilterTimeTo] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<UnifiedOrder | null>(null);
+  const [selectedBillIds, setSelectedBillIds] = useState<Set<string>>(() => new Set());
+  /** Last-focused completed bill for P = quick reprint. */
+  const [quickPrintBillId, setQuickPrintBillId] = useState<string | null>(null);
   const [heldBillToPay, setHeldBillToPay] = useState<Bill | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<UnifiedOrder | null>(null);
   const [printPreview, setPrintPreview] = useState<{
@@ -218,6 +245,28 @@ export function OrdersPage(): JSX.Element {
     onError: (err: Error) => setNotice(err.message),
   });
 
+  const deleteBillsMutation = useMutation({
+    mutationFn: async (bills: Bill[]) => {
+      for (const bill of bills) {
+        await deleteBill(bill.id);
+      }
+      return bills.length;
+    },
+    onSuccess: (count) => {
+      setSelectedBillIds(new Set());
+      setSelectedOrder(null);
+      setNotice(
+        count === 1
+          ? "Order deleted."
+          : `${count} orders deleted.`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void ordersQuery.refetch();
+      void kitchenQuery.refetch();
+    },
+    onError: (err: Error) => setNotice(err.message),
+  });
+
   const allOrders = useMemo(
     () => buildUnifiedOrders(ordersQuery.data ?? [], kitchenQuery.data ?? []),
     [ordersQuery.data, kitchenQuery.data],
@@ -286,7 +335,70 @@ export function OrdersPage(): JSX.Element {
     [filtered, posSettings],
   );
 
+  const deletableBillsInView = useMemo(
+    () => filtered.filter((o): o is Extract<UnifiedOrder, { source: "bill" }> => o.source === "bill"),
+    [filtered],
+  );
+
+  const allDeletableSelected =
+    deletableBillsInView.length > 0 &&
+    deletableBillsInView.every((o) => selectedBillIds.has(o.bill.id));
+
+  const selectedBills = useMemo(() => {
+    const byId = new Map(deletableBillsInView.map((o) => [o.bill.id, o.bill]));
+    return [...selectedBillIds]
+      .map((id) => byId.get(id))
+      .filter((b): b is Bill => Boolean(b));
+  }, [deletableBillsInView, selectedBillIds]);
+
+  useEffect(() => {
+    const allowed = new Set(deletableBillsInView.map((o) => o.bill.id));
+    setSelectedBillIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (allowed.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [deletableBillsInView]);
+
+  function toggleBillSelected(billId: string): void {
+    setSelectedBillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(billId)) next.delete(billId);
+      else next.add(billId);
+      return next;
+    });
+  }
+
+  function toggleSelectAllDeletable(): void {
+    if (allDeletableSelected) {
+      setSelectedBillIds(new Set());
+      return;
+    }
+    setSelectedBillIds(new Set(deletableBillsInView.map((o) => o.bill.id)));
+  }
+
+  function deleteSingleBill(bill: Bill): void {
+    if (!confirmDeleteBill(bill)) return;
+    deleteBillsMutation.mutate([bill]);
+  }
+
+  function deleteSelectedBills(): void {
+    if (selectedBills.length === 0) return;
+    const confirmed = window.confirm(
+      selectedBills.length === 1
+        ? `Permanently delete order ${selectedBills[0]!.orderRef ?? selectedBills[0]!.billRef}?\n\nThis action cannot be undone.`
+        : `Permanently delete ${selectedBills.length} selected orders?\n\nThis action cannot be undone.`,
+    );
+    if (!confirmed) return;
+    deleteBillsMutation.mutate(selectedBills);
+  }
+
   function reprint(bill: Bill): void {
+    setQuickPrintBillId(bill.id);
     void (async () => {
       const branchCode = branch?.code ?? "—";
       const branchName = branch?.name ?? "POPS";
@@ -311,6 +423,8 @@ export function OrdersPage(): JSX.Element {
           paperSize: profile?.paperSize,
           copies: profile?.copies,
           praFiscal: resolved.footer,
+          billPrintSettings:
+            resolveBillPrintSettingsForReceipt(branchCode) ?? loadBillPrintSettings(branchCode),
         },
         printerName: profile?.name ?? assigned?.printerName,
         systemPrinterName: profile?.systemPrinterName ?? assigned?.systemPrinterName,
@@ -337,14 +451,27 @@ export function OrdersPage(): JSX.Element {
       }
       setPraFiscal(issued.fiscal);
       setNotice(praIssuedNotice(mode, issued.fiscal.invoiceNumber));
-      await ordersQuery.refetch();
-      reprint({
+
+      // Patch list so RPRA hides immediately (API used to omit praMode on bills).
+      const patched: Bill = {
         ...bill,
         praMode: mode,
         praInvoiceNumber: issued.fiscal.invoiceNumber,
         praQrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
         praInvoiceId: issued.fiscal.invoiceId,
+      };
+      void queryClient.setQueriesData<Bill[]>({ queryKey: ["orders", branch.code] }, (old) => {
+        if (!old) return old;
+        return old.map((row) => (row.id === bill.id ? { ...row, ...patched } : row));
       });
+      setSelectedOrder((prev) =>
+        prev?.source === "bill" && prev.bill.id === bill.id
+          ? { ...prev, bill: { ...prev.bill, ...patched } }
+          : prev,
+      );
+
+      await ordersQuery.refetch();
+      reprint(patched);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "PRA issue failed.");
     } finally {
@@ -414,7 +541,44 @@ export function OrdersPage(): JSX.Element {
 
   function openOrder(order: UnifiedOrder): void {
     setSelectedOrder(order);
+    if (order.source === "bill" && order.bill.status === "completed") {
+      setQuickPrintBillId(order.bill.id);
+    }
   }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key !== "p" && e.key !== "P") return;
+      if (isTypingTarget(e.target)) return;
+      if (printPreview || praModalOpen || heldBillToPay || selectedOrder) return;
+
+      const fromSelection =
+        selectedBills.length === 1 && selectedBills[0]!.status === "completed"
+          ? selectedBills[0]!
+          : null;
+      const fromFocus =
+        quickPrintBillId &&
+        (ordersQuery.data ?? []).find((b) => b.id === quickPrintBillId && b.status === "completed");
+      const bill = fromSelection ?? fromFocus ?? null;
+      if (!bill) {
+        setNotice("Pehle completed bill select/open karein, phir P dabayein (quick print).");
+        return;
+      }
+      e.preventDefault();
+      reprint(bill);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    printPreview,
+    praModalOpen,
+    heldBillToPay,
+    selectedOrder,
+    selectedBills,
+    quickPrintBillId,
+    ordersQuery.data,
+  ]);
 
   function editInPos(order: UnifiedOrder): void {
     if (order.source === "kitchen") {
@@ -535,196 +699,263 @@ export function OrdersPage(): JSX.Element {
             : "No orders match your filters."}
         </p>
       ) : (
-        <SimpleTable
-          rowKey={(r) => r.id}
-          rows={filtered}
-          onRowClick={openOrder}
-          columns={[
-            {
-              key: "ref",
-              header: "Order",
-              render: (r) => (
-                <div className="min-w-0">
-                  <button
-                    type="button"
-                    className={tableOrderRefClass}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openOrder(r);
-                    }}
-                  >
-                    {unifiedOrderRef(r)}
-                  </button>
-                  {r.source === "bill" && r.bill.praInvoiceNumber ? (
-                    <div className="mt-0.5 truncate text-[10px] text-slate-500">
-                      PRA Invoice # {r.bill.praInvoiceNumber}
-                    </div>
-                  ) : null}
-                </div>
-              ),
-            },
-            {
-              key: "type",
-              header: "Type",
-              render: (r) => (
-                <span className="text-xs text-slate-500">
-                  {r.source === "bill" ? r.bill.billRef : r.ticket.ticketRef}
-                </span>
-              ),
-            },
-            {
-              key: "tableLabel",
-              header: "Table",
-              render: (r) => unifiedOrderTable(r),
-            },
-            {
-              key: "waiterName",
-              header: "Waiter",
-              render: (r) => unifiedOrderWaiter(r),
-            },
-            {
-              key: "service",
-              header: "Service",
-              render: (r) => {
-                const service = unifiedOrderService(r, posSettings);
-                return service ? (
-                  <span className="text-xs text-slate-400">
-                    {service.servicePct}% · Rs {service.service.toLocaleString()}
-                  </span>
-                ) : (
-                  "—"
-                );
-              },
-            },
-            {
-              key: "payment",
-              header: "Payment",
-              render: (r) =>
-                r.source === "bill" ? (
-                  <span className="text-xs text-slate-400">{formatBillPayments(r.bill)}</span>
-                ) : (
-                  "—"
+        <div className="space-y-2">
+          {selectedBillIds.size > 0 ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-red-500/25 bg-red-500/5 px-3 py-2">
+              <span className="text-xs text-slate-300">
+                {selectedBillIds.size} selected
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                disabled={deleteBillsMutation.isPending}
+                onClick={deleteSelectedBills}
+              >
+                {deleteBillsMutation.isPending ? "Deleting…" : "Delete selected"}
+              </Button>
+              <button
+                type="button"
+                className="text-xs text-slate-400 hover:text-slate-200"
+                disabled={deleteBillsMutation.isPending}
+                onClick={() => setSelectedBillIds(new Set())}
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
+          <SimpleTable
+            rowKey={(r) => r.id}
+            rows={filtered}
+            onRowClick={openOrder}
+            columns={[
+              {
+                key: "select",
+                id: "select",
+                className: "w-10",
+                header: (
+                  <input
+                    type="checkbox"
+                    checked={allDeletableSelected}
+                    disabled={deletableBillsInView.length === 0 || deleteBillsMutation.isPending}
+                    onChange={toggleSelectAllDeletable}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label="Select all deletable orders"
+                    className="h-3.5 w-3.5 accent-red-500"
+                  />
                 ),
-            },
-            {
-              key: "total",
-              header: "Total",
-              render: (r) => {
-                const total = unifiedOrderTotal(r, posSettings);
-                return total != null ? `Rs ${total.toLocaleString()}` : "—";
+                render: (r) =>
+                  r.source === "bill" ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedBillIds.has(r.bill.id)}
+                      disabled={deleteBillsMutation.isPending}
+                      onChange={() => toggleBillSelected(r.bill.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${unifiedOrderRef(r)}`}
+                      className="h-3.5 w-3.5 accent-red-500"
+                    />
+                  ) : (
+                    <span className="inline-block w-3.5" aria-hidden />
+                  ),
               },
-            },
-            {
-              key: "createdAt",
-              header: "When",
-              render: (r) => formatWhen(r.createdAt),
-            },
-            {
-              key: "status",
-              header: "Status",
-              render: (r) => (
-                <Badge tone={unifiedOrderStatusTone(r)}>{unifiedOrderStatusLabel(r)}</Badge>
-              ),
-            },
-            {
-              key: "actions",
-              header: "",
-              id: "actions",
-              render: (r) => (
-                <span className="flex gap-2" onClick={(e) => e.stopPropagation()} role="presentation">
-                  <button
-                    type="button"
-                    className={`text-xs ${linkActionClass}`}
-                    onClick={() => openOrder(r)}
-                  >
-                    View
-                  </button>
-                  {canEditUnifiedOrder(r) ? (
+              {
+                key: "ref",
+                header: "Order",
+                render: (r) => (
+                  <div className="min-w-0">
                     <button
                       type="button"
-                      className={`text-xs ${linkSuccessClass}`}
-                      onClick={() => editInPos(r)}
-                    >
-                      Edit
-                    </button>
-                  ) : null}
-                  {r.source === "bill" && r.bill.status === "held" ? (
-                    <button
-                      type="button"
-                      className={`text-xs ${linkWarningClass}`}
-                      onClick={() => setHeldBillToPay(r.bill)}
-                    >
-                      Pay
-                    </button>
-                  ) : null}
-                  {r.source === "bill" && r.bill.status === "completed" ? (
-                    <button
-                      type="button"
-                      className={`text-xs ${linkWarningClass}`}
-                      onClick={() => reprint(r.bill)}
-                    >
-                      Reprint
-                    </button>
-                  ) : null}
-                  {r.source === "bill" &&
-                  r.bill.status === "completed" &&
-                  r.bill.praInvoiceNumber ? (
-                    <button
-                      type="button"
-                      className={`text-xs ${linkActionClass}`}
-                      disabled={praBusy}
-                      onClick={() => void viewPraForBill(r.bill)}
-                    >
-                      View PRA
-                    </button>
-                  ) : null}
-                  {r.source === "bill" &&
-                  r.bill.status === "completed" &&
-                  canShowRpraForBill({
-                    praFakeEnabled,
-                    praRealEnabled,
-                    praMode: r.bill.praMode,
-                  }) ? (
-                    <button
-                      type="button"
-                      className={`text-xs font-semibold text-emerald-600 hover:text-emerald-500 dark:text-emerald-400`}
-                      disabled={praBusy}
-                      title="Upload to Real PRA and print Real fiscal slip"
-                      onClick={() => void requestRpra(r.bill)}
-                    >
-                      RPRA
-                    </button>
-                  ) : null}
-                  {canManageTables && canChangeOrderTable(r) ? (
-                    <button
-                      type="button"
-                      className={`text-xs ${linkActionClass}`}
-                      onClick={() => setChangeTableOrder(r)}
-                    >
-                      Change table
-                    </button>
-                  ) : null}
-                  {r.source === "bill" && r.bill.status === "completed" ? (
-                    <button
-                      type="button"
-                      className={`text-xs ${linkSuccessClass}`}
-                      onClick={() => {
-                        const ok = shareBillViaWhatsApp(
-                          r.bill,
-                          branch?.name ?? "POPS",
-                          phoneFromBillNotes(r.bill.notes),
-                        );
-                        setNotice(ok ? `WhatsApp share opened for ${r.bill.billRef}` : "Could not open WhatsApp.");
+                      className={tableOrderRefClass}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openOrder(r);
                       }}
                     >
-                      WhatsApp
+                      {unifiedOrderRef(r)}
                     </button>
-                  ) : null}
-                </span>
-              ),
-            },
-          ]}
-        />
+                    {r.source === "bill" && r.bill.praInvoiceNumber ? (
+                      <div className="mt-0.5 truncate text-[10px] text-slate-500">
+                        PRA Invoice # {r.bill.praInvoiceNumber}
+                      </div>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                key: "type",
+                header: "Type",
+                render: (r) => (
+                  <span className="text-xs text-slate-500">
+                    {r.source === "bill" ? r.bill.billRef : r.ticket.ticketRef}
+                  </span>
+                ),
+              },
+              {
+                key: "tableLabel",
+                header: "Table",
+                render: (r) => unifiedOrderTable(r),
+              },
+              {
+                key: "waiterName",
+                header: "Waiter",
+                render: (r) => unifiedOrderWaiter(r),
+              },
+              {
+                key: "service",
+                header: "Service",
+                render: (r) => {
+                  const service = unifiedOrderService(r, posSettings);
+                  return service ? (
+                    <span className="text-xs text-slate-400">
+                      {service.servicePct}% · Rs {service.service.toLocaleString()}
+                    </span>
+                  ) : (
+                    "—"
+                  );
+                },
+              },
+              {
+                key: "payment",
+                header: "Payment",
+                render: (r) =>
+                  r.source === "bill" ? (
+                    <span className="text-xs text-slate-400">{formatBillPayments(r.bill)}</span>
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
+                key: "total",
+                header: "Total",
+                render: (r) => {
+                  const total = unifiedOrderTotal(r, posSettings);
+                  return total != null ? `Rs ${total.toLocaleString()}` : "—";
+                },
+              },
+              {
+                key: "createdAt",
+                header: "When",
+                render: (r) => formatWhen(r.createdAt),
+              },
+              {
+                key: "status",
+                header: "Status",
+                render: (r) => (
+                  <Badge tone={unifiedOrderStatusTone(r)}>{unifiedOrderStatusLabel(r)}</Badge>
+                ),
+              },
+              {
+                key: "actions",
+                header: "",
+                id: "actions",
+                render: (r) => (
+                  <span className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()} role="presentation">
+                    <button
+                      type="button"
+                      className={`text-xs ${linkActionClass}`}
+                      onClick={() => openOrder(r)}
+                    >
+                      View
+                    </button>
+                    {canEditUnifiedOrder(r) ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkSuccessClass}`}
+                        onClick={() => editInPos(r)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                    {r.source === "bill" && r.bill.status === "held" ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkWarningClass}`}
+                        onClick={() => setHeldBillToPay(r.bill)}
+                      >
+                        Pay
+                      </button>
+                    ) : null}
+                    {r.source === "bill" && r.bill.status === "completed" ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkWarningClass}`}
+                        onClick={() => reprint(r.bill)}
+                        title="Reprint — or press P"
+                      >
+                        Reprint (P)
+                      </button>
+                    ) : null}
+                    {r.source === "bill" &&
+                    r.bill.status === "completed" &&
+                    r.bill.praInvoiceNumber ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkActionClass}`}
+                        disabled={praBusy}
+                        onClick={() => void viewPraForBill(r.bill)}
+                      >
+                        View PRA
+                      </button>
+                    ) : null}
+                    {r.source === "bill" &&
+                    r.bill.status === "completed" &&
+                    canShowRpraForBill({
+                      praFakeEnabled,
+                      praRealEnabled,
+                      praMode: r.bill.praMode,
+                    }) ? (
+                      <button
+                        type="button"
+                        className={`text-xs font-semibold text-emerald-600 hover:text-emerald-500 dark:text-emerald-400`}
+                        disabled={praBusy}
+                        title="Upload to Real PRA and print Real fiscal slip"
+                        onClick={() => void requestRpra(r.bill)}
+                      >
+                        RPRA
+                      </button>
+                    ) : null}
+                    {canManageTables && canChangeOrderTable(r) ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkActionClass}`}
+                        onClick={() => setChangeTableOrder(r)}
+                      >
+                        Change table
+                      </button>
+                    ) : null}
+                    {r.source === "bill" && r.bill.status === "completed" ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkSuccessClass}`}
+                        onClick={() => {
+                          const ok = shareBillViaWhatsApp(
+                            r.bill,
+                            branch?.name ?? "POPS",
+                            phoneFromBillNotes(r.bill.notes),
+                          );
+                          setNotice(ok ? `WhatsApp share opened for ${r.bill.billRef}` : "Could not open WhatsApp.");
+                        }}
+                      >
+                        WhatsApp
+                      </button>
+                    ) : null}
+                    {r.source === "bill" ? (
+                      <button
+                        type="button"
+                        className={`text-xs ${linkDangerClass}`}
+                        disabled={deleteBillsMutation.isPending}
+                        onClick={() => deleteSingleBill(r.bill)}
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </div>
       )}
 
       {selectedOrder ? (
@@ -762,6 +993,11 @@ export function OrdersPage(): JSX.Element {
             setSelectedOrder(null);
             setChangeTableOrder(order);
           }}
+          onDeleteBill={
+            selectedOrder.source === "bill"
+              ? () => deleteSingleBill(selectedOrder.bill)
+              : undefined
+          }
         />
       ) : null}
 
@@ -772,13 +1008,14 @@ export function OrdersPage(): JSX.Element {
           printerName={printPreview.printerName}
           systemPrinterName={printPreview.systemPrinterName}
           onClose={() => setPrintPreview(null)}
-          onPrinted={(ok) => {
+          onPrinted={(ok, error) => {
             setNotice(
               ok
                 ? printPreview.systemPrinterName
                   ? `Reprinted ${printPreview.billRef} to ${printPreview.systemPrinterName}`
                   : `Reprinted ${printPreview.billRef}`
-                : `Reprint failed for ${printPreview.billRef}. Check printer assignment / OS link.`,
+                : error?.trim() ||
+                    `Reprint failed for ${printPreview.billRef}. Check printer assignment / OS link.`,
             );
           }}
         />

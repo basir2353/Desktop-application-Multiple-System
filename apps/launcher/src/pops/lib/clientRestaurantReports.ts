@@ -11,13 +11,28 @@ import {
   fetchVendorBills,
 } from "../api/accounting";
 import { fetchCompletedOrders } from "../api/billing";
-import { fetchEmployeeAdvances, fetchEmployees } from "../api/hr";
+import { fetchEmployeeAdvances, fetchEmployees, fetchHrPayrollRuns } from "../api/hr";
 import { fetchBranchInventory, fetchInventoryReport } from "../api/inventory";
 import { fetchKitchenCancellations, fetchKitchenTickets } from "../api/kitchen";
 import { fetchBranchFloor } from "../api/tables";
+import { fetchBranchMenu } from "../api/menu";
 import { karachiDateKey, karachiTime, timeToMinutes } from "./orderSales";
+import {
+  emptyKitchenSaleBuckets,
+  kitchenSaleRowsFromBuckets,
+  resolveKitchenSaleGroup,
+} from "./kitchenSaleReport";
+import { loadPrinterRouting } from "./printerRouting";
+import { loadPrinterSections } from "./printerSections";
 
-type BillLine = { label?: string; qty?: number; unitPrice?: number; kitchen?: string; station?: string };
+type BillLine = {
+  label?: string;
+  qty?: number;
+  unitPrice?: number;
+  kitchen?: string;
+  station?: string;
+  menuItemId?: string;
+};
 
 function parseLines(bill: Bill): BillLine[] {
   return Array.isArray(bill.lines) ? (bill.lines as BillLine[]) : [];
@@ -57,6 +72,27 @@ function inferOrderType(tableLabel: string, notes?: string | null): string {
   if (t.includes("foodpanda") || n.includes("foodpanda")) return "Foodpanda";
   if (t.includes("staff")) return "Staff food";
   return "Dine-in";
+}
+
+function partyNameFromBill(notes: string | null | undefined, tableLabel: string, waiterName: string): string {
+  const n = (notes ?? "").trim();
+  if (n) {
+    const parts = n.split("·").map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const candidate = parts[1]!;
+      if (candidate && !/^\+?\d[\d\s-]{5,}$/.test(candidate)) return candidate;
+    }
+    if (parts.length === 1 && parts[0] && !/^(delivery|takeaway|online|foodpanda)/i.test(parts[0])) {
+      return parts[0];
+    }
+  }
+  const t = (tableLabel ?? "").trim();
+  if (/staff food/i.test(t)) {
+    const after = t.split("·").map((p) => p.trim()).filter(Boolean);
+    if (after.length >= 2) return after[after.length - 1]!.replace(/^Guest:\s*/i, "");
+  }
+  if (t && !/^(dine-in|takeaway|delivery|online|foodpanda)/i.test(t)) return t;
+  return waiterName?.trim() || "Walk-in";
 }
 
 function base(
@@ -774,6 +810,61 @@ export async function buildClientRestaurantReport(
     return { ...meta, rows, empty: rows.length === 0 };
   }
 
+  if (reportId === "kitchen-sale") {
+    const buckets = emptyKitchenSaleBuckets();
+    let menuById = new Map<string, { categoryId: string; categoryName: string }>();
+    try {
+      const menu = await fetchBranchMenu(branchCode);
+      const catName = new Map(menu.categories.map((c) => [c.id, c.name]));
+      menuById = new Map(
+        menu.items.map((item) => [
+          item.id,
+          {
+            categoryId: item.categoryId,
+            categoryName: catName.get(item.categoryId) ?? "",
+          },
+        ]),
+      );
+    } catch {
+      // fall through — still bucket by Outside
+    }
+    const routing = loadPrinterRouting(branchCode);
+    const sections = loadPrinterSections(branchCode);
+    const sectionName = new Map(sections.map((s) => [s.id, s.name]));
+
+    for (const bill of bills) {
+      for (const line of parseLines(bill)) {
+        const qty = Number(line.qty ?? 0);
+        const amount = qty * Number(line.unitPrice ?? 0);
+        if (qty <= 0 && amount <= 0) continue;
+        const menuMeta = line.menuItemId ? menuById.get(line.menuItemId) : undefined;
+        const sectionIds = menuMeta
+          ? routing.byItem[line.menuItemId!] ??
+            routing.byCategory[menuMeta.categoryId] ??
+            []
+          : [];
+        const group = resolveKitchenSaleGroup({
+          sectionIds,
+          sectionNames: sectionIds.map((id) => sectionName.get(id) ?? id),
+          categoryName: menuMeta?.categoryName,
+        });
+        buckets[group].qty += qty;
+        buckets[group].amount += amount;
+      }
+    }
+
+    const rows = kitchenSaleRowsFromBuckets(buckets);
+    const totalAmount = rows.reduce((s, r) => s + r.amount, 0);
+    return {
+      ...meta,
+      description:
+        "Pakistani / Fast Food / Outside — assign menu categories to these Print sections on Printer page.",
+      rows,
+      totals: { amount: totalAmount, pakistani: buckets.pakistani.amount, fastFood: buckets["fast-food"].amount, outside: buckets.outside.amount },
+      empty: totalAmount <= 0,
+    };
+  }
+
   if (reportId === "table-server-change") {
     const dineIn = bills.filter((b) => inferOrderType(b.tableLabel, b.notes) === "Dine-in");
     const rows = dineIn.map((b) => ({
@@ -811,6 +902,382 @@ export async function buildClientRestaurantReport(
     }
     const rows = [...map.entries()].map(([label, v]) => ({ label, qty: v.qty, amount: v.amount }));
     return { ...meta, rows, empty: rows.length === 0 };
+  }
+
+  if (reportId === "day-book") {
+    const expenses = await fetchExpenses(branchCode);
+    const sessions = await fetchCashSessions(branchCode);
+    const sessionMoves = await Promise.all(
+      sessions
+        .filter((s) => inRange(s.openedAt, from, to, fromTime, toTime))
+        .slice(0, 20)
+        .map(async (s) => {
+          try {
+            return await fetchCashMovements(s.id);
+          } catch {
+            return [];
+          }
+        }),
+    );
+    const vendorBills = await fetchVendorBills(branchCode);
+
+    type DayRow = { label: string; meta: string; amount: number; debit: number; credit: number };
+    const rows: DayRow[] = [];
+
+    for (const b of bills) {
+      const name = partyNameFromBill(b.notes, b.tableLabel, b.waiterName);
+      rows.push({
+        label: name,
+        meta: `${b.billRef} · Sale`,
+        amount: b.total,
+        debit: b.total,
+        credit: 0,
+      });
+    }
+    for (const e of expenses.filter((x) => inRange(`${x.expenseDate}T12:00:00+05:00`, from, to, fromTime, toTime))) {
+      rows.push({
+        label: e.vendor?.trim() || e.category,
+        meta: `${e.expenseDate} · Expense · ${e.category}`,
+        amount: e.amount,
+        debit: 0,
+        credit: e.amount,
+      });
+    }
+    for (const vb of vendorBills.filter((b) => inRange(b.createdAt, from, to, fromTime, toTime))) {
+      if ((vb.paid ?? 0) <= 0) continue;
+      rows.push({
+        label: vb.supplierName || "Vendor",
+        meta: `${vb.billRef} · Vendor payment`,
+        amount: vb.paid,
+        debit: 0,
+        credit: vb.paid,
+      });
+    }
+    for (const m of sessionMoves.flat()) {
+      if (!inRange(m.createdAt, from, to, fromTime, toTime)) continue;
+      const isOut = m.type === "paid_out";
+      rows.push({
+        label: m.reason || (isOut ? "Cash out" : "Cash in"),
+        meta: `${m.createdAt.slice(0, 10)} · Cash ${isOut ? "out" : "in"}`,
+        amount: m.amountPkr,
+        debit: isOut ? 0 : m.amountPkr,
+        credit: isOut ? m.amountPkr : 0,
+      });
+    }
+
+    const moneyIn = rows.reduce((s, r) => s + r.debit, 0);
+    const moneyOut = rows.reduce((s, r) => s + r.credit, 0);
+    return {
+      ...meta,
+      rows,
+      totals: { moneyIn, moneyOut, net: moneyIn - moneyOut, count: rows.length },
+      empty: rows.length === 0,
+    };
+  }
+
+  if (reportId === "in-out") {
+    const [expenses, payrollRuns, advanceSummaries, vendorBills, inventory] = await Promise.all([
+      fetchExpenses(branchCode),
+      fetchHrPayrollRuns(branchCode).catch(() => []),
+      fetchEmployeeAdvances(branchCode).catch(() => []),
+      fetchVendorBills(branchCode),
+      fetchBranchInventory(branchCode).catch(() => null),
+    ]);
+
+    let supplierFromCash = 0;
+    let supplierCashQty = 0;
+    try {
+      const sessions = await fetchCashSessions(branchCode);
+      for (const session of sessions) {
+        if (!inRange(session.openedAt, from, to, fromTime, toTime) && session.status !== "open") {
+          // still pull movements that fall in range even if session opened earlier
+        }
+        let movements: Awaited<ReturnType<typeof fetchCashMovements>> = [];
+        try {
+          movements = await fetchCashMovements(session.id);
+        } catch {
+          continue;
+        }
+        for (const m of movements) {
+          if (m.type !== "paid_out" || !inRange(m.createdAt, from, to, fromTime, toTime)) continue;
+          if (m.partyKind === "supplier") {
+            supplierFromCash += m.amountPkr;
+            supplierCashQty += 1;
+          }
+        }
+      }
+    } catch {
+      // ignore cash session failures
+    }
+
+    const saleBills = bills.filter((b) => b.status === "completed");
+    const cashIn = saleBills.reduce((s, b) => s + (b.total ?? 0), 0);
+
+    const expenseRows = expenses.filter(
+      (e) =>
+        e.status !== "Rejected" &&
+        inRange(`${e.expenseDate}T12:00:00+05:00`, from, to, fromTime, toTime),
+    );
+    const expensesTotal = expenseRows.reduce((s, e) => s + e.amount, 0);
+
+    const paidPayrolls = payrollRuns.filter((p) => {
+      if (p.status !== "paid") return false;
+      const when = p.paidAt || p.createdAt;
+      return inRange(when, from, to, fromTime, toTime);
+    });
+    const salariesTotal = paidPayrolls.reduce((s, p) => s + Math.max(0, p.totalNet ?? 0), 0);
+
+    const advanceItems = advanceSummaries.flatMap((sum) => sum.advances ?? []);
+    const advancesInRange = advanceItems.filter((a) => inRange(a.createdAt, from, to, fromTime, toTime));
+    const advancesTotal = advancesInRange.reduce((s, a) => s + a.amountPkr, 0);
+
+    const vendorPaidInRange = vendorBills.filter(
+      (vb) => (vb.paid ?? 0) > 0 && inRange(vb.createdAt, from, to, fromTime, toTime),
+    );
+    const supplierFromBills = vendorPaidInRange.reduce((s, vb) => s + (vb.paid ?? 0), 0);
+    // Prefer dedicated cash pay-outs when present; otherwise bill paid amounts in range.
+    const supplierPayments =
+      supplierFromCash > 0 ? supplierFromCash : supplierFromBills;
+    const supplierQty = supplierFromCash > 0 ? supplierCashQty : vendorPaidInRange.length;
+
+    const grns = (inventory?.goodsReceipts ?? []).filter((g) =>
+      inRange(g.deliveryDate ? `${g.deliveryDate}T12:00:00+05:00` : g.createdAt, from, to, fromTime, toTime),
+    );
+    const purchasingTotal = grns.reduce((s, g) => s + (g.totalCost ?? 0), 0);
+
+    const cashOut =
+      expensesTotal + salariesTotal + advancesTotal + supplierPayments + purchasingTotal;
+    const net = cashIn - cashOut;
+
+    const rows = [
+      {
+        section: "cashIn",
+        label: "Total Sale (Cash In)",
+        amount: cashIn,
+        qty: saleBills.length,
+        debit: cashIn,
+        credit: 0,
+        meta: "Completed bills · all payment methods",
+      },
+      {
+        section: "expenses",
+        label: "Expenses",
+        amount: expensesTotal,
+        qty: expenseRows.length,
+        debit: 0,
+        credit: expensesTotal,
+        meta: "Daily expenses in range",
+      },
+      {
+        section: "salaries",
+        label: "Salaries",
+        amount: salariesTotal,
+        qty: paidPayrolls.length,
+        debit: 0,
+        credit: salariesTotal,
+        meta: "Paid payroll net",
+      },
+      {
+        section: "advances",
+        label: "Employees Advance",
+        amount: advancesTotal,
+        qty: advancesInRange.length,
+        debit: 0,
+        credit: advancesTotal,
+        meta: "Staff advances given",
+      },
+      {
+        section: "supplierPayments",
+        label: "Supplier Payments",
+        amount: supplierPayments,
+        qty: supplierQty,
+        debit: 0,
+        credit: supplierPayments,
+        meta: supplierFromCash > 0 ? "Cash pay-outs to suppliers" : "Vendor bill payments recorded",
+      },
+      {
+        section: "purchasing",
+        label: "Purchasing",
+        amount: purchasingTotal,
+        qty: grns.length,
+        debit: 0,
+        credit: purchasingTotal,
+        meta: "Goods received (GRN) stock value",
+      },
+      {
+        section: "cashOut",
+        label: "Total Cash Out",
+        amount: cashOut,
+        qty: expenseRows.length + paidPayrolls.length + advancesInRange.length + supplierQty + grns.length,
+        debit: 0,
+        credit: cashOut,
+        meta: "Expenses + Salaries + Advances + Supplier + Purchasing",
+      },
+      {
+        section: "net",
+        label: "Net Cash",
+        amount: net,
+        qty: 1,
+        debit: net >= 0 ? net : 0,
+        credit: net < 0 ? Math.abs(net) : 0,
+        balance: net,
+        meta: "Cash In − Cash Out",
+      },
+    ];
+
+    return {
+      ...meta,
+      description: "Overall cash in/out — sale vs expenses, salaries, advances, supplier payments, purchasing.",
+      rows,
+      totals: {
+        cashIn,
+        cashOut,
+        net,
+        sale: cashIn,
+        expenses: expensesTotal,
+        salaries: salariesTotal,
+        advances: advancesTotal,
+        supplierPayments,
+        purchasing: purchasingTotal,
+      },
+      empty: cashIn === 0 && cashOut === 0,
+    };
+  }
+
+  if (reportId === "kitchen-wise-purchase") {
+    const inv = await fetchBranchInventory(branchCode);
+    const rows = inv.purchaseOrders
+      .filter((po) => inRange(po.createdAt, from, to, fromTime, toTime))
+      .map((po) => {
+        const kitchen = (po.chef?.trim() || po.requestedBy?.trim() || "Unassigned").trim();
+        const lines = po.lines ?? [];
+        const qty = lines.reduce((s, l) => s + l.qty, 0) || po.items;
+        const itemSummary = lines
+          .slice(0, 4)
+          .map((l) => `${l.ingredientName}×${l.qty}`)
+          .join(", ");
+        const more = lines.length > 4 ? "…" : "";
+        return {
+          label: kitchen,
+          qty,
+          amount: po.totalAmount,
+          meta: `${po.poNumber} · ${po.supplierName}${itemSummary ? ` · ${itemSummary}${more}` : ""}`,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label) || (b.amount ?? 0) - (a.amount ?? 0));
+    return {
+      ...meta,
+      rows,
+      totals: { amount: rows.reduce((s, r) => s + (r.amount ?? 0), 0), orders: rows.length },
+      empty: rows.length === 0,
+    };
+  }
+
+  if (reportId === "sale-purchase-by-party") {
+    const saleMap = new Map<string, number>();
+    for (const b of bills) {
+      const name = partyNameFromBill(b.notes, b.tableLabel, b.waiterName);
+      saleMap.set(name, (saleMap.get(name) ?? 0) + b.total);
+    }
+    const invoices = await fetchCustomerInvoices(branchCode);
+    for (const inv of invoices.filter((i) => inRange(i.createdAt, from, to, fromTime, toTime))) {
+      const name = inv.customerName.trim() || "Customer";
+      saleMap.set(name, (saleMap.get(name) ?? 0) + inv.amount);
+    }
+    const purchaseMap = new Map<string, number>();
+    const vendorBills = await fetchVendorBills(branchCode);
+    for (const vb of vendorBills.filter((b) => inRange(b.createdAt, from, to, fromTime, toTime))) {
+      const name = vb.supplierName.trim() || "Vendor";
+      purchaseMap.set(name, (purchaseMap.get(name) ?? 0) + vb.amount);
+    }
+    const names = new Set([...saleMap.keys(), ...purchaseMap.keys()]);
+    const rows = [...names]
+      .map((name) => {
+        const sale = saleMap.get(name) ?? 0;
+        const purchase = purchaseMap.get(name) ?? 0;
+        return {
+          label: name,
+          debit: sale,
+          credit: purchase,
+          amount: sale,
+          balance: purchase,
+          meta: `Sale ${sale} · Purchase ${purchase}`,
+        };
+      })
+      .sort((a, b) => b.debit + b.credit - (a.debit + a.credit));
+    return {
+      ...meta,
+      rows,
+      totals: {
+        saleTotal: rows.reduce((s, r) => s + r.debit, 0),
+        purchaseTotal: rows.reduce((s, r) => s + r.credit, 0),
+        parties: rows.length,
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  if (reportId === "party-report") {
+    const invoices = await fetchCustomerInvoices(branchCode);
+    const vendorBills = await fetchVendorBills(branchCode);
+    const customers = new Map<string, { name: string; phone: string | null; receivable: number }>();
+    for (const inv of invoices) {
+      const key = `${inv.customerName}|${inv.customerPhone ?? ""}`;
+      const cur = customers.get(key) ?? {
+        name: inv.customerName,
+        phone: inv.customerPhone,
+        receivable: 0,
+      };
+      cur.receivable += inv.balance;
+      customers.set(key, cur);
+    }
+    const vendors = new Map<string, { name: string; payable: number }>();
+    for (const vb of vendorBills) {
+      const cur = vendors.get(vb.supplierId) ?? { name: vb.supplierName, payable: 0 };
+      cur.payable += vb.balance;
+      vendors.set(vb.supplierId, cur);
+    }
+    const rows = [
+      ...[...customers.values()].map((c) => ({
+        label: c.name,
+        debit: c.receivable,
+        credit: 0,
+        balance: c.receivable,
+        amount: c.receivable,
+        meta: `— · ${c.phone || "—"}`,
+      })),
+      ...[...vendors.values()].map((v) => ({
+        label: v.name,
+        debit: 0,
+        credit: v.payable,
+        balance: -v.payable,
+        amount: v.payable,
+        meta: `— · —`,
+      })),
+    ].sort(
+      (a, b) =>
+        Math.abs(b.debit) + Math.abs(b.credit) - (Math.abs(a.debit) + Math.abs(a.credit)),
+    );
+    return {
+      ...meta,
+      rows,
+      totals: {
+        receivable: rows.reduce((s, r) => s + r.debit, 0),
+        payable: rows.reduce((s, r) => s + r.credit, 0),
+        parties: rows.length,
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  if (reportId === "universal-ledger") {
+    return {
+      ...meta,
+      description:
+        "Interactive Universal Ledger (Sale / Purchase / Expense / Item / Customer / Supplier).",
+      rows: [],
+      empty: true,
+    };
   }
 
   return { ...meta, rows: [], empty: true };

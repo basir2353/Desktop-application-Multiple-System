@@ -269,6 +269,7 @@ export class MenuService implements OnModuleInit {
         askForQty: input.askForQty ?? false,
         allowManualDiscount: input.allowManualDiscount ?? false,
         defaultDiscountPct: input.defaultDiscountPct ?? 0,
+        simplePrice: input.simplePrice ?? false,
       })
       .returning();
 
@@ -322,6 +323,7 @@ export class MenuService implements OnModuleInit {
         ...(input.defaultDiscountPct !== undefined
           ? { defaultDiscountPct: input.defaultDiscountPct }
           : {}),
+        ...(input.simplePrice !== undefined ? { simplePrice: input.simplePrice } : {}),
       })
       .where(eq(popsMenuItems.id, itemId))
       .returning();
@@ -400,6 +402,7 @@ export class MenuService implements OnModuleInit {
       askForQty: row.askForQty,
       allowManualDiscount: row.allowManualDiscount,
       defaultDiscountPct: row.defaultDiscountPct ?? 0,
+      simplePrice: row.simplePrice ?? false,
     };
   }
 

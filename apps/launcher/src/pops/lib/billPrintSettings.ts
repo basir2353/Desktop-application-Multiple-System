@@ -145,7 +145,7 @@ export const BILL_SYSTEM_BLOCK_LABELS: Record<BillSystemBlockId, string> = {
 };
 
 export const DEFAULT_BILL_PRINT_SETTINGS: BillPrintSettings = {
-  baseFontSize: 14,
+  baseFontSize: 18,
   layout: "compact",
   headerAlign: "center",
   headerBusinessName: "",
@@ -501,17 +501,13 @@ export function loadBillPrintSettings(branchCode: string | undefined): BillPrint
 
 export function saveBillPrintSettings(branchCode: string, settings: BillPrintSettings): void {
   const next = normalizeBillPrintSettings(settings);
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, BillPrintSettings>) : {};
-    parsed[branchCode] = next;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-    window.dispatchEvent(
-      new CustomEvent(BILL_PRINT_SETTINGS_CHANGED_EVENT, { detail: { branchCode, settings: next } }),
-    );
-  } catch {
-    // ignore storage errors
-  }
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const parsed = raw ? (JSON.parse(raw) as Record<string, BillPrintSettings>) : {};
+  parsed[branchCode] = next;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+  window.dispatchEvent(
+    new CustomEvent(BILL_PRINT_SETTINGS_CHANGED_EVENT, { detail: { branchCode, settings: next } }),
+  );
 }
 
 export function loadActiveBillTemplateId(branchCode: string | undefined): string | null {
@@ -564,22 +560,22 @@ export function billReceiptFontSizes(baseFontSize: number): {
   const px = (n: number) => Math.round(n * r * 10) / 10;
   return {
     body: baseFontSize,
-    branchName: px(20),
-    docType: px(12),
-    metaChip: px(13),
-    metaChipBillRef: px(13),
-    notes: px(12),
-    timestamp: px(12),
-    th: px(11),
-    itemName: px(15),
-    qty: px(15),
-    amt: px(14),
-    rowLabel: px(13),
-    rowValue: px(14),
-    grandLabel: px(16),
-    grandValue: px(18),
-    footer: px(12),
-    headerSubtitle: px(11),
-    footerSecondary: px(11),
+    branchName: px(26),
+    docType: px(16),
+    metaChip: px(18),
+    metaChipBillRef: px(22),
+    notes: px(16),
+    timestamp: px(16),
+    th: px(16),
+    itemName: px(20),
+    qty: px(20),
+    amt: px(19),
+    rowLabel: px(18),
+    rowValue: px(19),
+    grandLabel: px(20),
+    grandValue: px(24),
+    footer: px(16),
+    headerSubtitle: px(15),
+    footerSecondary: px(15),
   };
 }

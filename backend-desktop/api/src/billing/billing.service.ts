@@ -15,6 +15,7 @@ import {
   organizationMemberships,
   popsBills,
   popsBranches,
+  popsKitchenTickets,
   popsRiders,
   users,
   type PlatformPgDb,
@@ -458,6 +459,7 @@ export class BillingService implements OnApplicationBootstrap {
       .returning();
 
     if (!row) throw new NotFoundException("Bill not found");
+    await this.closeRelatedKitchenTickets(row);
     return this.mapBill(row);
   }
 
@@ -537,6 +539,10 @@ export class BillingService implements OnApplicationBootstrap {
     organizationId: string,
     row: typeof popsBills.$inferSelect,
   ): Promise<void> {
+    // Waiter / kitchen "Active" lists are ticket-status based. Closing the bill
+    // must mark matching KOTs done or they stay "open" on waiter apps.
+    await this.closeRelatedKitchenTickets(row);
+
     try {
       await this.inventoryDeduction.deductForCompletedBill(organizationId, row);
     } catch (err) {
@@ -578,6 +584,56 @@ export class BillingService implements OnApplicationBootstrap {
     }
   }
 
+  /** Mark non-done kitchen tickets for this paid bill so waiter Active lists clear. */
+  private async closeRelatedKitchenTickets(
+    row: typeof popsBills.$inferSelect,
+  ): Promise<void> {
+    const orderRef = (row.orderRef ?? "").trim();
+    if (!orderRef) return;
+    try {
+      const openTickets = await this.db
+        .select({
+          id: popsKitchenTickets.id,
+          orderRef: popsKitchenTickets.orderRef,
+          stationLabel: popsKitchenTickets.stationLabel,
+        })
+        .from(popsKitchenTickets)
+        .where(
+          and(
+            eq(popsKitchenTickets.branchId, row.branchId),
+            ne(popsKitchenTickets.status, "done"),
+          ),
+        );
+
+      const targetRef = orderRef.toLowerCase();
+      const tableKey = tableKeyFromLabel(row.tableLabel);
+      const ids = openTickets
+        .filter((ticket) => {
+          const ticketRef = (ticket.orderRef ?? "").trim().toLowerCase();
+          if (ticketRef && ticketRef === targetRef) return true;
+          if (!ticketRef && tableKey) {
+            const ticketTable = tableKeyFromLabel(ticket.stationLabel);
+            return Boolean(ticketTable && ticketTable === tableKey);
+          }
+          return false;
+        })
+        .map((ticket) => ticket.id);
+
+      if (ids.length === 0) return;
+
+      await this.db
+        .update(popsKitchenTickets)
+        .set({ status: "done", billId: row.id })
+        .where(inArray(popsKitchenTickets.id, ids));
+    } catch (err) {
+      this.logger.warn(
+        `Could not close kitchen tickets for ${row.billRef}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   private computeBillTotals(input: CreateBill): BillTotals {
     const subtotal = input.lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
     const servicePct = input.servicePct ?? 0;
@@ -599,7 +655,8 @@ export class BillingService implements OnApplicationBootstrap {
   ): BillTotals {
     const afterDisc = subtotal - discount;
     const service = Math.round(afterDisc * (servicePct / 100));
-    const tax = Math.round((afterDisc + service) * (taxPct / 100));
+    // Tax food/items only — never service or delivery (matches POS + PRA).
+    const tax = Math.round(afterDisc * (taxPct / 100));
     const total = afterDisc + service + tax + deliveryCharge;
     return { subtotal, discount, service, servicePct, tax, taxPct, deliveryCharge, total };
   }
@@ -611,9 +668,17 @@ export class BillingService implements OnApplicationBootstrap {
     if (!payments || payments.length === 0) {
       return [{ method: "cash" as const, amount: total }];
     }
-    return payments
+    const normalized = payments
       .filter((p) => p.amount > 0)
       .map((p) => ({ method: p.method, amount: Math.round(p.amount) }));
+    if (normalized.length === 0) {
+      return [{ method: "cash" as const, amount: total }];
+    }
+    // Single-tender: snap to exact server total so 1-PKR rounding never blocks Pay.
+    if (normalized.length === 1) {
+      return [{ ...normalized[0], amount: Math.max(normalized[0].amount, total) }];
+    }
+    return normalized;
   }
 
   private assertPaymentsCoverTotal(
@@ -675,6 +740,11 @@ export class BillingService implements OnApplicationBootstrap {
       riderName,
       deliveryChargePkr: row.deliveryChargePkr,
       status: row.status as "held" | "completed" | "void" | "open",
+      praMode: (row.praMode as "fake" | "real" | null) ?? null,
+      praInvoiceNumber: row.praInvoiceNumber ?? null,
+      praInvoiceId: row.praInvoiceId ?? null,
+      praQrPayload: row.praQrPayload ?? null,
+      praIssuedAt: row.praIssuedAt ? row.praIssuedAt.toISOString() : null,
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -728,4 +798,15 @@ function waiterDisplayName(email: string): string {
   const local = email.split("@")[0] ?? email;
   const words = local.replace(/[._-]+/g, " ").trim().split(/\s+/);
   return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+/** Normalize "Table H5" / "H5" / "Dine-in · Table H5" → "H5". */
+function tableKeyFromLabel(label: string | null | undefined): string {
+  const raw = (label ?? "").trim();
+  if (!raw) return "";
+  const tableMatch = /\btable\s*[:#-]?\s*([a-z0-9-]+)\b/i.exec(raw);
+  if (tableMatch?.[1]) return tableMatch[1].toUpperCase();
+  // Bare station like "H5" or "R3"
+  if (/^[a-z]?\d+[a-z]?$/i.test(raw)) return raw.toUpperCase();
+  return raw.toUpperCase();
 }

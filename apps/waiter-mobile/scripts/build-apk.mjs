@@ -345,7 +345,7 @@ function ensureAndroidProject(apiUrl, buildPaths) {
   const fastBuild = process.env.POPS_FAST_BUILD !== "0";
   const forcePrebuild = process.env.POPS_FORCE_PREBUILD === "1";
 
-  // Fast path: reuse existing android/ (Gradle + native caches). Patch id + launcher name.
+  // Fast path: reuse existing android/ (Gradle + native caches). Patch id + launcher name + version.
   if (androidExists && !forcePrebuild && (fastBuild || !packageMismatch)) {
     if (packageMismatch) {
       console.log(
@@ -356,6 +356,8 @@ function ensureAndroidProject(apiUrl, buildPaths) {
       console.log("[build-apk] Fast: reusing existing android/ (skip prebuild)");
     }
     forceAppDisplayName(buildPaths.androidDir, variant.displayName);
+    forceAndroidVersion(buildGradle);
+    forceArm64AbiFilters(buildGradle);
     return;
   }
 
@@ -397,6 +399,7 @@ function ensureAndroidProject(apiUrl, buildPaths) {
   forceArm64Only(join(buildPaths.androidDir, "gradle.properties"));
   forceArm64AbiFilters(buildGradle);
   forceApplicationId(buildGradle, variant.packageId);
+  forceAndroidVersion(buildGradle);
   forceAppDisplayName(buildPaths.androidDir, variant.displayName);
 }
 
@@ -407,6 +410,40 @@ function forceApplicationId(buildGradlePath, packageId) {
   if (next !== text) {
     writeFileSync(buildGradlePath, next);
     console.log(`[build-apk] Forced applicationId → ${packageId}`);
+  }
+}
+
+/**
+ * Fast builds reuse android/ without expo prebuild, so Gradle can stay stuck on
+ * versionCode 1 / versionName 1.0.1. Auto-update then forever sees feed > local.
+ */
+function forceAndroidVersion(buildGradlePath) {
+  if (!existsSync(buildGradlePath)) return;
+  const appJsonPath = join(appRoot, "app.json");
+  if (!existsSync(appJsonPath)) return;
+  const appJson = JSON.parse(readFileSync(appJsonPath, "utf8"));
+  const versionName = String(appJson.expo?.version ?? "1.0.0").trim() || "1.0.0";
+  const versionCode = Math.max(1, Number(appJson.expo?.android?.versionCode ?? 1) || 1);
+
+  let text = readFileSync(buildGradlePath, "utf8");
+  let next = text;
+  if (/versionCode\s+\d+/.test(next)) {
+    next = next.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
+  } else if (/defaultConfig\s*\{/.test(next)) {
+    next = next.replace(/defaultConfig\s*\{/, `defaultConfig {\n        versionCode ${versionCode}`);
+  }
+  if (/versionName\s+"[^"]*"/.test(next)) {
+    next = next.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+  } else if (/versionName\s+'[^']*'/.test(next)) {
+    next = next.replace(/versionName\s+'[^']*'/, `versionName "${versionName}"`);
+  } else if (/defaultConfig\s*\{/.test(next)) {
+    next = next.replace(/defaultConfig\s*\{/, `defaultConfig {\n        versionName "${versionName}"`);
+  }
+  if (next !== text) {
+    writeFileSync(buildGradlePath, next);
+    console.log(`[build-apk] Forced Android versionName=${versionName} versionCode=${versionCode}`);
+  } else {
+    console.log(`[build-apk] Android version already ${versionName} (${versionCode})`);
   }
 }
 

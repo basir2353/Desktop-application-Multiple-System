@@ -154,7 +154,10 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
   return `
   <div class="pra-fbr-block">
     <div class="pra-rule"></div>
-    <div class="pra-invoice-line"><strong>PRA Invoice #</strong> ${escapeHtml(pra.invoiceNumber)}</div>
+    <div class="pra-invoice-block">
+      <div class="pra-invoice-label">PRA Invoice #</div>
+      <div class="pra-invoice-number">${escapeHtml(pra.invoiceNumber)}</div>
+    </div>
     <table class="pra-qr-table" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;border-collapse:collapse;">
       <tr>
         <td align="center" valign="middle" style="text-align:center;width:100%;">
@@ -194,10 +197,45 @@ export const PRA_RECEIPT_FOOTER_CSS = `
     }
     .pra-invoice-line {
       text-align: center;
-      font-size: 12px;
-      font-weight: 700;
+      font-size: 22px;
+      font-weight: 400;
       margin: 0 0 8px;
+      letter-spacing: 0;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
       word-break: break-all;
+    }
+    .pra-invoice-block {
+      display: block;
+      width: 100%;
+      margin: 0 0 10px;
+      text-align: center !important;
+      color: #000;
+    }
+    .pra-invoice-label {
+      display: block;
+      width: 100%;
+      margin: 0 0 4px;
+      text-align: center !important;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1.2;
+      color: #000;
+    }
+    .pra-invoice-number {
+      display: block;
+      width: 100%;
+      text-align: center !important;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0;
+      line-height: 1.25;
+      color: #000;
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
+      word-break: break-all;
+      overflow-wrap: anywhere;
     }
     .pra-qr-table {
       width: 100% !important;
@@ -241,11 +279,31 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       line-height: 1.2;
       color: #000;
     }
-    .meta-pra-invoice .meta-value {
+    .meta-pra-invoice {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
+      margin: 2px 0 8px;
+      padding: 4px 0 6px;
+      border-bottom: 1px dashed #000;
+    }
+    .meta-pra-invoice .meta-label {
+      font-size: 14px;
       font-weight: 700;
-      letter-spacing: 0.01em;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      width: 100%;
+    }
+    .meta-pra-invoice .meta-value {
+      font-size: 26px !important;
+      font-weight: 700;
+      letter-spacing: 0;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
       word-break: break-all;
       overflow-wrap: anywhere;
       white-space: normal !important;
+      text-align: left;
+      line-height: 1.25;
+      width: 100%;
     }
 `;

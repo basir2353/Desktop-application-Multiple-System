@@ -10,6 +10,8 @@ export type PosCartLine = {
   qty: number;
   unitPrice: number;
   lineLabel: string;
+  /** Kitchen / customer note for this line only (e.g. بدون مرچ). */
+  lineNote?: string;
   /** Higher values appear first in the ticket list. */
   sortOrder: number;
   /** Auto-added happy hour gift — not editable from the menu grid. */
@@ -19,6 +21,12 @@ export type PosCartLine = {
   /** Percent (0–100) or PKR amount depending on lineDiscountMode. */
   lineDiscountValue?: number;
 };
+
+/** Receipt / KOT label including optional line note. */
+export function cartLinePrintLabel(line: Pick<PosCartLine, "lineLabel" | "lineNote">): string {
+  const note = line.lineNote?.trim();
+  return note ? `${line.lineLabel} (${note})` : line.lineLabel;
+}
 
 /** Newest items first. Quantity changes must not bump sortOrder (see PosPage setQty). */
 export function sortCartLinesNewestFirst(lines: PosCartLine[]): PosCartLine[] {
@@ -44,11 +52,13 @@ export function buildCartLine(
   qty = 1,
   sortOrder = 0,
   unitPriceOverride?: number,
+  lineNote?: string,
 ): PosCartLine {
   const lineLabel = formatMenuItemLabel({
     name: item.name,
     portion: item.portion,
     variantLabel: variant?.label ?? null,
+    simplePrice: item.simplePrice,
   });
   const unitPrice =
     unitPriceOverride != null && unitPriceOverride >= 0
@@ -58,13 +68,16 @@ export function buildCartLine(
     item.allowManualDiscount && !item.nonTaxable && isMenuItemDiscountable(item)
       ? Math.max(0, Math.min(100, Math.round(item.defaultDiscountPct ?? 0)))
       : 0;
+  const note = lineNote?.trim() || undefined;
+  const baseKey = cartLineKey(item.id, variant?.id);
   return {
-    key: cartLineKey(item.id, variant?.id),
+    key: note ? `${baseKey}::note:${note}` : baseKey,
     item,
     variant,
     qty: Math.max(1, Math.round(qty)),
     unitPrice,
     lineLabel,
+    lineNote: note,
     sortOrder,
     lineDiscountMode: defaultPct > 0 ? "percent" : null,
     lineDiscountValue: defaultPct > 0 ? defaultPct : 0,

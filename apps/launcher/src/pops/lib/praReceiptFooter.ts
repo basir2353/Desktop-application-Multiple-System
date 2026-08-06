@@ -159,8 +159,8 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       width: 100%;
       margin-top: 4px;
       text-align: center !important;
-      font-size: 9px;
-      font-weight: 700;
+      font-size: 11px;
+      font-weight: 400;
       letter-spacing: 0.02em;
       line-height: 1.2;
       color: #000;
@@ -175,9 +175,9 @@ export const PRA_RECEIPT_FOOTER_CSS = `
     .pra-invoice-label {
       display: block;
       width: 100%;
-      margin: 0 0 3px;
+      margin: 0 0 4px;
       text-align: center !important;
-      font-size: 10px;
+      font-size: 14px;
       font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
@@ -188,12 +188,13 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       display: block;
       width: 100%;
       text-align: center !important;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.02em;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0;
       line-height: 1.25;
       color: #000;
       font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
       word-break: break-all;
       overflow-wrap: anywhere;
     }
@@ -203,11 +204,12 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       width: 100%;
       margin: 0 0 8px;
       text-align: center !important;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.02em;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0;
       line-height: 1.25;
       color: #000;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
       word-break: break-all;
     }
     .pra-qr-fallback {
@@ -221,14 +223,16 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       text-align: center;
     }
     .meta-pra-invoice .meta-value {
-      font-size: 11px !important;
-      font-weight: 800;
-      letter-spacing: 0.02em;
+      font-size: 26px !important;
+      font-weight: 700;
+      letter-spacing: 0;
+      font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
       word-break: break-all;
       overflow-wrap: anywhere;
       white-space: normal !important;
       overflow: visible !important;
       text-overflow: clip !important;
+      line-height: 1.25;
     }
 `;
 

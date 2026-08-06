@@ -1,13 +1,15 @@
-import type { Bill, KitchenTicket, MenuItem } from "@platform/contracts";
+import type { Bill, BillPayment, KitchenTicket, MenuItem } from "@platform/contracts";
+import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import * as Print from "expo-print";
 import { Alert } from "react-native";
 import { extractKitchenNotes } from "./loadOrder";
 import {
-  activeKitchenPrinters,
   loadMobilePrinterSettings,
 } from "./mobilePrinterSettings";
 import { formatPkr, orderRefFromTicket } from "./orderDisplay";
+import { parseDeliveryFieldsFromNotes, resolveTicketDeliveryNotes } from "./orderMode";
 import { trySilentBranchPrint } from "./branchPrintClient";
+import { createPrintDedupeGate, mobilePrintDedupeKey } from "./printDedupe";
 import { resolvePraFooterForBillPrint } from "./praReceipt";
 import {
   buildPraReceiptFooterHtml,
@@ -24,6 +26,86 @@ function escapeHtml(value: string): string {
 }
 
 type PrintLine = { label: string; qty: number; unitPrice?: number };
+
+/** Structured receipt payload — desktop rebuilds with EXE `buildTicketHtml` (same design). */
+type MobileReceiptTicket = {
+  branchName?: string;
+  modeLabel?: string;
+  tableLabel?: string;
+  waiterName?: string;
+  notes?: string;
+  billRef?: string;
+  orderRef?: string;
+  lines?: Array<{
+    label: string;
+    qty: number;
+    unitPrice?: number;
+    menuItemId?: string;
+    categoryId?: string;
+  }>;
+  subtotal?: number;
+  discount?: number;
+  service?: number;
+  tax?: number;
+  deliveryCharge?: number;
+  total?: number;
+  servicePct?: number;
+  taxPct?: number;
+  discountPct?: number;
+  payments?: BillPayment[];
+  /** When true, desktop/KOT rebuild shows UPDATE REVISED. */
+  isOrderUpdate?: boolean;
+  /** Serializable PRA fields (desktop regenerates QR/logo). */
+  praFiscal?: {
+    mode: PraReceiptFooter["mode"];
+    invoiceNumber: string;
+    orderRef: string;
+    qrPayload: string;
+  } | null;
+};
+
+function receiptTicketFromBill(
+  branchName: string,
+  bill: Bill,
+  pra?: PraReceiptFooter | null,
+): MobileReceiptTicket {
+  const discount = Math.max(0, Number(bill.discount) || 0);
+  const subtotal = Math.max(0, Number(bill.subtotal) || 0);
+  const payments = (bill.payments ?? []).filter((p) => p.amount > 0);
+  return {
+    branchName,
+    modeLabel: bill.tableLabel,
+    tableLabel: bill.tableLabel,
+    waiterName: bill.waiterName?.trim() || undefined,
+    notes: bill.notes?.trim() || undefined,
+    billRef: bill.billRef,
+    orderRef: bill.orderRef ?? bill.billRef,
+    lines: (bill.lines ?? []).map((l) => ({
+      label: l.label,
+      qty: l.qty,
+      unitPrice: l.unitPrice,
+    })),
+    subtotal,
+    discount,
+    service: bill.service,
+    tax: bill.tax,
+    deliveryCharge: bill.deliveryChargePkr,
+    total: bill.total,
+    servicePct: bill.servicePct,
+    taxPct: bill.taxPct,
+    discountPct: subtotal > 0 ? Math.round((discount / subtotal) * 100) : 0,
+    payments: payments.length ? payments : undefined,
+    praFiscal: pra?.invoiceNumber
+      ? {
+          mode: pra.mode,
+          invoiceNumber: pra.invoiceNumber,
+          orderRef: pra.orderRef,
+          // EXE rebuild requires non-empty qrPayload; fall back to invoice #.
+          qrPayload: (pra.qrPayload?.trim() || pra.invoiceNumber).trim(),
+        }
+      : null,
+  };
+}
 
 function linesFromTicket(ticket: KitchenTicket): PrintLine[] {
   if (ticket.lines && ticket.lines.length > 0) {
@@ -278,7 +360,7 @@ function buildKotHtml(input: {
     <div class="doc-type">Kitchen Order</div>
   </header>
   <div class="meta">${metaChips}</div>
-  ${isUpdate ? `<div class="kot-update-banner">*** UPDATE — REVISED ORDER ***</div>` : ""}
+  ${isUpdate ? `<div class="kot-update-banner">*** UPDATE REVISED ***</div>` : ""}
   ${input.notes?.trim() ? `<p class="notes">${escapeHtml(input.notes.trim())}</p>` : ""}
   <div class="timestamp">${escapeHtml(printedAt)}</div>
   <div class="kot-mid-space" aria-hidden="true"></div>
@@ -296,7 +378,7 @@ function buildKotHtml(input: {
     <div class="row"><span class="label">Total quantity</span><span class="value">${totalQty}</span></div>
   </div>
   <div class="footer">
-    <div class="kot-banner">${isUpdate ? "Kitchen copy — UPDATE" : "Kitchen copy — order"}</div>
+    <div class="kot-banner">${isUpdate ? "Kitchen copy — UPDATE REVISED" : "Kitchen copy — order"}</div>
   </div>
 </body>
 </html>`;
@@ -307,7 +389,9 @@ function buildReceiptHtml(
   branchCode: string,
   bill: Bill,
   pra?: PraReceiptFooter | null,
+  opts?: { isOrderUpdate?: boolean },
 ): string {
+  const isUpdate = Boolean(opts?.isOrderUpdate);
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -323,21 +407,73 @@ function buildReceiptHtml(
     )
     .join("");
 
+  const contact = parseDeliveryFieldsFromNotes(bill.notes);
+  const riderLabel = bill.riderName?.trim() || contact.riderName;
   const metaRows = [
-    `<div class="meta-row meta-row-strong"><span class="meta-label">Order</span><span class="meta-value">${escapeHtml(bill.orderRef ?? bill.billRef)}</span></div>`,
     pra?.invoiceNumber
       ? `<div class="meta-row meta-row-strong meta-pra-invoice"><span class="meta-label">PRA Invoice #</span><span class="meta-value">${escapeHtml(pra.invoiceNumber)}</span></div>`
       : "",
+    `<div class="meta-row meta-row-strong"><span class="meta-label">Order</span><span class="meta-value">${escapeHtml(bill.orderRef ?? bill.billRef)}</span></div>`,
     `<div class="meta-row meta-row-strong"><span class="meta-label">Type</span><span class="meta-value">${escapeHtml(bill.tableLabel)}</span></div>`,
     `<div class="meta-row"><span class="meta-label">Bill</span><span class="meta-value">${escapeHtml(bill.billRef)}</span></div>`,
     bill.waiterName
       ? `<div class="meta-row"><span class="meta-label">Cashier</span><span class="meta-value">${escapeHtml(bill.waiterName)}</span></div>`
       : "",
+    contact.customer
+      ? `<div class="meta-row meta-row-strong"><span class="meta-label">Customer</span><span class="meta-value">${escapeHtml(contact.customer)}</span></div>`
+      : "",
+    contact.phone
+      ? `<div class="meta-row meta-row-strong"><span class="meta-label">Phone</span><span class="meta-value">${escapeHtml(contact.phone)}</span></div>`
+      : "",
+    contact.address
+      ? `<div class="meta-row meta-row-strong"><span class="meta-label">Address</span><span class="meta-value">${escapeHtml(contact.address)}</span></div>`
+      : "",
+    riderLabel
+      ? `<div class="meta-row meta-row-strong"><span class="meta-label">Rider</span><span class="meta-value">${escapeHtml(riderLabel)}</span></div>`
+      : "",
   ]
     .filter(Boolean)
     .join("");
 
+  const packedDelivery = Boolean(
+    contact.customer || contact.phone || contact.address || riderLabel,
+  );
+  const rawNotes = bill.notes?.trim() ?? "";
+  const cleanedNotes = rawNotes
+    .split(" · ")
+    .map((p) => p.trim())
+    .filter((p) => p && !/^Disc(?:Pct|Rs):\d+$/i.test(p) && !/^CashRecv:\d+$/i.test(p))
+    .join(" · ")
+    .trim();
+  const displayNotes =
+    cleanedNotes && !(packedDelivery && /^Delivery\s*·/i.test(cleanedNotes))
+      ? cleanedNotes
+      : "";
+
   const praFooter = pra ? buildPraReceiptFooterHtml(pra) : "";
+  const discount = Math.max(0, Number(bill.discount) || 0);
+  const payments = (bill.payments ?? []).filter((p) => p.amount > 0);
+  const paymentRows = payments
+    .map((p) => {
+      const label = PAYMENT_METHOD_LABELS[p.method] ?? p.method;
+      return `<div class="row"><span>${escapeHtml(label)}</span><span>${formatPkr(p.amount)}</span></div>`;
+    })
+    .join("");
+  let cashReceived = 0;
+  for (const part of rawNotes.split(" · ").map((p) => p.trim())) {
+    const m = part.match(/^CashRecv:(\d+)$/i);
+    if (m) cashReceived = Math.max(0, Number(m[1]) || 0);
+  }
+  const changeDue = cashReceived > bill.total ? cashReceived - bill.total : 0;
+  const changeRows =
+    changeDue > 0
+      ? `<div class="row"><span>Cash Received</span><span>${formatPkr(cashReceived)}</span></div>
+         <div class="row grand"><span>Change Due</span><span>${formatPkr(changeDue)}</span></div>`
+      : "";
+  const paymentBlock =
+    payments.length > 0
+      ? `<div class="pay-settled"><div class="pay-settled-title">Payment</div>${paymentRows}${changeRows}</div>`
+      : "";
 
   return `<!DOCTYPE html>
 <html>
@@ -429,6 +565,8 @@ function buildReceiptHtml(
       margin-top: 6px;
       padding-top: 6px;
     }
+    .pay-settled { margin-top: 10px; border-top: 1px dashed #000; padding-top: 8px; }
+    .pay-settled-title { font-size: 11px; font-weight: 800; text-transform: uppercase; margin-bottom: 4px; }
     .timestamp {
       text-align: center;
       font-size: 11px;
@@ -448,13 +586,23 @@ function buildReceiptHtml(
       border: 2px solid #000;
       padding: 8px;
     }
+    .receipt-update-banner {
+      text-align: center;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      border: 2px solid #000;
+      padding: 6px 4px;
+      margin: 6px 0 8px;
+    }
     ${PRA_RECEIPT_FOOTER_CSS}
   </style>
 </head>
 <body class="ticket-receipt">
   <div class="branch-name">${escapeHtml(branchName)}</div>
-  <div class="doc-type">Customer Receipt</div>
+  <div class="doc-type">${isUpdate ? "Customer Receipt — UPDATE REVISED" : "Customer Receipt"}</div>
+  ${isUpdate ? `<div class="receipt-update-banner">*** UPDATE REVISED ***</div>` : ""}
   <div class="meta-block">${metaRows}</div>
+  ${displayNotes ? `<p class="notes" style="text-align:center;font-style:italic;margin:0 0 8px">${escapeHtml(displayNotes)}</p>` : ""}
   <table class="items">
     <thead>
       <tr>
@@ -467,17 +615,22 @@ function buildReceiptHtml(
   </table>
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>${formatPkr(bill.subtotal)}</span></div>
+    ${discount > 0 ? `<div class="row"><span>Discount</span><span>${formatPkr(discount)}</span></div>` : ""}
     <div class="row"><span>Service (${bill.servicePct}%)</span><span>${formatPkr(bill.service)}</span></div>
     <div class="row"><span>${pra ? `Sales Tax (${bill.taxPct}%)` : `Tax (${bill.taxPct}%)`}</span><span>${formatPkr(bill.tax)}</span></div>
     ${bill.deliveryChargePkr > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(bill.deliveryChargePkr)}</span></div>` : ""}
     <div class="row grand"><span>Total</span><span>${formatPkr(bill.total)}</span></div>
   </div>
+  ${paymentBlock}
   <div class="timestamp">${escapeHtml(printedAt)} · ${escapeHtml(branchCode)}</div>
   ${bill.status === "held" ? '<div class="held">*** ON HOLD — NOT PAID ***</div>' : '<div class="footer">Thank you — visit again</div>'}
   ${praFooter}
 </body>
 </html>`;
 }
+
+/** Sync lock + window so one tap cannot enqueue many EXE print jobs. */
+const printDedupeGate = createPrintDedupeGate();
 
 async function printHtml(
   html: string,
@@ -489,93 +642,78 @@ async function printHtml(
     printerName?: string | null;
     orderId?: string | null;
     sectionId?: string | null;
-    ticket?: {
-      branchName?: string;
-      modeLabel?: string;
-      tableLabel?: string;
-      waiterName?: string;
-      notes?: string;
-      isOrderUpdate?: boolean;
-      orderRef?: string;
-      lines?: Array<{
-        label: string;
-        qty: number;
-        unitPrice?: number;
-        menuItemId?: string;
-        categoryId?: string;
-      }>;
-      subtotal?: number;
-      discount?: number;
-      service?: number;
-      tax?: number;
-      deliveryCharge?: number;
-      total?: number;
-      servicePct?: number;
-      taxPct?: number;
-      discountPct?: number;
-    };
+    ticket?: MobileReceiptTicket & { isOrderUpdate?: boolean };
   },
 ): Promise<boolean> {
-  if (opts?.branchCode) {
-    const { loadMobilePrinterSettings } = await import("./mobilePrinterSettings");
-    const settings = await loadMobilePrinterSettings();
-    if (!settings.autoPrint) return false;
+  const dedupeKey = mobilePrintDedupeKey(opts ?? {});
+  const early = printDedupeGate.begin(dedupeKey);
+  if (early === true) return true;
+  if (early) return early;
 
-    const anySilentMode = settings.modeLive || settings.modeIp || settings.modeServer;
+  const run = async (): Promise<boolean> => {
+    if (opts?.branchCode) {
+      const { loadMobilePrinterSettings } = await import("./mobilePrinterSettings");
+      const settings = await loadMobilePrinterSettings();
+      if (!settings.autoPrint) return false;
 
-    let userId: string | null = null;
-    try {
-      const { useSessionStore } = await import("../stores/sessionStore");
-      userId = useSessionStore.getState().claims?.sub ?? null;
-    } catch {
-      userId = null;
-    }
+      let userId: string | null = null;
+      try {
+        const { useSessionStore } = await import("../stores/sessionStore");
+        userId = useSessionStore.getState().claims?.sub ?? null;
+      } catch {
+        userId = null;
+      }
 
-    // Never send mobile display labels as systemPrinterName — that caused XPS/PDF picks on Windows.
-    const silent = await trySilentBranchPrint({
-      branchCode: opts.branchCode,
-      printerName: opts.printerName ?? null,
-      orderId: opts.orderId ?? null,
-      userId,
-      payload: {
-        kind: opts.kind ?? "receipt",
-        html,
-        systemPrinterName: null,
-        copies: 1,
-        orderRef: opts.orderId ?? null,
-        sectionId: opts.sectionId ?? null,
-        meta: {
-          userId,
-          ticket: opts.ticket ?? null,
-          source: "waiter-mobile",
+      // Never send mobile display labels as systemPrinterName — that caused XPS/PDF picks on Windows.
+      const silent = await trySilentBranchPrint({
+        branchCode: opts.branchCode,
+        printerName: opts.printerName ?? null,
+        orderId: opts.orderId ?? null,
+        userId,
+        payload: {
+          kind: opts.kind ?? "receipt",
+          html,
+          systemPrinterName: null,
+          copies: 1,
+          orderRef: opts.orderId ?? null,
+          sectionId: opts.sectionId ?? null,
+          meta: {
+            userId,
+            ticket: opts.ticket ?? null,
+            source: "waiter-mobile",
+          },
         },
-      },
-    });
-    if (silent) return true;
+      });
+      if (silent) {
+        printDedupeGate.markDone(dedupeKey);
+        return true;
+      }
 
-    // Silent modes are configured — do not fall back to Expo dialog (wrong format / PDF / loops).
-    if (anySilentMode) {
+      // Branch print always goes via EXE (Live/IP/Server). Never Expo/phone dialog.
       return false;
     }
-  }
 
-  // Expo dialog only when every silent mode is OFF (manual / debug).
-  try {
-    if (hint?.trim()) {
-      await new Promise<void>((resolve) => {
-        Alert.alert(
-          "Select printer",
-          `In the print dialog, choose:\n\n${hint.trim()}`,
-          [{ text: "Continue", onPress: () => resolve() }],
-          { cancelable: false },
-        );
-      });
+    // Expo dialog only for local debug prints that are not tied to a branch.
+    try {
+      if (hint?.trim()) {
+        await new Promise<void>((resolve) => {
+          Alert.alert(
+            "Select printer",
+            `In the print dialog, choose:\n\n${hint.trim()}`,
+            [{ text: "Continue", onPress: () => resolve() }],
+            { cancelable: false },
+          );
+        });
+      }
+      await Print.printAsync({ html });
+      printDedupeGate.markDone(dedupeKey);
+      return true;
+    } catch {
+      return false;
     }
-    await Print.printAsync({ html });
-    return true;
-  } catch {
-    return false;
-  }
+  };
+
+  return printDedupeGate.track(dedupeKey, run());
 }
 
 async function printKitchenHtml(
@@ -603,14 +741,11 @@ async function printKitchenHtml(
     };
   },
 ): Promise<boolean> {
-  const settings = await loadMobilePrinterSettings();
-  const kitchens = activeKitchenPrinters(settings);
-  // Profile label only (e.g. "Kitchen 1") — desktop routes to linked OS printer by kind/name.
-  const printerName = kitchens[0] ?? null;
+  // Never send soft labels like "Kitchen 1" — EXE routes like cashier via Assign Users + sections.
   return printHtml(html, undefined, {
     branchCode: opts?.branchCode,
     kind: "kot",
-    printerName,
+    printerName: null,
     orderId: opts?.orderId ?? null,
     sectionId: opts?.sectionId ?? null,
     ticket: opts?.ticket,
@@ -622,30 +757,7 @@ async function printBillHtml(
   opts?: {
     branchCode?: string;
     orderId?: string | null;
-    ticket?: {
-      branchName?: string;
-      modeLabel?: string;
-      tableLabel?: string;
-      waiterName?: string;
-      notes?: string;
-      orderRef?: string;
-      lines?: Array<{
-        label: string;
-        qty: number;
-        unitPrice?: number;
-        menuItemId?: string;
-        categoryId?: string;
-      }>;
-      subtotal?: number;
-      discount?: number;
-      service?: number;
-      tax?: number;
-      deliveryCharge?: number;
-      total?: number;
-      servicePct?: number;
-      taxPct?: number;
-      discountPct?: number;
-    };
+    ticket?: MobileReceiptTicket;
   },
 ): Promise<boolean> {
   // Do not send mobile soft labels (e.g. "Cashier / Billing") — desktop routes the bill
@@ -659,39 +771,32 @@ async function printBillHtml(
   });
 }
 
+/**
+ * Print customer pay receipt.
+ * - `embedPra: false` → simple slip (desktop Print) — never auto-issue PRA
+ * - `embedPra: true` → issue/embed FPRA or Real PRA when tax is Active (desktop Close / RPRA)
+ */
 export async function printBillReceipt(
   branchName: string,
   branchCode: string,
   bill: Bill,
+  options?: { embedPra?: boolean; isOrderUpdate?: boolean },
 ): Promise<boolean> {
-  const pra = await resolvePraFooterForBillPrint({
-    branchCode,
-    bill,
-    issueIfMissing: true,
-  }).catch(() => null);
-  const lines = (bill.lines ?? []).map((l) => ({
-    label: l.label,
-    qty: l.qty,
-    unitPrice: l.unitPrice,
-  }));
-  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill, pra), {
+  const embedPra = Boolean(options?.embedPra);
+  const isOrderUpdate = Boolean(options?.isOrderUpdate);
+  const pra = embedPra
+    ? await resolvePraFooterForBillPrint({
+        branchCode,
+        bill,
+        issueIfMissing: true,
+      }).catch(() => null)
+    : null;
+  return printBillHtml(buildReceiptHtml(branchName, branchCode, bill, pra, { isOrderUpdate }), {
     branchCode,
     orderId: bill.billRef,
     ticket: {
-      branchName,
-      modeLabel: bill.tableLabel,
-      tableLabel: bill.tableLabel,
-      orderRef: bill.orderRef ?? bill.billRef,
-      lines,
-      subtotal: bill.subtotal,
-      service: bill.service,
-      tax: bill.tax,
-      deliveryCharge: bill.deliveryChargePkr,
-      total: bill.total,
-      servicePct: bill.servicePct,
-      taxPct: bill.taxPct,
-      discount: 0,
-      discountPct: 0,
+      ...receiptTicketFromBill(branchName, bill, pra),
+      isOrderUpdate,
     },
   });
 }
@@ -711,13 +816,17 @@ export async function printCartBill(input: {
   taxPct: number;
   total: number;
   deliveryChargePkr?: number;
+  discount?: number;
+  discountPct?: number;
   cashTaxPct?: number;
   cardTaxPct?: number;
   cashTax?: number;
   cardTax?: number;
   cashTotal?: number;
   cardTotal?: number;
+  isOrderUpdate?: boolean;
 }): Promise<boolean> {
+  const isUpdate = Boolean(input.isOrderUpdate);
   const printedAt = new Date().toLocaleString("en-PK", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -732,14 +841,18 @@ export async function printCartBill(input: {
     )
     .join("");
   const delivery = input.deliveryChargePkr ?? 0;
+  const discount = Math.max(0, Number(input.discount) || 0);
+  const discountPct =
+    input.discountPct ??
+    (input.subtotal > 0 && discount > 0 ? Math.round((discount / input.subtotal) * 100) : 0);
+  const afterDisc = Math.max(0, input.subtotal - discount);
   const cashTaxPct = input.cashTaxPct ?? input.taxPct;
   const cardTaxPct = input.cardTaxPct ?? (cashTaxPct >= 15 ? 8 : cashTaxPct);
-  const cashTax =
-    input.cashTax ?? Math.round(((input.subtotal + input.service) * cashTaxPct) / 100);
-  const cardTax =
-    input.cardTax ?? Math.round(((input.subtotal + input.service) * cardTaxPct) / 100);
-  const cashTotal = input.cashTotal ?? input.subtotal + input.service + cashTax + delivery;
-  const cardTotal = input.cardTotal ?? input.subtotal + input.service + cardTax + delivery;
+  const serviceAmt = Math.round(afterDisc * (input.servicePct / 100));
+  const cashTax = input.cashTax ?? Math.round((afterDisc * cashTaxPct) / 100);
+  const cardTax = input.cardTax ?? Math.round((afterDisc * cardTaxPct) / 100);
+  const cashTotal = input.cashTotal ?? afterDisc + serviceAmt + cashTax + delivery;
+  const cardTotal = input.cardTotal ?? afterDisc + serviceAmt + cardTax + delivery;
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -765,6 +878,10 @@ export async function printCartBill(input: {
     .doc-type {
       margin-top: 6px; font-size: 11px; font-weight: 700;
       letter-spacing: 0.1em; text-transform: uppercase; text-align: center;
+    }
+    .receipt-update-banner {
+      text-align: center; font-weight: 800; letter-spacing: 0.06em;
+      border: 2px solid #000; padding: 6px 4px; margin: 6px 0 8px;
     }
     .meta-block { margin: 10px 0 12px; }
     .meta-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
@@ -798,7 +915,8 @@ export async function printCartBill(input: {
 </head>
 <body class="ticket-receipt">
   <div class="branch-name">${escapeHtml(input.branchName)}</div>
-  <div class="doc-type">Customer Receipt</div>
+  <div class="doc-type">${isUpdate ? "Customer Receipt — UPDATE REVISED" : "Customer Receipt"}</div>
+  ${isUpdate ? `<div class="receipt-update-banner">*** UPDATE REVISED ***</div>` : ""}
   <div class="meta-block">
     <div class="meta-row meta-row-strong"><span class="meta-label">Order</span><span class="meta-value">${escapeHtml(input.orderRef)}</span></div>
     <div class="meta-row meta-row-strong"><span class="meta-label">Type</span><span class="meta-value">${escapeHtml(input.tableLabel)}</span></div>
@@ -808,21 +926,24 @@ export async function printCartBill(input: {
     <thead><tr><th class="qty">QTY</th><th class="item">ITEM</th><th class="amt">AMOUNT</th></tr></thead>
     <tbody>${lineRows || `<tr><td class="qty">—</td><td class="item-name">No items</td><td class="amt">—</td></tr>`}</tbody>
   </table>
-  <div class="totals">
-    <div class="row"><span>Subtotal</span><span>${formatPkr(input.subtotal)}</span></div>
-    <div class="row"><span>Service (${input.servicePct}%)</span><span>${formatPkr(input.service)}</span></div>
-    ${delivery > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
-  </div>
   <div class="pay-compare">
     <div class="pay-compare-col">
-      <div class="pay-compare-title">Cash (${cashTaxPct}%)</div>
-      <div class="row"><span>Sales Tax</span><span>${formatPkr(cashTax)}</span></div>
-      <div class="row grand"><span>Net</span><span>${formatPkr(cashTotal)}</span></div>
+      <div class="pay-compare-title">On Card Payment</div>
+      <div class="row"><span>Sub Total</span><span>${formatPkr(input.subtotal)}</span></div>
+      ${discount > 0 ? `<div class="row"><span>Discount${discountPct > 0 ? ` (${discountPct}%)` : ""}</span><span>${formatPkr(discount)}</span></div>` : ""}
+      ${serviceAmt > 0 ? `<div class="row"><span>Service (${input.servicePct}%)</span><span>${formatPkr(serviceAmt)}</span></div>` : ""}
+      ${delivery > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
+      <div class="row"><span>GST (${cardTaxPct}%)</span><span>${formatPkr(cardTax)}</span></div>
+      <div class="row grand"><span>Net Total</span><span>${formatPkr(cardTotal)}</span></div>
     </div>
     <div class="pay-compare-col">
-      <div class="pay-compare-title">Card (${cardTaxPct}%)</div>
-      <div class="row"><span>Sales Tax</span><span>${formatPkr(cardTax)}</span></div>
-      <div class="row grand"><span>Net</span><span>${formatPkr(cardTotal)}</span></div>
+      <div class="pay-compare-title">On Cash Payment</div>
+      <div class="row"><span>Sub Total</span><span>${formatPkr(input.subtotal)}</span></div>
+      ${discount > 0 ? `<div class="row"><span>Discount${discountPct > 0 ? ` (${discountPct}%)` : ""}</span><span>${formatPkr(discount)}</span></div>` : ""}
+      ${serviceAmt > 0 ? `<div class="row"><span>Service (${input.servicePct}%)</span><span>${formatPkr(serviceAmt)}</span></div>` : ""}
+      ${delivery > 0 ? `<div class="row"><span>Delivery</span><span>${formatPkr(delivery)}</span></div>` : ""}
+      <div class="row"><span>GST (${cashTaxPct}%)</span><span>${formatPkr(cashTax)}</span></div>
+      <div class="row grand"><span>Net Total</span><span>${formatPkr(cashTotal)}</span></div>
     </div>
   </div>
   <div class="timestamp">${escapeHtml(printedAt)} · ${escapeHtml(input.branchCode)}</div>
@@ -846,8 +967,9 @@ export async function printCartBill(input: {
       total: input.total,
       servicePct: input.servicePct,
       taxPct: input.taxPct,
-      discount: 0,
-      discountPct: 0,
+      discount,
+      discountPct,
+      isOrderUpdate: isUpdate,
     },
   });
 }
@@ -858,22 +980,53 @@ export async function printKitchenOrder(
   branchCode: string,
   ticket: KitchenTicket,
   menuItems?: MenuItem[],
-  opts?: { isOrderUpdate?: boolean },
+  opts?: {
+    isOrderUpdate?: boolean;
+    /** When set (UPDATE REVISED), print only these changed lines. */
+    linesOverride?: Array<{
+      label: string;
+      qty: number;
+      unitPrice?: number;
+      menuItemId?: string;
+      categoryId?: string;
+    }>;
+  },
 ): Promise<boolean> {
-  const lines = linesFromTicket(ticket).map((line) => {
-    const fromTicket = ticket.lines?.find(
-      (l) => l.label === line.label && l.qty === line.qty,
-    );
-    const menuItemId = fromTicket?.menuItemId;
-    const menu = menuItemId ? menuItems?.find((m) => m.id === menuItemId) : undefined;
-    return {
-      ...line,
-      menuItemId,
-      categoryId: menu?.categoryId,
-      unitPrice: line.unitPrice ?? fromTicket?.unitPrice ?? 0,
-    };
-  });
-  const notes = ticket.notes?.trim() || extractKitchenNotes(ticket) || null;
+  const ticketLines = opts?.linesOverride?.length
+    ? opts.linesOverride
+    : ticket.lines ?? [];
+  const lines = (
+    opts?.linesOverride?.length
+      ? opts.linesOverride.map((line) => ({
+          label: line.label,
+          qty: line.qty,
+          unitPrice: line.unitPrice ?? 0,
+          menuItemId: line.menuItemId,
+          categoryId: line.categoryId,
+        }))
+      : linesFromTicket(ticket).map((line, index) => {
+          const fromTicket =
+            ticketLines[index] ??
+            ticketLines.find((l) => l.label === line.label && l.qty === line.qty);
+          const menuItemId = fromTicket?.menuItemId?.trim() || undefined;
+          const menu =
+            (menuItemId ? menuItems?.find((m) => m.id === menuItemId) : undefined) ??
+            menuItems?.find(
+              (m) => m.name.trim().toLowerCase() === line.label.trim().toLowerCase(),
+            );
+          return {
+            ...line,
+            menuItemId: menuItemId ?? menu?.id,
+            categoryId: menu?.categoryId,
+            unitPrice: line.unitPrice ?? fromTicket?.unitPrice ?? menu?.price ?? 0,
+          };
+        })
+  );
+  const notes =
+    resolveTicketDeliveryNotes(ticket) ||
+    ticket.notes?.trim() ||
+    extractKitchenNotes(ticket) ||
+    null;
   const orderRef = orderRefFromTicket(ticket);
   const html = buildKotHtml({
     branchName,

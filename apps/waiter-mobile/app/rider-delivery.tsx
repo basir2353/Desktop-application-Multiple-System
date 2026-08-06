@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import { DELIVERY_STATUS_LABELS, type DeliveryOrder, type DeliveryStatus } from "@platform/contracts";
 import { fetchMyDeliveries, updateDeliveryStatus } from "../src/api/delivery";
 import { fetchBranchMenu } from "../src/api/menu";
 import { Button, Card, Notice, Screen, StatusBadge, colors } from "../src/components/ui";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import { DeliveryMap, mapsDestinationQuery } from "../src/components/DeliveryMap";
 import { formatPkr, formatTimeAgo, orderRefFromTicket } from "../src/lib/orderDisplay";
 import { deliveryOrderTotal } from "../src/lib/orderHistory";
@@ -48,6 +49,7 @@ function resolveRiderMapAddress(order: DeliveryOrder): string {
 }
 
 export default function RiderDeliveryDetailScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -188,15 +190,21 @@ export default function RiderDeliveryDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   scroll: { gap: 14, paddingBottom: 32 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  ref: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  ref: { color: c.text, fontSize: 20, fontWeight: "700" },
   section: { gap: 4 },
-  label: { color: colors.muted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" },
-  value: { color: colors.text, fontSize: 16, lineHeight: 22 },
-  total: { color: colors.accent, fontSize: 22, fontWeight: "700" },
-  items: { color: colors.text, fontSize: 14, lineHeight: 20 },
-  meta: { color: colors.muted, fontSize: 12, marginTop: 8 },
+  label: { color: c.muted, fontSize: 12, fontWeight: "600", textTransform: "uppercase" },
+  value: { color: c.text, fontSize: 16, lineHeight: 22 },
+  total: { color: c.accent, fontSize: 22, fontWeight: "700" },
+  items: { color: c.text, fontSize: 14, lineHeight: 20 },
+  meta: { color: c.muted, fontSize: 12, marginTop: 8 },
   actions: { gap: 10, marginTop: 8 },
-});
+
+  }));
+}
+

@@ -19,6 +19,7 @@ import {
   createPayrollRunSchema,
   createPopsCashMovementSchema,
   openCashSessionSchema,
+  payPayrollSchema,
   recordPaymentSchema,
   updateTaxSettingsSchema,
 } from "@platform/contracts";
@@ -276,7 +277,7 @@ export class AccountingController {
   }
 
   @Patch("tax")
-  @RequirePermissions("pops.accounting.manage")
+  @RequirePermissions("pops.accounting.manage", "pops.menu.manage")
   updateTax(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
     return this.accounting.updateTaxSettings(
       user.organizationId,
@@ -308,8 +309,13 @@ export class AccountingController {
 
   @Patch("payroll/:payrollId/pay")
   @RequirePermissions("pops.accounting.manage")
-  payPayroll(@CurrentUser() user: AccessJwtPayload, @Param("payrollId") payrollId: string) {
-    return this.accounting.payPayroll(user.organizationId, user.sub, payrollId);
+  payPayroll(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("payrollId") payrollId: string,
+    @Body() body: unknown,
+  ) {
+    const input = payPayrollSchema.parse(body ?? {});
+    return this.accounting.payPayroll(user.organizationId, user.sub, payrollId, input);
   }
 
   @Get("reports/:reportId")

@@ -15,6 +15,7 @@ import {
   Title,
   colors,
 } from "../src/components/ui";
+import { ThemeToggle } from "../src/components/ThemeToggle";
 import { decodeAccessToken } from "../src/lib/jwt";
 import { warmApiConnection } from "../src/lib/warmApi";
 import {
@@ -46,7 +47,7 @@ const ROLE_DEFAULTS: Record<StaffRole, { email: string; title: string; subtitle:
   cashier: {
     email: "cashier1@platform.local",
     title: "Cashier",
-    subtitle: "Close held orders and collect payments.",
+    subtitle: "View paid / held bills and reprint slips.",
     demoPin: "2222",
   },
 };
@@ -219,13 +220,16 @@ export default function LoginScreen() {
     <Screen safeTop>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24 }}>
-          <View>
-            <Title>{appName}</Title>
-            <Subtitle>
-              {isAdminApp
-                ? "Admin login — sales dashboard, users, activity, and PRA."
-                : "One Staff APK · Waiter or Rider · then Email or PIN below."}
-            </Subtitle>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Title>{appName}</Title>
+              <Subtitle>
+                {isAdminApp
+                  ? "Admin login — sales dashboard, users, activity, and PRA."
+                  : "One Staff APK · Waiter or Rider · then Email or PIN below."}
+              </Subtitle>
+            </View>
+            <ThemeToggle />
           </View>
 
           {roleTabs.length > 0 ? (

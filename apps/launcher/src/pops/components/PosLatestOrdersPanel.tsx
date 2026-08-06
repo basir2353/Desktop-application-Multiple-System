@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
+import type { Bill } from "@platform/contracts";
 import {
   canChangePosRecentOrderTable,
   canEditPosRecentOrder,
@@ -53,8 +54,9 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { sessionCanManageFloor } from "../lib/roleAccess";
-import { loadPosSettings } from "../lib/posSettings";
+import { loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../lib/posSettings";
 import {
+  isPosOrderModeVisible,
   loadPosOrderModeVisibility,
   POS_ORDER_MODE_VISIBILITY_CHANGED_EVENT,
 } from "../lib/posOrderModeVisibility";
@@ -73,6 +75,8 @@ type Props = {
   /** Bill just paid via Close → Pay; panel marks Closed and shows that bill’s PRA invoice. */
   closeAfterPayBillId?: string | null;
   onCloseAfterPayHandled?: () => void;
+  /** Parent (POS) wires shortcut P → quick print selected bill. */
+  quickPrintRef?: { current: (() => boolean) | null };
 };
 
 function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
@@ -91,11 +95,18 @@ export function PosLatestOrdersPanel({
   onNotice,
   closeAfterPayBillId = null,
   onCloseAfterPayHandled,
+  quickPrintRef,
 }: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
-  const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
+  const [posSettingsTick, setPosSettingsTick] = useState(0);
+  /** Bill ids that successfully uploaded to Real PRA this session — hide RPRA immediately. */
+  const [rpraDoneBillIds, setRpraDoneBillIds] = useState<Set<string>>(() => new Set());
+  const posSettings = useMemo(
+    () => loadPosSettings(branch?.code),
+    [branch?.code, posSettingsTick],
+  );
   const canManageTables = sessionCanManageFloor(claims);
   const taxFeatures = useTaxAuthorityFeatures();
   const praFakeEnabled = isPraFakeEnabled(taxFeatures.data);
@@ -104,6 +115,17 @@ export function PosLatestOrdersPanel({
   const [orderModeVisibility, setOrderModeVisibility] = useState(() =>
     loadPosOrderModeVisibility(branch?.code),
   );
+
+  useEffect(() => {
+    function onPosSettingsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setPosSettingsTick((n) => n + 1);
+      }
+    }
+    window.addEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+    return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+  }, [branch?.code]);
 
   useEffect(() => {
     setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
@@ -122,13 +144,7 @@ export function PosLatestOrdersPanel({
   }, [branch?.code]);
 
   const visibleFilterModes = useMemo(
-    () =>
-      POS_ORDER_MODES.filter((m) => {
-        if (m.id === "online") return orderModeVisibility.onlineEnabled;
-        if (m.id === "foodpanda") return orderModeVisibility.foodpandaEnabled;
-        if (m.id === "staff-food") return orderModeVisibility.staffFoodEnabled;
-        return true;
-      }),
+    () => POS_ORDER_MODES.filter((m) => isPosOrderModeVisible(m.id, orderModeVisibility)),
     [orderModeVisibility],
   );
 
@@ -145,6 +161,14 @@ export function PosLatestOrdersPanel({
     }
   }, [visibleFilterModes, modeFilter]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [layoutMode, setLayoutMode] = useState<"list" | "grid">(() => {
+    try {
+      const raw = localStorage.getItem("pops-latest-orders-layout");
+      return raw === "grid" ? "grid" : "list";
+    } catch {
+      return "list";
+    }
+  });
   const [viewOrder, setViewOrder] = useState<PosRecentOrder | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<PosRecentOrder | null>(null);
   const [printPreview, setPrintPreview] = useState<{
@@ -243,6 +267,29 @@ export function PosLatestOrdersPanel({
       return { order, bill, issued };
     },
     onSuccess: async ({ order, bill, issued }) => {
+      // Hide RPRA immediately — do not wait for refetch (API used to omit praMode).
+      setRpraDoneBillIds((prev) => {
+        const next = new Set(prev);
+        next.add(bill.id);
+        return next;
+      });
+
+      // Patch cached bills so Paid list shows praMode=real without a full reload.
+      queryClient.setQueriesData<Bill[]>({ queryKey: ["orders", branch?.code] }, (old) => {
+        if (!old) return old;
+        return old.map((row) =>
+          row.id === bill.id
+            ? {
+                ...row,
+                praMode: "real" as const,
+                praInvoiceNumber: issued.fiscal.invoiceNumber,
+                praInvoiceId: issued.fiscal.invoiceId,
+                praQrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
+              }
+            : row,
+        );
+      });
+
       void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
       if (!canEmbedPraOnSlip(issued.fiscal)) {
         onNotice?.("Real PRA did not return invoice number/QR.", "error");
@@ -338,7 +385,7 @@ export function PosLatestOrdersPanel({
     let praFiscal = base.praFiscal ?? null;
     let notice: string | undefined;
 
-    // Print = always simple (no PRA). Close = issue/embed PRA when Tax Active.
+    // Print on unpaid = simple. Print/reprint on paid = PRA (same as Close).
     if (options?.embedPra) {
       if (!bill) {
         notice = "Paid bill not found for this order — cannot issue PRA invoice.";
@@ -382,26 +429,66 @@ export function PosLatestOrdersPanel({
 
   function openPrintPreview(order: PosRecentOrder): void {
     void (async () => {
-      const built = await buildPaidReceiptInput(order, { embedPra: false });
+      // Paid / Closed bills → PRA logo invoice. Open/held → simple slip (or KOT path elsewhere).
+      const isPaidBill =
+        order.bill?.status === "completed" ||
+        Boolean(order.bill?.praInvoiceNumber) ||
+        modeFilter === "Paid";
+      const built = await buildPaidReceiptInput(order, { embedPra: isPaidBill });
       if (!built) return;
       setPrintPreview({
         input: built.input,
         printerName: built.printerName,
         systemPrinterName: built.systemPrinterName,
-        title: "Simple invoice",
-        subtitle: "Print = simple slip (FPRA)",
+        title: isPaidBill && built.input.praFiscal ? "PRA invoice" : isPaidBill ? "Paid invoice" : "Simple invoice",
+        subtitle: isPaidBill
+          ? built.input.praFiscal
+            ? `PRA Invoice # ${built.input.praFiscal.invoiceNumber} · QR + logo`
+            : "Paid reprint (PRA unavailable — Tax Active check karein)"
+          : "Print = simple slip (FPRA)",
       });
+      if (built.notice && isPaidBill && !built.input.praFiscal) {
+        onNotice?.(built.notice, "error");
+      }
     })();
   }
 
   /**
-   * Print = always simple customer order slip (no kitchen KOT, no PRA).
+   * Print: paid/Closed → PRA logo bill; unpaid → simple customer slip.
    * Kitchen KOT still goes out from POS Order / Pay.
    */
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
     openPrintPreview(order);
   }
+
+  const printOrderRef = useRef(printOrder);
+  printOrderRef.current = printOrder;
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const ordersRef = useRef(orders);
+  ordersRef.current = orders;
+
+  useEffect(() => {
+    if (!quickPrintRef) return;
+    quickPrintRef.current = () => {
+      const id = selectedIdRef.current;
+      if (!id) {
+        onNotice?.("Pehle koi bill select karein, phir P dabayein (quick print).", "error");
+        return false;
+      }
+      const order = ordersRef.current.find((o) => o.id === id);
+      if (!order) {
+        onNotice?.("Selected bill list mein nahi mili.", "error");
+        return false;
+      }
+      printOrderRef.current(order);
+      return true;
+    };
+    return () => {
+      quickPrintRef.current = null;
+    };
+  }, [quickPrintRef, onNotice]);
 
   /**
    * Close (paid): mark status Closed + show this order’s real PRA invoice (number + QR + logo).
@@ -497,6 +584,15 @@ export function PosLatestOrdersPanel({
     openCloseInvoicePreview(order);
   }
 
+  function setOrdersLayout(next: "list" | "grid"): void {
+    setLayoutMode(next);
+    try {
+      localStorage.setItem("pops-latest-orders-layout", next);
+    } catch {
+      /* ignore */
+    }
+  }
+
   function handlePrintPreviewClose(): void {
     setPrintPreview(null);
   }
@@ -515,15 +611,57 @@ export function PosLatestOrdersPanel({
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
               <div className="mt-0.5 text-[10px] text-slate-500">
-                Edit = items · Print = simple · Close = Closed + PRA invoice
+                Select bill → <kbd className="rounded bg-slate-800 px-1 text-amber-300">P</kbd> quick
+                print · Close = PRA
               </div>
             </div>
-            <Link
-              to="../orders"
-              className="shrink-0 text-[10px] font-medium text-amber-400 hover:text-amber-300"
-            >
-              View all
-            </Link>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <div
+                className="inline-flex rounded-md border border-slate-700/80 bg-slate-950/80 p-0.5"
+                role="group"
+                aria-label="Orders layout"
+              >
+                <button
+                  type="button"
+                  onClick={() => setOrdersLayout("list")}
+                  title="List view"
+                  aria-pressed={layoutMode === "list"}
+                  className={`rounded px-1.5 py-1 transition ${
+                    layoutMode === "list"
+                      ? "bg-amber-500 text-slate-950"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrdersLayout("grid")}
+                  title="Grid view"
+                  aria-pressed={layoutMode === "grid"}
+                  className={`rounded px-1.5 py-1 transition ${
+                    layoutMode === "grid"
+                      ? "bg-amber-500 text-slate-950"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </button>
+              </div>
+              <Link
+                to="../orders"
+                className="shrink-0 text-[10px] font-medium text-amber-400 hover:text-amber-300"
+              >
+                View all
+              </Link>
+            </div>
           </div>
 
           <div className="relative mt-2">
@@ -625,14 +763,17 @@ export function PosLatestOrdersPanel({
                   : `No ${modeFilter.toLowerCase()} orders yet.`}
             </p>
           ) : (
-            <ul className="grid grid-cols-3 gap-1">
+            <ul
+              className={
+                layoutMode === "list" ? "flex flex-col gap-1" : "grid grid-cols-3 gap-1"
+              }
+            >
               {displayedOrders.map((order) => {
                 const isSelected = selectedId === order.id;
                 const orderTotal = posRecentOrderTotal(order, posSettings);
                 const showChangeTable =
                   canManageTables && canChangePosRecentOrderTable(order) && Boolean(branch?.code);
                 const showEdit = Boolean(onEdit) && canEditPosRecentOrder(order);
-                // FPRA Active only — never on Real Active / Real invoice tickets.
                 const showRpra =
                   canShowRpraForBill({
                     praFakeEnabled,
@@ -641,49 +782,190 @@ export function PosLatestOrdersPanel({
                   }) &&
                   isPaidPosRecentOrder(order) &&
                   Boolean(order.bill) &&
-                  order.bill?.status === "completed";
+                  order.bill?.status === "completed" &&
+                  !rpraDoneBillIds.has(order.bill!.id);
+                const station = formatPosStationDisplay(order.stationLabel, order.orderMode);
+
+                const onCardActivate = () => {
+                  if (showEdit && onEdit) {
+                    setSelectedId(order.id);
+                    onEdit(order);
+                    return;
+                  }
+                  toggleSelected(order);
+                };
+
+                const actionButtons = (
+                  <>
+                    {showEdit ? (
+                      <button
+                        type="button"
+                        className="rounded border border-sky-300 px-1.5 py-0.5 text-[9px] font-medium text-sky-700 transition hover:border-sky-400 hover:bg-sky-50 dark:border-sky-700/60 dark:text-sky-300 dark:hover:border-sky-500/50 dark:hover:bg-sky-500/10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit?.(order);
+                          setSelectedId(order.id);
+                        }}
+                        title="Open order in ticket panel to add/remove items"
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded border border-amber-300 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 transition hover:border-amber-400 hover:bg-amber-50 dark:border-slate-700 dark:text-amber-400 dark:hover:border-amber-500/40 dark:hover:bg-amber-500/10"
+                      onClick={(e) => printOrder(order, e)}
+                      title={
+                        order.kind === "pending" && order.kitchenTicket?.status !== "done"
+                          ? "Print kitchen order ticket (order stays editable)"
+                          : order.bill?.status === "completed" || modeFilter === "Paid"
+                            ? "Re-print PRA invoice (logo + QR) — or press P"
+                            : "Print simple invoice — or press P"
+                      }
+                    >
+                      Print
+                      <span className="ml-0.5 opacity-60">P</span>
+                    </button>
+                    {showRpra ? (
+                      <button
+                        type="button"
+                        className="rounded border border-emerald-500/50 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-600/50 dark:bg-emerald-600/20 dark:text-emerald-300 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/30 dark:hover:text-white disabled:opacity-50"
+                        title="Upload this paid ticket to Real PRA and print Real fiscal slip"
+                        disabled={rpraMutation.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          rpraMutation.mutate(order);
+                        }}
+                      >
+                        {rpraMutation.isPending && rpraMutation.variables?.id === order.id ? "…" : "RPRA"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-medium text-slate-700 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-300 dark:hover:border-red-500/40 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                      onClick={(e) => closeOrder(order, e)}
+                      disabled={closeOrderMutation.isPending}
+                      title={
+                        canPayPosRecentOrder(order)
+                          ? "Pay → status Closed + this order’s PRA invoice"
+                          : "Status Closed + this order’s PRA invoice"
+                      }
+                    >
+                      Close
+                    </button>
+                    {isSelected ? (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewOrder(order);
+                          }}
+                        >
+                          View
+                        </button>
+                        {showChangeTable ? (
+                          <button
+                            type="button"
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setChangeTableOrder(order);
+                            }}
+                          >
+                            Table
+                          </button>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </>
+                );
+
+                if (layoutMode === "list") {
+                  return (
+                    <li key={order.id}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={onCardActivate}
+                        onDoubleClick={(e) => handleOrderDoubleClick(order, e)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onCardActivate();
+                          }
+                        }}
+                        className={[
+                          "flex items-center gap-2 rounded-lg border px-2 py-1.5 transition",
+                          isSelected
+                            ? "border-amber-500 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-slate-900 dark:ring-amber-500/20"
+                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-950/40 dark:hover:border-slate-700",
+                        ].join(" ")}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="shrink-0 font-mono text-[11px] font-bold text-slate-900 dark:text-white">
+                              {order.ref}
+                            </span>
+                            <span
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(order.statusTone)}`}
+                              aria-hidden
+                            />
+                            <span className="truncate text-[10px] text-slate-600 dark:text-slate-400">
+                              {order.orderMode} · {station}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-[9px] text-slate-500 dark:text-slate-500">
+                            <span>{formatRecentOrderTime(order.createdAt)}</span>
+                            <span className="truncate">{order.statusLabel}</span>
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          {orderTotal != null ? (
+                            <p className="text-[12px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                              {orderTotal.toLocaleString()}
+                            </p>
+                          ) : (
+                            <p className="text-[10px] text-slate-400 dark:text-slate-600">—</p>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                          {actionButtons}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                }
 
                 return (
                   <li key={order.id}>
                     <div
                       role="button"
                       tabIndex={0}
-                      onClick={() => {
-                        // Editable open orders: one tap loads them into the ticket for changes.
-                        if (showEdit && onEdit) {
-                          setSelectedId(order.id);
-                          onEdit(order);
-                          return;
-                        }
-                        toggleSelected(order);
-                      }}
+                      onClick={onCardActivate}
                       onDoubleClick={(e) => handleOrderDoubleClick(order, e)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          if (showEdit && onEdit) {
-                            setSelectedId(order.id);
-                            onEdit(order);
-                            return;
-                          }
-                          toggleSelected(order);
+                          onCardActivate();
                         }
                       }}
                       className={[
-                        "flex h-full flex-col rounded-lg border bg-slate-950/50 p-1.5 transition",
+                        "flex h-full flex-col rounded-lg border p-1.5 transition",
                         isSelected
-                          ? "border-amber-500/50 ring-1 ring-amber-500/20"
-                          : "border-slate-800/70 hover:border-slate-700",
+                          ? "border-amber-500 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-slate-900 dark:ring-amber-500/20"
+                          : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-950/50 dark:hover:border-slate-700",
                       ].join(" ")}
                     >
                       <div className="space-y-0.5">
                         <div className="flex items-start justify-between gap-1">
-                          <span className="font-mono text-sm font-bold leading-tight text-white">
+                          <span className="font-mono text-sm font-bold leading-tight text-slate-900 dark:text-white">
                             {order.ref}
                           </span>
                           <button
                             type="button"
-                            className="shrink-0 rounded px-0.5 text-[10px] leading-none text-slate-500 transition hover:bg-slate-800 hover:text-red-400"
+                            className="shrink-0 rounded px-0.5 text-[10px] leading-none text-slate-400 transition hover:bg-slate-100 hover:text-red-600 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-red-400"
                             onClick={(e) => closeOrder(order, e)}
                             disabled={closeOrderMutation.isPending}
                             aria-label="Close order"
@@ -699,115 +981,32 @@ export function PosLatestOrdersPanel({
 
                       <div className="mt-1">
                         {orderTotal != null ? (
-                          <p className="text-[11px] font-bold tabular-nums leading-none text-emerald-400">
+                          <p className="text-[11px] font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
                             {orderTotal.toLocaleString()}
                           </p>
                         ) : (
-                          <p className="text-[10px] font-medium text-slate-600">—</p>
+                          <p className="text-[10px] font-medium text-slate-400 dark:text-slate-600">—</p>
                         )}
                       </div>
 
                       <div className="mt-1 flex min-w-0 items-center gap-1 text-[8px]">
-                        <span className="inline-flex min-w-0 items-center gap-0.5 truncate text-slate-300">
+                        <span className="inline-flex min-w-0 items-center gap-0.5 truncate text-slate-700 dark:text-slate-300">
                           <span
                             className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(order.statusTone)}`}
                             aria-hidden
                           />
                           <span className="truncate">{order.statusLabel}</span>
                         </span>
-                        <span className="shrink-0 text-slate-600">·</span>
-                        <span className="truncate text-slate-400">{order.orderMode}</span>
+                        <span className="shrink-0 text-slate-400 dark:text-slate-600">·</span>
+                        <span className="truncate text-slate-600 dark:text-slate-400">{order.orderMode}</span>
                       </div>
 
-                      <p className="mt-1 truncate text-sm font-semibold leading-tight text-slate-200">
-                        {formatPosStationDisplay(order.stationLabel, order.orderMode)}
+                      <p className="mt-1 truncate text-sm font-semibold leading-tight text-slate-800 dark:text-slate-200">
+                        {station}
                       </p>
 
-                      <div className="mt-1.5 border-t border-slate-800/80 pt-1">
-                        <div className="flex gap-1">
-                          {showEdit ? (
-                            <button
-                              type="button"
-                              className="flex-1 rounded border border-sky-700/60 py-0.5 text-[9px] font-medium text-sky-300 transition hover:border-sky-500/50 hover:bg-sky-500/10"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onEdit?.(order);
-                                setSelectedId(order.id);
-                              }}
-                              title="Open order in ticket panel to add/remove items"
-                            >
-                              Edit
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-amber-400 transition hover:border-amber-500/40 hover:bg-amber-500/10"
-                            onClick={(e) => printOrder(order, e)}
-                            title={
-                              order.kind === "pending" && order.kitchenTicket?.status !== "done"
-                                ? "Print kitchen order ticket (order stays editable)"
-                                : "Print simple invoice (FPRA)"
-                            }
-                          >
-                            Print
-                          </button>
-                          {showRpra ? (
-                            <button
-                              type="button"
-                              className="shrink-0 rounded border border-emerald-600/50 bg-emerald-600/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/30 hover:text-white disabled:opacity-50"
-                              title="Upload this paid ticket to Real PRA and print Real fiscal slip"
-                              disabled={rpraMutation.isPending}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                rpraMutation.mutate(order);
-                              }}
-                            >
-                              {rpraMutation.isPending && rpraMutation.variables?.id === order.id
-                                ? "…"
-                                : "RPRA"}
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="flex-1 rounded border border-slate-700 py-0.5 text-[9px] font-medium text-slate-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
-                            onClick={(e) => closeOrder(order, e)}
-                            disabled={closeOrderMutation.isPending}
-                            title={
-                              canPayPosRecentOrder(order)
-                                ? "Pay → status Closed + this order’s PRA invoice"
-                                : "Status Closed + this order’s PRA invoice"
-                            }
-                          >
-                            Close
-                          </button>
-                        </div>
-
-                        {isSelected ? (
-                          <div className="mt-1 flex gap-1">
-                            <button
-                              type="button"
-                              className="flex-1 rounded border border-slate-700 py-1 text-[9px] font-medium text-slate-300 transition hover:border-slate-600 hover:text-white"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setViewOrder(order);
-                              }}
-                            >
-                              View
-                            </button>
-                            {showChangeTable ? (
-                              <button
-                                type="button"
-                                className="flex-1 rounded border border-slate-700 py-1 text-[9px] font-medium text-slate-300 transition hover:border-slate-600 hover:text-white"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setChangeTableOrder(order);
-                                }}
-                              >
-                                Table
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : null}
+                      <div className="mt-1.5 border-t border-slate-200 pt-1 dark:border-slate-800/80">
+                        <div className="flex flex-wrap gap-1">{actionButtons}</div>
                       </div>
                     </div>
                   </li>
@@ -852,6 +1051,17 @@ export function PosLatestOrdersPanel({
           title={printPreview.title}
           subtitle={printPreview.subtitle}
           onClose={handlePrintPreviewClose}
+          onPrinted={(ok, error) => {
+            if (ok) {
+              onNotice?.("Invoice sent to printer.", "success");
+              return;
+            }
+            onNotice?.(
+              error?.trim() ||
+                "Print failed. Check Printer → receipt assignment, or use the desktop EXE for Auto print.",
+              "error",
+            );
+          }}
         />
       ) : null}
     </>

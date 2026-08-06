@@ -21,7 +21,7 @@ import {
   printPrinterNodes,
   type PlatformPgDb,
 } from "@platform/database-pg";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { requireTenantOrganizationId } from "../auth/jwt.types";
@@ -49,6 +49,38 @@ export class PrintingService {
     const organizationId = this.orgId(user);
     const cloudEnabled = await this.isCloudQueueEnabled(organizationId);
     const branchCode = input.branchCode.trim();
+    const orderId = input.orderId?.trim() || null;
+    const kind = String(input.payload?.kind ?? "receipt").trim().toLowerCase() || "receipt";
+
+    // Idempotent: same order+kind within 45s returns the existing job (mobile retries / double tap).
+    if (orderId) {
+      const since = new Date(Date.now() - 45_000);
+      const recent = await this.db
+        .select()
+        .from(printJobsCloud)
+        .where(
+          and(
+            eq(printJobsCloud.organizationId, organizationId),
+            eq(printJobsCloud.orderId, orderId),
+            gte(printJobsCloud.createdAt, since),
+            inArray(printJobsCloud.status, ["pending", "printing", "completed"]),
+          ),
+        )
+        .orderBy(desc(printJobsCloud.createdAt))
+        .limit(20);
+
+      const branchUpper = branchCode.toUpperCase();
+      const existing = recent.find((row) => {
+        if (row.branchCode.trim().toUpperCase() !== branchUpper) return false;
+        const payload =
+          row.payloadJson && typeof row.payloadJson === "object"
+            ? (row.payloadJson as { kind?: string })
+            : {};
+        const rowKind = String(payload.kind ?? "receipt").trim().toLowerCase() || "receipt";
+        return rowKind === kind;
+      });
+      if (existing) return existing;
+    }
 
     const [row] = await this.db
       .insert(printJobsCloud)
@@ -59,7 +91,7 @@ export class PrintingService {
         deviceId: input.deviceId ?? null,
         deviceLabel: input.deviceLabel ?? null,
         printerName: input.printerName ?? null,
-        orderId: input.orderId ?? null,
+        orderId,
         priority: input.priority ?? 100,
         status: "pending",
         payloadJson: input.payload,
@@ -103,6 +135,23 @@ export class PrintingService {
     if (!branchCode) {
       throw new BadRequestException("branchCode is required");
     }
+
+    // Drop stale pending jobs (older than 5 min) so EXE refresh does not spam old prints.
+    const staleBefore = new Date(Date.now() - 5 * 60_000);
+    await this.db
+      .update(printJobsCloud)
+      .set({
+        status: "failed",
+        error: "Expired: pending job older than 5 minutes",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(printJobsCloud.organizationId, organizationId),
+          eq(printJobsCloud.status, "pending"),
+          lt(printJobsCloud.createdAt, staleBefore),
+        ),
+      );
 
     // Case-insensitive match — mobile/desktop branch codes may differ in casing.
     const pendingRows = await this.db

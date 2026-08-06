@@ -286,9 +286,9 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
         <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
           <h3 className={`text-base font-semibold ${headingClass}`}>Company reset</h3>
           <p className={`text-sm ${mutedClass}`}>
-            Deletes every transaction (sales, bills, journals, payroll runs, stock movements, tax
-            invoices). Dashboard and profit &amp; loss become zero. Keeps users, menu, products,
-            employees, and licence settings.
+            Deletes every transaction (sales, bills, journals, payroll, employees, stock movements,
+            tax invoices). Dashboard and profit &amp; loss become zero. Keeps users, menu, products,
+            and licence settings.
           </p>
           <label className="block text-sm">
             <span className="mb-1 block">

@@ -28,6 +28,16 @@ import { modalBackdropRaisedClass } from "../../../lib/themeClasses";
 
 const DEDUCTION_RATE = 0.0727;
 
+function toDatetimeLocalValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function baqayaClass(net: number): string {
+  if (net < 0) return "font-medium text-red-400";
+  return "font-medium text-emerald-300/90";
+}
+
 /** Prefer server open advances; fill gaps from local Pay Out ledger (offline / API missing). */
 function mergeAdvanceTotals(
   branchCode: string,
@@ -84,6 +94,8 @@ export function HrPayrollPage(): JSX.Element {
   const [showCreate, setShowCreate] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [payTarget, setPayTarget] = useState<{ id: string; ref: string } | null>(null);
+  const [payAtLocal, setPayAtLocal] = useState(() => toDatetimeLocalValue(new Date()));
 
   const now = new Date();
   const defaultPeriodStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -181,7 +193,7 @@ export function HrPayrollPage(): JSX.Element {
       gross,
       deductions,
       advances,
-      net: Math.max(0, gross - deductions),
+      net: gross - deductions,
       count: selectedLines.length,
     };
   }, [selectedLines]);
@@ -221,11 +233,17 @@ export function HrPayrollPage(): JSX.Element {
   });
 
   const payMutation = useMutation({
-    mutationFn: payHrPayrollRun,
+    mutationFn: ({ id, paidAt }: { id: string; paidAt: string }) => payHrPayrollRun(id, { paidAt }),
     onSuccess: (run) => {
       void queryClient.invalidateQueries({ queryKey: ["hr"] });
       void queryClient.invalidateQueries({ queryKey: ["accounting"] });
-      setNotice(`${run.payrollRef} paid — salary slips are ready to print.`);
+      setPayTarget(null);
+      const when = run.paidAt
+        ? new Date(run.paidAt).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" })
+        : "";
+      setNotice(
+        `${run.payrollRef} paid${when ? ` on ${when}` : ""} — ledger updated; salary slips ready.`,
+      );
       setError(null);
     },
     onError: (err: Error) => setError(err.message),
@@ -354,7 +372,8 @@ export function HrPayrollPage(): JSX.Element {
                 Pehle se liya hua advance auto deduct hota hai.{" "}
                 <span className="text-amber-300/90">Advance</span> column pe{" "}
                 <span className="text-amber-300/90">+</span> se yahan bhi add kar sakte ho (ya POS Pay Out).{" "}
-                <span className="text-emerald-300/90">Baqaya</span> = salary + OT − statutory − advance.
+                <span className="text-emerald-300/90">Baqaya</span> = salary + OT − statutory − advance
+                (advance zyada ho to <span className="text-red-400">minus</span>).
               </p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
@@ -440,7 +459,7 @@ export function HrPayrollPage(): JSX.Element {
                   {staffLines.map((line) => {
                     const emp = employeeById.get(line.employeeId);
                     if (!emp) return null;
-                    const net = Math.max(0, line.grossPkr + line.overtimePkr - line.deductionsPkr);
+                    const net = line.grossPkr + line.overtimePkr - line.deductionsPkr;
                     return (
                       <tr key={line.employeeId} className={line.selected ? "" : "opacity-50"}>
                         <td className="px-3 py-2">
@@ -532,8 +551,10 @@ export function HrPayrollPage(): JSX.Element {
                           {formatPkr(line.deductionsPkr)}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="font-medium text-emerald-300/90">{formatPkr(net)}</div>
-                          <div className="text-[10px] text-slate-500">baqaya / payable</div>
+                          <div className={baqayaClass(net)}>{formatPkr(net)}</div>
+                          <div className="text-[10px] text-slate-500">
+                            {net < 0 ? "minus — advance > salary" : "baqaya / payable"}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -563,7 +584,13 @@ export function HrPayrollPage(): JSX.Element {
               </div>
               <div>
                 <dt>Baqaya (payable)</dt>
-                <dd className="text-sm font-semibold text-emerald-300">{formatPkr(previewTotals.net)}</dd>
+                <dd
+                  className={`text-sm font-semibold ${
+                    previewTotals.net < 0 ? "text-red-400" : "text-emerald-300"
+                  }`}
+                >
+                  {formatPkr(previewTotals.net)}
+                </dd>
               </div>
             </dl>
             <button
@@ -597,8 +624,26 @@ export function HrPayrollPage(): JSX.Element {
             { key: "periodStart", header: "From" },
             { key: "periodEnd", header: "To" },
             { key: "totalGross", header: "Gross", render: (r) => formatPkr(Number(r.totalGross)) },
-            { key: "totalNet", header: "Net", render: (r) => formatPkr(Number(r.totalNet)) },
+            {
+              key: "totalNet",
+              header: "Baqaya",
+              render: (r) => {
+                const net = Number(r.totalNet);
+                return <span className={baqayaClass(net)}>{formatPkr(net)}</span>;
+              },
+            },
             { key: "staffCount", header: "Staff" },
+            {
+              key: "paidAt",
+              header: "Paid at",
+              render: (r) =>
+                r.paidAt
+                  ? new Date(String(r.paidAt)).toLocaleString("en-PK", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })
+                  : "—",
+            },
             {
               key: "status",
               header: "Status",
@@ -647,7 +692,10 @@ export function HrPayrollPage(): JSX.Element {
                       type="button"
                       className="text-xs text-emerald-400"
                       disabled={payMutation.isPending}
-                      onClick={() => payMutation.mutate(String(r.id))}
+                      onClick={() => {
+                        setPayAtLocal(toDatetimeLocalValue(new Date()));
+                        setPayTarget({ id: String(r.id), ref: String(r.payrollRef) });
+                      }}
                     >
                       Pay
                     </button>
@@ -692,9 +740,56 @@ export function HrPayrollPage(): JSX.Element {
                   render: (r) => formatPkr(Number(r.statutoryPkr ?? 0)),
                 },
                 { key: "deductionsPkr", header: "Total ded.", render: (r) => formatPkr(Number(r.deductionsPkr)) },
-                { key: "netPkr", header: "Baqaya", render: (r) => formatPkr(Number(r.netPkr)) },
+                {
+                  key: "netPkr",
+                  header: "Baqaya",
+                  render: (r) => {
+                    const net = Number(r.netPkr);
+                    return <span className={baqayaClass(net)}>{formatPkr(net)}</span>;
+                  },
+                },
               ]}
             />
+          </div>
+        </div>
+      ) : null}
+
+      {payTarget ? (
+        <div className={modalBackdropRaisedClass} role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-xl border border-slate-700 bg-slate-950 p-4 shadow-xl">
+            <div className="text-sm font-medium text-white">Pay payroll {payTarget.ref}</div>
+            <p className="mt-1 text-xs text-slate-400">
+              Pay date &amp; time ledger journal aur salary slip pe jayegi.
+            </p>
+            <label className="mt-3 block text-xs text-slate-500">
+              Paid at (date &amp; time)
+              <input
+                type="datetime-local"
+                className={`${hrInputClass} mt-1 w-full`}
+                value={payAtLocal}
+                onChange={(e) => setPayAtLocal(e.target.value)}
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                onClick={() => setPayTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={payMutation.isPending || !payAtLocal}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                onClick={() => {
+                  const iso = new Date(payAtLocal).toISOString();
+                  payMutation.mutate({ id: payTarget.id, paidAt: iso });
+                }}
+              >
+                {payMutation.isPending ? "Paying…" : "Confirm pay"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -704,17 +799,15 @@ export function HrPayrollPage(): JSX.Element {
           <div className="w-full max-w-sm rounded-xl border border-slate-700 bg-slate-950 p-4 shadow-xl">
             <div className="text-sm font-medium text-white">Add advance</div>
             <p className="mt-1 text-xs text-slate-400">
-              {advanceFor.employeeName} — max advance = base salary (
-              {formatPkr(advanceFor.baseSalaryPkr)}). Open: {formatPkr(advanceFor.openAdvancePkr)}.
-              Remaining:{" "}
-              {formatPkr(Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr))}.
+              {advanceFor.employeeName} — open advances: {formatPkr(advanceFor.openAdvancePkr)}.
+              Base salary {formatPkr(advanceFor.baseSalaryPkr)}. Advance salary se zyada ho to baqaya
+              minus mein dikhega.
             </p>
             <label className="mt-3 block text-xs text-slate-500">
               Amount (PKR)
               <input
                 type="number"
                 min={1}
-                max={Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr)}
                 step={1}
                 autoFocus
                 className={`${hrInputClass} mt-1 w-full`}
@@ -748,22 +841,11 @@ export function HrPayrollPage(): JSX.Element {
                 type="button"
                 className="rounded-lg bg-amber-500/90 px-3 py-1.5 text-xs font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
                 disabled={
-                  addAdvanceMutation.isPending ||
-                  !advanceAmount ||
-                  !(Number(advanceAmount) > 0) ||
-                  Number(advanceAmount) >
-                    Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr)
+                  addAdvanceMutation.isPending || !advanceAmount || !(Number(advanceAmount) > 0)
                 }
                 onClick={() => {
                   const amount = Math.round(Number(advanceAmount));
-                  const remaining = Math.max(0, advanceFor.baseSalaryPkr - advanceFor.openAdvancePkr);
                   if (!(amount > 0) || !branch?.code) return;
-                  if (amount > remaining) {
-                    setError(
-                      `Advance cannot exceed remaining salary cap (${remaining.toLocaleString()} PKR).`,
-                    );
-                    return;
-                  }
                   addAdvanceMutation.mutate({
                     branchCode: branch.code,
                     employeeId: advanceFor.employeeId,

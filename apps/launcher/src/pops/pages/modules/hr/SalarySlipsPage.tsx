@@ -125,7 +125,27 @@ export function SalarySlipsPage(): JSX.Element {
                   header: "Period",
                   render: (r) => `${String(r.periodStart)} — ${String(r.periodEnd)}`,
                 },
-                { key: "netPkr", header: "Net pay", render: (r) => formatPkr(Number(r.netPkr)) },
+                {
+                  key: "netPkr",
+                  header: "Baqaya",
+                  render: (r) => {
+                    const net = Number(r.netPkr);
+                    return (
+                      <span className={net < 0 ? "text-red-400" : undefined}>{formatPkr(net)}</span>
+                    );
+                  },
+                },
+                {
+                  key: "paidAt",
+                  header: "Paid at",
+                  render: (r) =>
+                    r.paidAt
+                      ? new Date(String(r.paidAt)).toLocaleString("en-PK", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : "—",
+                },
                 {
                   key: "payrollStatus",
                   header: "Payroll",

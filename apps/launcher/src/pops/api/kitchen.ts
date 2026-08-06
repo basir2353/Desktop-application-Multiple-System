@@ -53,7 +53,19 @@ export async function fetchKitchenTickets(
       throw new Error(err?.message ?? `Kitchen tickets failed: ${res.status}`);
     }
     const json: unknown = await res.json();
-    const remote = kitchenTicketListSchema.parse(json).tickets;
+    const listParsed = kitchenTicketListSchema.safeParse(json);
+    let remote: KitchenTicket[] = [];
+    if (listParsed.success) {
+      remote = listParsed.data.tickets;
+    } else if (json && typeof json === "object" && Array.isArray((json as { tickets?: unknown }).tickets)) {
+      // Soft-parse: keep valid tickets even if one legacy row fails schema.
+      for (const row of (json as { tickets: unknown[] }).tickets) {
+        const one = kitchenTicketSchema.safeParse(row);
+        if (one.success) remote.push(one.data);
+      }
+    } else {
+      throw new Error("Kitchen tickets response invalid");
+    }
     if (opts?.scope === "done") {
       return remote.filter((t) => t.status === "done");
     }

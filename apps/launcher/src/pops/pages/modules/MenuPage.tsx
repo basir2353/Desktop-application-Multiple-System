@@ -67,6 +67,27 @@ function emptyVariantRow(): VariantRow {
   return { label: "", price: "", barcode: "" };
 }
 
+function variantsPayloadFromForm(form: ItemFormState): { label: string; price: number; barcode?: string }[] {
+  if (form.simplePrice) {
+    const price = Number(form.simplePriceValue);
+    if (!Number.isFinite(price) || price < 1) {
+      throw new Error("Enter a valid Simple Price (PKR).");
+    }
+    return [{ label: "Standard", price: Math.round(price) }];
+  }
+  const variants = form.variants
+    .filter((v) => v.price.trim())
+    .map((v) => ({
+      label: v.label.trim() || "Standard",
+      price: Number(v.price),
+      barcode: v.barcode.trim() || undefined,
+    }));
+  if (variants.length === 0) {
+    throw new Error("Add at least one sub-category with a price.");
+  }
+  return variants;
+}
+
 type ItemFormState = {
   name: string;
   secondaryName: string;
@@ -78,10 +99,22 @@ type ItemFormState = {
   askForQty: boolean;
   allowManualDiscount: boolean;
   defaultDiscountPct: string;
+  /** Flat price — hide size list; tickets print name only. */
+  simplePrice: boolean;
+  /** Used when simplePrice is on (single PKR field). */
+  simplePriceValue: string;
   variants: VariantRow[];
 };
 
 function menuItemToEditForm(item: MenuItem): ItemFormState {
+  const onlySilent =
+    item.variants.length <= 1 &&
+    (!item.variants[0] ||
+      !item.variants[0].label.trim() ||
+      /^(standard|regular|default|normal)$/i.test(item.variants[0].label.trim()));
+  const simplePrice = Boolean(item.simplePrice) || onlySilent;
+  const price =
+    item.variants[0]?.price != null ? String(item.variants[0].price) : String(item.price ?? "");
   return {
     name: item.name,
     secondaryName: item.secondaryName ?? "",
@@ -93,6 +126,8 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
     askForQty: item.askForQty,
     allowManualDiscount: item.allowManualDiscount,
     defaultDiscountPct: String(item.defaultDiscountPct ?? 0),
+    simplePrice,
+    simplePriceValue: price,
     variants:
       item.variants.length > 0
         ? item.variants.map((v) => ({
@@ -231,110 +266,162 @@ function MenuItemVariantFields({
   onChange: (next: ItemFormState) => void;
 }): JSX.Element {
   return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-medium text-slate-300">Sub-categories (sizes)</div>
-        <div className="flex flex-wrap gap-1">
-          {VARIANT_PRESETS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              className="rounded-md border border-slate-700 px-2 py-0.5 text-[10px] text-slate-400 hover:border-amber-500/40 hover:text-white"
-              onClick={() =>
-                onChange({
-                  ...form,
-                  variants: [...form.variants, { ...emptyVariantRow(), label: preset }],
-                })
-              }
-            >
-              + {preset}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="mt-1 text-[10px] text-slate-500">
-        Add Full, Half, Quarter, or custom sizes. POS shows a picker when a dish has more than one.
-      </p>
-      <ul className="mt-2 space-y-2">
-        {form.variants.map((row, index) => (
-          <li
-            key={index}
-            className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
-          >
-            <label className="block text-[10px] text-slate-500 sm:col-span-3">
-              Label
-              <input
-                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-                placeholder="Full"
-                value={row.label}
-                onChange={(e) =>
-                  onChange({
-                    ...form,
-                    variants: form.variants.map((v, i) =>
-                      i === index ? { ...v, label: e.target.value } : v,
-                    ),
-                  })
-                }
-              />
-            </label>
-            <label className="block text-[10px] text-slate-500 sm:col-span-2">
-              Price (PKR)
-              <input
-                type="number"
-                min={1}
-                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-                value={row.price}
-                onChange={(e) =>
-                  onChange({
-                    ...form,
-                    variants: form.variants.map((v, i) =>
-                      i === index ? { ...v, price: e.target.value } : v,
-                    ),
-                  })
-                }
-              />
-            </label>
-            <label className="block text-[10px] text-slate-500 sm:col-span-3">
-              Barcode
-              <input
-                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-                value={row.barcode}
-                onChange={(e) =>
-                  onChange({
-                    ...form,
-                    variants: form.variants.map((v, i) =>
-                      i === index ? { ...v, barcode: e.target.value } : v,
-                    ),
-                  })
-                }
-              />
-            </label>
-            <div className="flex items-end justify-end sm:col-span-4">
-              {form.variants.length > 1 ? (
+    <div className="space-y-3">
+      <label className="flex items-start gap-2 text-xs text-slate-300">
+        <input
+          type="checkbox"
+          className="mt-0.5 accent-amber-500"
+          checked={form.simplePrice}
+          onChange={(e) => {
+            const on = e.target.checked;
+            const priceFromVariants = form.variants.find((v) => v.price.trim())?.price ?? form.simplePriceValue;
+            onChange({
+              ...form,
+              simplePrice: on,
+              simplePriceValue: on ? priceFromVariants || form.simplePriceValue : form.simplePriceValue,
+              variants: on
+                ? [{ label: "Standard", price: priceFromVariants || form.simplePriceValue, barcode: "" }]
+                : form.variants.length > 0
+                  ? form.variants
+                  : [emptyVariantRow()],
+            });
+          }}
+        />
+        <span>
+          <span className="font-medium text-slate-200">Simple Price</span>
+          <span className="mt-0.5 block text-[10px] text-slate-500">
+            On: one price only — POS adds the item directly; kitchen / bill print name without Standard /
+            Half / Full.
+          </span>
+        </span>
+      </label>
+
+      {form.simplePrice ? (
+        <label className="block text-xs text-slate-400">
+          Price (PKR)
+          <input
+            type="number"
+            min={1}
+            required
+            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.simplePriceValue}
+            onChange={(e) =>
+              onChange({
+                ...form,
+                simplePriceValue: e.target.value,
+                variants: [{ label: "Standard", price: e.target.value, barcode: "" }],
+              })
+            }
+            placeholder="e.g. 120"
+          />
+        </label>
+      ) : (
+        <div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-medium text-slate-300">Sub-categories (sizes)</div>
+            <div className="flex flex-wrap gap-1">
+              {VARIANT_PRESETS.map((preset) => (
                 <button
+                  key={preset}
                   type="button"
-                  className={`pb-1.5 text-[10px] ${linkDangerClass}`}
+                  className="rounded-md border border-slate-700 px-2 py-0.5 text-[10px] text-slate-400 hover:border-amber-500/40 hover:text-white"
                   onClick={() =>
                     onChange({
                       ...form,
-                      variants: form.variants.filter((_, i) => i !== index),
+                      variants: [...form.variants, { ...emptyVariantRow(), label: preset }],
                     })
                   }
                 >
-                  Remove
+                  + {preset}
                 </button>
-              ) : null}
+              ))}
             </div>
-          </li>
-        ))}
-      </ul>
-      <button
-        type="button"
-        className={`mt-2 text-xs ${linkWarningClass}`}
-        onClick={() => onChange({ ...form, variants: [...form.variants, emptyVariantRow()] })}
-      >
-        + Add sub-category
-      </button>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Add Full, Half, Quarter, or custom sizes. POS shows a picker when a dish has more than one.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {form.variants.map((row, index) => (
+              <li
+                key={index}
+                className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
+              >
+                <label className="block text-[10px] text-slate-500 sm:col-span-3">
+                  Label
+                  <input
+                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                    placeholder="Full"
+                    value={row.label}
+                    onChange={(e) =>
+                      onChange({
+                        ...form,
+                        variants: form.variants.map((v, i) =>
+                          i === index ? { ...v, label: e.target.value } : v,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <label className="block text-[10px] text-slate-500 sm:col-span-2">
+                  Price (PKR)
+                  <input
+                    type="number"
+                    min={1}
+                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                    value={row.price}
+                    onChange={(e) =>
+                      onChange({
+                        ...form,
+                        variants: form.variants.map((v, i) =>
+                          i === index ? { ...v, price: e.target.value } : v,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <label className="block text-[10px] text-slate-500 sm:col-span-3">
+                  Barcode
+                  <input
+                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                    value={row.barcode}
+                    onChange={(e) =>
+                      onChange({
+                        ...form,
+                        variants: form.variants.map((v, i) =>
+                          i === index ? { ...v, barcode: e.target.value } : v,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <div className="flex items-end justify-end sm:col-span-4">
+                  {form.variants.length > 1 ? (
+                    <button
+                      type="button"
+                      className={`pb-1.5 text-[10px] ${linkDangerClass}`}
+                      onClick={() =>
+                        onChange({
+                          ...form,
+                          variants: form.variants.filter((_, i) => i !== index),
+                        })
+                      }
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className={`mt-2 text-xs ${linkWarningClass}`}
+            onClick={() => onChange({ ...form, variants: [...form.variants, emptyVariantRow()] })}
+          >
+            + Add sub-category
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -524,6 +611,8 @@ export function MenuPage(): JSX.Element {
     askForQty: false,
     allowManualDiscount: false,
     defaultDiscountPct: "0",
+    simplePrice: false,
+    simplePriceValue: "",
     variants: [emptyVariantRow()],
   });
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
@@ -736,16 +825,7 @@ export function MenuPage(): JSX.Element {
 
   const createItemMutation = useMutation({
     mutationFn: async () => {
-      const variants = itemForm.variants
-        .filter((v) => v.price.trim())
-        .map((v) => ({
-          label: v.label.trim() || "Standard",
-          price: Number(v.price),
-          barcode: v.barcode.trim() || undefined,
-        }));
-      if (variants.length === 0) {
-        throw new Error("Add at least one sub-category with a price.");
-      }
+      const variants = variantsPayloadFromForm(itemForm);
       let imageUrl: string | undefined;
       if (newItemImage) {
         imageUrl = await uploadMenuImage(newItemImage);
@@ -767,6 +847,8 @@ export function MenuPage(): JSX.Element {
         defaultDiscountPct: itemForm.allowManualDiscount
           ? Math.max(0, Math.min(100, Number(itemForm.defaultDiscountPct) || 0))
           : 0,
+        simplePrice: itemForm.simplePrice,
+        price: variants[0]?.price,
         variants,
       });
     },
@@ -783,6 +865,8 @@ export function MenuPage(): JSX.Element {
         askForQty: false,
         allowManualDiscount: false,
         defaultDiscountPct: "0",
+        simplePrice: false,
+        simplePriceValue: "",
         variants: [emptyVariantRow()],
       });
       setNewItemImage(null);
@@ -821,16 +905,7 @@ export function MenuPage(): JSX.Element {
       imageFile: File | null;
       clearImage: boolean;
     }) => {
-      const variants = form.variants
-        .filter((v) => v.price.trim())
-        .map((v) => ({
-          label: v.label.trim() || "Standard",
-          price: Number(v.price),
-          barcode: v.barcode.trim() || undefined,
-        }));
-      if (variants.length === 0) {
-        throw new Error("Add at least one sub-category with a price.");
-      }
+      const variants = variantsPayloadFromForm(form);
       let imageUrl: string | null | undefined;
       if (imageFile) {
         imageUrl = await uploadMenuImage(imageFile);
@@ -852,6 +927,8 @@ export function MenuPage(): JSX.Element {
           defaultDiscountPct: form.allowManualDiscount
             ? Math.max(0, Math.min(100, Number(form.defaultDiscountPct) || 0))
             : 0,
+          simplePrice: form.simplePrice,
+          price: variants[0]?.price,
           variants,
           ...(imageUrl !== undefined ? { imageUrl } : {}),
         },

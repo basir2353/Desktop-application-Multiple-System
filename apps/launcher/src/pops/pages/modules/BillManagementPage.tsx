@@ -16,7 +16,7 @@ import {
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { loadBusinessDaySettings } from "../../lib/businessDay";
 import { billChannelLabel, businessDateKey, filterOrdersByDateTime, ordersPageBills } from "../../lib/orderSales";
-import { effectiveTaxPct, loadPosSettings } from "../../lib/posSettings";
+import { effectiveTaxPct, loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../../lib/posSettings";
 import { discountAmountFromPct } from "../../lib/posDiscount";
 import { printBillAsync } from "../../lib/printTicket";
 import {
@@ -105,7 +105,23 @@ export function BillManagementPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const businessDay = useMemo(() => loadBusinessDaySettings(branch?.code), [branch?.code]);
-  const posSettings = useMemo(() => loadPosSettings(branch?.code), [branch?.code]);
+  const [posSettingsTick, setPosSettingsTick] = useState(0);
+  const posSettings = useMemo(
+    () => loadPosSettings(branch?.code),
+    [branch?.code, posSettingsTick],
+  );
+
+  useEffect(() => {
+    function onPosSettingsChanged(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branch?.code || detail?.branchCode === branch.code) {
+        setPosSettingsTick((n) => n + 1);
+      }
+    }
+    window.addEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+    return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
+  }, [branch?.code]);
+
   const [billPrintSettings, setBillPrintSettings] = useState<BillPrintSettings>(() =>
     loadBillPrintSettings(branch?.code),
   );
@@ -434,9 +450,8 @@ export function BillManagementPage(): JSX.Element {
           settings={billPrintSettings}
           onChange={setBillPrintSettings}
           onNotice={setNotice}
-          onSave={() => {
-            persistBillSettings(billPrintSettings);
-            setNotice("Bill customization saved for this branch.");
+          onSave={(next) => {
+            setBillPrintSettings(next);
           }}
         />
       ) : null}

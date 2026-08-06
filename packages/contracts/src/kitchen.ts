@@ -9,7 +9,11 @@ export const kitchenTicketLineSchema = z.object({
   label: z.string(),
   qty: z.number().int().positive(),
   unitPrice: z.coerce.number().nonnegative().default(0),
-  menuItemId: z.string().uuid().optional(),
+  // Coerce blank / non-UUID ids away so one bad line never blanks the whole ticket list.
+  menuItemId: z.preprocess(
+    (value) => (typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined),
+    z.string().uuid().optional(),
+  ),
 });
 
 export const kitchenTicketSchema = z.object({

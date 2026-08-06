@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { expenseCategorySchema } from "./accounting";
 
 export const employmentStatusSchema = z.enum(["active", "on_leave", "terminated"]);
 export const attendanceStatusSchema = z.enum(["present", "late", "absent", "on_leave"]);
@@ -128,12 +129,22 @@ export const hrPayrollRunSchema = z.object({
   periodEnd: z.string(),
   totalGross: z.number(),
   totalDeductions: z.number(),
+  /** Can be negative when advances exceed salary (baqaya / balance). */
   totalNet: z.number(),
   staffCount: z.number(),
   status: z.enum(["draft", "approved", "paid"]),
   createdBy: z.string().nullable(),
   createdAt: z.string(),
+  /** ISO datetime when Pay was recorded. */
+  paidAt: z.string().nullable().optional(),
+  paidBy: z.string().nullable().optional(),
   lines: z.array(payrollLineSchema).optional(),
+});
+
+/** Body for PATCH .../payroll/:id/pay */
+export const payPayrollSchema = z.object({
+  /** ISO or local datetime (`YYYY-MM-DDTHH:mm`). Defaults to now. */
+  paidAt: z.string().min(1).optional(),
 });
 
 export const payrollRunEmployeeInputSchema = z.object({
@@ -247,6 +258,7 @@ export type PayrollLine = z.infer<typeof payrollLineSchema>;
 export type HrPayrollRun = z.infer<typeof hrPayrollRunSchema>;
 export type PayrollRunEmployeeInput = z.infer<typeof payrollRunEmployeeInputSchema>;
 export type CreateHrPayrollRun = z.infer<typeof createHrPayrollRunSchema>;
+export type PayPayroll = z.infer<typeof payPayrollSchema>;
 export type SalarySlip = z.infer<typeof salarySlipSchema>;
 export type HrDashboard = z.infer<typeof hrDashboardSchema>;
 
@@ -260,6 +272,11 @@ export const staffFoodRecordSchema = z.object({
   personName: z.string(),
   employeeCode: z.string().nullable(),
   jobTitle: z.string().nullable(),
+  supplierId: z.string().uuid().nullable(),
+  supplierName: z.string().nullable(),
+  expenseCategory: expenseCategorySchema,
+  expenseId: z.string().uuid().nullable(),
+  expenseRef: z.string().nullable(),
   mealDate: z.string(),
   itemsOrdered: z.string(),
   amountPkr: z.number().int().nonnegative(),
@@ -272,6 +289,8 @@ export const createStaffFoodSchema = z.object({
   branchCode: z.string().min(1),
   consumerType: staffFoodConsumerTypeSchema,
   employeeId: z.string().uuid().optional(),
+  supplierId: z.string().uuid().optional(),
+  expenseCategory: expenseCategorySchema.optional().default("Staff Meals"),
   personName: z.string().min(1).max(120),
   mealDate: z.string(),
   itemsOrdered: z.string().min(1).max(1000),

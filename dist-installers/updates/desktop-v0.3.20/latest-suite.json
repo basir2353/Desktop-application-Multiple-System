@@ -1,0 +1,11 @@
+{
+  "version": "0.3.20",
+  "notes": "Desktop suite update 0.3.20",
+  "pub_date": "2026-08-04T10:52:27.634Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSMWtPYXc1endxUWVWTjc0bS9VTFVLZVVQaVFVdXE1WXJZK0k2U21neGxSRHF1RmVQVDA1dGJOcllTcjcwL3dyMmRsU2tRa000WklDYUVRMlA3cDRWNW1md2FPUXJrY0E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1ODQwNzM5CWZpbGU6UE9QUyBVbml2ZXJzYWwgTWFuYWdlbWVudCBTeXN0ZW1fMC4zLjIwX3g2NC1zZXR1cC5leGUKTEwxV1M5ZWtWMW9BdFhadWRLR2c3ek9melFwQ3hHb2hQR0N0YUZRMXVRUjU2aCtzWDkybmpMbGVRcnEvT0pCYW9MV0oxTFB0VUdsbWR1dGhoWWhNQUE9PQo=",
+      "url": "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-v0.3.20/POPS-Universal-Management-System_0.3.20_x64-setup.exe"
+    }
+  }
+}

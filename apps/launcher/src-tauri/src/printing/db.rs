@@ -138,6 +138,50 @@ pub fn get_job(conn: &Connection, id: &str) -> Result<Option<PrintJobRow>, Strin
     Ok(None)
 }
 
+/// Recent job for the same order (mobile double-submit / Live+LAN race).
+/// `since_iso` is an RFC3339/ISO lower bound (jobs with created_at >= since_iso).
+pub fn find_recent_order_job(
+    conn: &Connection,
+    branch_code: &str,
+    order_id: &str,
+    kind: &str,
+    since_iso: &str,
+) -> Result<Option<PrintJobRow>, String> {
+    let order_id = order_id.trim();
+    if order_id.is_empty() {
+        return Ok(None);
+    }
+    let mut stmt = conn
+        .prepare(
+            r#"SELECT id, branch_code, printer_id, printer_name, order_id, priority, status, retry_count, error, payload_json, created_at, updated_at, printed_at
+               FROM print_jobs
+               WHERE branch_code = ?1 AND order_id = ?2
+                 AND status IN ('pending','printing','completed')
+                 AND created_at >= ?3
+               ORDER BY created_at DESC
+               LIMIT 12"#,
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![branch_code, order_id, since_iso], |row| map_job(row))
+        .map_err(|e| e.to_string())?;
+    let kind_l = kind.trim().to_lowercase();
+    for row in rows {
+        let job = row.map_err(|e| e.to_string())?;
+        let payload: serde_json::Value =
+            serde_json::from_str(&job.payload_json).unwrap_or(serde_json::json!({}));
+        let row_kind = payload
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("receipt")
+            .to_lowercase();
+        if row_kind == kind_l {
+            return Ok(Some(job));
+        }
+    }
+    Ok(None)
+}
+
 pub fn list_jobs(
     conn: &Connection,
     branch_code: Option<&str>,

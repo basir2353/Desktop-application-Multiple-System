@@ -18,6 +18,7 @@ import {
   Title,
   colors,
 } from "../src/components/ui";
+import { ThemeToggle } from "../src/components/ThemeToggle";
 import {
   currentBusinessDateKey,
   filterOrdersByDate,
@@ -154,21 +155,24 @@ export default function AdminHomeScreen() {
               {waiterEmail ?? claims?.sub ?? "Incharge"} · {roleName}
             </Subtitle>
           </View>
-          <Pressable
-            onPress={() => {
-              clear();
-              router.replace("/");
-            }}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: colors.border,
-            }}
-          >
-            <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>Sign out</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <ThemeToggle size="sm" />
+            <Pressable
+              onPress={() => {
+                clear();
+                router.replace("/");
+              }}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>Sign out</Text>
+            </Pressable>
+          </View>
         </View>
 
         {visibleBranches.length > 0 ? (

@@ -22,6 +22,7 @@ import {
 } from "@platform/database-pg";
 import * as bcrypt from "bcryptjs";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { extractOrderNotesFromItemsSummary } from "../lib/order-notes-from-summary";
 import { NotificationsService } from "../notifications/notifications.service";
 import type { AccessJwtPayload } from "../auth/jwt.types";
 import { findLiveLoginUserByEmail } from "../lib/login-email";
@@ -180,6 +181,10 @@ export class DeliveryService implements OnApplicationBootstrap {
 
   async listRiders(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
+    // Rider logins created via Users often lack a pops_riders row for this branch —
+    // sync them so POS / mobile Delivery dropdowns are never empty for active riders.
+    await this.ensureRiderProfilesForBranch(organizationId, branch);
+
     const rows = await this.db
       .select({
         rider: popsRiders,
@@ -196,6 +201,108 @@ export class DeliveryService implements OnApplicationBootstrap {
       branchCode: branch.code,
       riders: rows.map((row) => this.mapRider(row.rider, row.email, row.branchCode)),
     };
+  }
+
+  /**
+   * Ensure every active rider-role membership for this branch has a Delivery profile
+   * on the branch (required for POS assignment + receipt rider name).
+   */
+  async ensureRiderProfilesForBranch(
+    organizationId: string,
+    branch: { id: string; code: string },
+  ): Promise<void> {
+    const memberships = await this.db
+      .select({
+        userId: organizationMemberships.userId,
+        branchScope: organizationMemberships.branchScope,
+        email: users.email,
+        name: users.name,
+      })
+      .from(organizationMemberships)
+      .innerJoin(users, eq(users.id, organizationMemberships.userId))
+      .where(
+        and(
+          eq(organizationMemberships.organizationId, organizationId),
+          eq(organizationMemberships.role, "rider"),
+          eq(organizationMemberships.active, true),
+          ne(users.status, "deleted"),
+        ),
+      );
+
+    const branchCode = branch.code.trim().toUpperCase();
+    const eligible = memberships.filter((m) => {
+      const scope = (m.branchScope ?? "all").trim().toUpperCase();
+      return scope === "ALL" || scope === branchCode;
+    });
+
+    for (const m of eligible) {
+      const existingOnBranch = await this.db
+        .select({ id: popsRiders.id })
+        .from(popsRiders)
+        .where(
+          and(
+            eq(popsRiders.organizationId, organizationId),
+            eq(popsRiders.branchId, branch.id),
+            eq(popsRiders.userId, m.userId),
+          ),
+        )
+        .limit(1);
+      if (existingOnBranch.length > 0) continue;
+
+      const anyProfile = await this.db
+        .select()
+        .from(popsRiders)
+        .where(
+          and(eq(popsRiders.organizationId, organizationId), eq(popsRiders.userId, m.userId)),
+        )
+        .limit(1);
+
+      const fromEmail = (m.email?.split("@")[0] ?? "Rider").replace(/[._-]+/g, " ").trim();
+      const displayName =
+        anyProfile[0]?.name?.trim() || m.name?.trim() || fromEmail || "Rider";
+
+      await this.db.insert(popsRiders).values({
+        organizationId,
+        branchId: branch.id,
+        userId: m.userId,
+        name: displayName,
+        phone: anyProfile[0]?.phone ?? null,
+        cnic: anyProfile[0]?.cnic ?? null,
+        salaryPkr: anyProfile[0]?.salaryPkr ?? null,
+        fromArea: anyProfile[0]?.fromArea ?? null,
+        notes: anyProfile[0]?.notes ?? null,
+        active: true,
+      });
+    }
+  }
+
+  /** Create / link a Delivery rider profile when a Users rider account is created. */
+  async ensureRiderProfileForUser(
+    organizationId: string,
+    userId: string,
+    branchScope: string,
+  ): Promise<void> {
+    const scope = branchScope.trim().toUpperCase();
+    if (scope === "ALL" || !scope) {
+      const branches = await this.db
+        .select({ id: popsBranches.id, code: popsBranches.code })
+        .from(popsBranches)
+        .where(eq(popsBranches.organizationId, organizationId))
+        .orderBy(asc(popsBranches.code));
+      for (const branch of branches) {
+        await this.ensureRiderProfilesForBranch(organizationId, branch);
+      }
+      return;
+    }
+
+    try {
+      const branch = await this.resolveBranch(organizationId, scope);
+      await this.ensureRiderProfilesForBranch(organizationId, branch);
+    } catch {
+      this.logger.warn(
+        `Could not ensure rider profile for user ${userId} on branch scope ${branchScope}`,
+      );
+    }
   }
 
   async createRider(organizationId: string, input: CreateRider) {
@@ -620,10 +727,7 @@ export class DeliveryService implements OnApplicationBootstrap {
   }
 
   private extractTicketNotes(summary: string): string | null {
-    const idx = summary.lastIndexOf(" · ");
-    if (idx === -1) return null;
-    const notes = summary.slice(idx + 3).trim();
-    return notes || null;
+    return extractOrderNotesFromItemsSummary(summary);
   }
 
   private async resolveBranch(organizationId: string, branchCode: string) {
@@ -631,7 +735,12 @@ export class DeliveryService implements OnApplicationBootstrap {
     const rows = await this.db
       .select()
       .from(popsBranches)
-      .where(and(eq(popsBranches.organizationId, organizationId), eq(popsBranches.code, code)))
+      .where(
+        and(
+          eq(popsBranches.organizationId, organizationId),
+          sql`upper(${popsBranches.code}) = ${code.toUpperCase()}`,
+        ),
+      )
       .limit(1);
     const branch = rows[0];
     if (!branch) throw new NotFoundException(`Branch not found: ${code}`);

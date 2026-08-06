@@ -7,7 +7,7 @@ type Props = {
   variant: MenuItemVariant | null;
   defaultPrice: number;
   defaultQty?: number;
-  onConfirm: (result: { price: number; qty: number }) => void;
+  onConfirm: (result: { price: number; qty: number; lineNote?: string }) => void;
   onClose: () => void;
 };
 
@@ -21,6 +21,7 @@ export function PosItemPromptModal({
 }: Props): JSX.Element {
   const [price, setPrice] = useState(String(defaultPrice > 0 ? defaultPrice : ""));
   const [qty, setQty] = useState(String(defaultQty > 0 ? defaultQty : 1));
+  const [lineNote, setLineNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const firstRef = useRef<HTMLInputElement>(null);
 
@@ -28,6 +29,7 @@ export function PosItemPromptModal({
     name: item.name,
     portion: item.portion,
     variantLabel: variant?.label ?? null,
+    simplePrice: item.simplePrice,
   });
 
   useEffect(() => {
@@ -57,6 +59,7 @@ export function PosItemPromptModal({
     onConfirm({
       price: Math.round(nextPrice),
       qty: Math.max(1, Math.round(nextQty)),
+      lineNote: lineNote.trim() || undefined,
     });
   }
 
@@ -114,6 +117,18 @@ export function PosItemPromptModal({
               />
             </label>
           ) : null}
+          <label className="block text-xs text-slate-600 dark:text-slate-400">
+            Item note (optional)
+            <input
+              ref={!item.askForPrice && !item.askForQty ? firstRef : undefined}
+              type="text"
+              maxLength={80}
+              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              value={lineNote}
+              onChange={(e) => setLineNote(e.target.value)}
+              placeholder="e.g. بدون مرچ"
+            />
+          </label>
           {error ? <p className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
           <div className="flex gap-2">
             <button

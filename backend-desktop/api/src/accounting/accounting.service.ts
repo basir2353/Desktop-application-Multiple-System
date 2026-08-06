@@ -60,11 +60,88 @@ export class AccountingService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap(): Promise<void> {
     try {
+      await this.ensurePayrollColumns();
       await this.seedChartForAllBranches();
       await this.backfillSalesEntries();
     } catch (err) {
       this.logger.warn(`Accounting bootstrap skipped: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  private async ensurePayrollColumns(): Promise<void> {
+    await this.db.execute(sql`
+      ALTER TABLE pops_payroll_runs
+      ADD COLUMN IF NOT EXISTS paid_at timestamptz
+    `);
+    await this.db.execute(sql`
+      ALTER TABLE pops_payroll_runs
+      ADD COLUMN IF NOT EXISTS paid_by text
+    `);
+    await this.db.execute(sql`
+      ALTER TABLE pops_tax_settings
+      ADD COLUMN IF NOT EXISTS pos_charges_json text
+    `);
+  }
+
+  private parsePosCharges(
+    raw: string | null | undefined,
+    fallback: { serviceTaxPct: number; salesTaxPct: number },
+  ): NonNullable<UpdateTaxSettings["posCharges"]> {
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<NonNullable<UpdateTaxSettings["posCharges"]>>;
+        if (parsed && typeof parsed.servicePct === "number") {
+          return {
+            servicePct: Number(parsed.servicePct) || 0,
+            taxPct: Number(parsed.taxPct) || fallback.salesTaxPct,
+            taxByPaymentMethod: parsed.taxByPaymentMethod ?? true,
+            cashTaxPct: Number(parsed.cashTaxPct) || fallback.salesTaxPct,
+            cardTaxPct: Number(parsed.cardTaxPct) || 8,
+            onlineTaxPct: Number(parsed.onlineTaxPct) || Number(parsed.cardTaxPct) || 8,
+            taxEnabled: parsed.taxEnabled ?? true,
+            autoDiscountEnabled: parsed.autoDiscountEnabled ?? false,
+            autoDiscountPct: Number(parsed.autoDiscountPct) || 10,
+            serviceOnDineIn: parsed.serviceOnDineIn ?? true,
+            serviceOnTakeaway: parsed.serviceOnTakeaway ?? false,
+            serviceOnDelivery: parsed.serviceOnDelivery ?? false,
+            serviceOnOnline: parsed.serviceOnOnline ?? false,
+            serviceOnFoodpanda: parsed.serviceOnFoodpanda ?? false,
+            serviceOnStaffFood: parsed.serviceOnStaffFood ?? true,
+            taxOnDineIn: parsed.taxOnDineIn ?? true,
+            taxOnTakeaway: parsed.taxOnTakeaway ?? false,
+            taxOnDelivery: parsed.taxOnDelivery ?? false,
+            taxOnOnline: parsed.taxOnOnline ?? true,
+            taxOnFoodpanda: parsed.taxOnFoodpanda ?? true,
+            taxOnStaffFood: parsed.taxOnStaffFood ?? true,
+          };
+        }
+      } catch {
+        // fall through
+      }
+    }
+    return {
+      servicePct: fallback.serviceTaxPct,
+      taxPct: fallback.salesTaxPct,
+      taxByPaymentMethod: true,
+      cashTaxPct: fallback.salesTaxPct >= 15 ? 16 : fallback.salesTaxPct,
+      cardTaxPct: 8,
+      onlineTaxPct: 8,
+      taxEnabled: true,
+      autoDiscountEnabled: false,
+      autoDiscountPct: 10,
+      serviceOnDineIn: true,
+      serviceOnTakeaway: false,
+      serviceOnDelivery: false,
+      serviceOnOnline: false,
+      serviceOnFoodpanda: false,
+      serviceOnStaffFood: true,
+      taxOnDineIn: true,
+      taxOnTakeaway: false,
+      taxOnDelivery: false,
+      taxOnOnline: true,
+      taxOnFoodpanda: true,
+      taxOnStaffFood: true,
+    };
   }
 
   async ensureBranchChart(organizationId: string, branchId: string): Promise<void> {
@@ -855,27 +932,7 @@ export class AccountingService implements OnApplicationBootstrap {
       input.type === "paid_out" &&
       (input.asAdvance === true || (input.asAdvance !== false && partyKind === "employee" && Boolean(employeeId)));
 
-    if (asAdvance && employeeRow) {
-      const openAdvances = await this.db
-        .select()
-        .from(popsEmployeeAdvances)
-        .where(
-          and(
-            eq(popsEmployeeAdvances.organizationId, organizationId),
-            eq(popsEmployeeAdvances.employeeId, employeeRow.id),
-            inArray(popsEmployeeAdvances.status, ["open", "reserved"]),
-          ),
-        );
-      const alreadyOut = openAdvances.reduce((s, a) => s + a.amountPkr, 0);
-      const salaryCap = Math.max(0, employeeRow.baseSalaryPkr);
-      if (alreadyOut + input.amountPkr > salaryCap) {
-        const remaining = Math.max(0, salaryCap - alreadyOut);
-        throw new BadRequestException(
-          `Advance cannot exceed base salary (${salaryCap.toLocaleString()} PKR). ` +
-            `Already outstanding ${alreadyOut.toLocaleString()} PKR — max new advance ${remaining.toLocaleString()} PKR.`,
-        );
-      }
-    }
+    // Advances may exceed base salary — payroll shows negative baqaya.
 
     const [row] = await this.db
       .insert(popsCashMovements)
@@ -1488,13 +1545,19 @@ export class AccountingService implements OnApplicationBootstrap {
     const taxCollected = await this.sumAccountCredits(branch.id, ["2201"], from, today);
     const taxPaid = await this.sumAccountDebits(branch.id, ["2201"], from, today);
 
+    const serviceTaxPct = settings?.serviceTaxPct ?? 10;
+    const salesTaxPct = settings?.salesTaxPct ?? 15;
+
     return {
       taxName: settings?.taxName ?? "GST",
-      salesTaxPct: settings?.salesTaxPct ?? 15,
-      serviceTaxPct: settings?.serviceTaxPct ?? 10,
+      salesTaxPct,
+      serviceTaxPct,
       taxRegistrationNo: settings?.taxRegistrationNo ?? null,
       taxCollected,
       taxPaid,
+      posCharges: settings?.posChargesJson
+        ? this.parsePosCharges(settings.posChargesJson, { serviceTaxPct, salesTaxPct })
+        : undefined,
     };
   }
 
@@ -1508,14 +1571,21 @@ export class AccountingService implements OnApplicationBootstrap {
       )
       .limit(1);
 
+    const posChargesJson = input.posCharges ? JSON.stringify(input.posCharges) : undefined;
+    const serviceFromPos = input.posCharges?.servicePct;
+    const salesFromPos = input.posCharges?.taxByPaymentMethod
+      ? input.posCharges.cashTaxPct
+      : input.posCharges?.taxPct;
+
     if (rows[0]) {
       await this.db
         .update(popsTaxSettings)
         .set({
           taxName: input.taxName ?? rows[0].taxName,
-          salesTaxPct: input.salesTaxPct ?? rows[0].salesTaxPct,
-          serviceTaxPct: input.serviceTaxPct ?? rows[0].serviceTaxPct,
+          salesTaxPct: input.salesTaxPct ?? salesFromPos ?? rows[0].salesTaxPct,
+          serviceTaxPct: input.serviceTaxPct ?? serviceFromPos ?? rows[0].serviceTaxPct,
           taxRegistrationNo: input.taxRegistrationNo ?? rows[0].taxRegistrationNo,
+          ...(posChargesJson !== undefined ? { posChargesJson } : {}),
           updatedAt: new Date(),
         })
         .where(eq(popsTaxSettings.id, rows[0].id));
@@ -1524,9 +1594,10 @@ export class AccountingService implements OnApplicationBootstrap {
         organizationId,
         branchId: branch.id,
         taxName: input.taxName ?? "GST",
-        salesTaxPct: input.salesTaxPct ?? 15,
-        serviceTaxPct: input.serviceTaxPct ?? 10,
+        salesTaxPct: input.salesTaxPct ?? salesFromPos ?? 15,
+        serviceTaxPct: input.serviceTaxPct ?? serviceFromPos ?? 10,
         taxRegistrationNo: input.taxRegistrationNo ?? null,
+        posChargesJson: posChargesJson ?? null,
       });
     }
 
@@ -1555,6 +1626,8 @@ export class AccountingService implements OnApplicationBootstrap {
       status: r.status as "draft" | "approved" | "paid",
       createdBy: r.createdBy,
       createdAt: r.createdAt.toISOString(),
+      paidAt: r.paidAt ? r.paidAt.toISOString() : null,
+      paidBy: r.paidBy ?? null,
     }));
   }
 
@@ -1592,6 +1665,8 @@ export class AccountingService implements OnApplicationBootstrap {
       status: "draft" as const,
       createdBy: userEmail,
       createdAt: row!.createdAt.toISOString(),
+      paidAt: null,
+      paidBy: null,
     };
   }
 
@@ -1606,6 +1681,10 @@ export class AccountingService implements OnApplicationBootstrap {
       throw new NotFoundException("Payroll run not found");
     }
 
+    // Balanced even when advances > salary (negative net): payable = max(0, net).
+    const payable = Math.max(0, payroll.totalNetPkr);
+    const deductionCredit = Math.max(0, payroll.totalGrossPkr - payable);
+
     const entry = await this.hooks.postEntry(organizationId, payroll.branchId, {
       entryRef: `JV-${payroll.payrollRef}`,
       entryDate: payroll.periodEnd,
@@ -1615,8 +1694,13 @@ export class AccountingService implements OnApplicationBootstrap {
       createdBy: userEmail,
       lines: [
         { accountCode: "5204", debit: payroll.totalGrossPkr, credit: 0 },
-        { accountCode: "2301", debit: 0, credit: payroll.totalNetPkr },
-        { accountCode: "5204", debit: 0, credit: payroll.totalDeductionsPkr, memo: "Deductions" },
+        { accountCode: "2301", debit: 0, credit: payable },
+        {
+          accountCode: "5204",
+          debit: 0,
+          credit: deductionCredit,
+          memo: payroll.totalNetPkr < 0 ? "Deductions / advance recovery" : "Deductions",
+        },
       ].filter((l) => l.debit > 0 || l.credit > 0),
     });
 
@@ -1628,7 +1712,12 @@ export class AccountingService implements OnApplicationBootstrap {
     return { payrollRef: payroll.payrollRef, status: "approved" };
   }
 
-  async payPayroll(organizationId: string, userEmail: string, payrollId: string) {
+  async payPayroll(
+    organizationId: string,
+    userEmail: string,
+    payrollId: string,
+    input?: { paidAt?: string },
+  ) {
     const rows = await this.db
       .select()
       .from(popsPayrollRuns)
@@ -1642,25 +1731,41 @@ export class AccountingService implements OnApplicationBootstrap {
       throw new BadRequestException("Payroll must be approved before payment");
     }
 
-    await this.hooks.postEntry(organizationId, payroll.branchId, {
-      entryRef: `JV-PAY-${payroll.payrollRef}`,
-      entryDate: new Date().toISOString().slice(0, 10),
-      source: "payroll",
-      sourceRef: payroll.payrollRef,
-      description: `Payroll payment ${payroll.payrollRef}`,
-      createdBy: userEmail,
-      lines: [
-        { accountCode: "2301", debit: payroll.totalNetPkr, credit: 0 },
-        { accountCode: "1102", debit: 0, credit: payroll.totalNetPkr },
-      ],
+    const paidAt = resolvePayrollPaidAt(input?.paidAt);
+    const entryDate = paidAt.toISOString().slice(0, 10);
+    const paidLabel = paidAt.toLocaleString("en-PK", {
+      dateStyle: "medium",
+      timeStyle: "short",
     });
+    const cashOut = Math.max(0, payroll.totalNetPkr);
+
+    if (cashOut > 0) {
+      await this.hooks.postEntry(organizationId, payroll.branchId, {
+        entryRef: `JV-PAY-${payroll.payrollRef}`,
+        entryDate,
+        source: "payroll",
+        sourceRef: payroll.payrollRef,
+        description: `Payroll payment ${payroll.payrollRef} · ${paidLabel}`,
+        createdBy: userEmail,
+        lines: [
+          { accountCode: "2301", debit: cashOut, credit: 0 },
+          { accountCode: "1102", debit: 0, credit: cashOut },
+        ],
+      });
+    }
+    // Zero / negative baqaya: no bank cash-out journal (advances already left cash earlier).
 
     await this.db
       .update(popsPayrollRuns)
-      .set({ status: "paid" })
+      .set({ status: "paid", paidAt, paidBy: userEmail })
       .where(eq(popsPayrollRuns.id, payrollId));
 
-    return { payrollRef: payroll.payrollRef, status: "paid" };
+    return {
+      payrollRef: payroll.payrollRef,
+      status: "paid" as const,
+      paidAt: paidAt.toISOString(),
+      paidBy: userEmail,
+    };
   }
 
   async getReport(organizationId: string, branchCode: string, reportId: string) {
@@ -1985,4 +2090,14 @@ export class AccountingService implements OnApplicationBootstrap {
     if (!branch) throw new NotFoundException(`Branch not found: ${code}`);
     return branch;
   }
+}
+
+/** Accept ISO / datetime-local; fall back to now. */
+export function resolvePayrollPaidAt(raw?: string | null): Date {
+  const trimmed = raw?.trim();
+  if (!trimmed) return new Date();
+  // datetime-local has no timezone — treat as local wall clock.
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return new Date();
+  return parsed;
 }

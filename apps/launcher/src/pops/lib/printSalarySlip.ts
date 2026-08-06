@@ -25,9 +25,12 @@ export function buildSalarySlipHtml(slip: SalarySlip, branchName?: string): stri
             day: "2-digit",
             month: "short",
             year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
           }),
         )}</span></div>`
       : "";
+  const netClass = slip.netPkr < 0 ? ' style="color:#b91c1c"' : "";
 
   return `<!DOCTYPE html>
 <html>
@@ -78,7 +81,7 @@ export function buildSalarySlipHtml(slip: SalarySlip, branchName?: string): stri
     <tr><td>Gross pay</td><td>${escapeHtml(formatPkr(slip.grossPkr))}</td></tr>
     <tr><td>Deductions (EOBI/tax)</td><td>− ${escapeHtml(formatPkr(slip.deductionsPkr))}</td></tr>
     <tr><td>Overtime</td><td>${escapeHtml(formatPkr(slip.overtimePkr))}</td></tr>
-    <tr class="total"><td>Net pay</td><td>${escapeHtml(formatPkr(slip.netPkr))}</td></tr>
+    <tr class="total"><td>Baqaya / Net</td><td${netClass}>${escapeHtml(formatPkr(slip.netPkr))}</td></tr>
   </table>
   ${paidLine}
   <div class="footer">Generated ${escapeHtml(

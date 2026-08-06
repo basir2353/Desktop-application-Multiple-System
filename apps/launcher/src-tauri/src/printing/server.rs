@@ -328,13 +328,33 @@ fn handle_request(
             .cloned()
             .unwrap_or_else(|| parsed.clone());
         let payload_json = payload.to_string();
+        let order_id = parsed.get("orderId").and_then(|v| v.as_str());
+        let kind = payload
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("receipt");
+        // Same order within ~45s → return existing job (no second PDF dialog).
+        if let Some(oid) = order_id {
+            let since = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().saturating_sub(45))
+                .unwrap_or(0)
+                .to_string();
+            if let Ok(Some(existing)) = db::find_recent_order_job(&conn, branch_code, oid, kind, &since)
+            {
+                return json_response(
+                    200,
+                    serde_json::to_string(&existing).unwrap_or_else(|_| "{}".into()),
+                );
+            }
+        }
         if let Err(e) = db::insert_job(
             &conn,
             &id,
             branch_code,
             parsed.get("printerId").and_then(|v| v.as_str()),
             parsed.get("printerName").and_then(|v| v.as_str()),
-            parsed.get("orderId").and_then(|v| v.as_str()),
+            order_id,
             parsed
                 .get("priority")
                 .and_then(|v| v.as_i64())

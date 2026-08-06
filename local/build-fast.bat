@@ -74,6 +74,7 @@ if errorlevel 1 (
   call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:admin-apk:win
   if errorlevel 1 exit /b 1
 )
+call :COPY_APK_TO_REPO pops-admin-release.apk
 echo Done: %REPO%\apps\waiter-mobile\dist\pops-admin-release.apk
 exit /b 0
 
@@ -88,8 +89,20 @@ if errorlevel 1 (
   call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:staff-apk:win
   if errorlevel 1 exit /b 1
 )
+call :COPY_APK_TO_REPO pops-staff-release.apk
 echo Done: %REPO%\apps\waiter-mobile\dist\pops-staff-release.apk
 exit /b 0
+
+:COPY_APK_TO_REPO
+set "APK_NAME=%~1"
+mkdir "%REPO%\apps\waiter-mobile\dist" 2>nul
+if exist "%POPS_BUILD_ROOT%\apps\waiter-mobile\dist\%APK_NAME%" (
+  copy /Y "%POPS_BUILD_ROOT%\apps\waiter-mobile\dist\%APK_NAME%" "%REPO%\apps\waiter-mobile\dist\%APK_NAME%" >nul
+)
+if exist "%POPS_BUILD_ROOT%\dist-installers\mobile-updates" (
+  robocopy "%POPS_BUILD_ROOT%\dist-installers\mobile-updates" "%REPO%\dist-installers\mobile-updates" /E /NFL /NDL /NJH /NJS /nc /ns /np >nul
+)
+goto :eof
 
 :BUILD_APK_WAITER
 call :PREP_APK_ROOT

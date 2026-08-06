@@ -1,6 +1,6 @@
 import type { BillLine, BillPayment, PaymentMethod } from "@platform/contracts";
 import { computeTicketTotals } from "./posDiscount";
-import { cartLineNet, type PosCartLine } from "./posCart";
+import { cartLineNet, cartLinePrintLabel, type PosCartLine } from "./posCart";
 import { effectiveTaxPct, type PosSettings } from "./posSettings";
 
 export type CheckoutTotals = ReturnType<typeof computeTicketTotals> & {
@@ -26,7 +26,7 @@ export function cartToBillLines(cart: PosCartLine[]): BillLine[] {
     }
     const id = String(line.item.id ?? "").trim();
     return {
-      label: line.lineLabel,
+      label: cartLinePrintLabel(line),
       qty: billQty,
       unitPrice,
       // Omit non-UUID ids — Zod rejects them even when the field is optional.

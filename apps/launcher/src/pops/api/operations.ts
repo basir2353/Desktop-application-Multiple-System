@@ -1,10 +1,14 @@
 import {
   createPopsBranchSchema,
   dashboardResponseSchema,
+  orgDataResetResultSchema,
+  orgDataResetSchema,
   popsBranchSchema,
   updatePopsBranchSchema,
   type CreatePopsBranch,
   type DashboardResponse,
+  type DataResetScope,
+  type OrgDataResetResult,
   type PopsBranch,
   type UpdatePopsBranch,
 } from "@platform/contracts";
@@ -49,6 +53,39 @@ export async function updatePopsBranch(
     throw new Error(err?.message ?? `Update branch failed: ${res.status}`);
   }
   return popsBranchSchema.parse(await res.json());
+}
+
+export async function fetchBusinessProfile(): Promise<{ name: string }> {
+  const res = await authFetch("/v1/operations/business-profile");
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Business profile failed: ${res.status}`);
+  }
+  const json = (await res.json()) as { name?: unknown };
+  if (typeof json?.name !== "string" || !json.name.trim()) {
+    throw new Error("Invalid business profile response");
+  }
+  return { name: json.name };
+}
+
+export async function resetOrgData(
+  scope: DataResetScope,
+  confirmText: string,
+): Promise<OrgDataResetResult> {
+  const body = orgDataResetSchema.parse({ scope, confirmText });
+  const res = await authFetch("/v1/operations/data-reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string | string[] } | null;
+    const message = Array.isArray(err?.message)
+      ? err.message.join(", ")
+      : (err?.message ?? `Data reset failed: ${res.status}`);
+    throw new Error(message);
+  }
+  return orgDataResetResultSchema.parse(await res.json());
 }
 
 export async function fetchDashboard(branchCode: string): Promise<DashboardResponse> {

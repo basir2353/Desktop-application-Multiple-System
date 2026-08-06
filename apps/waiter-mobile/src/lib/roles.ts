@@ -5,11 +5,18 @@ export type AppKind = "staff" | "admin" | "staff-locked";
 
 export function resolveStaffRole(claims: AccessTokenClaims | null): StaffRole | null {
   if (!claims) return null;
-  if (claims.role === "rider") return "rider";
-  if (claims.role === "cashier") return "cashier";
-  if (claims.role === "waiter") return "waiter";
+  const role = (claims.role ?? "").toLowerCase();
+  if (role === "rider") return "rider";
+  // Manager / admin / owner use cashier privileges in the staff app (Close, RPRA, pay).
+  if (role === "cashier" || role === "manager" || role === "admin" || role === "owner") {
+    return "cashier";
+  }
+  if (role === "waiter") return "waiter";
   const permissions = Array.isArray(claims.permissions) ? claims.permissions : [];
   if (permissions.includes("pops.delivery.manage") && claims.riderId) return "rider";
+  if (permissions.includes("pops.billing.manage") || permissions.includes("pops.pos.manage")) {
+    return "cashier";
+  }
   if (permissions.includes("pops.kitchen.bump")) return "waiter";
   return "waiter";
 }
@@ -52,7 +59,13 @@ export function isCashierRole(claims: AccessTokenClaims | null): boolean {
   return resolveStaffRole(claims) === "cashier";
 }
 
+/** Cashier / manager / admin may close any order. Waiters close only tickets they own (UI gate). */
 export function canCloseOrders(claims: AccessTokenClaims | null): boolean {
   if (!claims) return false;
-  return claims.role === "cashier" || claims.role === "manager" || claims.role === "admin";
+  const role = (claims.role ?? "").toLowerCase();
+  if (role === "cashier" || role === "manager" || role === "admin" || role === "owner") {
+    return true;
+  }
+  // Prefer role resolution so manager/admin are not misclassified as waiters.
+  return resolveStaffRole(claims) === "cashier";
 }

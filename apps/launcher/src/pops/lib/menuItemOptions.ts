@@ -11,6 +11,8 @@ export type MenuItemOptions = {
   secondaryName: string;
   /** Default % when Item Manual Discount is enabled. */
   defaultDiscountPct: number;
+  /** Flat price — no sizes on POS / tickets. */
+  simplePrice: boolean;
 };
 
 const STORAGE_PREFIX = "pops.menuItemOptions.v1.";
@@ -31,6 +33,7 @@ export function defaultMenuItemOptions(): MenuItemOptions {
     allowManualDiscount: false,
     secondaryName: "",
     defaultDiscountPct: 0,
+    simplePrice: false,
   };
 }
 
@@ -51,6 +54,7 @@ export function normalizeMenuItemOptions(input: Partial<MenuItemOptions> | null 
     allowManualDiscount,
     secondaryName: String(input.secondaryName ?? "").trim(),
     defaultDiscountPct: allowManualDiscount ? clampDiscountPct(input.defaultDiscountPct) : 0,
+    simplePrice: Boolean(input.simplePrice),
   };
 }
 
@@ -99,7 +103,8 @@ export function menuApiSupportsItemOptions(raw: Record<string, unknown> | null |
     typeof raw.askForQty === "boolean" ||
     typeof raw.allowManualDiscount === "boolean" ||
     typeof raw.secondaryName === "string" ||
-    typeof raw.defaultDiscountPct === "number"
+    typeof raw.defaultDiscountPct === "number" ||
+    typeof raw.simplePrice === "boolean"
   );
 }
 

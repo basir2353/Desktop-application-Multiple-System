@@ -1,18 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Bill, BillPayment, KitchenTicket, MenuItem } from "@platform/contracts";
+import { useQuery } from "@tanstack/react-query";
+import type { Bill, KitchenTicket, MenuItem } from "@platform/contracts";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
-import { completeBill, fetchOrders } from "../src/api/billing";
-import { fetchTaxFeatures } from "../src/api/admin";
+import { fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets } from "../src/api/kitchen";
 import { fetchBranchMenu } from "../src/api/menu";
 import {
@@ -26,17 +24,9 @@ import {
   StatusBadge,
   colors,
 } from "../src/components/ui";
-import { CloseOrderModal } from "../src/components/CloseOrderModal";
+import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import { formatPkr, formatTimeAgo, formatWhen, isToday } from "../src/lib/orderDisplay";
-import {
-  canEmbedPraOnSlip,
-  checkRealPraConnected,
-  issuePraForBill,
-  praIssuedNotice,
-  REAL_PRA_NOT_CONNECTED_MSG,
-} from "../src/lib/praIssueFlow";
 import { printBillReceipt, printCartBill, printKitchenOrder } from "../src/lib/printBill";
-import { canCloseOrders, isWaiterRole } from "../src/lib/roles";
 import {
   buildUnifiedOrders,
   canEditUnifiedOrder,
@@ -51,19 +41,19 @@ import {
   unifiedOrderTotal,
   type UnifiedOrder,
 } from "../src/lib/orderHistory";
-import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, effectiveTaxPct } from "../src/lib/posTaxSettings";
+import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, posTaxSettingsFromApi } from "../src/lib/posTaxSettings";
+import { fetchTaxSettings } from "../src/api/accounting";
+import { inferOrderModeFromStation } from "../src/lib/orderMode";
 import { useBranchStore } from "../src/stores/branchStore";
 import { resolveStaffRole } from "../src/lib/roles";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-const TAX_SETTINGS = DEFAULT_POS_TAX_SETTINGS;
-
-type HistoryFilter = "today" | "all" | "held";
+type HistoryFilter = "today" | "all" | "held" | "paid";
 
 export default function HistoryScreen() {
+  const styles = useScreenStyles();
   const router = useRouter();
   const params = useLocalSearchParams<{ filter?: string }>();
-  const queryClient = useQueryClient();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
   const branch = useBranchStore((s) => s.branch);
@@ -72,10 +62,9 @@ export default function HistoryScreen() {
     params.filter === "held" ? "held" : "today",
   );
   const [search, setSearch] = useState("");
-  const [closeBill, setCloseBill] = useState<Bill | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [rpraBusyId, setRpraBusyId] = useState<string | null>(null);
-  const cashierCanClose = canCloseOrders(claims) && !isWaiterRole(claims);
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const printLockRef = useRef<Set<string>>(new Set());
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
@@ -83,13 +72,6 @@ export default function HistoryScreen() {
     queryFn: () => fetchOrders(branchCode),
     refetchInterval: 15_000,
   });
-
-  const taxQuery = useQuery({
-    queryKey: ["tax-features"],
-    queryFn: fetchTaxFeatures,
-    staleTime: 60_000,
-  });
-  const praFakeEnabled = Boolean(taxQuery.data?.praFakeEnabled);
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
@@ -105,6 +87,16 @@ export default function HistoryScreen() {
     staleTime: 5 * 60_000,
   });
 
+  const posTaxQuery = useQuery({
+    queryKey: ["pos-tax-settings", branchCode],
+    enabled: Boolean(branchCode),
+    queryFn: () => fetchTaxSettings(branchCode),
+    staleTime: 30_000,
+  });
+  const TAX_SETTINGS = posTaxQuery.data
+    ? posTaxSettingsFromApi(posTaxQuery.data)
+    : DEFAULT_POS_TAX_SETTINGS;
+
   const menuItems = menuQuery.data?.items ?? [];
 
   const unified = useMemo(
@@ -118,6 +110,8 @@ export default function HistoryScreen() {
       list = list.filter((order) => isToday(order.createdAt));
     } else if (filter === "held") {
       list = list.filter((order) => order.source === "bill" && order.bill.status === "held");
+    } else if (filter === "paid") {
+      list = list.filter((order) => order.source === "bill" && order.bill.status === "completed");
     }
     if (search.trim()) {
       list = list.filter((order) => matchesOrderSearch(order, search));
@@ -151,127 +145,85 @@ export default function HistoryScreen() {
     void kitchenQuery.refetch();
   }
 
-  const closeMutation = useMutation({
-    mutationFn: (payload: { billId: string; payments: BillPayment[] }) => {
-      const dominant = payload.payments.reduce((best, p) =>
-        !best || p.amount > best.amount ? p : best,
-      payload.payments[0]);
-      const method =
-        dominant?.method === "card"
-          ? "card"
-          : dominant?.method === "wallet" || dominant?.method === "bank"
-            ? "wallet"
-            : "cash";
-      return completeBill(payload.billId, {
-        payments: payload.payments,
-        servicePct: TAX_SETTINGS.servicePct,
-        taxPct: effectiveTaxPct(TAX_SETTINGS, method),
-      });
-    },
-    onSuccess: async (bill) => {
-      setCloseBill(null);
-      void queryClient.invalidateQueries({ queryKey: ["orders"] });
-      let message = `Order ${bill.billRef} closed successfully.`;
-      if (branch) {
-        const printed = await printBillReceipt(branch.name, branch.code, bill);
-        if (printed) message = `${message} Receipt printed.`;
-      }
-      setNotice(message);
-    },
-    onError: (err: Error) => setNotice(err.message),
-  });
+  async function withPrintLock(key: string, run: () => Promise<void>): Promise<void> {
+    if (printLockRef.current.has(key) || printingId) return;
+    printLockRef.current.add(key);
+    setPrintingId(key);
+    try {
+      await run();
+    } finally {
+      printLockRef.current.delete(key);
+      setPrintingId(null);
+    }
+  }
 
   async function handlePrint(bill: Bill): Promise<void> {
     if (!branch) return;
-    const ok = await printBillReceipt(branch.name, branch.code, bill);
-    setNotice(ok ? `Bill for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
-  }
-
-  async function handleRpra(bill: Bill): Promise<void> {
-    if (!branch) return;
-    setRpraBusyId(bill.id);
-    try {
-      const gate = await checkRealPraConnected(branch.code);
-      if (!gate.connected) throw new Error(REAL_PRA_NOT_CONNECTED_MSG);
-      const issued = await issuePraForBill({
-        branchCode: branch.code,
-        billId: bill.id,
-        mode: "real",
-      });
-      if (!canEmbedPraOnSlip(issued.fiscal)) {
-        setNotice("Real PRA did not return invoice number/QR.");
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: ["orders", branchCode] });
-      const printed = await printBillReceipt(branch.name, branch.code, {
-        ...bill,
-        praMode: "real",
-        praInvoiceNumber: issued.fiscal.invoiceNumber,
-        praQrPayload: issued.fiscal.qrPayload?.trim() || issued.fiscal.invoiceNumber,
-        praInvoiceId: issued.fiscal.invoiceId,
-      });
-      setNotice(
-        printed
-          ? `${praIssuedNotice("real", issued.fiscal.invoiceNumber)}. Receipt printed.`
-          : praIssuedNotice("real", issued.fiscal.invoiceNumber),
-      );
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not upload to Real PRA.");
-    } finally {
-      setRpraBusyId(null);
-    }
+    await withPrintLock(`bill-${bill.id}`, async () => {
+      const ok = await printBillReceipt(branch.name, branch.code, bill, { embedPra: false });
+      setNotice(ok ? `Bill for ${bill.billRef} sent to printer.` : `Could not print ${bill.billRef}.`);
+    });
   }
 
   async function handlePrintKitchen(ticket: KitchenTicket): Promise<void> {
     if (!branch) return;
-    const ok = await printKitchenOrder(branch.name, branch.code, ticket, menuItems);
-    setNotice(
-      ok
-        ? `Print order sent for ${ticket.orderRef ?? ticket.ticketRef}.`
-        : `Could not print ${ticket.orderRef ?? ticket.ticketRef}.`,
-    );
+    await withPrintLock(`kot-${ticket.id}`, async () => {
+      const ok = await printKitchenOrder(branch.name, branch.code, ticket, menuItems);
+      setNotice(
+        ok
+          ? `Print order sent for ${ticket.orderRef ?? ticket.ticketRef}.`
+          : `Could not print ${ticket.orderRef ?? ticket.ticketRef}.`,
+      );
+    });
   }
 
   async function handlePrintKitchenBill(ticket: KitchenTicket): Promise<void> {
     if (!branch) return;
-    const lines = (ticket.lines ?? []).map((line) => ({
-      label: line.label,
-      qty: line.qty,
-      unitPrice: line.unitPrice ?? 0,
-    }));
-    const subtotal =
-      lines.length > 0
-        ? lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0)
-        : kitchenTicketTotal(ticket, menuItems) ?? 0;
-    const totals = calcServiceTaxTotals(subtotal, TAX_SETTINGS, "cash");
-    const ok = await printCartBill({
-      branchName: branch.name,
-      branchCode: branch.code,
-      orderRef: ticket.orderRef ?? ticket.ticketRef,
-      tableLabel: ticket.stationLabel,
-      waiterName: ticket.createdByName,
-      lines:
+    await withPrintLock(`kbill-${ticket.id}`, async () => {
+      const lines = (ticket.lines ?? []).map((line) => ({
+        label: line.label,
+        qty: line.qty,
+        unitPrice: line.unitPrice ?? 0,
+      }));
+      const subtotal =
         lines.length > 0
-          ? lines
-          : [{ label: ticket.itemsSummary || "Order", qty: 1, unitPrice: subtotal }],
-      subtotal,
-      service: totals.service,
-      servicePct: totals.servicePct,
-      tax: totals.tax,
-      taxPct: totals.taxPct,
-      total: totals.total,
-      cashTaxPct: totals.cashTaxPct,
-      cardTaxPct: totals.cardTaxPct,
-      cashTax: totals.cashTax,
-      cardTax: totals.cardTax,
-      cashTotal: totals.cashTotal,
-      cardTotal: totals.cardTotal,
+          ? lines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0)
+          : kitchenTicketTotal(ticket, menuItems, TAX_SETTINGS) ?? 0;
+      const totals = calcServiceTaxTotals(
+        subtotal,
+        TAX_SETTINGS,
+        "cash",
+        inferOrderModeFromStation(ticket.stationLabel),
+      );
+      const ok = await printCartBill({
+        branchName: branch.name,
+        branchCode: branch.code,
+        orderRef: ticket.orderRef ?? ticket.ticketRef,
+        tableLabel: ticket.stationLabel,
+        waiterName: ticket.createdByName,
+        lines:
+          lines.length > 0
+            ? lines
+            : [{ label: ticket.itemsSummary || "Order", qty: 1, unitPrice: subtotal }],
+        subtotal,
+        service: totals.service,
+        servicePct: totals.servicePct,
+        tax: totals.tax,
+        taxPct: totals.taxPct,
+        total: totals.total,
+        cashTaxPct: totals.cashTaxPct,
+        cardTaxPct: totals.cardTaxPct,
+        cashTax: totals.cashTax,
+        cardTax: totals.cardTax,
+        cashTotal: totals.cashTotal,
+        cardTotal: totals.cardTotal,
+      });
+      setNotice(
+        ok
+          ? `Bill sent for ${ticket.orderRef ?? ticket.ticketRef}.`
+          : `Could not print bill for ${ticket.orderRef ?? ticket.ticketRef}.`,
+      );
     });
-    setNotice(
-      ok
-        ? `Bill sent for ${ticket.orderRef ?? ticket.ticketRef}.`
-        : `Could not print bill for ${ticket.orderRef ?? ticket.ticketRef}.`,
-    );
   }
 
   function openEdit(order: UnifiedOrder): void {
@@ -285,8 +237,8 @@ export default function HistoryScreen() {
   const filters: { id: HistoryFilter; label: string }[] = [
     { id: "today", label: "Today" },
     { id: "all", label: "All" },
-    // Cashiers close held bills; waiters may view on-hold but cannot close.
-    { id: "held", label: cashierCanClose ? "On hold · close" : "On hold" },
+    { id: "paid", label: "Paid" },
+    { id: "held", label: "On hold" },
   ];
 
   return (
@@ -307,20 +259,10 @@ export default function HistoryScreen() {
         </View>
 
         {queryError ? <Notice tone="warning">{queryError}</Notice> : null}
-        {!cashierCanClose && filter === "held" ? (
-          <Notice tone="warning">
-            Waiters cannot close orders. Cashier collects payment and closes held bills.
-          </Notice>
-        ) : null}
         {notice ? (
           <Notice
             tone={
-              notice.includes("success") ||
-              notice.includes("closed") ||
-              notice.includes("printed") ||
-              notice.includes("issued")
-                ? "success"
-                : "warning"
+              notice.includes("success") || notice.includes("printed") ? "success" : "warning"
             }
           >
             {notice}
@@ -383,7 +325,9 @@ export default function HistoryScreen() {
                     ? "Kitchen tickets and bills from today will appear here."
                     : filter === "held"
                       ? "Held bills waiting for payment appear here."
-                      : "Your branch order history will appear here."
+                      : filter === "paid"
+                        ? "Completed / paid bills appear here."
+                        : "Your branch order history will appear here."
               }
             />
           </Card>
@@ -396,7 +340,6 @@ export default function HistoryScreen() {
                 menuItems={menuItems}
                 userId={claims?.sub ?? null}
                 onEdit={openEdit}
-                onClose={cashierCanClose && order.source === "bill" && order.bill.status === "held" ? () => setCloseBill(order.bill) : undefined}
                 onPrint={
                   order.source === "bill"
                     ? () => void handlePrint(order.bill)
@@ -407,32 +350,11 @@ export default function HistoryScreen() {
                     ? () => void handlePrintKitchenBill(order.ticket)
                     : undefined
                 }
-                onRpra={
-                  praFakeEnabled &&
-                  order.source === "bill" &&
-                  order.bill.status === "completed" &&
-                  order.bill.praMode !== "real"
-                    ? () => void handleRpra(order.bill)
-                    : undefined
-                }
-                rpraBusy={order.source === "bill" && rpraBusyId === order.bill.id}
               />
             ))}
           </View>
         )}
       </ScrollView>
-
-      {closeBill ? (
-        <CloseOrderModal
-          bill={closeBill}
-          visible
-          loading={closeMutation.isPending}
-          onClose={() => setCloseBill(null)}
-          onConfirm={(payments) =>
-            closeMutation.mutate({ billId: closeBill.id, payments })
-          }
-        />
-      ) : null}
     </Screen>
   );
 }
@@ -442,22 +364,17 @@ function OrderHistoryCard({
   menuItems,
   userId,
   onEdit,
-  onClose,
   onPrint,
   onPrintBill,
-  onRpra,
-  rpraBusy,
 }: {
   order: UnifiedOrder;
   menuItems: MenuItem[];
   userId: string | null;
   onEdit: (order: UnifiedOrder) => void;
-  onClose?: () => void;
   onPrint?: () => void;
   onPrintBill?: () => void;
-  onRpra?: () => void;
-  rpraBusy?: boolean;
 }) {
+  const styles = useScreenStyles();
   const total = unifiedOrderTotal(order, menuItems);
   const accent = orderStatusAccent(order);
   const status = unifiedOrderStatus(order);
@@ -527,20 +444,6 @@ function OrderHistoryCard({
             <Text style={styles.printBtnText}>Print bill</Text>
           </Pressable>
         ) : null}
-        {onRpra ? (
-          <Pressable
-            onPress={onRpra}
-            disabled={rpraBusy}
-            style={[styles.rpraBtn, rpraBusy ? { opacity: 0.55 } : null]}
-          >
-            <Text style={styles.rpraBtnText}>{rpraBusy ? "…" : "RPRA"}</Text>
-          </Pressable>
-        ) : null}
-        {onClose ? (
-          <Pressable onPress={onClose} style={styles.closeBtn}>
-            <Text style={styles.closeBtnText}>Close</Text>
-          </Pressable>
-        ) : null}
         </View>
       </View>
 
@@ -549,7 +452,10 @@ function OrderHistoryCard({
   );
 }
 
-const styles = StyleSheet.create({
+
+function useScreenStyles() {
+  return useThemedStyleSheet((c) => ({
+
   screen: {
     paddingBottom: 0,
   },
@@ -564,12 +470,12 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   branchName: {
-    color: colors.text,
+    color: c.text,
     fontSize: 18,
     fontWeight: "700",
   },
   branchMeta: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 13,
   },
   statsRow: {
@@ -579,14 +485,14 @@ const styles = StyleSheet.create({
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderRadius: 12,
     paddingHorizontal: 12,
   },
   searchIcon: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 18,
     marginRight: 8,
   },
@@ -595,10 +501,10 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingHorizontal: 0,
-    color: colors.text,
+    color: c.text,
   },
   clearSearch: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 13,
     fontWeight: "600",
     paddingLeft: 8,
@@ -613,7 +519,7 @@ const styles = StyleSheet.create({
     paddingVertical: 32,
   },
   loadingText: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
   },
   emptyCard: {
@@ -623,10 +529,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   orderCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     borderLeftWidth: 3,
     padding: 16,
     gap: 10,
@@ -646,7 +552,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   orderRef: {
-    color: colors.text,
+    color: c.text,
     fontFamily: "monospace",
     fontSize: 16,
     fontWeight: "700",
@@ -658,27 +564,27 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   tablePill: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: c.border,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   tablePillText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 12,
     fontWeight: "600",
   },
   sourceLabel: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.4,
     textTransform: "uppercase",
   },
   itemsSummary: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -707,7 +613,7 @@ const styles = StyleSheet.create({
     maxWidth: "55%",
   },
   orderTotal: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 18,
     fontWeight: "700",
   },
@@ -717,13 +623,13 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   orderWhen: {
-    color: colors.text,
+    color: c.text,
     fontSize: 13,
     fontWeight: "600",
     marginTop: 4,
   },
   orderWhenExact: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
     marginTop: 2,
   },
@@ -738,7 +644,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   editBtnText: {
-    color: colors.accent,
+    color: c.accent,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -751,52 +657,25 @@ const styles = StyleSheet.create({
   printBtn: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bg,
+    borderColor: c.border,
+    backgroundColor: c.bg,
     paddingHorizontal: 14,
     paddingVertical: 10,
     minWidth: 72,
     alignItems: "center",
   },
   printBtnText: {
-    color: colors.text,
+    color: c.text,
     fontSize: 14,
     fontWeight: "600",
   },
-  rpraBtn: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.55)",
-    backgroundColor: "rgba(16, 185, 129, 0.18)",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    minWidth: 72,
-    alignItems: "center",
-  },
-  rpraBtnText: {
-    color: "#6ee7b7",
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  closeBtn: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(34, 197, 94, 0.45)",
-    backgroundColor: "rgba(34, 197, 94, 0.12)",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    minWidth: 72,
-    alignItems: "center",
-  },
-  closeBtnText: {
-    color: colors.success,
-    fontSize: 14,
-    fontWeight: "700",
-  },
   orderMeta: {
-    color: colors.muted,
+    color: c.muted,
     fontSize: 11,
     fontFamily: "monospace",
     marginTop: -2,
   },
-});
+
+  }));
+}
+

@@ -30,6 +30,7 @@ import * as bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { DeliveryService } from "../delivery/delivery.service";
 import { MailService } from "../mail/mail.service";
 import {
   findLiveLoginUserByEmail,
@@ -118,6 +119,7 @@ export class UsersService implements OnApplicationBootstrap {
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly mail: MailService,
     private readonly config: ConfigService,
+    private readonly delivery: DeliveryService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -432,6 +434,10 @@ export class UsersService implements OnApplicationBootstrap {
       lastActivityAt: null,
     });
 
+    if (input.role === "rider") {
+      await this.delivery.ensureRiderProfileForUser(organizationId, user.id, branchScope);
+    }
+
     return this.getUser(organizationId, user.id);
   }
 
@@ -487,6 +493,17 @@ export class UsersService implements OnApplicationBootstrap {
             eq(organizationMemberships.userId, userId),
           ),
         );
+    }
+
+    const nextRole = input.role ?? membership.role;
+    if (nextRole === "rider") {
+      const nextScope =
+        input.branchScope !== undefined
+          ? input.branchScope.trim() === "All"
+            ? "all"
+            : input.branchScope.trim().toUpperCase()
+          : membership.branchScope;
+      await this.delivery.ensureRiderProfileForUser(organizationId, userId, nextScope);
     }
 
     return this.getUser(organizationId, userId);
@@ -727,6 +744,14 @@ export class UsersService implements OnApplicationBootstrap {
       pinRequired: invite.pinRequired,
       lastActivityAt: new Date(),
     });
+
+    if (invite.role === "rider") {
+      await this.delivery.ensureRiderProfileForUser(
+        invite.organizationId,
+        user.id,
+        invite.branchScope,
+      );
+    }
 
     await this.db
       .update(userInvites)

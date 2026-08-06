@@ -11,14 +11,14 @@ import {
   type PaymentMethod,
   type WaiterOption,
 } from "@platform/contracts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BillReceiptPreview } from "./BillReceiptPreview";
 import { computeCheckoutTotals } from "../lib/posCheckout";
 import { discountAmountFromPct } from "../lib/posDiscount";
 import { billChannelLabel } from "../lib/orderSales";
 import { type PrintTicketInput } from "../lib/printTicket";
 import type { BillPrintSettings } from "../lib/billPrintSettings";
-import { loadPosSettings } from "../lib/posSettings";
+import { loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../lib/posSettings";
 import { fieldInputClass, fieldSelectClass, linkDangerClass } from "../lib/themeClasses";
 
 export type BillFormValues = {
@@ -108,7 +108,22 @@ export function BillFormModal({
   onClose,
   onSubmit,
 }: Props): JSX.Element {
-  const taxEnabled = loadPosSettings(branchCode).taxEnabled;
+  const [settingsTick, setSettingsTick] = useState(0);
+  useEffect(() => {
+    function refresh(event: Event): void {
+      const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
+      if (!branchCode || detail?.branchCode === branchCode) {
+        setSettingsTick((n) => n + 1);
+      }
+    }
+    window.addEventListener(POS_SETTINGS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, refresh);
+  }, [branchCode]);
+
+  const taxEnabled = useMemo(
+    () => loadPosSettings(branchCode).taxEnabled,
+    [branchCode, settingsTick],
+  );
   const [form, setForm] = useState<BillFormValues>(() => {
     const base =
       mode === "edit" && bill
@@ -118,6 +133,16 @@ export function BillFormModal({
     return base;
   });
   const [menuPick, setMenuPick] = useState("");
+
+  // Apply latest Settings defaults when creating a new bill (not when editing an existing one).
+  useEffect(() => {
+    if (mode !== "create") return;
+    setForm((prev) => ({
+      ...prev,
+      servicePct: defaultServicePct,
+      taxPct: taxEnabled ? defaultTaxPct : 0,
+    }));
+  }, [mode, defaultServicePct, defaultTaxPct, taxEnabled]);
 
   const totals = useMemo(() => {
     const validLines = form.lines.filter((l) => l.label.trim() && l.qty > 0);

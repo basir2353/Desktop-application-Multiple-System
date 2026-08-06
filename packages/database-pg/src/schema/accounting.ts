@@ -239,6 +239,8 @@ export const popsTaxSettings = pgTable("pops_tax_settings", {
   salesTaxPct: integer("sales_tax_pct").notNull().default(15),
   serviceTaxPct: integer("service_tax_pct").notNull().default(10),
   taxRegistrationNo: text("tax_registration_no"),
+  /** JSON blob for POS service/tax charges (cash/card rates, mode toggles). */
+  posChargesJson: text("pos_charges_json"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -259,6 +261,9 @@ export const popsPayrollRuns = pgTable("pops_payroll_runs", {
   staffCount: integer("staff_count").notNull(),
   status: text("status").notNull().default("draft"), // draft | approved | paid
   journalEntryId: uuid("journal_entry_id").references(() => popsJournalEntries.id, { onDelete: "set null" }),
+  /** When salary was paid (date+time) — used on slips + pay journal. */
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  paidBy: text("paid_by"),
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

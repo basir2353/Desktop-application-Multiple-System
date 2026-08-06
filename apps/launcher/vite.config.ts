@@ -34,6 +34,10 @@ export default defineConfig(({ mode }) => {
       host: "127.0.0.1",
       port: 1420,
       strictPort: true,
+      // Avoid Chrome ERR_CACHE_READ_FAILURE / stale 304 on dynamic imports during dev.
+      headers: {
+        "Cache-Control": "no-store",
+      },
       // Shop IP is PRA-whitelisted; proxy PostData so the browser can reach e-IMS without CORS.
       proxy: {
         "/pra-ims": {

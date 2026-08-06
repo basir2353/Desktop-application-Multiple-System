@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -43,12 +51,26 @@ const productHints = {
   pharmacy: /pharmacy/i,
 };
 const hint = productHints[edition];
+function versionTuple(name) {
+  const m = name.match(/_(\d+)\.(\d+)\.(\d+)_/);
+  if (!m) return [0, 0, 0];
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
 const ranked = setupFiles
   .filter((f) => hint.test(f))
   .sort((a, b) => {
-    const sa = existsSync(join(nsisDir, a)) ? a : a;
-    const sb = existsSync(join(nsisDir, b)) ? b : b;
-    return sb.localeCompare(sa);
+    const va = versionTuple(a);
+    const vb = versionTuple(b);
+    for (let i = 0; i < 3; i++) {
+      if (vb[i] !== va[i]) return vb[i] - va[i];
+    }
+    // Same version: newest file wins.
+    try {
+      return statSync(join(nsisDir, b)).mtimeMs - statSync(join(nsisDir, a)).mtimeMs;
+    } catch {
+      return b.localeCompare(a);
+    }
   });
 const setupName = ranked[0] ?? setupFiles.sort().at(-1);
 const setupPath = join(nsisDir, setupName);

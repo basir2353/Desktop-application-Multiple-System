@@ -113,6 +113,24 @@ export function resolveAutoPraMode(features: {
   return null;
 }
 
+/** RPRA button: FPRA Active only. Click sends that ticket to Real PRA + Real print. */
+export function canShowRpraButton(features: {
+  praFakeEnabled?: boolean;
+  praRealEnabled?: boolean;
+}): boolean {
+  return resolveAutoPraMode(features) === "fake";
+}
+
+/** Hide RPRA on tickets that already have a Real PRA invoice. */
+export function canShowRpraForBill(input: {
+  praFakeEnabled?: boolean;
+  praRealEnabled?: boolean;
+  praMode?: string | null;
+}): boolean {
+  if (String(input.praMode ?? "").toLowerCase() === "real") return false;
+  return canShowRpraButton(input);
+}
+
 export type AutoIssuePraResult = {
   mode: PraInvoiceMode | null;
   fiscal: PraFiscalInvoice | null;

@@ -179,3 +179,13 @@ export async function payCustomerInvoice(
   }
   return res.json().catch(() => ({ ok: true }));
 }
+
+export async function fetchTaxSettings(branchCode: string) {
+  const { taxSettingsSchema } = await import("@platform/contracts");
+  const res = await authFetch(`/v1/accounting/tax?${branchParams(branchCode)}`);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Tax settings failed: ${res.status}`);
+  }
+  return taxSettingsSchema.parse(await res.json());
+}

@@ -1,4 +1,5 @@
-import type { StaffFoodRecord } from "@platform/contracts";
+import type { ExpenseCategory, StaffFoodRecord } from "@platform/contracts";
+import { EXPENSE_CATEGORIES } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
@@ -7,6 +8,7 @@ import {
   fetchEmployees,
   fetchStaffFood,
 } from "../api/hr";
+import { fetchBranchInventory } from "../api/inventory";
 import { formatPkr, hrInputClass, useHrAccess } from "../hooks/useHr";
 import { accentValueClass, linkDangerClass, mutedClass, panelClass } from "../lib/themeClasses";
 import { Badge } from "../ui/Badge";
@@ -23,6 +25,8 @@ export function StaffFoodPanel(): JSX.Element {
     consumerType: "staff" as ConsumerType,
     employeeId: "",
     personName: "",
+    supplierId: "",
+    expenseCategory: "Staff Meals" as ExpenseCategory,
     mealDate: new Date().toISOString().slice(0, 10),
     itemsOrdered: "",
     amountPkr: "",
@@ -41,12 +45,20 @@ export function StaffFoodPanel(): JSX.Element {
     queryFn: () => fetchEmployees(branch!.code),
   });
 
+  const suppliersQuery = useQuery({
+    queryKey: ["inventory", "branch", branch?.code, "staff-food-suppliers"],
+    enabled: Boolean(branch?.code) && canManage,
+    queryFn: () => fetchBranchInventory(branch!.code),
+  });
+
   const createMutation = useMutation({
     mutationFn: () =>
       createStaffFoodRecord({
         branchCode: branch!.code,
         consumerType: form.consumerType,
         employeeId: form.consumerType === "staff" ? form.employeeId : undefined,
+        supplierId: form.supplierId || undefined,
+        expenseCategory: form.expenseCategory,
         personName:
           form.consumerType === "guest"
             ? form.personName.trim()
@@ -58,6 +70,7 @@ export function StaffFoodPanel(): JSX.Element {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["hr", "staff-food"] });
+      void queryClient.invalidateQueries({ queryKey: ["accounting", "expenses"] });
       setForm((current) => ({
         ...current,
         itemsOrdered: "",
@@ -82,6 +95,11 @@ export function StaffFoodPanel(): JSX.Element {
   const activeEmployees = useMemo(
     () => (employeesQuery.data ?? []).filter((e) => e.employmentStatus === "active"),
     [employeesQuery.data],
+  );
+
+  const activeSuppliers = useMemo(
+    () => (suppliersQuery.data?.suppliers ?? []).filter((s) => s.active),
+    [suppliersQuery.data],
   );
 
   if (staffFoodQuery.isLoading) return <HrLoading label="Loading staff food records…" />;
@@ -171,6 +189,33 @@ export function StaffFoodPanel(): JSX.Element {
             />
           )}
 
+          <select
+            className={hrInputClass}
+            value={form.expenseCategory}
+            onChange={(e) =>
+              setForm({ ...form, expenseCategory: e.target.value as ExpenseCategory })
+            }
+          >
+            {EXPENSE_CATEGORIES.map((category) => (
+              <option key={category} value={category}>
+                Expense · {category}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className={hrInputClass}
+            value={form.supplierId}
+            onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
+          >
+            <option value="">Supplier (optional)</option>
+            {activeSuppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
+            ))}
+          </select>
+
           <input
             className={hrInputClass}
             type="date"
@@ -218,7 +263,7 @@ export function StaffFoodPanel(): JSX.Element {
           },
           {
             key: "personName",
-            header: "Name",
+            header: "Employee / guest",
             render: (r) => (
               <div>
                 <div className="font-medium text-slate-900 dark:text-slate-100">{r.personName}</div>
@@ -230,6 +275,23 @@ export function StaffFoodPanel(): JSX.Element {
                 ) : null}
               </div>
             ),
+          },
+          {
+            key: "expenseCategory",
+            header: "Expense",
+            render: (r) => (
+              <div>
+                <div>{r.expenseCategory}</div>
+                {r.expenseRef ? (
+                  <div className={`text-xs ${mutedClass}`}>{r.expenseRef}</div>
+                ) : null}
+              </div>
+            ),
+          },
+          {
+            key: "supplierName",
+            header: "Supplier",
+            render: (r) => r.supplierName ?? "—",
           },
           {
             key: "itemsOrdered",

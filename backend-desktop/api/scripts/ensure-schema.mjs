@@ -21,6 +21,7 @@ const STATEMENTS = [
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS enabled_modules jsonb`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fbr_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_enabled boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE pops_menu_items ADD COLUMN IF NOT EXISTS simple_price boolean NOT NULL DEFAULT false`,
   // General Store core tables (create if drizzle push skipped them on Railway).
   `CREATE TABLE IF NOT EXISTS store_categories (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -393,6 +394,9 @@ const STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS entity_deletion_backups_entity_idx
     ON entity_deletion_backups (entity_type, entity_id)`,
+  `ALTER TABLE pops_staff_food ADD COLUMN IF NOT EXISTS supplier_id uuid`,
+  `ALTER TABLE pops_staff_food ADD COLUMN IF NOT EXISTS expense_category text NOT NULL DEFAULT 'Staff Meals'`,
+  `ALTER TABLE pops_staff_food ADD COLUMN IF NOT EXISTS expense_id uuid`,
 ];
 export function ensureCriticalSchema() {
   const databaseUrl = process.env.DATABASE_URL?.trim();

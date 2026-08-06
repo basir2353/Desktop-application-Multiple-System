@@ -23,8 +23,9 @@ export const DEFAULT_MOBILE_PRINTER_SETTINGS: MobilePrinterSettings = {
   kitchenPrinters: ["Kitchen 1", "", "", ""],
   billPrinter: "Cashier / Billing",
   autoPrint: true,
-  modeIp: true,
-  modeServer: true,
+  /** Defaults: Live only. Enabling multiple modes no longer cascades (see printDedupe). */
+  modeIp: false,
+  modeServer: false,
   modeLive: true,
 };
 
@@ -37,9 +38,14 @@ function normalize(raw: Partial<MobilePrinterSettings> | null | undefined): Mobi
     kitchenPrinters: kitchen,
     billPrinter: String(raw?.billPrinter ?? DEFAULT_MOBILE_PRINTER_SETTINGS.billPrinter).trim(),
     autoPrint: raw?.autoPrint !== false,
-    modeIp: raw?.modeIp !== false,
-    modeServer: raw?.modeServer !== false,
-    modeLive: raw?.modeLive !== false,
+    modeIp:
+      typeof raw?.modeIp === "boolean" ? raw.modeIp : DEFAULT_MOBILE_PRINTER_SETTINGS.modeIp,
+    modeServer:
+      typeof raw?.modeServer === "boolean"
+        ? raw.modeServer
+        : DEFAULT_MOBILE_PRINTER_SETTINGS.modeServer,
+    modeLive:
+      typeof raw?.modeLive === "boolean" ? raw.modeLive : DEFAULT_MOBILE_PRINTER_SETTINGS.modeLive,
   };
 }
 

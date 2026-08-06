@@ -114,7 +114,7 @@ export function PrintCustomizeHub({ branchCode, notify, initialSub = "receipt" }
             branchCode={branchCode}
             settings={billSettings}
             onChange={setBillSettings}
-            onSave={() => persistBill(billSettings)}
+            onSave={(next) => setBillSettings(next)}
             onNotice={notify}
           />
         ) : null}

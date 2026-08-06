@@ -17,9 +17,12 @@ import {
 } from "../../lib/billPrintSettings";
 import {
   loadPosOrderModeVisibility,
+  normalizePosOrderModeVisibility,
+  POS_ORDER_MODE_VISIBILITY_KEYS,
   savePosOrderModeVisibility,
   type PosOrderModeVisibility,
 } from "../../lib/posOrderModeVisibility";
+import { POS_ORDER_MODES } from "../../lib/posOrderMode";
 import { BillCustomizationPanel } from "../../components/BillCustomizationPanel";
 import { fieldInputClass } from "../../lib/themeClasses";
 import { MenuImagePicker } from "../../ui/MenuImagePicker";
@@ -106,7 +109,7 @@ export function ContentPage(): JSX.Element {
   }
 
   function toggleOrderMode(key: keyof PosOrderModeVisibility, value: boolean): void {
-    const next = { ...orderModeVisibility, [key]: value };
+    const next = normalizePosOrderModeVisibility({ ...orderModeVisibility, [key]: value });
     setOrderModeVisibility(next);
     savePosOrderModeVisibility(branch!.code, next);
     setNotice("Order type visibility updated.");
@@ -211,10 +214,8 @@ export function ContentPage(): JSX.Element {
             branchCode={branch.code}
             settings={billPrintSettings}
             onChange={setBillPrintSettings}
-            onSave={() => {
-              persistBillSettings(billPrintSettings);
-              setNotice("Receipt content saved for this branch.");
-            }}
+            onNotice={setNotice}
+            onSave={(next) => setBillPrintSettings(next)}
           />
         </div>
       </section>
@@ -222,35 +223,30 @@ export function ContentPage(): JSX.Element {
       <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">POS order types</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Enable or disable optional order-type tabs on the POS screen. When enabled, they appear in
-          their current position alongside Dine-in, Takeaway, and Delivery.
+          On = tab shows on POS. Off = hidden. At least one type must stay on. (Same controls as
+          Settings → Charges by order type → Show.)
         </p>
 
         <div className="mt-4 space-y-3">
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={orderModeVisibility.onlineEnabled}
-              onChange={(e) => toggleOrderMode("onlineEnabled", e.target.checked)}
-            />
-            Online Orders
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={orderModeVisibility.foodpandaEnabled}
-              onChange={(e) => toggleOrderMode("foodpandaEnabled", e.target.checked)}
-            />
-            Foodpanda Orders
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={orderModeVisibility.staffFoodEnabled}
-              onChange={(e) => toggleOrderMode("staffFoodEnabled", e.target.checked)}
-            />
-            Staff Food
-          </label>
+          {POS_ORDER_MODES.map(({ id, label }) => {
+            const key = POS_ORDER_MODE_VISIBILITY_KEYS[id];
+            const checked = Boolean(orderModeVisibility[key]);
+            const enabledCount = Object.values(orderModeVisibility).filter(Boolean).length;
+            return (
+              <label
+                key={id}
+                className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={checked && enabledCount <= 1}
+                  onChange={(e) => toggleOrderMode(key, e.target.checked)}
+                />
+                {label}
+              </label>
+            );
+          })}
         </div>
       </section>
 

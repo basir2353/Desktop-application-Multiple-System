@@ -36,6 +36,7 @@ import {
   movePrinterPriority,
   PRINTER_ROUTING_CHANGED_EVENT,
   PRINTER_TEXT_SCALE_LABELS,
+  printerTypeForSection,
   printerTypeLabel,
   printerTypesForSystem,
   setCategorySections,
@@ -61,6 +62,11 @@ import {
   todaysPrintCount,
 } from "../../lib/printHistory";
 import { printTestPageAsync } from "../../lib/printTicket";
+import {
+  clampCustomPaperWidthMm,
+  loadThermalPrintSettings,
+  saveThermalPrintSettings,
+} from "../../lib/thermalPrintSettings";
 import { fetchBranchMenuAdmin } from "../../api/menu";
 import { fetchAssignableStaff, fetchOrgUsers } from "../../api/users";
 import { PageHeader } from "../../ui/PageHeader";
@@ -241,23 +247,6 @@ function PrinterDashboardStats({
       />
     </div>
   );
-}
-
-function printerTypeForSection(section: PrinterSection): PrinterType {
-  const id = section.id.toLowerCase();
-  const n = section.name.toLowerCase();
-  if (id === "receipt" || n.includes("receipt") || n.includes("bill") || n.includes("cashier")) {
-    return "receipt";
-  }
-  if (id === "counter" || n.includes("counter")) return "counter";
-  if (id === "warehouse" || n.includes("warehouse")) return "warehouse";
-  if (id === "label" || n.includes("label")) return "label";
-  if (id === "returns" || n.includes("return")) return "receipt";
-  if (id === "back-office" || n.includes("back office") || n.includes("back-office")) {
-    return "other";
-  }
-  if (n.includes("bar") || n.includes("drink") || n.includes("beverage")) return "bar";
-  return "kitchen";
 }
 
 function maybeSetDefaultPosPrinter(
@@ -1226,6 +1215,10 @@ function PrinterCategoriesTab({
       <div className="text-sm font-semibold text-slate-900 dark:text-white">Category printer routing</div>
       <p className="mt-1 text-xs text-slate-500">
         Every order line in a category prints to the sections checked here, unless a specific item overrides it.
+        Assign categories to <span className="font-medium text-slate-700 dark:text-slate-300">Pakistani</span>,{" "}
+        <span className="font-medium text-slate-700 dark:text-slate-300">Fast Food</span>, or{" "}
+        <span className="font-medium text-slate-700 dark:text-slate-300">Outside</span> — those drive the{" "}
+        <span className="font-medium text-slate-700 dark:text-slate-300">Kitchen Sale Report</span>.
       </p>
       <input
         className="mt-3 w-full max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
@@ -1406,6 +1399,7 @@ function PrinterItemsTab({
 function PrinterProfilesTab({
   branchCode,
   routing,
+  sections,
   systemPrinters,
   staffLabelById,
   notify,
@@ -1413,6 +1407,7 @@ function PrinterProfilesTab({
 }: {
   branchCode: string;
   routing: PrinterRoutingState;
+  sections: PrinterSection[];
   systemPrinters: SystemPrinterInfo[];
   staffLabelById: Map<string, string>;
   notify: (message: string) => void;
@@ -1420,6 +1415,9 @@ function PrinterProfilesTab({
 }): JSX.Element {
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<PrinterType>(isStore ? "receipt" : "kitchen");
+  const [newSectionId, setNewSectionId] = useState(
+    () => sections.find((s) => s.enabled)?.id ?? (isStore ? "receipt" : "kitchen"),
+  );
   const [newOsPrinter, setNewOsPrinter] = useState("");
   const addTypeOptions = printerTypesForSystem(isStore);
 
@@ -1443,17 +1441,22 @@ function PrinterProfilesTab({
       return;
     }
     try {
+      const sec = sections.find((s) => s.id === newSectionId);
+      const printerType = sec ? printerTypeForSection(sec) : newType;
       const profile = addPrinterProfile(branchCode, name, {
-        printerType: newType,
+        printerType,
         systemPrinterName: newOsPrinter || undefined,
       });
-      maybeSetDefaultPosPrinter(branchCode, profile.id, newType);
+      if (sec) {
+        setSectionPrimaryPrinter(branchCode, sec.id, profile.id);
+      }
+      maybeSetDefaultPosPrinter(branchCode, profile.id, printerType, sec?.id);
       setNewName("");
       setNewOsPrinter("");
       notify(
         profile.systemPrinterName
-          ? `Printer “${profile.name}” added and linked to ${profile.systemPrinterName}.`
-          : `Printer “${profile.name}” added. Link any Windows printer (including PDF/XPS) for Auto print.`,
+          ? `Printer “${profile.name}” added (${sec?.name ?? printerType}) → ${profile.systemPrinterName}.`
+          : `Printer “${profile.name}” added${sec ? ` as ${sec.name}` : ""}. Link any Windows printer for Auto print.`,
       );
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not add printer profile.");
@@ -1495,11 +1498,8 @@ function PrinterProfilesTab({
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">All printers</div>
         <p className="mt-1 text-xs text-slate-500">
-          Add a name, type (
-          {isStore
-            ? "Receipt / Counter / Warehouse / Label / Other"
-            : "Kitchen / Bar / Receipt"}
-          ), and link any Windows printer — USB, network,{" "}
+          Add a name, pick a <span className="text-slate-300">section role</span> (Kitchen / Bar / Grill / … —
+          same list as Sections), and link any Windows printer — USB, network,{" "}
           <span className="text-slate-300">Microsoft Print to PDF</span>, XPS, and more. Auto POS print uses the
           linked device; if silent print fails, the Windows dialog opens (same as manual).
         </p>
@@ -1519,14 +1519,29 @@ function PrinterProfilesTab({
           />
           <select
             className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
-            value={newType}
-            onChange={(e) => setNewType(e.target.value as PrinterType)}
+            value={newSectionId}
+            onChange={(e) => {
+              const sectionId = e.target.value;
+              setNewSectionId(sectionId);
+              const sec = sections.find((s) => s.id === sectionId);
+              if (sec) setNewType(printerTypeForSection(sec));
+            }}
           >
-            {addTypeOptions.map((type) => (
-              <option key={type} value={type}>
-                {printerTypeLabel(type, isStore)}
+            {(sections.filter((s) => s.enabled).length
+              ? sections.filter((s) => s.enabled)
+              : []
+            ).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.icon} {s.name}
               </option>
             ))}
+            {sections.filter((s) => s.enabled).length === 0
+              ? addTypeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {printerTypeLabel(type, isStore)}
+                  </option>
+                ))
+              : null}
           </select>
           <select
             className="min-w-[12rem] max-w-sm flex-1 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
@@ -1572,7 +1587,7 @@ function PrinterProfilesTab({
             <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-2.5 py-2">Printer name</th>
-                <th className="px-2.5 py-2">Type</th>
+                <th className="px-2.5 py-2">Section / Role</th>
                 <th className="px-2.5 py-2">OS printer</th>
                 <th className="px-2.5 py-2">Counter</th>
                 <th className="px-2.5 py-2">Assigned users</th>
@@ -1602,21 +1617,41 @@ function PrinterProfilesTab({
                       />
                     </td>
                     <td className="px-2.5 py-2">
-                      <select
-                        className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
-                        value={printer.printerType}
-                        onChange={(e) => {
-                          const printerType = e.target.value as PrinterType;
-                          updatePrinterProfile(branchCode, printer.id, { printerType });
-                          maybeSetDefaultPosPrinter(branchCode, printer.id, printerType);
-                        }}
-                      >
-                        {typeOptionsForProfile(isStore, printer.printerType).map((type) => (
-                          <option key={type} value={type}>
-                            {printerTypeLabel(type, isStore)}
-                          </option>
-                        ))}
-                      </select>
+                      {(() => {
+                        const linked = listSectionsForPrinter(branchCode, printer.id, sections);
+                        const primaryId = linked.find((s) => s.primary)?.id ?? "";
+                        return (
+                          <select
+                            className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                            value={primaryId}
+                            onChange={(e) => {
+                              const sectionId = e.target.value;
+                              if (!sectionId) return;
+                              setSectionPrimaryPrinter(branchCode, sectionId, printer.id);
+                              const sec = sections.find((s) => s.id === sectionId);
+                              if (sec) {
+                                maybeSetDefaultPosPrinter(
+                                  branchCode,
+                                  printer.id,
+                                  printerTypeForSection(sec),
+                                  sec.id,
+                                );
+                              }
+                            }}
+                          >
+                            <option value="">
+                              {primaryId ? "Change section…" : "No section yet"}
+                            </option>
+                            {sections
+                              .filter((s) => s.enabled)
+                              .map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.icon} {s.name}
+                                </option>
+                              ))}
+                          </select>
+                        );
+                      })()}
                     </td>
                     <td className="px-2.5 py-2">
                       <select
@@ -1718,20 +1753,41 @@ function PrinterProfilesTab({
                         />
                         <select
                           value={printer.paperSize}
-                          onChange={(e) =>
-                            updatePrinterProfile(branchCode, printer.id, {
-                              paperSize: e.target.value as PrinterPaperSize,
-                            })
-                          }
+                          onChange={(e) => {
+                            const paperSize = e.target.value as PrinterPaperSize;
+                            updatePrinterProfile(branchCode, printer.id, { paperSize });
+                            if (printer.printerType === "receipt" || paperSize === "custom") {
+                              saveThermalPrintSettings(branchCode, { defaultPaperSize: paperSize });
+                            }
+                          }}
                           className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
                           title="Thermal paper width"
                         >
                           <option value="58mm">58mm roll</option>
                           <option value="80mm">80mm roll</option>
                           <option value="100mm">100mm roll</option>
-                          <option value="custom">Custom (branch setting)</option>
+                          <option value="custom">Custom (branch mm)</option>
                           <option value="A4">A4</option>
                         </select>
+                        {printer.paperSize === "custom" ? (
+                          <input
+                            type="number"
+                            min={48}
+                            max={120}
+                            title="Custom roll width (mm)"
+                            className="w-full rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                            defaultValue={loadThermalPrintSettings(branchCode).customPaperWidthMm}
+                            onBlur={(e) => {
+                              const mm = clampCustomPaperWidthMm(Number(e.target.value));
+                              e.target.value = String(mm);
+                              saveThermalPrintSettings(branchCode, {
+                                defaultPaperSize: "custom",
+                                customPaperWidthMm: mm,
+                              });
+                              updatePrinterProfile(branchCode, printer.id, { paperSize: "custom" });
+                            }}
+                          />
+                        ) : null}
                         <select
                           value={printer.textScale ?? "M"}
                           onChange={(e) =>
@@ -2106,7 +2162,10 @@ function PrinterAssignmentTab({
                                       </span>
                                       <span className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-400">
                                         <span>
-                                          Role {printerTypeLabel(p.printerType, isStore)}
+                                          Role{" "}
+                                          {primarySec
+                                            ? `${primarySec.icon ? `${primarySec.icon} ` : ""}${primarySec.name}`
+                                            : printerTypeLabel(p.printerType, isStore)}
                                         </span>
                                         <span>·</span>
                                         <span>
@@ -2117,10 +2176,7 @@ function PrinterAssignmentTab({
                                         {primarySec ? (
                                           <>
                                             <span>·</span>
-                                            <span className="text-amber-300">
-                                              {primarySec.icon ? `${primarySec.icon} ` : ""}
-                                              {primarySec.name} Primary
-                                            </span>
+                                            <span className="text-amber-300">Primary</span>
                                           </>
                                         ) : null}
                                       </span>
@@ -2193,7 +2249,7 @@ function PrinterAssignmentTab({
             <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-2.5 py-2">Printer</th>
-                <th className="px-2.5 py-2">Type / Role</th>
+                <th className="px-2.5 py-2">Section / Role</th>
                 <th className="px-2.5 py-2">Section (primary)</th>
                 <th className="px-2.5 py-2">Roll · Text</th>
                 <th className="px-2.5 py-2">Assigned users</th>
@@ -2222,22 +2278,44 @@ function PrinterAssignmentTab({
                         <div className="mt-1">{sectionBadgesForPrinter(p.id)}</div>
                       </td>
                       <td className="px-2.5 py-2">
-                        <select
-                          className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
-                          value={p.printerType}
-                          onChange={(e) => {
-                            const printerType = e.target.value as PrinterType;
-                            updatePrinterProfile(branchCode, p.id, { printerType });
-                            maybeSetDefaultPosPrinter(branchCode, p.id, printerType);
-                            notify(`Role → ${printerTypeLabel(printerType, isStore)}`);
-                          }}
-                        >
-                          {typeOptions.map((type) => (
-                            <option key={type} value={type}>
-                              {printerTypeLabel(type, isStore)}
-                            </option>
-                          ))}
-                        </select>
+                        {(() => {
+                          const linked = listSectionsForPrinter(branchCode, p.id, sections);
+                          const primaryId = linked.find((s) => s.primary)?.id ?? "";
+                          return (
+                            <select
+                              className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                              value={primaryId}
+                              onChange={(e) => {
+                                const sectionId = e.target.value;
+                                if (!sectionId) return;
+                                setSectionPrimaryPrinter(branchCode, sectionId, p.id);
+                                const sec = sections.find((s) => s.id === sectionId);
+                                if (sec) {
+                                  maybeSetDefaultPosPrinter(
+                                    branchCode,
+                                    p.id,
+                                    printerTypeForSection(sec),
+                                    sec.id,
+                                  );
+                                }
+                                notify(
+                                  `Role → ${sec?.icon ? `${sec.icon} ` : ""}${sec?.name ?? sectionId}`,
+                                );
+                              }}
+                            >
+                              <option value="">
+                                {primaryId ? "Change section…" : "No section yet"}
+                              </option>
+                              {sections
+                                .filter((s) => s.enabled)
+                                .map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.icon} {s.name}
+                                  </option>
+                                ))}
+                            </select>
+                          );
+                        })()}
                       </td>
                       <td className="px-2.5 py-2">
                         <select
@@ -2268,11 +2346,13 @@ function PrinterAssignmentTab({
                         <div className="flex flex-col gap-1">
                           <select
                             value={p.paperSize}
-                            onChange={(e) =>
-                              updatePrinterProfile(branchCode, p.id, {
-                                paperSize: e.target.value as PrinterPaperSize,
-                              })
-                            }
+                            onChange={(e) => {
+                              const paperSize = e.target.value as PrinterPaperSize;
+                              updatePrinterProfile(branchCode, p.id, { paperSize });
+                              if (p.printerType === "receipt" || paperSize === "custom") {
+                                saveThermalPrintSettings(branchCode, { defaultPaperSize: paperSize });
+                              }
+                            }}
                             className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
                           >
                             <option value="58mm">58mm roll</option>
@@ -2281,6 +2361,25 @@ function PrinterAssignmentTab({
                             <option value="custom">Custom</option>
                             <option value="A4">A4</option>
                           </select>
+                          {p.paperSize === "custom" ? (
+                            <input
+                              type="number"
+                              min={48}
+                              max={120}
+                              title="Custom roll width (mm)"
+                              className="w-full rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-white"
+                              defaultValue={loadThermalPrintSettings(branchCode).customPaperWidthMm}
+                              onBlur={(e) => {
+                                const mm = clampCustomPaperWidthMm(Number(e.target.value));
+                                e.target.value = String(mm);
+                                saveThermalPrintSettings(branchCode, {
+                                  defaultPaperSize: "custom",
+                                  customPaperWidthMm: mm,
+                                });
+                                updatePrinterProfile(branchCode, p.id, { paperSize: "custom" });
+                              }}
+                            />
+                          ) : null}
                           <select
                             value={p.textScale ?? "M"}
                             onChange={(e) =>
@@ -2857,6 +2956,7 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
           <PrinterProfilesTab
             branchCode={branchCode}
             routing={routing}
+            sections={sections}
             systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
             staffLabelById={staffLabelById}
             notify={notify}

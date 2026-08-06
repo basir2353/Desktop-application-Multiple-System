@@ -22,7 +22,7 @@ import {
   listPrintersByType,
   PRINTER_ROUTING_CHANGED_EVENT,
   resolveKotPrinter,
-  resolvePrinterForUser,
+  resolvePrintUserId,
   resolveReceiptPrinter,
   setUserPrinterForType,
 } from "../../lib/printerRouting";
@@ -50,7 +50,7 @@ import {
   subtleClass,
 } from "../../lib/themeClasses";
 import {
-  effectiveTaxPct,
+  effectiveTaxPctForMode,
   loadPosSettings,
   POS_SETTINGS_CHANGED_EVENT,
   type PosSettings,
@@ -251,6 +251,14 @@ export function WaiterPage(): JSX.Element {
     void printerRevision;
     return listPrintersByType(branchCode, "receipt");
   }, [branchCode, printerRevision]);
+  const kitchenPrinterOptions = useMemo(() => {
+    void printerRevision;
+    return listPrintersByType(branchCode, "kitchen");
+  }, [branchCode, printerRevision]);
+  const barPrinterOptions = useMemo(() => {
+    void printerRevision;
+    return listPrintersByType(branchCode, "bar");
+  }, [branchCode, printerRevision]);
 
   const waitersQuery = useQuery({
     queryKey: ["billing", "waiters", branchCode],
@@ -402,7 +410,7 @@ export function WaiterPage(): JSX.Element {
 
   const subtotal = cart.reduce((s, l) => s + l.item.price * l.qty, 0);
   const servicePct = posSettings.servicePct;
-  const taxPct = effectiveTaxPct(posSettings);
+  const taxPct = effectiveTaxPctForMode(posSettings, "dine-in");
   const ticketTotals = computeTicketTotals(subtotal, 0, servicePct, taxPct);
   const service = ticketTotals.service;
   const tax = ticketTotals.tax;
@@ -470,6 +478,11 @@ export function WaiterPage(): JSX.Element {
 
       let printOk = true;
       const errors: string[] = [];
+      // Same as cashier / mobile: logged-in staff first, then selected waiter.
+      const printUserId = resolvePrintUserId(
+        useSessionStore.getState().claims?.sub,
+        waiterId,
+      );
       for (const group of groups) {
         const section = group.sectionId
           ? enabledSections.find((s) => s.id === group.sectionId)
@@ -478,14 +491,12 @@ export function WaiterPage(): JSX.Element {
           section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
             ? ("bar" as const)
             : ("kitchen" as const);
-        const profile =
-          resolveKotPrinter(branchCode, group.sectionId, waiterId, preferredType) ??
-          resolveKotPrinter(
-            branchCode,
-            group.sectionId,
-            useSessionStore.getState().claims?.sub,
-            preferredType,
-          );
+        const profile = resolveKotPrinter(
+          branchCode,
+          group.sectionId,
+          printUserId,
+          preferredType,
+        );
         if (group.sectionId && !profile?.systemPrinterName?.trim()) {
           const label = section ? `${section.icon} ${section.name}` : group.sectionId;
           printOk = false;
@@ -623,11 +634,10 @@ export function WaiterPage(): JSX.Element {
     try {
       const bill = await createBillMutation.mutateAsync();
       const sessionUserId = useSessionStore.getState().claims?.sub;
-      // Selected waiter's printer first; else logged-in user's assignment; else branch default.
-      const profile =
-        resolvePrinterForUser(branchCode, waiterId, "receipt") ??
-        resolveReceiptPrinter(branchCode, sessionUserId);
-      const assigned = getWaiterPrinter(branchCode, waiterId);
+      // Same as cashier Latest Orders: session user first, then bill waiter.
+      const printUserId = resolvePrintUserId(sessionUserId, waiterId);
+      const profile = resolveReceiptPrinter(branchCode, printUserId);
+      const assigned = getWaiterPrinter(branchCode, printUserId);
       const payload: Omit<PrintTicketInput, "kind"> = withPrinterProfile(
         {
           ...billToPrintInput(branch?.name ?? "POPS", branchCode || "—", bill),
@@ -939,66 +949,97 @@ export function WaiterPage(): JSX.Element {
             {canManagePrinters && waiters.length > 0 ? (
               <SectionPanel
                 title="Printer assignments"
-                subtitle="Pick printer by waiter name — each waiter prints to their own receipt printer"
+                subtitle="Same as cashier Assign Users: Kitchen + Bar for Print order, Receipt for Print bill"
                 open={printerPanelOpen}
                 onToggle={() => setPrinterPanelOpen((v) => !v)}
               >
-                <div className="space-y-3">
-                  {receiptPrinterOptions.length === 0 ? (
+                <div className="space-y-4">
+                  {kitchenPrinterOptions.length + barPrinterOptions.length + receiptPrinterOptions.length ===
+                  0 ? (
                     <p className={`text-xs ${mutedClass}`}>
-                      No receipt printer profiles yet. Add them under Printer → Printer Profiles, then assign here by
-                      waiter name.
+                      No printer profiles yet. Add Kitchen / Bar / Receipt under Printer → Profiles, then assign here
+                      (or Printer → Assign Users).
                     </p>
                   ) : null}
                   {waiters.map((w) => {
                     void printerRevision;
-                    const assignedIds = getPrintersForUser(branchCode, w.id)
-                      .filter((p) => p.printerType === "receipt")
-                      .map((p) => p.id);
-                    const currentId = assignedIds[0] ?? "";
-                    const current = getWaiterPrinter(branchCode, w.id);
+                    const assigned = getPrintersForUser(branchCode, w.id);
+                    const kitchenId =
+                      assigned.find((p) => p.printerType === "kitchen")?.id ?? "";
+                    const barId = assigned.find((p) => p.printerType === "bar")?.id ?? "";
+                    const receiptId =
+                      assigned.find((p) => p.printerType === "receipt")?.id ?? "";
                     return (
-                      <label key={w.id} className={`block text-xs ${mutedClass}`}>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">{w.name}</span>
-                        <select
-                          className={`mt-1.5 ${fieldSelectClass}`}
-                          value={currentId}
-                          onChange={(e) => {
-                            if (!branchCode) return;
-                            const printerId = e.target.value || null;
-                            setUserPrinterForType(branchCode, w.id, "receipt", printerId);
-                            const profile = receiptPrinterOptions.find((p) => p.id === printerId);
-                            // Keep legacy map in sync for older reprint paths (OS name only).
-                            setWaiterPrinter(
-                              branchCode,
-                              w.id,
-                              profile?.systemPrinterName?.trim() || "",
-                            );
-                            setNotice(
-                              printerId
-                                ? `${w.name} → ${profile?.name ?? "printer"}`
-                                : `${w.name} printer cleared`,
-                            );
-                          }}
-                        >
-                          <option value="">Branch default / unassigned</option>
-                          {receiptPrinterOptions.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                              {p.systemPrinterName ? ` · ${p.systemPrinterName}` : ""}
-                              {p.assignedCounter ? ` · ${p.assignedCounter}` : ""}
-                            </option>
+                      <div
+                        key={w.id}
+                        className="rounded-lg border border-slate-200 p-3 dark:border-slate-700"
+                      >
+                        <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                          {w.name}
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                          {(
+                            [
+                              {
+                                label: "Kitchen",
+                                type: "kitchen" as const,
+                                value: kitchenId,
+                                options: kitchenPrinterOptions,
+                              },
+                              {
+                                label: "Bar",
+                                type: "bar" as const,
+                                value: barId,
+                                options: barPrinterOptions,
+                              },
+                              {
+                                label: "Receipt",
+                                type: "receipt" as const,
+                                value: receiptId,
+                                options: receiptPrinterOptions,
+                              },
+                            ] as const
+                          ).map((row) => (
+                            <label key={row.type} className={`block text-[11px] ${mutedClass}`}>
+                              <span className="font-medium text-slate-600 dark:text-slate-300">
+                                {row.label}
+                              </span>
+                              <select
+                                className={`mt-1 ${fieldSelectClass}`}
+                                value={row.value}
+                                onChange={(e) => {
+                                  if (!branchCode) return;
+                                  const printerId = e.target.value || null;
+                                  setUserPrinterForType(branchCode, w.id, row.type, printerId);
+                                  if (row.type === "receipt") {
+                                    const profile = receiptPrinterOptions.find(
+                                      (p) => p.id === printerId,
+                                    );
+                                    setWaiterPrinter(
+                                      branchCode,
+                                      w.id,
+                                      profile?.systemPrinterName?.trim() || "",
+                                    );
+                                  }
+                                  setNotice(
+                                    printerId
+                                      ? `${w.name} → ${row.label}`
+                                      : `${w.name} ${row.label} cleared`,
+                                  );
+                                }}
+                              >
+                                <option value="">Unassigned</option>
+                                {row.options.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name}
+                                    {p.systemPrinterName ? ` · ${p.systemPrinterName}` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                           ))}
-                        </select>
-                        {current?.printerName ? (
-                          <span className="mt-1 block text-[10px] text-amber-700 dark:text-amber-300">
-                            Active: {current.printerName}
-                            {current.systemPrinterName && current.systemPrinterName !== current.printerName
-                              ? ` (${current.systemPrinterName})`
-                              : ""}
-                          </span>
-                        ) : null}
-                      </label>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1136,7 +1177,7 @@ export function WaiterPage(): JSX.Element {
                       type="button"
                       onClick={() => {
                         setTableId(t.tableNumber);
-                        setShowMenu(false);
+                        setShowMenu(true);
                         setNotice(
                           booked && t.bookedOrderRef
                             ? `Table ${t.tableNumber} is booked by ${t.bookedOrderRef}.`

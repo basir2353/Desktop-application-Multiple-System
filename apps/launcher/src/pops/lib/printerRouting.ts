@@ -8,7 +8,6 @@
  */
 import type { PosCartLine } from "./posCart";
 import { loadPrinterSections, savePrinterSections, type PrinterSection } from "./printerSections";
-import { saveThermalPrintSettings } from "./thermalPrintSettings";
 
 export type PrinterPaperSize = "58mm" | "80mm" | "100mm" | "A4" | "custom";
 
@@ -586,11 +585,8 @@ export function updatePrinterProfile(
     printers,
   });
 
-  // Keep thermal default paper in sync when any linked profile's roll size changes
-  // so Auto KOT / receipt both wrap to the printer width.
-  if (nextPatch.paperSize) {
-    saveThermalPrintSettings(branchCode, { defaultPaperSize: nextPatch.paperSize });
-  }
+  // Thermal Paper & layout is the source of truth for roll width (including Custom mm).
+  // Do not overwrite it when a profile paper size changes — that was wiping Custom.
 }
 
 export function duplicatePrinterProfile(branchCode: string, printerId: string): PrinterProfile | null {
@@ -632,7 +628,29 @@ export function setSectionPrinters(branchCode: string, sectionId: string, printe
   });
 }
 
-/** Make `printerId` the primary printer for a section (index 0). Adds it if missing. */
+/** Map a print section (Kitchen / Bar / Receipt / custom) → routing printerType. */
+export function printerTypeForSection(section: {
+  id: string;
+  name: string;
+}): PrinterType {
+  const id = section.id.toLowerCase();
+  const n = section.name.toLowerCase();
+  if (id === "receipt" || n.includes("receipt") || n.includes("bill") || n.includes("cashier")) {
+    return "receipt";
+  }
+  if (id === "counter" || n.includes("counter")) return "counter";
+  if (id === "warehouse" || n.includes("warehouse")) return "warehouse";
+  if (id === "label" || n.includes("label")) return "label";
+  if (id === "returns" || n.includes("return")) return "receipt";
+  if (id === "back-office" || n.includes("back office") || n.includes("back-office")) {
+    return "other";
+  }
+  if (n.includes("bar") || n.includes("drink") || n.includes("beverage")) return "bar";
+  return "kitchen";
+}
+
+/** Make `printerId` the primary printer for a section (index 0). Adds it if missing.
+ * Also syncs profile `printerType` from the section so Role matches Kitchen/Bar/… everywhere. */
 export function setSectionPrimaryPrinter(
   branchCode: string,
   sectionId: string,
@@ -642,6 +660,14 @@ export function setSectionPrimaryPrinter(
   const current = state.sectionPrinters[sectionId] ?? [];
   const next = [printerId, ...current.filter((id) => id !== printerId)];
   setSectionPrinters(branchCode, sectionId, next);
+
+  const section = loadPrinterSections(branchCode).find((s) => s.id === sectionId);
+  if (!section) return;
+  const printerType = printerTypeForSection(section);
+  const profile = loadPrinterRouting(branchCode).printers.find((p) => p.id === printerId);
+  if (profile && profile.printerType !== printerType) {
+    updatePrinterProfile(branchCode, printerId, { printerType });
+  }
 }
 
 /** Sections that currently list this printer (primary first when applicable). */

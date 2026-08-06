@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { RESTAURANT_REPORT_DEFS } from "@platform/contracts";
 import {
   popsBankAccounts,
@@ -13,9 +13,15 @@ import {
   popsEmployeeAdvances,
   popsEmployees,
   popsExpenses,
+  popsGoodsReceipts,
   popsIngredients,
   popsKitchenLineCancellations,
   popsKitchenTickets,
+  popsMenuCategories,
+  popsMenuItems,
+  popsPayrollRuns,
+  popsPurchaseOrderLines,
+  popsPurchaseOrders,
   popsSeatingSections,
   popsStockAdjustments,
   popsSuppliers,
@@ -27,7 +33,34 @@ import {
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { AccountingService } from "../accounting/accounting.service";
 
-type BillLine = { label?: string; qty?: number; unitPrice?: number; station?: string; kitchen?: string };
+type BillLine = {
+  label?: string;
+  qty?: number;
+  unitPrice?: number;
+  station?: string;
+  kitchen?: string;
+  menuItemId?: string;
+};
+
+const KITCHEN_SALE_GROUPS = [
+  { id: "pakistani", label: "Pakistani Dishes Sales", match: /pakistani|desi|karahi|biryani/i },
+  { id: "fast-food", label: "Fast Food Sales", match: /fast\s*food|fastfood|burger|pizza|shawarma/i },
+  { id: "outside", label: "Outside Sales", match: /outside|chinese|bbq|grill/i },
+] as const;
+
+function resolveKitchenSaleGroupFromCategory(categoryName: string | undefined): (typeof KITCHEN_SALE_GROUPS)[number]["id"] {
+  const name = (categoryName ?? "").trim();
+  if (name) {
+    for (const g of KITCHEN_SALE_GROUPS) {
+      if (g.id === "outside") continue;
+      if (g.match.test(name)) return g.id;
+    }
+    for (const g of KITCHEN_SALE_GROUPS) {
+      if (g.id === "outside" && g.match.test(name)) return g.id;
+    }
+  }
+  return "outside";
+}
 
 @Injectable()
 export class ReportsService {
@@ -77,6 +110,13 @@ export class ReportsService {
         return { ...base, ...this.salesByItem(await this.completedBills(organizationId, branch.id, range)) };
       case "sales-by-kitchen":
         return { ...base, ...this.salesByKitchen(await this.completedBills(organizationId, branch.id, range)) };
+      case "kitchen-sale":
+        return {
+          ...base,
+          description:
+            "Pakistani / Fast Food / Outside sales — map categories via Print sections (desktop) or category names.",
+          ...(await this.kitchenSaleReport(organizationId, branch.id, range)),
+        };
       case "sales-by-employee":
         return { ...base, ...this.salesByEmployee(await this.completedBills(organizationId, branch.id, range)) };
       case "sales-by-order-type":
@@ -164,6 +204,29 @@ export class ReportsService {
         return { ...base, ...(await this.ingredientsUsage(organizationId, branch.id, range)) };
       case "ingredients-stock":
         return { ...base, ...(await this.ingredientsStock(organizationId, branch.id)) };
+      case "day-book":
+        return { ...base, ...(await this.dayBook(organizationId, branch.id, range)) };
+      case "in-out":
+        return {
+          ...base,
+          description:
+            "Cash In (total sale) vs Cash Out (expenses, salaries, advances, supplier payments, purchasing) with Net Cash.",
+          ...(await this.inOutReport(organizationId, branch.id, range)),
+        };
+      case "kitchen-wise-purchase":
+        return { ...base, ...(await this.kitchenWisePurchase(organizationId, branch.id, range)) };
+      case "sale-purchase-by-party":
+        return { ...base, ...(await this.salePurchaseByParty(organizationId, branch.id, range)) };
+      case "party-report":
+        return { ...base, ...(await this.partyReport(organizationId, branch.id)) };
+      case "universal-ledger":
+        return {
+          ...base,
+          description:
+            "Interactive Universal Ledger (Sale / Purchase / Expense / Item / Customer / Supplier) — open in desktop Reports.",
+          rows: [],
+          empty: true,
+        };
       default:
         throw new NotFoundException(`Unknown report: ${reportId}`);
     }
@@ -292,6 +355,60 @@ export class ReportsService {
       rows,
       totals: { amount: rows.reduce((s, r) => s + r.amount, 0) },
       empty: rows.length === 0,
+    };
+  }
+
+  /** Category-wise kitchen sale: Pakistani / Fast Food / Outside. */
+  private async kitchenSaleReport(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const bills = await this.completedBills(organizationId, branchId, range);
+    const menuRows = await this.db
+      .select({
+        itemId: popsMenuItems.id,
+        categoryName: popsMenuCategories.name,
+      })
+      .from(popsMenuItems)
+      .innerJoin(popsMenuCategories, eq(popsMenuCategories.id, popsMenuItems.categoryId))
+      .where(and(eq(popsMenuItems.organizationId, organizationId), eq(popsMenuItems.branchId, branchId)));
+
+    const categoryByItem = new Map(menuRows.map((r) => [r.itemId, r.categoryName]));
+    const buckets: Record<(typeof KITCHEN_SALE_GROUPS)[number]["id"], { qty: number; amount: number }> = {
+      pakistani: { qty: 0, amount: 0 },
+      "fast-food": { qty: 0, amount: 0 },
+      outside: { qty: 0, amount: 0 },
+    };
+
+    for (const bill of bills) {
+      for (const line of this.parseLines(bill.linesJson)) {
+        const qty = Number(line.qty ?? 0);
+        const amount = qty * Number(line.unitPrice ?? 0);
+        if (qty <= 0 && amount <= 0) continue;
+        const categoryName = line.menuItemId ? categoryByItem.get(line.menuItemId) : undefined;
+        const group = resolveKitchenSaleGroupFromCategory(categoryName);
+        buckets[group].qty += qty;
+        buckets[group].amount += amount;
+      }
+    }
+
+    const rows = KITCHEN_SALE_GROUPS.map((g) => ({
+      label: g.label,
+      qty: buckets[g.id].qty,
+      amount: buckets[g.id].amount,
+      meta: g.id,
+    }));
+    const totalAmount = rows.reduce((s, r) => s + r.amount, 0);
+    return {
+      rows,
+      totals: {
+        amount: totalAmount,
+        pakistani: buckets.pakistani.amount,
+        fastFood: buckets["fast-food"].amount,
+        outside: buckets.outside.amount,
+      },
+      empty: totalAmount <= 0,
     };
   }
 
@@ -1289,6 +1406,578 @@ export class ReportsService {
       totals: {
         items: rows.length,
         value: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  /** Extract party/customer name from POS notes (`Channel · Name · phone · …`) or table label. */
+  private partyNameFromBill(notes: string | null, tableLabel: string, waiterName: string): string {
+    const n = (notes ?? "").trim();
+    if (n) {
+      const parts = n.split("·").map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        const candidate = parts[1]!;
+        if (candidate && !/^\+?\d[\d\s-]{5,}$/.test(candidate)) return candidate;
+      }
+      if (parts.length === 1 && parts[0] && !/^(delivery|takeaway|online|foodpanda)/i.test(parts[0])) {
+        return parts[0];
+      }
+    }
+    const t = (tableLabel ?? "").trim();
+    if (/staff food/i.test(t)) {
+      const after = t.split("·").map((p) => p.trim()).filter(Boolean);
+      if (after.length >= 2) return after[after.length - 1]!.replace(/^Guest:\s*/i, "");
+    }
+    if (t && !/^(dine-in|takeaway|delivery|online|foodpanda)/i.test(t)) return t;
+    return waiterName?.trim() || "Walk-in";
+  }
+
+  private async dayBook(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const bills = await this.completedBills(organizationId, branchId, range);
+
+    const expenses = await this.db
+      .select()
+      .from(popsExpenses)
+      .where(
+        and(
+          eq(popsExpenses.organizationId, organizationId),
+          eq(popsExpenses.branchId, branchId),
+          gte(popsExpenses.expenseDate, range.from),
+          lte(popsExpenses.expenseDate, range.to),
+        ),
+      );
+
+    const vendorPayments = await this.db
+      .select({
+        paymentRef: popsVendorPayments.paymentRef,
+        amountPkr: popsVendorPayments.amountPkr,
+        paymentDate: popsVendorPayments.paymentDate,
+        supplierName: popsSuppliers.name,
+      })
+      .from(popsVendorPayments)
+      .innerJoin(popsVendorBills, eq(popsVendorPayments.vendorBillId, popsVendorBills.id))
+      .leftJoin(popsSuppliers, eq(popsVendorBills.supplierId, popsSuppliers.id))
+      .where(
+        and(
+          eq(popsVendorBills.organizationId, organizationId),
+          eq(popsVendorBills.branchId, branchId),
+          gte(popsVendorPayments.paymentDate, range.from),
+          lte(popsVendorPayments.paymentDate, range.to),
+        ),
+      );
+
+    const cashMoves = await this.db
+      .select()
+      .from(popsCashMovements)
+      .where(
+        and(
+          eq(popsCashMovements.organizationId, organizationId),
+          eq(popsCashMovements.branchId, branchId),
+          gte(popsCashMovements.createdAt, this.rangeStart(range)),
+          lte(popsCashMovements.createdAt, this.rangeEnd(range)),
+        ),
+      );
+
+    type DayRow = {
+      label: string;
+      meta: string;
+      amount: number;
+      debit: number;
+      credit: number;
+      sortKey: string;
+    };
+
+    const rows: DayRow[] = [];
+
+    for (const b of bills) {
+      const name = this.partyNameFromBill(b.notes, b.tableLabel, b.waiterName);
+      const moneyIn = b.totalPkr;
+      rows.push({
+        label: name,
+        meta: `${b.billRef} · Sale`,
+        amount: moneyIn,
+        debit: moneyIn,
+        credit: 0,
+        sortKey: b.createdAt.toISOString(),
+      });
+    }
+
+    for (const e of expenses) {
+      rows.push({
+        label: e.vendor?.trim() || e.category,
+        meta: `${e.expenseDate} · Expense · ${e.category}`,
+        amount: e.amountPkr,
+        debit: 0,
+        credit: e.amountPkr,
+        sortKey: `${e.expenseDate}T12:00:00+05:00`,
+      });
+    }
+
+    for (const p of vendorPayments) {
+      rows.push({
+        label: p.supplierName || "Vendor",
+        meta: `${p.paymentRef} · Vendor payment`,
+        amount: p.amountPkr,
+        debit: 0,
+        credit: p.amountPkr,
+        sortKey: `${p.paymentDate}T12:00:00+05:00`,
+      });
+    }
+
+    for (const m of cashMoves) {
+      const isOut = m.type === "paid_out";
+      rows.push({
+        label: m.reason || (isOut ? "Cash out" : "Cash in"),
+        meta: `${m.createdAt.toISOString().slice(0, 10)} · Cash ${isOut ? "out" : "in"}`,
+        amount: m.amountPkr,
+        debit: isOut ? 0 : m.amountPkr,
+        credit: isOut ? m.amountPkr : 0,
+        sortKey: m.createdAt.toISOString(),
+      });
+    }
+
+    rows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+    const moneyIn = rows.reduce((s, r) => s + r.debit, 0);
+    const moneyOut = rows.reduce((s, r) => s + r.credit, 0);
+
+    return {
+      rows: rows.map(({ sortKey: _s, ...r }) => r),
+      totals: { moneyIn, moneyOut, net: moneyIn - moneyOut, count: rows.length },
+      empty: rows.length === 0,
+    };
+  }
+
+  private async inOutReport(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const bills = await this.completedBills(organizationId, branchId, range);
+    const cashIn = bills.reduce((s, b) => s + (b.totalPkr ?? 0), 0);
+
+    const expenses = await this.db
+      .select()
+      .from(popsExpenses)
+      .where(
+        and(
+          eq(popsExpenses.organizationId, organizationId),
+          eq(popsExpenses.branchId, branchId),
+          gte(popsExpenses.expenseDate, range.from),
+          lte(popsExpenses.expenseDate, range.to),
+        ),
+      );
+    const expenseRows = expenses.filter((e) => e.status !== "Rejected");
+    const expensesTotal = expenseRows.reduce((s, e) => s + e.amountPkr, 0);
+
+    const payrolls = await this.db
+      .select()
+      .from(popsPayrollRuns)
+      .where(
+        and(
+          eq(popsPayrollRuns.organizationId, organizationId),
+          eq(popsPayrollRuns.branchId, branchId),
+          eq(popsPayrollRuns.status, "paid"),
+        ),
+      );
+    const paidPayrolls = payrolls.filter((p) => {
+      const when = p.paidAt ?? p.createdAt;
+      return when >= this.rangeStart(range) && when <= this.rangeEnd(range);
+    });
+    const salariesTotal = paidPayrolls.reduce((s, p) => s + Math.max(0, p.totalNetPkr ?? 0), 0);
+
+    const advances = await this.db
+      .select()
+      .from(popsEmployeeAdvances)
+      .where(
+        and(
+          eq(popsEmployeeAdvances.organizationId, organizationId),
+          eq(popsEmployeeAdvances.branchId, branchId),
+          gte(popsEmployeeAdvances.createdAt, this.rangeStart(range)),
+          lte(popsEmployeeAdvances.createdAt, this.rangeEnd(range)),
+        ),
+      );
+    const advancesTotal = advances.reduce((s, a) => s + a.amountPkr, 0);
+
+    const vendorPayments = await this.db
+      .select({
+        amountPkr: popsVendorPayments.amountPkr,
+      })
+      .from(popsVendorPayments)
+      .innerJoin(popsVendorBills, eq(popsVendorPayments.vendorBillId, popsVendorBills.id))
+      .where(
+        and(
+          eq(popsVendorBills.organizationId, organizationId),
+          eq(popsVendorBills.branchId, branchId),
+          gte(popsVendorPayments.paymentDate, range.from),
+          lte(popsVendorPayments.paymentDate, range.to),
+        ),
+      );
+
+    const cashSupplierMoves = await this.db
+      .select()
+      .from(popsCashMovements)
+      .where(
+        and(
+          eq(popsCashMovements.organizationId, organizationId),
+          eq(popsCashMovements.branchId, branchId),
+          eq(popsCashMovements.type, "paid_out"),
+          gte(popsCashMovements.createdAt, this.rangeStart(range)),
+          lte(popsCashMovements.createdAt, this.rangeEnd(range)),
+        ),
+      );
+    const supplierFromCash = cashSupplierMoves
+      .filter((m) => m.partyKind === "supplier")
+      .reduce((s, m) => s + m.amountPkr, 0);
+    const supplierFromPayments = vendorPayments.reduce((s, p) => s + p.amountPkr, 0);
+    const supplierPayments = supplierFromCash > 0 ? supplierFromCash : supplierFromPayments;
+    const supplierQty =
+      supplierFromCash > 0
+        ? cashSupplierMoves.filter((m) => m.partyKind === "supplier").length
+        : vendorPayments.length;
+
+    const grns = await this.db
+      .select()
+      .from(popsGoodsReceipts)
+      .where(
+        and(
+          eq(popsGoodsReceipts.organizationId, organizationId),
+          eq(popsGoodsReceipts.branchId, branchId),
+          gte(popsGoodsReceipts.deliveryDate, range.from),
+          lte(popsGoodsReceipts.deliveryDate, range.to),
+        ),
+      );
+    const purchasingTotal = grns.reduce((s, g) => s + (g.totalCostPkr ?? 0), 0);
+
+    const cashOut =
+      expensesTotal + salariesTotal + advancesTotal + supplierPayments + purchasingTotal;
+    const net = cashIn - cashOut;
+
+    const rows = [
+      {
+        section: "cashIn",
+        label: "Total Sale (Cash In)",
+        amount: cashIn,
+        qty: bills.length,
+        debit: cashIn,
+        credit: 0,
+        meta: "Completed bills · all payment methods",
+      },
+      {
+        section: "expenses",
+        label: "Expenses",
+        amount: expensesTotal,
+        qty: expenseRows.length,
+        debit: 0,
+        credit: expensesTotal,
+        meta: "Daily expenses in range",
+      },
+      {
+        section: "salaries",
+        label: "Salaries",
+        amount: salariesTotal,
+        qty: paidPayrolls.length,
+        debit: 0,
+        credit: salariesTotal,
+        meta: "Paid payroll net",
+      },
+      {
+        section: "advances",
+        label: "Employees Advance",
+        amount: advancesTotal,
+        qty: advances.length,
+        debit: 0,
+        credit: advancesTotal,
+        meta: "Staff advances given",
+      },
+      {
+        section: "supplierPayments",
+        label: "Supplier Payments",
+        amount: supplierPayments,
+        qty: supplierQty,
+        debit: 0,
+        credit: supplierPayments,
+        meta: supplierFromCash > 0 ? "Cash pay-outs to suppliers" : "Vendor payments recorded",
+      },
+      {
+        section: "purchasing",
+        label: "Purchasing",
+        amount: purchasingTotal,
+        qty: grns.length,
+        debit: 0,
+        credit: purchasingTotal,
+        meta: "Goods received (GRN) stock value",
+      },
+      {
+        section: "cashOut",
+        label: "Total Cash Out",
+        amount: cashOut,
+        qty: expenseRows.length + paidPayrolls.length + advances.length + supplierQty + grns.length,
+        debit: 0,
+        credit: cashOut,
+        meta: "Expenses + Salaries + Advances + Supplier + Purchasing",
+      },
+      {
+        section: "net",
+        label: "Net Cash",
+        amount: net,
+        qty: 1,
+        debit: net >= 0 ? net : 0,
+        credit: net < 0 ? Math.abs(net) : 0,
+        balance: net,
+        meta: "Cash In − Cash Out",
+      },
+    ];
+
+    return {
+      rows,
+      totals: {
+        cashIn,
+        cashOut,
+        net,
+        sale: cashIn,
+        expenses: expensesTotal,
+        salaries: salariesTotal,
+        advances: advancesTotal,
+        supplierPayments,
+        purchasing: purchasingTotal,
+      },
+      empty: cashIn === 0 && cashOut === 0,
+    };
+  }
+
+  private async kitchenWisePurchase(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const pos = await this.db
+      .select({
+        id: popsPurchaseOrders.id,
+        poNumber: popsPurchaseOrders.poNumber,
+        totalAmountPkr: popsPurchaseOrders.totalAmountPkr,
+        chef: popsPurchaseOrders.chef,
+        requestedBy: popsPurchaseOrders.requestedBy,
+        createdAt: popsPurchaseOrders.createdAt,
+        supplierName: popsSuppliers.name,
+      })
+      .from(popsPurchaseOrders)
+      .leftJoin(popsSuppliers, eq(popsPurchaseOrders.supplierId, popsSuppliers.id))
+      .where(
+        and(
+          eq(popsPurchaseOrders.organizationId, organizationId),
+          eq(popsPurchaseOrders.branchId, branchId),
+          gte(popsPurchaseOrders.createdAt, this.rangeStart(range)),
+          lte(popsPurchaseOrders.createdAt, this.rangeEnd(range)),
+        ),
+      )
+      .orderBy(desc(popsPurchaseOrders.createdAt));
+
+    const lines =
+      pos.length === 0
+        ? []
+        : await this.db
+            .select({
+              purchaseOrderId: popsPurchaseOrderLines.purchaseOrderId,
+              qty: popsPurchaseOrderLines.qty,
+              ingredientName: popsIngredients.name,
+            })
+            .from(popsPurchaseOrderLines)
+            .leftJoin(popsIngredients, eq(popsPurchaseOrderLines.ingredientId, popsIngredients.id))
+            .where(inArray(popsPurchaseOrderLines.purchaseOrderId, pos.map((p) => p.id)));
+
+    const linesByPo = new Map<string, { qty: number; items: string[] }>();
+    for (const line of lines) {
+      const cur = linesByPo.get(line.purchaseOrderId) ?? { qty: 0, items: [] };
+      cur.qty += line.qty;
+      if (line.ingredientName) cur.items.push(`${line.ingredientName}×${line.qty}`);
+      linesByPo.set(line.purchaseOrderId, cur);
+    }
+
+    const rows = pos
+      .map((po) => {
+        const kitchen = (po.chef?.trim() || po.requestedBy?.trim() || "Unassigned").trim();
+        const lineInfo = linesByPo.get(po.id);
+        const itemSummary = lineInfo?.items.slice(0, 4).join(", ") ?? "";
+        const more = (lineInfo?.items.length ?? 0) > 4 ? "…" : "";
+        return {
+          label: kitchen,
+          qty: lineInfo?.qty ?? 0,
+          amount: po.totalAmountPkr,
+          meta: `${po.poNumber} · ${po.supplierName || "Supplier"}${itemSummary ? ` · ${itemSummary}${more}` : ""}`,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label) || (b.amount ?? 0) - (a.amount ?? 0));
+
+    return {
+      rows,
+      totals: {
+        amount: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+        orders: rows.length,
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  private async salePurchaseByParty(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const bills = await this.completedBills(organizationId, branchId, range);
+    const saleMap = new Map<string, number>();
+    for (const b of bills) {
+      const name = this.partyNameFromBill(b.notes, b.tableLabel, b.waiterName);
+      saleMap.set(name, (saleMap.get(name) ?? 0) + b.totalPkr);
+    }
+
+    // Credit invoices also count as party sales in the period.
+    const invoices = await this.db
+      .select()
+      .from(popsCustomerInvoices)
+      .where(
+        and(
+          eq(popsCustomerInvoices.organizationId, organizationId),
+          eq(popsCustomerInvoices.branchId, branchId),
+          gte(popsCustomerInvoices.createdAt, this.rangeStart(range)),
+          lte(popsCustomerInvoices.createdAt, this.rangeEnd(range)),
+        ),
+      );
+    for (const inv of invoices) {
+      const name = inv.customerName.trim() || "Customer";
+      saleMap.set(name, (saleMap.get(name) ?? 0) + inv.amountPkr);
+    }
+
+    const vendorBills = await this.db
+      .select({
+        amountPkr: popsVendorBills.amountPkr,
+        supplierName: popsSuppliers.name,
+      })
+      .from(popsVendorBills)
+      .leftJoin(popsSuppliers, eq(popsVendorBills.supplierId, popsSuppliers.id))
+      .where(
+        and(
+          eq(popsVendorBills.organizationId, organizationId),
+          eq(popsVendorBills.branchId, branchId),
+          gte(popsVendorBills.createdAt, this.rangeStart(range)),
+          lte(popsVendorBills.createdAt, this.rangeEnd(range)),
+        ),
+      );
+
+    const purchaseMap = new Map<string, number>();
+    for (const vb of vendorBills) {
+      const name = vb.supplierName?.trim() || "Vendor";
+      purchaseMap.set(name, (purchaseMap.get(name) ?? 0) + vb.amountPkr);
+    }
+
+    const names = new Set([...saleMap.keys(), ...purchaseMap.keys()]);
+    const rows = [...names]
+      .map((name) => {
+        const sale = saleMap.get(name) ?? 0;
+        const purchase = purchaseMap.get(name) ?? 0;
+        return {
+          label: name,
+          debit: sale,
+          credit: purchase,
+          amount: sale,
+          balance: purchase,
+          meta: `Sale ${sale} · Purchase ${purchase}`,
+        };
+      })
+      .sort((a, b) => b.debit + b.credit - (a.debit + a.credit));
+
+    const saleTotal = rows.reduce((s, r) => s + (r.debit ?? 0), 0);
+    const purchaseTotal = rows.reduce((s, r) => s + (r.credit ?? 0), 0);
+
+    return {
+      rows,
+      totals: { saleTotal, purchaseTotal, parties: rows.length },
+      empty: rows.length === 0,
+    };
+  }
+
+  private async partyReport(organizationId: string, branchId: string) {
+    const invoices = await this.db
+      .select()
+      .from(popsCustomerInvoices)
+      .where(
+        and(
+          eq(popsCustomerInvoices.organizationId, organizationId),
+          eq(popsCustomerInvoices.branchId, branchId),
+        ),
+      );
+
+    const customers = new Map<
+      string,
+      { name: string; phone: string | null; email: string | null; receivable: number }
+    >();
+    for (const inv of invoices) {
+      const key = `${inv.customerName}|${inv.customerPhone ?? ""}`;
+      const open = Math.max(0, inv.amountPkr - inv.paidPkr);
+      const cur = customers.get(key) ?? {
+        name: inv.customerName,
+        phone: inv.customerPhone,
+        email: null,
+        receivable: 0,
+      };
+      cur.receivable += open;
+      customers.set(key, cur);
+    }
+
+    const suppliers = await this.db
+      .select()
+      .from(popsSuppliers)
+      .where(and(eq(popsSuppliers.organizationId, organizationId), eq(popsSuppliers.branchId, branchId)));
+
+    const billSums = await this.db
+      .select({
+        supplierId: popsVendorBills.supplierId,
+        total: sql<number>`coalesce(sum(${popsVendorBills.amountPkr}), 0)`,
+        paid: sql<number>`coalesce(sum(${popsVendorBills.paidPkr}), 0)`,
+      })
+      .from(popsVendorBills)
+      .where(and(eq(popsVendorBills.organizationId, organizationId), eq(popsVendorBills.branchId, branchId)))
+      .groupBy(popsVendorBills.supplierId);
+
+    const billMap = new Map(
+      billSums.map((r) => [r.supplierId, { total: Number(r.total), paid: Number(r.paid) }]),
+    );
+
+    const rows = [
+      ...[...customers.values()]
+        .filter((c) => c.receivable > 0 || Boolean(c.phone))
+        .map((c) => ({
+          label: c.name,
+          debit: c.receivable,
+          credit: 0,
+          balance: c.receivable,
+          amount: c.receivable,
+          meta: [c.email || "—", c.phone || "—"].join(" · "),
+        })),
+      ...suppliers.map((s) => {
+        const sums = billMap.get(s.id) ?? { total: 0, paid: 0 };
+        const payable = Math.max(0, sums.total - sums.paid + (s.openingBalancePkr ?? 0));
+        return {
+          label: s.name,
+          debit: 0,
+          credit: payable,
+          balance: -payable,
+          amount: payable,
+          meta: [s.email || "—", s.phone || "—"].join(" · "),
+        };
+      }),
+    ].sort((a, b) => Math.abs(b.debit ?? 0) + Math.abs(b.credit ?? 0) - (Math.abs(a.debit ?? 0) + Math.abs(a.credit ?? 0)));
+
+    return {
+      rows,
+      totals: {
+        receivable: rows.reduce((s, r) => s + (r.debit ?? 0), 0),
+        payable: rows.reduce((s, r) => s + (r.credit ?? 0), 0),
+        parties: rows.length,
       },
       empty: rows.length === 0,
     };

@@ -5,7 +5,7 @@ REM Usage: local\publish-mobile-release.bat [version]
 cd /d "%~dp0\.."
 
 set "VER=%~1"
-if "%VER%"=="" set "VER=1.1.5"
+if "%VER%"=="" set "VER=1.1.10"
 set "TAG=mobile-v%VER%"
 set "DIR=%CD%\dist-installers\mobile-updates\%TAG%"
 set "REPO=basir2353/pops-mobile-updates"
