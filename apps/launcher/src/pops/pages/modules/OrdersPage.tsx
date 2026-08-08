@@ -1076,10 +1076,14 @@ export function OrdersPage(): JSX.Element {
         onPrint={() => {
           if (!praFiscal) return;
           setPraPrinting(true);
+          const printUserId = resolvePrintUserId(claims?.sub, null);
+          const profile = resolveReceiptPrinter(branch?.code, printUserId);
+          const assigned = getWaiterPrinter(branch?.code, printUserId);
           void printIssuedPraSlip(praFiscal, {
             branchName: branch?.name,
             branchCode: branch?.code,
-            systemPrinterName: null,
+            systemPrinterName:
+              profile?.systemPrinterName ?? assigned?.systemPrinterName ?? null,
           })
             .then((res) => {
               if (!res.ok) setNotice(res.error ?? "Invoice print failed.");

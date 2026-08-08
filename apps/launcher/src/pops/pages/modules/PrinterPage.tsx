@@ -2,6 +2,10 @@ import { Button } from "@platform/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePopsStore } from "../../../stores/popsStore";
+import {
+  isPosPrintStationEnabled,
+  setPosPrintStationEnabled,
+} from "../../lib/canDirectThermalPrint";
 import { KotCustomizationPanel } from "../../components/KotCustomizationPanel";
 import {
   PRINTER_PRESETS,
@@ -3058,6 +3062,7 @@ export function PrinterPage(): JSX.Element {
   const isStore = systemId === "general-store";
   const [notice, setNotice] = useState<string | null>(null);
   const [legacyOpen, setLegacyOpen] = useState(false);
+  const [posStation, setPosStation] = useState(() => isPosPrintStationEnabled());
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
@@ -3121,6 +3126,40 @@ export function PrinterPage(): JSX.Element {
             : `Printer configuration for ${branch.name} (${branch.code}) — sections, profiles, routing, and KOT template.`
         }
       />
+
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 dark:border-amber-500/20">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-slate-900 dark:text-white">
+              This PC is POS print station
+            </div>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+              Option 19: only enable on the cashier POS that owns the thermal printer. Accountant /
+              Inventory / Owner PCs stay off — use Reports → Export Excel (and PDF) so they never
+              fight the POS spooler.
+            </p>
+          </div>
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-800 dark:text-slate-200">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-400"
+              checked={posStation}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setPosPrintStationEnabled(on);
+                setPosStation(on);
+                setNotice(
+                  on
+                    ? "This PC can Auto-print to thermal printers (POS station)."
+                    : "Direct thermal print disabled on this PC — Export PDF/Excel only.",
+                );
+              }}
+            />
+            {posStation ? "Enabled" : "Disabled"}
+          </label>
+        </div>
+        {notice ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{notice}</p> : null}
+      </div>
 
       <PrinterManagement branchCode={branch.code} />
 

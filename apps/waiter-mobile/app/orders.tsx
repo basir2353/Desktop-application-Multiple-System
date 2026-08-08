@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets } from "../src/api/kitchen";
 import { fetchBranchMenu } from "../src/api/menu";
@@ -97,18 +98,23 @@ export default function OrdersScreen() {
   const [printingId, setPrintingId] = useState<string | null>(null);
   const printLockRef = useRef<Set<string>>(new Set());
 
+  const kitchenPoll = useLiveRefetchInterval(15_000);
+  const ordersPoll = useLiveRefetchInterval(20_000);
+
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 5_000,
+    refetchInterval: kitchenPoll,
+    staleTime: 10_000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: 10_000,
+    refetchInterval: ordersPoll,
+    staleTime: 15_000,
   });
 
   const menuQuery = useQuery({

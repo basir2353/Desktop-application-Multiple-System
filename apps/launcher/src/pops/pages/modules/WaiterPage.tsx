@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
+import { allocateUniqueOrderRef } from "../../lib/uniqueOrderRef";
 import { sessionCanManageFloor, sessionCanManageUsers } from "../../lib/roleAccess";
 import { createBill, createWaiter, fetchWaiters, updateWaiter } from "../../api/billing";
 import { fetchKitchenTickets, createKitchenTicket } from "../../api/kitchen";
@@ -128,7 +129,7 @@ function tableStatusTone(status: string): "success" | "warning" | "info" | "neut
 }
 
 function newWaiterOrderRef(): string {
-  return `ORD-${Date.now().toString().slice(-4)}`;
+  return allocateUniqueOrderRef("ORD");
 }
 
 function SectionPanel({

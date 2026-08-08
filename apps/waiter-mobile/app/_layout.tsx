@@ -82,7 +82,9 @@ const queryClient = new QueryClient({
         if (error instanceof SessionExpiredError) return false;
         return failureCount < 1;
       },
-      staleTime: 5_000,
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      refetchOnReconnect: true,
     },
     mutations: {
       onError: (error) => {
@@ -168,7 +170,6 @@ export default function RootLayout() {
   const hydrateTheme = useThemeStore((s) => s.hydrate);
   const sessionHydrated = useSessionStore((s) => s.hydrated);
   const branchHydrated = useBranchStore((s) => s.hydrated);
-  const themeHydrated = useThemeStore((s) => s.hydrated);
 
   useEffect(() => {
     void warmApiConnection();
@@ -185,7 +186,7 @@ export default function RootLayout() {
     void bootstrapSession();
   }, [sessionHydrated]);
 
-  if (!sessionHydrated || !branchHydrated || !themeHydrated) {
+  if (!sessionHydrated || !branchHydrated) {
     return null;
   }
 

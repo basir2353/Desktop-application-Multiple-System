@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { and, asc, desc, eq, gte, lte, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, ne, sql } from "drizzle-orm";
 import type { CreateBill, CreateKitchenTicket, KitchenTicketStatus, UpdateKitchenTicket } from "@platform/contracts";
 import {
   popsBills,
@@ -21,7 +21,11 @@ import { ClosingService } from "../closing/closing.service";
 import { DeliveryService } from "../delivery/delivery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { extractOrderNotesFromItemsSummary } from "../lib/order-notes-from-summary";
-import { assertDineInTableAvailable } from "../tables/table-booking";
+import {
+  assertDineInTableAvailable,
+  isDineInTableLabel,
+  normalizeTableLabel,
+} from "../tables/table-booking";
 
 type StoredLine = { label: string; qty: number; unitPrice: number; menuItemId?: string };
 
@@ -87,7 +91,7 @@ export class KitchenService {
 
     // Idempotent create: flaky mobile networks may retry the same ORD-* after the
     // first insert already succeeded (client never saw the 201).
-    const orderRef = input.orderRef?.trim() || null;
+    let orderRef = input.orderRef?.trim() || null;
     if (orderRef) {
       const existing = await this.db
         .select()
@@ -103,6 +107,35 @@ export class KitchenService {
         .limit(1);
       if (existing[0]) {
         return this.mapTicketForResponse(existing[0]);
+      }
+
+      // Never reuse an ORD that already has a completed/held bill or done ticket —
+      // that mixed old paid orders with new ones in POS Latest / print.
+      const paidClash = await this.db
+        .select({ id: popsBills.id })
+        .from(popsBills)
+        .where(
+          and(
+            eq(popsBills.branchId, branch.id),
+            eq(popsBills.orderRef, orderRef),
+            ne(popsBills.status, "void"),
+          ),
+        )
+        .limit(1);
+      const doneClash = await this.db
+        .select({ id: popsKitchenTickets.id })
+        .from(popsKitchenTickets)
+        .where(
+          and(
+            eq(popsKitchenTickets.branchId, branch.id),
+            eq(popsKitchenTickets.orderRef, orderRef),
+            eq(popsKitchenTickets.status, "done"),
+          ),
+        )
+        .limit(1);
+      if (paidClash[0] || doneClash[0]) {
+        const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+        orderRef = `${orderRef}-${suffix}`;
       }
     }
 
@@ -202,17 +235,46 @@ export class KitchenService {
         `This order was taken by ${owner}. Only they can edit it — you have view access.`,
       );
     }
+    /** Destination-table occupants absorbed during transfer (merged into this ticket). */
+    let absorbedDestLines: StoredLine[] = [];
+    let absorbedDestNotes: string | null = null;
+
     if (input.stationLabel !== undefined) {
       if (existing.status === "done") {
         throw new BadRequestException("Cannot change table on a completed order");
       }
       const nextLabel = input.stationLabel.trim();
       if (nextLabel.toLowerCase() !== existing.stationLabel.trim().toLowerCase()) {
-        await assertDineInTableAvailable(this.db, existing.branchId, nextLabel, {
-          allowOrderRef: existing.orderRef,
-          excludeTicketId: existing.id,
-          intent: "new-order",
-        });
+        // Table transfer: merge any open order already on the destination into this
+        // ticket, move held bills, then relocate — do not hard-block booked tables.
+        if (isDineInTableLabel(nextLabel)) {
+          const absorbed = await this.absorbDestinationTableOccupants(existing, nextLabel);
+          absorbedDestLines = absorbed.lines;
+          absorbedDestNotes = absorbed.notes;
+          await this.relocateHeldBillsForOrder(
+            existing.branchId,
+            existing.orderRef,
+            existing.stationLabel,
+            nextLabel,
+          );
+          if (existing.billId) {
+            await this.db
+              .update(popsBills)
+              .set({ tableLabel: nextLabel })
+              .where(
+                and(
+                  eq(popsBills.id, existing.billId),
+                  eq(popsBills.status, "held"),
+                ),
+              );
+          }
+        } else {
+          await assertDineInTableAvailable(this.db, existing.branchId, nextLabel, {
+            allowOrderRef: existing.orderRef,
+            excludeTicketId: existing.id,
+            intent: "new-order",
+          });
+        }
       }
     }
 
@@ -234,7 +296,8 @@ export class KitchenService {
         unitPrice: l.unitPrice ?? 0,
         ...(l.menuItemId ? { menuItemId: l.menuItemId } : {}),
       }));
-      const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, storedLines);
+      const withDest = mergeStoredLines(storedLines, absorbedDestLines);
+      const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, withDest);
       const previousLines = this.linesFromTicket(existing);
       pendingCancellations = diffCanceledLines(previousLines, enrichedLines);
       linesJson = JSON.stringify(
@@ -246,18 +309,51 @@ export class KitchenService {
         })),
       );
       const lineText = enrichedLines.map((l) => `${l.label} x${l.qty}`).join(", ");
-      const notes =
+      const baseNotes =
         input.notes !== undefined
           ? input.notes?.trim() || null
           : this.extractNotesFromSummary(existing.itemsSummary);
+      const notes = joinOrderNotes(baseNotes, absorbedDestNotes);
       itemsSummary = notes ? `${lineText} · ${notes}` : lineText;
     } else if (input.notes !== undefined) {
-      const storedLines = this.linesFromTicket(existing);
+      const storedLines = mergeStoredLines(this.linesFromTicket(existing), absorbedDestLines);
+      const enrichedLines =
+        absorbedDestLines.length > 0
+          ? await this.enrichLinesFromMenu(existing.branchId, storedLines)
+          : storedLines;
+      if (absorbedDestLines.length > 0) {
+        linesJson = JSON.stringify(
+          enrichedLines.map((l) => ({
+            label: l.label,
+            qty: l.qty,
+            unitPrice: l.unitPrice ?? 0,
+            ...(l.menuItemId ? { menuItemId: l.menuItemId } : {}),
+          })),
+        );
+      }
       const lineText =
-        storedLines.length > 0
-          ? storedLines.map((l) => `${l.label} x${l.qty}`).join(", ")
+        enrichedLines.length > 0
+          ? enrichedLines.map((l) => `${l.label} x${l.qty}`).join(", ")
           : existing.itemsSummary.split(" · ")[0]?.trim() || existing.itemsSummary;
-      const notes = input.notes?.trim() || null;
+      const notes = joinOrderNotes(input.notes?.trim() || null, absorbedDestNotes);
+      itemsSummary = notes ? `${lineText} · ${notes}` : lineText;
+    } else if (absorbedDestLines.length > 0) {
+      // Table transfer with destination merge — persist combined items on the moved ticket.
+      const merged = mergeStoredLines(this.linesFromTicket(existing), absorbedDestLines);
+      const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, merged);
+      linesJson = JSON.stringify(
+        enrichedLines.map((l) => ({
+          label: l.label,
+          qty: l.qty,
+          unitPrice: l.unitPrice ?? 0,
+          ...(l.menuItemId ? { menuItemId: l.menuItemId } : {}),
+        })),
+      );
+      const lineText = enrichedLines.map((l) => `${l.label} x${l.qty}`).join(", ");
+      const notes = joinOrderNotes(
+        this.extractNotesFromSummary(existing.itemsSummary),
+        absorbedDestNotes,
+      );
       itemsSummary = notes ? `${lineText} · ${notes}` : lineText;
     }
 
@@ -519,6 +615,124 @@ export class KitchenService {
     return extractOrderNotesFromItemsSummary(summary);
   }
 
+  /**
+   * When transferring onto an occupied dine-in table: pull open KOTs + held bills
+   * into the moving ticket, then clear those occupants so H5 shows one full order.
+   */
+  private async absorbDestinationTableOccupants(
+    source: typeof popsKitchenTickets.$inferSelect,
+    nextLabel: string,
+  ): Promise<{ lines: StoredLine[]; notes: string | null }> {
+    const normalized = normalizeTableLabel(nextLabel);
+    const lines: StoredLine[] = [];
+    const noteParts: string[] = [];
+
+    const destTickets = await this.db
+      .select()
+      .from(popsKitchenTickets)
+      .where(
+        and(
+          eq(popsKitchenTickets.branchId, source.branchId),
+          ne(popsKitchenTickets.status, "done"),
+          ne(popsKitchenTickets.id, source.id),
+          sql`lower(trim(${popsKitchenTickets.stationLabel})) = ${normalized}`,
+        ),
+      );
+
+    for (const dest of destTickets) {
+      for (const line of this.linesFromTicket(dest)) {
+        lines.push({
+          label: line.label,
+          qty: line.qty,
+          unitPrice: line.unitPrice ?? 0,
+          ...(line.menuItemId ? { menuItemId: line.menuItemId } : {}),
+        });
+      }
+      const n = this.extractNotesFromSummary(dest.itemsSummary);
+      if (n) noteParts.push(n);
+      await this.db
+        .update(popsKitchenTickets)
+        .set({
+          status: "done",
+          itemsSummary: `${dest.itemsSummary} · merged→${source.orderRef ?? source.ticketRef}`,
+        })
+        .where(eq(popsKitchenTickets.id, dest.id));
+    }
+
+    const destHeld = await this.db
+      .select()
+      .from(popsBills)
+      .where(
+        and(
+          eq(popsBills.branchId, source.branchId),
+          eq(popsBills.status, "held"),
+          sql`lower(trim(${popsBills.tableLabel})) = ${normalized}`,
+        ),
+      );
+
+    for (const bill of destHeld) {
+      const sameOrder =
+        source.orderRef?.trim() &&
+        bill.orderRef?.trim() &&
+        source.orderRef.trim() === bill.orderRef.trim();
+      if (sameOrder) {
+        // Source's own held bill already on dest — relocateHeldBills will keep it.
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(bill.linesJson) as StoredLine[];
+        if (Array.isArray(parsed)) {
+          for (const line of parsed) {
+            if (!line?.label || !(line.qty > 0)) continue;
+            lines.push({
+              label: line.label,
+              qty: line.qty,
+              unitPrice: line.unitPrice ?? 0,
+              ...(line.menuItemId ? { menuItemId: line.menuItemId } : {}),
+            });
+          }
+        }
+      } catch {
+        /* ignore bad json */
+      }
+      if (bill.notes?.trim()) noteParts.push(bill.notes.trim());
+      await this.db
+        .update(popsBills)
+        .set({
+          status: "void",
+          notes: `${bill.notes?.trim() ? `${bill.notes.trim()} · ` : ""}merged→${source.orderRef ?? source.ticketRef}`,
+        })
+        .where(eq(popsBills.id, bill.id));
+    }
+
+    return {
+      lines,
+      notes: noteParts.length > 0 ? noteParts.join(" · ") : null,
+    };
+  }
+
+  /** Move held bills for this order to the new table label. */
+  private async relocateHeldBillsForOrder(
+    branchId: string,
+    orderRef: string | null,
+    _fromLabel: string,
+    toLabel: string,
+  ): Promise<void> {
+    if (!isDineInTableLabel(toLabel)) return;
+    const ref = orderRef?.trim();
+    if (!ref) return;
+    await this.db
+      .update(popsBills)
+      .set({ tableLabel: toLabel.trim() })
+      .where(
+        and(
+          eq(popsBills.branchId, branchId),
+          eq(popsBills.status, "held"),
+          eq(popsBills.orderRef, ref),
+        ),
+      );
+  }
+
   private linesFromTicket(row: typeof popsKitchenTickets.$inferSelect): CreateBill["lines"] {
     if (row.linesJson) {
       try {
@@ -581,6 +795,41 @@ function normalizeMenuLabel(label: string): string {
 
 function lineKey(line: { label: string; menuItemId?: string }): string {
   return line.menuItemId ? `id:${line.menuItemId}` : `label:${normalizeMenuLabel(line.label)}`;
+}
+
+function mergeStoredLines(base: StoredLine[], extra: StoredLine[]): StoredLine[] {
+  if (extra.length === 0) return base.map((l) => ({ ...l }));
+  const out: StoredLine[] = base.map((l) => ({ ...l }));
+  for (const line of extra) {
+    if (!line.label?.trim() || !(line.qty > 0)) continue;
+    const key = lineKey(line);
+    const idx = out.findIndex((row) => lineKey(row) === key);
+    if (idx >= 0) {
+      const prev = out[idx]!;
+      out[idx] = {
+        ...prev,
+        qty: prev.qty + line.qty,
+        unitPrice: prev.unitPrice > 0 ? prev.unitPrice : line.unitPrice ?? 0,
+        ...(prev.menuItemId || line.menuItemId
+          ? { menuItemId: prev.menuItemId ?? line.menuItemId }
+          : {}),
+      };
+    } else {
+      out.push({
+        label: line.label,
+        qty: line.qty,
+        unitPrice: line.unitPrice ?? 0,
+        ...(line.menuItemId ? { menuItemId: line.menuItemId } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+function joinOrderNotes(a: string | null | undefined, b: string | null | undefined): string | null {
+  const parts = [a?.trim(), b?.trim()].filter(Boolean) as string[];
+  if (parts.length === 0) return null;
+  return [...new Set(parts)].join(" · ");
 }
 
 function aggregateLines(

@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets } from "../src/api/kitchen";
 import { fetchBranchMenu } from "../src/api/menu";
@@ -66,18 +67,22 @@ export default function HistoryScreen() {
   const [printingId, setPrintingId] = useState<string | null>(null);
   const printLockRef = useRef<Set<string>>(new Set());
 
+  const historyPoll = useLiveRefetchInterval(60_000);
+
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: 15_000,
+    refetchInterval: historyPoll,
+    staleTime: 30_000,
   });
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 15_000,
+    refetchInterval: historyPoll,
+    staleTime: 30_000,
   });
 
   const menuQuery = useQuery({

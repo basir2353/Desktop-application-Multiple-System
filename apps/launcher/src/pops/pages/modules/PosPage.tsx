@@ -178,6 +178,8 @@ import { loadPrinterSections } from "../../lib/printerSections";
 import {
   groupCartLinesBySection,
   resolveKotPrinter,
+  resolvePrintUserId,
+  resolveReceiptPrinter,
 } from "../../lib/printerRouting";
 import { logPrintEvent } from "../../lib/printHistory";
 import {
@@ -1704,8 +1706,14 @@ export function PosPage(): JSX.Element {
       if (err) throw new Error(err);
       if (editingOrder?.kind === "ticket") {
         try {
+          // Prefer the ticket's live station after Table Transfer so Update does not
+          // rewrite the order back onto the old table (stale seating UI).
+          const liveTicket = (kitchenQuery.data ?? []).find(
+            (row) => row.id === editingOrder.ticketId,
+          );
+          const effectiveStation = liveTicket?.stationLabel?.trim() || stationLabel;
           return await updateKitchenTicket(editingOrder.ticketId, {
-            stationLabel,
+            stationLabel: effectiveStation,
             lines: kitchenLines(),
             notes: kitchenOrderNotes ?? null,
             ...deliveryExtras(),
@@ -1725,7 +1733,17 @@ export function PosPage(): JSX.Element {
       }
       return createKitchenTicket({
         branchCode: branch!.code,
-        orderRef: nextOrderRef(branch!.code, mode),
+        // Use the reserved on-screen order # (already peeked). Do not call nextOrderRef
+        // again — that skipped the displayed ref and caused paid/new ORD mix-ups.
+        orderRef: (() => {
+          const reserved = orderRef.trim();
+          if (reserved) {
+            const seq = parseOrderRefSeq(reserved);
+            if (seq) ensureOrderSeqAtLeast(branch!.code, seq, mode);
+            return reserved;
+          }
+          return nextOrderRef(branch!.code, mode);
+        })(),
         stationLabel,
         lines: kitchenLines(),
         notes: kitchenOrderNotes,
@@ -4042,10 +4060,16 @@ export function PosPage(): JSX.Element {
           ticket={tableTransferTicket}
           branchCode={branch.code}
           onClose={() => setTableTransferTicket(null)}
-          onSuccess={(message) => {
+          onSuccess={(message, updated) => {
             setPrintNotice({ message, tone: "success" });
-            if (editingOrder?.kind === "ticket" && editingOrder.ticketId === tableTransferTicket.id) {
-              void queryClient.invalidateQueries({ queryKey: ["kitchen", branch.code] });
+            if (updated) {
+              applyTableFromStation(updated.stationLabel);
+              if (
+                editingOrder?.kind === "ticket" &&
+                editingOrder.ticketId === updated.id
+              ) {
+                applyTicketToPos(updated);
+              }
             }
           }}
         />
@@ -4167,9 +4191,12 @@ export function PosPage(): JSX.Element {
         onPrint={() => {
           if (!praFiscal) return;
           setPraPrinting(true);
+          const printUserId = resolvePrintUserId(sessionUserId, null);
+          const profile = resolveReceiptPrinter(branch?.code, printUserId);
           void printIssuedPraSlip(praFiscal, {
             branchName: branch?.name,
             branchCode: branch?.code,
+            systemPrinterName: profile?.systemPrinterName ?? null,
           })
             .then((res) => {
               if (!res.ok) {

@@ -56,10 +56,7 @@ export function AdminBottomNav({ active }: { active?: AdminTab }) {
             <Pressable
               key={tab.id}
               onPress={() => {
-                if (selected && tab.id === current) {
-                  router.replace(tab.href as never);
-                  return;
-                }
+                if (selected) return;
                 router.replace(tab.href as never);
               }}
               style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}

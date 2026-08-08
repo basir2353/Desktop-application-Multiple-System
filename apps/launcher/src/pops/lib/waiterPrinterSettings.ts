@@ -42,25 +42,38 @@ export function loadWaiterPrinterMap(branchCode: string | undefined): Record<str
   return readAll()[branchCode] ?? {};
 }
 
+function isWaiterStationLabel(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  if ((WAITER_PRINTER_PRESETS as readonly string[]).some((p) => p.toLowerCase() === trimmed.toLowerCase())) {
+    return true;
+  }
+  return /^waiter\s*station\b/i.test(trimmed) || /^patio\s*printer$/i.test(trimmed) || /^bar\s*printer$/i.test(trimmed);
+}
+
 export function getWaiterPrinter(
   branchCode: string | undefined,
   waiterId: string | null | undefined,
 ): WaiterPrinterConfig | null {
   if (!branchCode || !waiterId) return null;
-  const config = loadWaiterPrinterMap(branchCode)[waiterId];
-  if (config?.printerName?.trim()) {
-    const name = config.printerName.trim();
-    // Legacy waiter map stores OS / station names used as the direct-print target.
-    return { printerName: name, systemPrinterName: name };
-  }
 
-  // Fall back to Assign Users (many-to-many) profiles — never treat display name as OS name.
+  // Prefer Assign Users / receipt routing — real Windows spooler link lives on the profile.
   const profile =
     resolveReceiptPrinter(branchCode, waiterId) ?? resolvePrinterForUser(branchCode, waiterId);
   if (profile) {
     return {
       printerName: profile.name,
       systemPrinterName: profile.systemPrinterName?.trim() || undefined,
+    };
+  }
+
+  const config = loadWaiterPrinterMap(branchCode)[waiterId];
+  if (config?.printerName?.trim()) {
+    const name = config.printerName.trim();
+    // Station presets are labels only — never send them to print_image_to_printer.
+    return {
+      printerName: name,
+      systemPrinterName: isWaiterStationLabel(name) ? undefined : name,
     };
   }
   return null;

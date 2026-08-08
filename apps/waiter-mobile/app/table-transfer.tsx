@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { fetchBranchFloor } from "../src/api/tables";
 import {
@@ -57,18 +58,23 @@ export default function TableTransferScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const kitchenPoll = useLiveRefetchInterval(15_000);
+  const floorPoll = useLiveRefetchInterval(30_000);
+
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 4_000,
+    refetchInterval: kitchenPoll,
+    staleTime: 10_000,
   });
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
-    refetchInterval: 4_000,
+    refetchInterval: floorPoll,
+    staleTime: 20_000,
   });
 
   const transferable = useMemo(() => {
@@ -140,7 +146,9 @@ export default function TableTransferScreen() {
         queryClient.invalidateQueries({ queryKey: ["tables"] }),
       ]);
       const ref = orderRefFromTicket(selectedTicket!);
-      setNotice(`Moved ${ref} to ${tableStationLabel(tableNumber)}.`);
+      setNotice(
+        `Moved ${ref} to ${tableStationLabel(tableNumber)} (merged if table had an order · refreshed).`,
+      );
       setError(null);
       setSelectedTicketId(null);
       setSelectedSectionId(null);
@@ -195,8 +203,8 @@ export default function TableTransferScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.subtitle}>
-          Move a dine-in order to another free table. Booked tables stay locked until their order is
-          closed.
+          Move a dine-in order to another table. If the destination already has an order, items are
+          merged and the screen refreshes immediately.
         </Text>
 
         {notice ? <Notice tone="success">{notice}</Notice> : null}
@@ -348,7 +356,7 @@ export default function TableTransferScreen() {
                       const isCurrent =
                         currentTableNumber != null && table.tableNumber === currentTableNumber;
                       const booked = table.bookingStatus === "booked" && !isCurrent;
-                      const disabled = transferMutation.isPending || booked;
+                      const disabled = transferMutation.isPending;
                       return (
                         <Pressable
                           key={table.id}
@@ -375,8 +383,8 @@ export default function TableTransferScreen() {
                               ? "Current"
                               : booked
                                 ? table.bookedOrderRef
-                                  ? `Booked · ${table.bookedOrderRef}`
-                                  : "Booked"
+                                  ? `Merge · ${table.bookedOrderRef}`
+                                  : "Merge"
                                 : `${table.seats} seats`}
                           </Text>
                         </Pressable>

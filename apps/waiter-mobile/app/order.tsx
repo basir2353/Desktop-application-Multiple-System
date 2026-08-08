@@ -17,6 +17,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { DeliveryMap } from "../src/components/DeliveryMap";
 import { DishVariantModal } from "../src/components/DishVariantModal";
 import { createBill, fetchOrders, updateBill } from "../src/api/billing";
@@ -127,34 +128,39 @@ export default function OrderScreen() {
   const kotBaselineRef = useRef<KotBaselineLine[] | null>(null);
   const [orderWriteBusy, setOrderWriteBusy] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
+  const kitchenPoll = useLiveRefetchInterval(15_000);
+  const ordersPoll = useLiveRefetchInterval(20_000);
+  const floorPoll = useLiveRefetchInterval(30_000);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
-    // Floor bookingStatus is the source of truth for Free/Booked chips — keep it fresh.
-    refetchInterval: orderWriteBusy ? false : 4_000,
+    refetchInterval: orderWriteBusy ? false : floorPoll,
+    staleTime: 20_000,
   });
 
   const menuQuery = useQuery({
     queryKey: ["menu", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchMenu(branchCode),
+    staleTime: 5 * 60_000,
   });
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    // Pause polling while sending — slow Wi‑Fi cannot finish POST if GETs keep fighting for bandwidth.
-    refetchInterval: orderWriteBusy ? false : 4_000,
+    refetchInterval: orderWriteBusy ? false : kitchenPoll,
+    staleTime: 10_000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: orderWriteBusy ? false : 6_000,
+    refetchInterval: orderWriteBusy ? false : ordersPoll,
+    staleTime: 15_000,
   });
 
   const ridersQuery = useQuery({

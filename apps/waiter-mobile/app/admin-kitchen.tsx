@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { AdminShell } from "../src/components/AdminBottomNav";
 import {
@@ -43,12 +44,14 @@ export default function AdminKitchenScreen() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<StatusFilter>("active");
   const [error, setError] = useState<string | null>(null);
+  const kitchenPoll = useLiveRefetchInterval(15_000);
 
   const kitchenQuery = useQuery({
     queryKey: ["admin", "kitchen", branchCode],
     queryFn: () => fetchKitchenTickets(branchCode!),
     enabled: allowed && Boolean(branchCode),
-    refetchInterval: 4_000,
+    refetchInterval: kitchenPoll,
+    staleTime: 10_000,
   });
 
   const advance = useMutation({

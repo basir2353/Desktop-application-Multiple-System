@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
+import { useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -22,6 +23,7 @@ import {
 } from "../src/components/ui";
 import { ThemeToggle } from "../src/components/ThemeToggle";
 import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
+import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import {
   formatPkr,
   formatTimeAgo,
@@ -57,26 +59,32 @@ export default function HomeScreen() {
   const clearBranch = useBranchStore((s) => s.clear);
 
   const branchCode = branch?.code ?? "";
+  const kitchenPoll = useLiveRefetchInterval(15_000);
+  const ordersPoll = useLiveRefetchInterval(20_000);
+  const floorPoll = useLiveRefetchInterval(30_000);
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 4_000,
+    refetchInterval: kitchenPoll,
+    staleTime: 10_000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchOrders(branchCode),
-    refetchInterval: 6_000,
+    refetchInterval: ordersPoll,
+    staleTime: 15_000,
   });
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
-    refetchInterval: 4_000,
+    refetchInterval: floorPoll,
+    staleTime: 20_000,
   });
 
   const menuQuery = useQuery({
@@ -101,18 +109,40 @@ export default function HomeScreen() {
   const tickets = kitchenQuery.data ?? [];
   const bills = ordersQuery.data ?? [];
   const menuItems = menuQuery.data?.items ?? [];
-  const unified = buildUnifiedOrders(bills, tickets);
-  const activeTickets = filterActiveKitchenTickets(tickets, bills);
-  const readyCount = activeTickets.filter((t) => t.status === "ready").length;
-  const cookingCount = activeTickets.filter((t) => t.status === "cooking").length;
-  const todayOrders = unified.filter((order) => isToday(order.createdAt));
-  const tableCount = (floorQuery.data?.tables ?? []).filter((t) => t.isActive).length;
-  const bookedTableCount = (floorQuery.data?.tables ?? []).filter(
-    (t) => t.isActive && t.bookingStatus === "booked",
-  ).length;
-  const recentTickets = [...activeTickets]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 4);
+  const unified = useMemo(() => buildUnifiedOrders(bills, tickets), [bills, tickets]);
+  const activeTickets = useMemo(
+    () => filterActiveKitchenTickets(tickets, bills),
+    [tickets, bills],
+  );
+  const readyCount = useMemo(
+    () => activeTickets.filter((t) => t.status === "ready").length,
+    [activeTickets],
+  );
+  const cookingCount = useMemo(
+    () => activeTickets.filter((t) => t.status === "cooking").length,
+    [activeTickets],
+  );
+  const todayOrders = useMemo(
+    () => unified.filter((order) => isToday(order.createdAt)),
+    [unified],
+  );
+  const tableCount = useMemo(
+    () => (floorQuery.data?.tables ?? []).filter((t) => t.isActive).length,
+    [floorQuery.data?.tables],
+  );
+  const bookedTableCount = useMemo(
+    () =>
+      (floorQuery.data?.tables ?? []).filter((t) => t.isActive && t.bookingStatus === "booked")
+        .length,
+    [floorQuery.data?.tables],
+  );
+  const recentTickets = useMemo(
+    () =>
+      [...activeTickets]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 4),
+    [activeTickets],
+  );
 
   const refreshing = kitchenQuery.isFetching || ordersQuery.isFetching;
   const displayName = waiterDisplayName(waiterEmail);

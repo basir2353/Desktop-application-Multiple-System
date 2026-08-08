@@ -99,7 +99,11 @@ export function PosLatestOrdersPanel({
 }: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
+  const displayRole = usePopsStore((s) => s.displayRole);
   const claims = useSessionStore((s) => s.claims);
+  const role = (claims?.role ?? displayRole ?? "").toLowerCase();
+  /** Cashiers stay on POS — hide Orders “View all” shortcut. */
+  const showViewAllOrders = role !== "cashier";
   const [posSettingsTick, setPosSettingsTick] = useState(0);
   /** Bill ids that successfully uploaded to Real PRA this session — hide RPRA immediately. */
   const [rpraDoneBillIds, setRpraDoneBillIds] = useState<Set<string>>(() => new Set());
@@ -655,12 +659,14 @@ export function PosLatestOrdersPanel({
                   </svg>
                 </button>
               </div>
-              <Link
-                to="../orders"
-                className="shrink-0 text-[10px] font-medium text-amber-400 hover:text-amber-300"
-              >
-                View all
-              </Link>
+              {showViewAllOrders ? (
+                <Link
+                  to="../orders"
+                  className="shrink-0 text-[10px] font-medium text-amber-400 hover:text-amber-300"
+                >
+                  View all
+                </Link>
+              ) : null}
             </div>
           </div>
 
@@ -1037,7 +1043,10 @@ export function PosLatestOrdersPanel({
           ticket={changeTableOrder.pendingTicket}
           branchCode={branch.code}
           onClose={() => setChangeTableOrder(null)}
-          onSuccess={() => setChangeTableOrder(null)}
+          onSuccess={(message) => {
+            setChangeTableOrder(null);
+            onNotice?.(message, "success");
+          }}
         />
       ) : null}
 
@@ -1053,12 +1062,17 @@ export function PosLatestOrdersPanel({
           onClose={handlePrintPreviewClose}
           onPrinted={(ok, error) => {
             if (ok) {
-              onNotice?.("Invoice sent to printer.", "success");
+              onNotice?.(
+                printPreview?.systemPrinterName
+                  ? `Invoice sent to ${printPreview.systemPrinterName}.`
+                  : "Print dialog opened — choose your physical printer (not PDF).",
+                "success",
+              );
               return;
             }
             onNotice?.(
               error?.trim() ||
-                "Print failed. Check Printer → receipt assignment, or use the desktop EXE for Auto print.",
+                "Print failed. Printer → Receipt pe OS printer link karein (EPSON/XP name), phir EXE se Print dabayein.",
               "error",
             );
           }}

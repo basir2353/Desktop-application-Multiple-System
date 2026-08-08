@@ -144,6 +144,43 @@ export function ReportsPage(): JSX.Element {
     "payable",
   ]);
 
+  function exportActivePdf(): void {
+    const data = reportQuery.data;
+    if (!data || rows.length === 0) return;
+    const escape = (v: unknown) =>
+      String(v ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    const head =
+      "<th>Label</th><th>Qty</th><th>Amount</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Meta</th>";
+    const body = rows
+      .map(
+        (r) =>
+          `<tr><td>${escape(r.label)}</td><td>${escape(r.qty ?? "")}</td><td>${escape(r.amount ?? "")}</td><td>${escape(r.debit ?? "")}</td><td>${escape(r.credit ?? "")}</td><td>${escape(r.balance ?? "")}</td><td>${escape(r.meta ?? "")}</td></tr>`,
+      )
+      .join("");
+    const html = `<!doctype html><html><head><title>${escape(data.title)}</title>
+      <style>
+        body{font-family:Segoe UI,Arial,sans-serif;padding:16px;color:#111}
+        h1{font-size:18px;margin:0 0 8px}
+        p{font-size:12px;color:#555;margin:0 0 12px}
+        table{border-collapse:collapse;width:100%;font-size:11px}
+        th,td{border:1px solid #ccc;padding:4px 6px;text-align:left}
+        th{background:#f3f4f6}
+      </style></head><body>
+      <h1>${escape(data.title)}</h1>
+      <p>${escape(branch?.name ?? "")} · ${escape(from)} ${escape(fromTime)} → ${escape(to)} ${escape(toTime)}</p>
+      <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+      <script>window.onload=function(){window.print()}<\/script>
+      </body></html>`;
+    const w = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
+    if (!w) return;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -153,6 +190,14 @@ export function ReportsPage(): JSX.Element {
           <>
             <Button variant="ghost" className="text-xs" onClick={exportIndex}>
               Export index
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              disabled={!reportQuery.data || rows.length === 0}
+              onClick={exportActivePdf}
+            >
+              Export PDF
             </Button>
             <Button
               className="text-xs"

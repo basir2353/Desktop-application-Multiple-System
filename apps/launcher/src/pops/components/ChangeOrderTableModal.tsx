@@ -15,7 +15,8 @@ type Props = {
   ticket: ChangeTableTicket;
   branchCode: string;
   onClose: () => void;
-  onSuccess?: (message: string) => void;
+  /** Called after transfer + query refetch. `updated` includes merged lines when dest had an order. */
+  onSuccess?: (message: string, updated?: KitchenTicket) => void;
 };
 
 export function ChangeOrderTableModal({
@@ -74,12 +75,25 @@ export function ChangeOrderTableModal({
   const changeMutation = useMutation({
     mutationFn: (tableNumber: string) =>
       updateKitchenTicket(ticket.id, { stationLabel: tableStationLabel(tableNumber) }),
-    onSuccess: async (_ticket, tableNumber) => {
-      await queryClient.invalidateQueries({ queryKey: ["kitchen"] });
-      await queryClient.invalidateQueries({ queryKey: ["orders"] });
-      await queryClient.invalidateQueries({ queryKey: ["tables"] });
+    onSuccess: async (updated, tableNumber) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["kitchen"] }),
+        queryClient.invalidateQueries({ queryKey: ["orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["tables"] }),
+      ]);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["kitchen", branchCode] }),
+        queryClient.refetchQueries({ queryKey: ["orders", branchCode] }),
+        queryClient.refetchQueries({ queryKey: ["tables", branchCode] }),
+      ]);
       const ref = ticket.orderRef ?? ticket.ticketRef;
-      onSuccess?.(`Moved ${ref} to ${tableStationLabel(tableNumber)}.`);
+      const dest = tableStationLabel(tableNumber);
+      const mergedHint =
+        (updated.lines?.length ?? 0) >
+        0 /* always show dest label — merge is server-side */
+          ? `Moved ${ref} to ${dest} (orders on ${dest} merged · screen refreshed).`
+          : `Moved ${ref} to ${dest}.`;
+      onSuccess?.(mergedHint, updated);
       onClose();
     },
     onError: (err: Error) => {
@@ -116,7 +130,7 @@ export function ChangeOrderTableModal({
             </h2>
             <p className="floor-modal-subtitle">
               {orderRef} · currently at <span className="font-medium">{ticket.stationLabel}</span>
-              {" · "}Booked tables cannot be selected until their order is closed.
+              {" · "}Booked tables merge into this order (items + updates).
             </p>
           </div>
           <button
@@ -180,7 +194,7 @@ export function ChangeOrderTableModal({
                       <button
                         key={t.id}
                         type="button"
-                        disabled={changeMutation.isPending || booked}
+                        disabled={changeMutation.isPending}
                         onClick={() => handleTablePick(t.tableNumber)}
                         className={`floor-modal-table-btn ${isCurrent ? "is-selected" : ""} ${
                           booked ? "is-booked" : ""
@@ -188,8 +202,8 @@ export function ChangeOrderTableModal({
                         title={
                           booked
                             ? t.bookedOrderRef
-                              ? `Booked · ${t.bookedOrderRef}`
-                              : "Booked"
+                              ? `Merge with ${t.bookedOrderRef} on this table`
+                              : "Merge with current order on this table"
                             : undefined
                         }
                       >
@@ -199,8 +213,8 @@ export function ChangeOrderTableModal({
                             ? "Current"
                             : booked
                               ? t.bookedOrderRef
-                                ? `Booked · ${t.bookedOrderRef}`
-                                : "Booked"
+                                ? `Merge · ${t.bookedOrderRef}`
+                                : "Merge"
                               : `${t.seats} seats`}
                         </div>
                       </button>
@@ -212,7 +226,7 @@ export function ChangeOrderTableModal({
           )}
 
           {changeMutation.isPending ? (
-            <p className="floor-modal-body-text mt-3 text-xs">Updating table…</p>
+            <p className="floor-modal-body-text mt-3 text-xs">Transferring & refreshing…</p>
           ) : null}
           {error ? <p className="floor-modal-error">{error}</p> : null}
         </div>

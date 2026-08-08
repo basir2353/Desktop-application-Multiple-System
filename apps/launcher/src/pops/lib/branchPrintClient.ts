@@ -1418,13 +1418,15 @@ export async function ensureBranchPrintRuntime(
   if (!code) return null;
 
   const settings = loadBranchPrintSettings(code);
+  // Keep the user's queue preference. Forcing useQueue:true made every POS Print
+  // click enqueue + toast "sent" while the thermal stayed silent if the worker failed.
+  // Cloud/mobile workers still run below regardless of useQueue.
   const next: BranchPrintServerSettings = {
     ...settings,
     branchCode: code,
     branchName: branchName || settings.branchName || code,
     enabled: true,
-    useQueue: true,
-    cloudHeartbeat: true,
+    cloudHeartbeat: settings.cloudHeartbeat !== false,
   };
   saveBranchPrintSettings(next);
 
