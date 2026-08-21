@@ -3,6 +3,8 @@ setlocal EnableExtensions
 REM Fast suite EXE build — keeps Cargo cache (no wipe), more parallel jobs.
 cd /d "%~dp0\.."
 
+call "%~dp0set-build-live-api.bat"
+
 set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
 set "MSVC_VER=14.44.35207"
 set "SDK_VER=10.0.26100.0"
@@ -20,8 +22,7 @@ REM Keep cache for speed (do NOT delete target dir)
 set "CARGO_TARGET_DIR=%TEMP%\pops-launcher-cargo-target"
 set "CARGO_BUILD_JOBS=%NUMBER_OF_PROCESSORS%"
 set "CARGO_INCREMENTAL=1"
-REM Built-in fallback URL; EXE still has Live/Local toggle at runtime
-set "VITE_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app"
+REM Built-in fallback URL from Active live server (runtime toggle still works)
 set "PLATFORM_EDITION=suite"
 set "TAURI_SIGNING_PRIVATE_KEY_PATH=%USERPROFILE%\.tauri\pops-updater.key"
 
@@ -65,5 +66,9 @@ for %%F in ("%CARGO_TARGET_DIR%\release\bundle\nsis\*-setup.exe") do (
   echo   %OUT_DIR%\%%~nxF
   echo   Desktop + Downloads
 )
+
+cd /d "%~dp0\..\apps\launcher"
+call %PNPM% exec node .\scripts\write-update-manifest.mjs suite
+if errorlevel 1 exit /b 1
 
 endlocal

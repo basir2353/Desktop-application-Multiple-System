@@ -3,6 +3,7 @@ import type { Bill, PraFiscalInvoice, PraInvoiceMode } from "@platform/contracts
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAdaptiveRefetchInterval } from "../../../lib/useAdaptiveRefetchInterval";
 import { fetchPraFiscalForSource } from "../../../lib/praApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
@@ -123,6 +124,7 @@ export function OrdersPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const canManageTables = sessionCanManageFloor(claims);
+  const ordersPollMs = useAdaptiveRefetchInterval(10_000);
   const businessDay = useMemo(
     () => loadBusinessDaySettings(branch?.code),
     [branch?.code],
@@ -176,14 +178,14 @@ export function OrdersPage(): JSX.Element {
     queryKey: ["orders", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchCompletedOrders(branch!.code),
-    refetchInterval: 10_000,
+    refetchInterval: ordersPollMs,
   });
 
   const kitchenQuery = useQuery({
     queryKey: ["kitchen", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchKitchenTickets(branch!.code),
-    refetchInterval: 10_000,
+    refetchInterval: ordersPollMs,
   });
 
   const completeHeldMutation = useMutation({

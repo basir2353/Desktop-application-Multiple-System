@@ -4,6 +4,7 @@ import {
   renderTicketHtmlToPngBytes,
 } from "./printTicket";
 import { buildPraFiscalHtml } from "./praFiscalPrint";
+import { trackPrintJob } from "./printQueueMonitor";
 import { asPrinterName } from "./asPrinterName";
 import { isDesktopAppRuntime, isVirtualSystemPrinter, printImageToSystemPrinter } from "./systemPrinters";
 
@@ -19,6 +20,15 @@ export async function printPraFiscalSlip(
     branchCode?: string;
   },
 ): Promise<{ ok: boolean; error?: string }> {
+  const tracker = trackPrintJob({
+    branchCode: options?.branchCode || fiscal.branchCode,
+    kind: "pra",
+    orderRef: fiscal.sourceRef || fiscal.invoiceNumber,
+    printerName: options?.systemPrinterName ?? undefined,
+    source: "pc",
+    deviceLabel: "desktop-launcher",
+  });
+
   try {
     const html = await buildPraFiscalHtml(fiscal, {
       branchName: options?.branchName,
@@ -35,16 +45,28 @@ export async function printPraFiscalSlip(
           copies: 1,
           paperWidthMm: options?.paperWidthMm ?? 80,
         });
-        if (img.ok) return { ok: true };
+        if (img.ok) {
+          tracker.finish(true);
+          return { ok: true };
+        }
         if (!img.unsupported) {
-          return { ok: false, error: img.error ?? `Printer "${printer}" failed.` };
+          const err = img.error ?? `Printer "${printer}" failed.`;
+          tracker.finish(false, err);
+          return { ok: false, error: err };
         }
       }
     }
     const opened = await printHtmlDocumentAndWait(html, `Invoice ${fiscal.invoiceNumber}`);
-    return opened ? { ok: true } : { ok: false, error: "Could not open print dialog." };
+    if (opened) {
+      tracker.finish(true);
+      return { ok: true };
+    }
+    tracker.finish(false, "Could not open print dialog.");
+    return { ok: false, error: "Could not open print dialog." };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "Invoice print failed." };
+    const msg = err instanceof Error ? err.message : "Invoice print failed.";
+    tracker.finish(false, msg);
+    return { ok: false, error: msg };
   }
 }
 

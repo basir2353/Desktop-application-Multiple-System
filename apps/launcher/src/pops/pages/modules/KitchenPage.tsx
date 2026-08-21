@@ -2,6 +2,7 @@ import { Button } from "@platform/ui";
 import type { KitchenTicket } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useAdaptiveRefetchInterval } from "../../../lib/useAdaptiveRefetchInterval";
 import { usePopsStore } from "../../../stores/popsStore";
 import { fetchCompletedOrders } from "../../api/billing";
 import {
@@ -115,6 +116,7 @@ function kitchenItemsSummary(order: UnifiedOrder): string {
 export function KitchenPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
+  const livePollMs = useAdaptiveRefetchInterval(5_000);
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"active" | "completed">("active");
   const [selectedOrder, setSelectedOrder] = useState<UnifiedOrder | null>(null);
@@ -155,7 +157,7 @@ export function KitchenPage(): JSX.Element {
         .flat()
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     },
-    refetchInterval: 5_000,
+    refetchInterval: livePollMs,
   });
 
   const ticketsQuery = useQuery({
@@ -174,7 +176,7 @@ export function KitchenPage(): JSX.Element {
       tickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       return { tickets, branchByTicketId };
     },
-    refetchInterval: 5_000,
+    refetchInterval: livePollMs,
   });
 
   const doneTicketsQuery = useQuery({
@@ -201,7 +203,7 @@ export function KitchenPage(): JSX.Element {
       tickets.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       return { tickets, branchByTicketId };
     },
-    refetchInterval: 5_000,
+    refetchInterval: livePollMs,
   });
 
   const kitchenTickets = ticketsQuery.data?.tickets ?? [];

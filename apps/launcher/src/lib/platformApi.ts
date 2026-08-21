@@ -11,6 +11,7 @@ import {
   type Business,
   type CreateBusiness,
   type CreateLicencePayment,
+  type CreatePlatformUser,
   type GrantLicenceDays,
   type LicencePayment,
   type LicenceReminderResult,
@@ -171,6 +172,15 @@ export async function recordLicencePayment(
 export async function fetchPlatformUsers(): Promise<PlatformUser[]> {
   const res = await authFetch("/v1/platform/users");
   return readJson(res, (json) => platformUserSchema.array().parse(json));
+}
+
+export async function createPlatformUser(input: CreatePlatformUser): Promise<PlatformUser> {
+  const res = await authFetch("/v1/platform/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readJson(res, (json) => platformUserSchema.parse(json));
 }
 
 export async function updatePlatformUser(

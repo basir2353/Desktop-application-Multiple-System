@@ -50,6 +50,16 @@ export type PosSettings = {
    * Local UI preference (not synced to mobile tax API).
    */
   showBillNotes: boolean;
+  /**
+   * When on, POS menu shows a Full Screen button after order type is selected.
+   * Local UI preference (not synced to mobile tax API).
+   */
+  fullScreenMenuEnabled: boolean;
+  /**
+   * Default full-screen / menu browse mode: categories first, or all items flat.
+   * Local UI preference (not synced to mobile tax API).
+   */
+  menuViewMode: "category" | "all";
 };
 
 export const DEFAULT_POS_SETTINGS: PosSettings = {
@@ -75,6 +85,8 @@ export const DEFAULT_POS_SETTINGS: PosSettings = {
   taxOnFoodpanda: true,
   taxOnStaffFood: true,
   showBillNotes: true,
+  fullScreenMenuEnabled: true,
+  menuViewMode: "category",
 };
 
 export const POS_SETTINGS_CHANGED_EVENT = "pops-pos-settings-changed";
@@ -110,6 +122,8 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     taxOnFoodpanda: input.taxOnFoodpanda ?? DEFAULT_POS_SETTINGS.taxOnFoodpanda,
     taxOnStaffFood: input.taxOnStaffFood ?? DEFAULT_POS_SETTINGS.taxOnStaffFood,
     showBillNotes: input.showBillNotes ?? DEFAULT_POS_SETTINGS.showBillNotes,
+    fullScreenMenuEnabled: input.fullScreenMenuEnabled ?? DEFAULT_POS_SETTINGS.fullScreenMenuEnabled,
+    menuViewMode: input.menuViewMode === "all" ? "all" : "category",
   };
 }
 
@@ -199,8 +213,8 @@ export function savePosSettings(branchCode: string, settings: PosSettings): void
 /** Map API tax settings → POS charges (cloud is source of truth when present). */
 export function posSettingsFromTaxApi(
   tax: TaxSettings,
-  /** Preserve local-only UI flags (e.g. showBillNotes) across cloud sync. */
-  localUi?: Pick<PosSettings, "showBillNotes">,
+  /** Preserve local-only UI flags across cloud sync. */
+  localUi?: Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "menuViewMode">,
 ): PosSettings {
   const charges = tax.posCharges;
   if (charges) {
@@ -209,6 +223,8 @@ export function posSettingsFromTaxApi(
       servicePct: Number.isFinite(charges.servicePct) ? charges.servicePct : tax.serviceTaxPct,
       taxPct: Number.isFinite(charges.taxPct) ? charges.taxPct : tax.salesTaxPct,
       showBillNotes: localUi?.showBillNotes,
+      fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
+      menuViewMode: localUi?.menuViewMode,
     });
   }
   return normalizePosSettings({
@@ -218,6 +234,8 @@ export function posSettingsFromTaxApi(
     cardTaxPct: DEFAULT_POS_SETTINGS.cardTaxPct,
     onlineTaxPct: DEFAULT_POS_SETTINGS.onlineTaxPct,
     showBillNotes: localUi?.showBillNotes,
+    fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
+    menuViewMode: localUi?.menuViewMode,
   });
 }
 

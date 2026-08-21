@@ -721,6 +721,7 @@ const gradleEnv = {
   EXPO_NO_METRO_WORKSPACE_ROOT: "1",
   NODE_OPTIONS: "--max-old-space-size=4096",
   ORG_GRADLE_PROJECT_reactNativeArchitectures: "arm64-v8a",
+  ...(process.env.GRADLE_USER_HOME ? { GRADLE_USER_HOME: process.env.GRADLE_USER_HOME } : {}),
   ...(androidSdk && existsSync(androidSdk)
     ? { ANDROID_HOME: androidSdk, ANDROID_SDK_ROOT: androidSdk }
     : {}),
@@ -744,6 +745,9 @@ const useDaemon =
 const gradleArgs = useDaemon
   ? ["assembleRelease", "--stacktrace"]
   : ["assembleRelease", "--no-daemon", "--stacktrace"];
+if (process.env.POPS_GRADLE_NO_CACHE === "1") {
+  gradleArgs.push("--no-build-cache");
+}
 if (useDaemon) {
   console.log("[build-apk] Gradle daemon enabled (fast)");
 }

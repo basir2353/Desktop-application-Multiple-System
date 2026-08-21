@@ -11,6 +11,7 @@ import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -18,6 +19,10 @@ import {
   View,
 } from "react-native";
 import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
+import {
+  loadMobileDisplaySettings,
+  type MobileDisplaySettings,
+} from "../src/lib/mobileDisplaySettings";
 import { DeliveryMap } from "../src/components/DeliveryMap";
 import { DishVariantModal } from "../src/components/DishVariantModal";
 import { createBill, fetchOrders, updateBill } from "../src/api/billing";
@@ -108,6 +113,11 @@ export default function OrderScreen() {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [tableSearch, setTableSearch] = useState("");
   const [showMenu, setShowMenu] = useState(false);
+  const [fullScreenMenuOpen, setFullScreenMenuOpen] = useState(false);
+  const [displaySettings, setDisplaySettings] = useState<MobileDisplaySettings>({
+    fullScreenMenuEnabled: false,
+    menuViewMode: "category",
+  });
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
@@ -131,6 +141,13 @@ export default function OrderScreen() {
   const kitchenPoll = useLiveRefetchInterval(15_000);
   const ordersPoll = useLiveRefetchInterval(20_000);
   const floorPoll = useLiveRefetchInterval(30_000);
+
+  useEffect(() => {
+    void loadMobileDisplaySettings().then((s) => {
+      setDisplaySettings(s);
+      if (s.menuViewMode === "all") setCategoryFilter(null);
+    });
+  }, []);
 
   const floorQuery = useQuery({
     queryKey: ["tables", branchCode],
@@ -1162,7 +1179,18 @@ export default function OrderScreen() {
                 onPress={() => setShowMenu((v) => !v)}
               />
             </View>
-            {editingOrder?.kind !== "bill" ? (
+            {displaySettings.fullScreenMenuEnabled ? (
+              <View style={styles.actionHalf}>
+                <Button
+                  label="Full Screen Menu"
+                  onPress={() => {
+                    if (displaySettings.menuViewMode === "all") setCategoryFilter(null);
+                    setFullScreenMenuOpen(true);
+                    setShowMenu(true);
+                  }}
+                />
+              </View>
+            ) : editingOrder?.kind !== "bill" ? (
             <View style={styles.actionHalf}>
               <Button
                 label={
@@ -1179,6 +1207,24 @@ export default function OrderScreen() {
             </View>
             ) : null}
           </View>
+          {displaySettings.fullScreenMenuEnabled && editingOrder?.kind !== "bill" ? (
+            <View style={[styles.actionRow, { marginTop: 8 }]}>
+              <View style={{ flex: 1 }}>
+                <Button
+                  label={
+                    sendMutation.isPending
+                      ? "Saving…"
+                      : editingOrder?.kind === "ticket"
+                        ? "Update & print"
+                        : "Send & print"
+                  }
+                  onPress={submitSendOrder}
+                  disabled={cart.length === 0 || Boolean(validateOrderTarget()) || sendMutation.isPending}
+                  loading={sendMutation.isPending}
+                />
+              </View>
+            </View>
+          ) : null}
 
           {cart.length > 0 ? (
             <View style={styles.printRow}>
@@ -1299,7 +1345,7 @@ export default function OrderScreen() {
           ) : null}
         </Card>
 
-        {showMenu ? (
+        {showMenu && !fullScreenMenuOpen ? (
           <Card style={styles.menuCard}>
             <SectionHeader title="Menu" actionLabel="Close" onAction={() => setShowMenu(false)} />
 
@@ -1421,6 +1467,173 @@ export default function OrderScreen() {
             ))}
           </Card>
         ) : null}
+
+        <Modal
+          visible={fullScreenMenuOpen}
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={() => setFullScreenMenuOpen(false)}
+        >
+          <View style={[styles.fullScreenRoot, { backgroundColor: colors.bg }]}>
+            <View style={styles.fullScreenHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fullScreenTitle}>Full screen menu</Text>
+                <Muted>
+                  {displaySettings.menuViewMode === "category"
+                    ? "Categories on top — tap one for items"
+                    : "All items in one list"}
+                </Muted>
+              </View>
+              <View style={styles.fullScreenModeRow}>
+                <Chip
+                  label="Category"
+                  selected={categoryFilter !== null || displaySettings.menuViewMode === "category"}
+                  onPress={() => {
+                    setDisplaySettings((prev) => ({ ...prev, menuViewMode: "category" }));
+                    if (!categoryFilter && categories[0]) setCategoryFilter(categories[0].id);
+                  }}
+                />
+                <Chip
+                  label="All items"
+                  selected={categoryFilter === null}
+                  onPress={() => setCategoryFilter(null)}
+                />
+              </View>
+              <Button label="Close" variant="ghost" onPress={() => setFullScreenMenuOpen(false)} />
+            </View>
+
+            {cartQty > 0 ? (
+              <View style={styles.menuCartSummary}>
+                <Text style={styles.menuCartSummaryText}>
+                  Qty {cartQty} · {cart.length} item{cart.length === 1 ? "" : "s"}
+                </Text>
+                <Text style={styles.menuCartSummaryTotal}>{formatPkr(subtotal)}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.searchWrap}>
+              <Text style={styles.searchIcon}>⌕</Text>
+              <Input
+                placeholder="Search dishes or categories…"
+                placeholderTextColor={colors.muted}
+                value={search}
+                onChangeText={(text) => {
+                  setSearch(text);
+                  if (text.trim()) setCategoryFilter(null);
+                }}
+                style={styles.searchInput}
+              />
+            </View>
+
+            {!search.trim() && categories.length > 0 && categoryFilter !== null ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.categoryRow}
+              >
+                <Chip
+                  label="All"
+                  selected={false}
+                  onPress={() => setCategoryFilter(null)}
+                />
+                {categories.map((cat) => (
+                  <Chip
+                    key={cat.id}
+                    label={cat.name}
+                    selected={categoryFilter === cat.id}
+                    onPress={() => setCategoryFilter(cat.id)}
+                  />
+                ))}
+              </ScrollView>
+            ) : !search.trim() && categories.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.categoryRow}
+              >
+                <Chip label="All" selected onPress={() => setCategoryFilter(null)} />
+                {categories.map((cat) => (
+                  <Chip
+                    key={cat.id}
+                    label={cat.name}
+                    selected={false}
+                    onPress={() => setCategoryFilter(cat.id)}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
+
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
+              {menuQuery.isLoading ? (
+                <View style={styles.menuLoading}>
+                  <ActivityIndicator color={colors.accent} />
+                  <Muted>Loading menu…</Muted>
+                </View>
+              ) : null}
+              {!menuQuery.isLoading && menuByCategory.length === 0 ? (
+                <EmptyState
+                  title="Nothing found"
+                  message={
+                    search.trim()
+                      ? "Try a different search term."
+                      : "No menu items available for this branch."
+                  }
+                />
+              ) : null}
+              {menuByCategory.map((section) => (
+                <View key={section.categoryId} style={styles.menuSection}>
+                  <CategoryHeading title={section.name} count={section.items.length} />
+                  {section.items.map((item) => {
+                    const itemLines = cart.filter((l) => l.item.id === item.id);
+                    const inCart = itemLines.reduce((s, l) => s + l.qty, 0);
+                    const variants = resolveSellableVariants(item);
+                    const displayPrice = menuItemDisplayPrice(item);
+                    const primaryLine = itemLines.length === 1 ? itemLines[0] : null;
+                    return (
+                      <View key={item.id} style={styles.menuItem}>
+                        <Pressable
+                          onPress={() => {
+                            if (inCart === 0 || shouldOpenVariantPicker(item)) onDishClick(item);
+                          }}
+                          style={({ pressed }) => [
+                            styles.menuItemCopy,
+                            pressed && styles.menuItemPressed,
+                          ]}
+                        >
+                          <Text style={styles.menuItemName} numberOfLines={2}>
+                            {formatMenuItemLabel(item)}
+                            {variants.length > 1 ? " · sizes" : ""}
+                          </Text>
+                          <Text style={styles.menuItemPrice}>
+                            {variants.length > 1
+                              ? `From ${formatPkr(displayPrice)}`
+                              : formatPkr(displayPrice)}
+                          </Text>
+                        </Pressable>
+                        {primaryLine ? (
+                          <QtyStepper
+                            qty={primaryLine.qty}
+                            minQty={primaryLine.printedQty ?? 0}
+                            onDecrement={() => setLineQty(primaryLine.key, primaryLine.qty - 1)}
+                            onIncrement={() => setLineQty(primaryLine.key, primaryLine.qty + 1)}
+                          />
+                        ) : (
+                          <Pressable
+                            onPress={() => onDishClick(item)}
+                            style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
+                            hitSlop={8}
+                          >
+                            <Text style={styles.addBtnText}>+</Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </Modal>
 
         {orderMode === "dine-in" ? (
         <Card style={styles.sectionCard}>
@@ -1791,6 +2004,28 @@ function useScreenStyles() {
   menuCard: {
     gap: 12,
     borderColor: "rgba(15, 118, 110, 0.25)",
+  },
+  fullScreenRoot: {
+    flex: 1,
+    paddingTop: 48,
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  fullScreenHeader: {
+    gap: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: c.border,
+  },
+  fullScreenTitle: {
+    color: c.text,
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  fullScreenModeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   menuCartSummary: {
     flexDirection: "row",

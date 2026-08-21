@@ -23,7 +23,9 @@ function poolSsl(connectionString: string): pg.PoolConfig["ssl"] {
 export function createPgDb(connectionString: string): { db: PlatformPgDb; pool: pg.Pool } {
   const pool = new pg.Pool({
     connectionString,
-    max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+    max: Number(process.env.DATABASE_POOL_MAX ?? 20),
+    connectionTimeoutMillis: Number(process.env.DATABASE_CONNECT_TIMEOUT_MS ?? 10_000),
+    idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30_000),
     ssl: poolSsl(connectionString),
   });
   const db = drizzle(pool, { schema });

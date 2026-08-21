@@ -2,6 +2,8 @@
 setlocal EnableExtensions
 cd /d "%~dp0\.."
 
+call "%~dp0set-build-live-api.bat"
+
 set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
 set "MSVC_VER=14.44.35207"
 set "SDK_VER=10.0.26100.0"
@@ -14,7 +16,6 @@ set "INCLUDE=%MSVC_ROOT%\VC\Tools\MSVC\%MSVC_VER%\include;%KITS%\Include\%SDK_VE
 set "CARGO_TARGET_DIR=%TEMP%\pops-launcher-cargo-target"
 set "CARGO_BUILD_JOBS=%NUMBER_OF_PROCESSORS%"
 set "CARGO_INCREMENTAL=1"
-set "VITE_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app"
 set "PLATFORM_EDITION=restaurant"
 set "TAURI_SIGNING_PRIVATE_KEY_PATH=%USERPROFILE%\.tauri\pops-updater.key"
 set "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="

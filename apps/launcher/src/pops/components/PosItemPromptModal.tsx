@@ -65,7 +65,7 @@ export function PosItemPromptModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/65"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/25 p-4 dark:bg-black/65"
       onClick={onClose}
       role="presentation"
     >

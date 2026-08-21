@@ -1,16 +1,13 @@
 import QRCode from "qrcode";
 import type { PraInvoiceMode } from "@platform/contracts";
-import { RAILWAY_API_URL } from "../../lib/apiBase";
+import { getLiveApiUrl } from "../../lib/apiBase";
 
 /** Official PRA public invoice lookup (manual search — ignores query params). */
 export const PRA_EIMS_VERIFY_URL = "https://e.pra.punjab.gov.pk/public/eims.xhtml";
 
-/** Public host for phone QR scans (never localhost). */
-const PRA_API_BASE = RAILWAY_API_URL.replace(/\/$/, "");
-const PRA_PUBLIC_VERIFY_BASE = `${PRA_API_BASE}/v1/pra/public-verify`;
-
-/** FPRA slip QR — real https site that only shows "Not Found" (no invoice / PRA verify). */
-const FPRA_NOT_FOUND_URL = `${PRA_API_BASE}/v1/pra/not-found`;
+function praApiBase(): string {
+  return getLiveApiUrl().replace(/\/$/, "");
+}
 
 /** e-IMS fiscal # pattern e.g. 197476FGYI38421035 */
 export function looksLikeRealPraInvoiceNumber(value: string): boolean {
@@ -23,13 +20,14 @@ export function looksLikeRealPraInvoiceNumber(value: string): boolean {
  */
 export function realPraVerifyUrl(invoiceNumber: string): string {
   const inv = invoiceNumber.trim();
-  if (!inv) return PRA_PUBLIC_VERIFY_BASE;
-  return `${PRA_PUBLIC_VERIFY_BASE}?InvoiceNo=${encodeURIComponent(inv)}`;
+  const base = `${praApiBase()}/v1/pra/public-verify`;
+  if (!inv) return base;
+  return `${base}?InvoiceNo=${encodeURIComponent(inv)}`;
 }
 
 /** FPRA slip QR → site page with only "Not Found". */
 export function fpraNotFoundUrl(): string {
-  return FPRA_NOT_FOUND_URL;
+  return `${praApiBase()}/v1/pra/not-found`;
 }
 
 /**

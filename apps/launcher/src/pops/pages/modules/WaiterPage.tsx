@@ -2,6 +2,7 @@ import { Button } from "@platform/ui";
 import { formatMenuItemLabel, type MenuItem as ApiMenuItem } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useAdaptiveRefetchInterval } from "../../../lib/useAdaptiveRefetchInterval";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { allocateUniqueOrderRef } from "../../lib/uniqueOrderRef";
@@ -191,6 +192,8 @@ export function WaiterPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const canManagePrinters = sessionCanManageFloor(claims);
+  const floorPollMs = useAdaptiveRefetchInterval(15_000);
+  const kitchenPollMs = useAdaptiveRefetchInterval(5_000);
   const [tableId, setTableId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [search, setSearch] = useState("");
@@ -327,7 +330,7 @@ export function WaiterPage(): JSX.Element {
     queryKey: ["tables", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchBranchFloor(branchCode),
-    refetchInterval: 15_000,
+    refetchInterval: floorPollMs,
   });
 
   const floorTables = useMemo(
@@ -390,7 +393,7 @@ export function WaiterPage(): JSX.Element {
     queryKey: ["kitchen", branchCode],
     enabled: Boolean(branchCode),
     queryFn: () => fetchKitchenTickets(branchCode),
-    refetchInterval: 5_000,
+    refetchInterval: kitchenPollMs,
   });
 
   const menuItems = menuQuery.data?.items.filter((m) => m.isActive) ?? [];

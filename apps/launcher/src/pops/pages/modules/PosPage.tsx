@@ -39,6 +39,7 @@ import { PosDishVariantModal } from "../../components/PosDishVariantModal";
 import { PosItemPromptModal } from "../../components/PosItemPromptModal";
 import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
 import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
+import { PosFullScreenMenuOverlay } from "../../components/PosFullScreenMenuOverlay";
 import { PosSeatingModal } from "../../components/PosSeatingModal";
 import {
   POS_ORDER_MODES,
@@ -181,7 +182,6 @@ import {
   resolvePrintUserId,
   resolveReceiptPrinter,
 } from "../../lib/printerRouting";
-import { logPrintEvent } from "../../lib/printHistory";
 import {
   DEFAULT_HAPPY_HOUR_SETTINGS,
   formatHappyHourSlotSummary,
@@ -278,6 +278,7 @@ export function PosPage(): JSX.Element {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [menuView, setMenuView] = useState<"all" | "category" | "featured">("all");
+  const [fullScreenMenuOpen, setFullScreenMenuOpen] = useState(false);
   const [categoryLayout, setCategoryLayout] = useState<"list" | "icon">(() => {
     try {
       const raw = localStorage.getItem("pops-pos-category-layout");
@@ -412,6 +413,8 @@ export function PosPage(): JSX.Element {
     setPosSettings(loadPosSettings(branch?.code));
     setHappyHourSettings(loadHappyHourSettings(branch?.code));
     setOrderModeVisibility(loadPosOrderModeVisibility(branch?.code));
+    const settings = loadPosSettings(branch?.code);
+    setMenuView(settings.menuViewMode === "all" ? "all" : "category");
   }, [branch?.code]);
 
   useEffect(() => {
@@ -441,7 +444,11 @@ export function PosPage(): JSX.Element {
     function onPosSettingsChanged(event: Event): void {
       const detail = (event as CustomEvent<{ branchCode?: string }>).detail;
       if (!branch?.code || detail?.branchCode === branch.code) {
-        setPosSettings(loadPosSettings(branch?.code));
+        const next = loadPosSettings(branch?.code);
+        setPosSettings(next);
+        setMenuView((prev) =>
+          prev === "featured" ? prev : next.menuViewMode === "all" ? "all" : "category",
+        );
       }
     }
     window.addEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
@@ -2156,12 +2163,6 @@ export function PosPage(): JSX.Element {
         copies: Math.max(1, payload.copies ?? 1),
       });
       const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
-      logPrintEvent(branch?.code, {
-        kind: "kot",
-        printerName: target,
-        orderRef: payload.orderRef,
-        ok: result.ok,
-      });
       if (!result.ok) {
         errors.push(`${target}: ${result.error ?? "print failed"}`);
       }
@@ -2189,12 +2190,6 @@ export function PosPage(): JSX.Element {
       };
       const result = await printKotDetailed(dialogPayload);
       const target = dialogPayload.systemPrinterName ?? dialogPayload.printerName ?? "Kitchen";
-      logPrintEvent(branch?.code, {
-        kind: "kot",
-        printerName: target,
-        orderRef: dialogPayload.orderRef,
-        ok: result.ok,
-      });
       if (!result.ok) {
         errors.push(`${target}: ${result.error ?? "print failed"}`);
       }
@@ -2708,6 +2703,28 @@ export function PosPage(): JSX.Element {
         />
       ) : null}
 
+      {fullScreenMenuOpen ? (
+        <PosFullScreenMenuOverlay
+          categories={categories}
+          items={menuItems}
+          initialViewMode={posSettings.menuViewMode}
+          priceLabel={(item) => {
+            const original = menuItemDisplayPrice(item);
+            if (happyHourActiveSlot?.percentOff) {
+              return {
+                display: applyHappyHourDiscountPrice(original, happyHourActiveSlot.percentOff),
+                original,
+              };
+            }
+            return { display: original };
+          }}
+          onPickItem={(item) => {
+            onDishClick(item);
+          }}
+          onClose={() => setFullScreenMenuOpen(false)}
+        />
+      ) : null}
+
       {variantPickerItem ? (
         <PosDishVariantModal
           item={variantPickerItem}
@@ -2748,11 +2765,25 @@ export function PosPage(): JSX.Element {
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/70 dark:text-amber-200/60">
                   Categories
                 </span>
-                <div
-                  className="inline-flex rounded-md border border-amber-300/60 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-950/80"
-                  role="group"
-                  aria-label="Category layout"
-                >
+                <div className="flex items-center gap-1.5">
+                  {posSettings.fullScreenMenuEnabled ? (
+                    <button
+                      type="button"
+                      title="Full screen menu"
+                      onClick={() => setFullScreenMenuOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-1 text-[10px] font-bold text-slate-950 shadow-sm shadow-amber-500/25 hover:bg-amber-400"
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" strokeLinecap="round" />
+                      </svg>
+                      Full screen
+                    </button>
+                  ) : null}
+                  <div
+                    className="inline-flex rounded-md border border-amber-300/60 bg-white/80 p-0.5 dark:border-slate-700 dark:bg-slate-950/80"
+                    role="group"
+                    aria-label="Category layout"
+                  >
                   <button
                     type="button"
                     title="List view"
@@ -2800,6 +2831,7 @@ export function PosPage(): JSX.Element {
                       <rect x="14" y="14" width="7" height="7" rx="1" />
                     </svg>
                   </button>
+                </div>
                 </div>
               </div>
 

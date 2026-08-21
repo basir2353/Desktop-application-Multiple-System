@@ -62,10 +62,18 @@ export class AccountingService implements OnApplicationBootstrap {
     try {
       await this.ensurePayrollColumns();
       await this.seedChartForAllBranches();
-      await this.backfillSalesEntries();
     } catch (err) {
       this.logger.warn(`Accounting bootstrap skipped: ${err instanceof Error ? err.message : String(err)}`);
     }
+    // Nest runs OnApplicationBootstrap inside init() *before* listen().
+    // Backfilling every completed bill here blocks /health and fails Railway deploys.
+    void this.backfillSalesEntries()
+      .then(() => this.logger.log("Accounting sales backfill complete"))
+      .catch((err) =>
+        this.logger.warn(
+          `Accounting backfill skipped: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
   }
 
   private async ensurePayrollColumns(): Promise<void> {
@@ -177,7 +185,19 @@ export class AccountingService implements OnApplicationBootstrap {
       .where(and(...billConditions))
       .orderBy(popsBills.createdAt);
 
+    const postedSaleRefs = await this.db
+      .select({ sourceRef: popsJournalEntries.sourceRef })
+      .from(popsJournalEntries)
+      .where(
+        and(
+          eq(popsJournalEntries.source, "sale"),
+          ...(branchId ? [eq(popsJournalEntries.branchId, branchId)] : []),
+        ),
+      );
+    const posted = new Set(postedSaleRefs.map((row) => row.sourceRef));
+
     for (const bill of bills) {
+      if (posted.has(bill.billRef)) continue;
       await this.hooks.ensureBranchChart(bill.organizationId, bill.branchId);
       await this.hooks.recordSaleFromBill(bill.organizationId, bill.branchId, bill);
     }

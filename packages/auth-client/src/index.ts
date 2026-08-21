@@ -4,15 +4,37 @@ import {
   tokenPairSchema,
   type TokenPair,
 } from "@platform/contracts";
+import { enqueueHttpRequest } from "./requestQueue.js";
 
 export type AuthClientOptions = {
   baseUrl: string;
   fetchImpl?: typeof fetch;
 };
 
+export {
+  enqueueHttpRequest,
+  globalHttpRequestQueue,
+  HttpRequestQueue,
+  isRequestQueueSlow,
+  REQUEST_QUEUE_FAST_CONCURRENCY,
+  REQUEST_QUEUE_SLOW_CONCURRENCY,
+  subscribeRequestQueueSlow,
+} from "./requestQueue.js";
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 /** Bound fetch for WebView/Tauri — bare `fetch` throws "Failed to fetch" in WebView2. */
 export function platformFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return globalThis.fetch(input, init);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const url = requestUrl(input);
+  return enqueueHttpRequest(() => globalThis.fetch(input, init), {
+    method,
+    key: method === "GET" || method === "HEAD" ? `${method} ${url}` : undefined,
+  });
 }
 
 export function isLikelyNetworkFailure(err: unknown): boolean {

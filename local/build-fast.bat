@@ -13,8 +13,11 @@ REM ============================================================================
 
 cd /d "%~dp0\.."
 set "REPO=%CD%"
+call "%REPO%\local\set-build-live-api.bat"
 set "POPS_FAST_BUILD=1"
-set "POPS_GRADLE_DAEMON=1"
+set "POPS_GRADLE_DAEMON=0"
+set "GRADLE_USER_HOME=D:\pops\gradle-home"
+if not exist "%GRADLE_USER_HOME%" mkdir "%GRADLE_USER_HOME%"
 set "NODE_ENV=production"
 set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
 set "ANDROID_SDK_ROOT=%ANDROID_HOME%"

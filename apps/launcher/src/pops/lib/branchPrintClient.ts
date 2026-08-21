@@ -7,7 +7,7 @@ import {
   PRINTING_ENTERPRISE_ENABLED_KEY,
 } from "@platform/contracts";
 import { printImageToSystemPrinter, isDesktopAppRuntime, listSystemPrinters, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
-import { logPrintEvent } from "./printHistory";
+import { classifyPrintSource, logPrintEvent } from "./printHistory";
 import type { PosCartLine } from "./posCart";
 
 const SETTINGS_KEY = "pops-branch-print-server-v1";
@@ -84,6 +84,7 @@ export type BranchQueueJob = {
   createdAt: string;
   updatedAt: string;
   printedAt?: string | null;
+  deviceLabel?: string | null;
 };
 
 function newId(): string {
@@ -174,6 +175,7 @@ function mapJob(raw: Record<string, unknown>): BranchQueueJob {
     createdAt: String(raw.created_at ?? raw.createdAt ?? ""),
     updatedAt: String(raw.updated_at ?? raw.updatedAt ?? ""),
     printedAt: (raw.printed_at ?? raw.printedAt ?? null) as string | null,
+    deviceLabel: (raw.device_label ?? raw.deviceLabel ?? null) as string | null,
   };
 }
 
@@ -432,6 +434,8 @@ export async function submitEnterprisePrintJob(input: {
         printerName: input.printerName ?? input.preferDirectIp.host,
         orderRef: input.orderId ?? undefined,
         ok: true,
+        source: "pc",
+        deviceLabel: "desktop-launcher",
       });
       return { queued: false, printedDirect: true };
     }
@@ -1278,6 +1282,9 @@ export function ensureBranchPrintWorker(): void {
         printerName: printerName ?? job.printerName ?? undefined,
         orderRef: job.orderId ?? undefined,
         ok,
+        source: classifyPrintSource(job.deviceLabel),
+        deviceLabel: job.deviceLabel ?? undefined,
+        error,
       });
       announcePrintJobDone({
         ok,
@@ -1339,12 +1346,18 @@ export function ensureCloudPrintPoller(branchCode: string): void {
         userId?: string | null;
         printerName?: string | null;
         orderId?: string | null;
+        deviceLabel?: string | null;
         payloadJson?: PrintJobPayload | Record<string, unknown>;
         payload?: PrintJobPayload;
       };
       if (!row?.id) return;
 
       const payload = (row.payload ?? row.payloadJson ?? {}) as PrintJobPayload;
+      const metaSource =
+        payload.meta && typeof payload.meta === "object" && "source" in payload.meta
+          ? String((payload.meta as { source?: unknown }).source ?? "")
+          : "";
+      const deviceLabel = row.deviceLabel ?? null;
       const localJob: BranchQueueJob = {
         id: row.id,
         branchCode: String(row.branchCode ?? code),
@@ -1355,6 +1368,7 @@ export function ensureCloudPrintPoller(branchCode: string): void {
         status: "printing",
         retryCount: 0,
         error: null,
+        deviceLabel,
         payloadJson: JSON.stringify({
           ...payload,
           meta: {
@@ -1383,6 +1397,9 @@ export function ensureCloudPrintPoller(branchCode: string): void {
         printerName: result.printer ?? localJob.printerName ?? undefined,
         orderRef: localJob.orderId ?? undefined,
         ok: result.ok,
+        source: classifyPrintSource(deviceLabel, metaSource),
+        deviceLabel: deviceLabel ?? undefined,
+        error: result.error,
       });
       announcePrintJobDone({
         ok: result.ok,

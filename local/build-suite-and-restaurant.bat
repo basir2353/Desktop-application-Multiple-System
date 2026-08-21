@@ -3,6 +3,8 @@ setlocal EnableExtensions
 REM Fast Universal (suite) + Restaurant EXE builds with signed auto-update artifacts.
 cd /d "%~dp0\.."
 
+call "%~dp0set-build-live-api.bat"
+
 set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
 set "MSVC_VER=14.44.35207"
 set "SDK_VER=10.0.26100.0"
@@ -19,7 +21,7 @@ if exist "%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-gnu\bin\carg
 set "CARGO_TARGET_DIR=%TEMP%\pops-launcher-cargo-target"
 set "CARGO_BUILD_JOBS=%NUMBER_OF_PROCESSORS%"
 set "CARGO_INCREMENTAL=1"
-set "VITE_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app"
+REM Live API from Super Admin Active server (local/live-env.json)
 
 REM Required for updater .sig artifacts (empty-password CI key)
 set "TAURI_SIGNING_PRIVATE_KEY_PATH=%USERPROFILE%\.tauri\pops-updater.key"
@@ -75,13 +77,21 @@ echo Next: publish with local\publish-desktop-release.bat 0.3.10
 exit /b 0
 
 :COPY_INSTALLERS
-for %%F in ("%CARGO_TARGET_DIR%\release\bundle\nsis\*-setup.exe") do (
-  copy /Y "%%~fF" "%OUT_DIR%\" >nul
-  copy /Y "%%~fF" "%USERPROFILE%\Desktop\" >nul
-  copy /Y "%%~fF" "%USERPROFILE%\Downloads\" >nul
-  if exist "%%~fF.sig" copy /Y "%%~fF.sig" "%OUT_DIR%\" >nul
-  echo DONE_%~1: %%~nxF
-  echo   %OUT_DIR%\%%~nxF
-  echo   Desktop + Downloads
+if /I "%~1"=="SUITE" (
+  for %%F in ("%CARGO_TARGET_DIR%\release\bundle\nsis\*Universal*-setup.exe") do call :COPY_ONE %%~1 "%%~fF"
+) else (
+  for %%F in ("%CARGO_TARGET_DIR%\release\bundle\nsis\*Restaurant*-setup.exe") do call :COPY_ONE %%~1 "%%~fF"
 )
 goto :eof
+
+:COPY_ONE
+set "SRC=%~2"
+if not exist "%SRC%" exit /b 0
+copy /Y "%SRC%" "%OUT_DIR%\" >nul
+copy /Y "%SRC%" "%USERPROFILE%\Desktop\" >nul
+copy /Y "%SRC%" "%USERPROFILE%\Downloads\" >nul
+if exist "%SRC%.sig" copy /Y "%SRC%.sig" "%OUT_DIR%\" >nul
+echo DONE_%~1: %~nx2
+echo   %OUT_DIR%\%~nx2
+echo   Desktop + Downloads
+exit /b 0

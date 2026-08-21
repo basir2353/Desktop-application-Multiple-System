@@ -416,6 +416,7 @@ const statements = ${JSON.stringify(STATEMENTS)};
 (async () => {
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: 10_000,
     ssl: /railway|rlwy\\.app|amazonaws|neon\\.tech/i.test(process.env.DATABASE_URL || "")
       ? { rejectUnauthorized: false }
       : undefined,

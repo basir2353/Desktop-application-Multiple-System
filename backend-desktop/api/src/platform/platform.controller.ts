@@ -12,6 +12,7 @@ import {
 import {
   createBusinessSchema,
   createLicencePaymentSchema,
+  createPlatformUserSchema,
   grantLicenceDaysSchema,
   resetPlatformUserPasswordSchema,
   sendLicenceRemindersSchema,
@@ -181,6 +182,15 @@ export class PlatformController {
   listUsers(@CurrentUser() user: AccessJwtPayload) {
     this.platform.assertSuperAdmin(user);
     return this.platform.listUsers();
+  }
+
+  @Post("users")
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions("platform.users.manage")
+  createUser(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    this.platform.assertSuperAdmin(user);
+    const input = createPlatformUserSchema.parse(body);
+    return this.platform.createUser(input);
   }
 
   @Delete("users/:userId")

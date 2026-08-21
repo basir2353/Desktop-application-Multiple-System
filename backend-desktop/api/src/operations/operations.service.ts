@@ -240,6 +240,15 @@ export class OperationsService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // Do not await — onModuleInit runs before listen() and would block Railway /health.
+    void this.runDeferredBootstrap().catch((err) => {
+      this.logger.warn(
+        `Operations bootstrap skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
+
+  private async runDeferredBootstrap(): Promise<void> {
     await this.seedIfEmpty();
     await this.backfillSalesFromDailyRollups();
   }

@@ -14,6 +14,7 @@ import {
   type Business,
   type CreateBusiness,
   type CreateLicencePayment,
+  type CreatePlatformUser,
   type GrantLicenceDays,
   type LicencePayment,
   type LicenceReminderResult,
@@ -53,6 +54,7 @@ import {
   tombstoneLoginEmail,
 } from "../lib/login-email";
 import { wipeBusinessTransactions } from "./business-reset.wipe";
+import { UsersService } from "../users/users.service";
 
 const LICENCE_TZ = "Asia/Karachi";
 
@@ -95,6 +97,7 @@ export class PlatformService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly orgAlerts: OrgAlertsService,
+    private readonly usersService: UsersService,
   ) {}
 
   assertSuperAdmin(user: AccessJwtPayload): void {
@@ -1036,6 +1039,35 @@ export class PlatformService {
     }
 
     return [...byId.values()];
+  }
+
+  async createUser(input: CreatePlatformUser): Promise<PlatformUser> {
+    const [org] = await this.db
+      .select({ id: organizations.id, status: organizations.status })
+      .from(organizations)
+      .where(eq(organizations.id, input.businessId))
+      .limit(1);
+    if (!org || org.status === "deleted") {
+      throw new NotFoundException("Business not found");
+    }
+
+    const created = await this.usersService.createUser(input.businessId, {
+      email: input.email,
+      password: input.password,
+      role: input.role,
+      branchScope: input.branchScope,
+      pinRequired: input.pinRequired,
+      staffPin: input.staffPin,
+    });
+
+    if (input.name?.trim()) {
+      await this.db.update(users).set({ name: input.name.trim() }).where(eq(users.id, created.id));
+    }
+
+    const listed = await this.listUsers();
+    const row = listed.find((u) => u.id === created.id);
+    if (!row) throw new BadRequestException("User created but could not be loaded");
+    return row;
   }
 
   async resetUserPassword(userId: string, password: string): Promise<{ ok: true }> {

@@ -2,7 +2,9 @@ import { Button } from "@platform/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { isOnline, subscribeConnectivity } from "@platform/connectivity";
-import { getApiBaseUrl } from "../../../lib/apiBase";
+import { getApiBaseUrl, describeApiServer } from "../../../lib/apiBase";
+import { LiveServerBadge } from "../../../components/LiveServerBadge";
+import { useSuperAdminEnvStore } from "../../../stores/superAdminEnvStore";
 import { countPendingOutbox, flushAllOfflineData } from "../../../lib/offlineSync";
 import { loadOfflineQueue } from "../../../store/lib/storePosSync";
 import { countOfflinePopsOrders } from "../../lib/popsOfflineOrders";
@@ -28,6 +30,8 @@ export function SyncPage(): JSX.Element {
   const dataMode = useDataModeStore((s) => s.dataMode);
   const lastSyncedAt = useDataModeStore((s) => s.lastSyncedAt);
   const setDataMode = useDataModeStore((s) => s.setDataMode);
+  const liveEnv = useSuperAdminEnvStore((s) => s.env);
+  const apiInfo = describeApiServer();
 
   const [online, setOnline] = useState(isOnline());
   const [notice, setNotice] = useState<string | null>(null);
@@ -99,6 +103,11 @@ export function SyncPage(): JSX.Element {
         <Badge tone={dataMode === "cloud" ? "info" : "neutral"}>
           {dataMode === "cloud" ? "Cloud database" : "Local only"}
         </Badge>
+        {apiInfo.preset === "live" && apiInfo.liveLabel ? (
+          <Badge tone={liveEnv === "new" ? "info" : "warning"}>
+            Server · {apiInfo.liveLabel} Active
+          </Badge>
+        ) : null}
         <span className="text-slate-400">Last sync · {formatRelativeTime(lastSyncedAt)}</span>
         <span className="text-slate-600">|</span>
         <span className="text-slate-400">
@@ -144,10 +153,16 @@ export function SyncPage(): JSX.Element {
           </label>
         </div>
 
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-3">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">API server</div>
-          <p className="text-sm text-slate-200">Live Railway</p>
+          <LiveServerBadge showUrl />
+          {apiInfo.dbLabel ? (
+            <p className="text-xs text-slate-400">{apiInfo.dbLabel}</p>
+          ) : null}
           <p className="break-all text-xs text-slate-500">{getApiBaseUrl()}</p>
+          <p className="text-[11px] text-slate-500">
+            Super Admin → Health par OLD/NEW switch karo — poora restaurant yahi server use karega.
+          </p>
         </div>
       </div>
     </div>

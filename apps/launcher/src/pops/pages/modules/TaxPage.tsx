@@ -22,6 +22,7 @@ import {
   isTaxAuthorityEnabled,
   useTaxAuthorityFeatures,
 } from "../../hooks/useTaxAuthorityFeatures";
+import { trackPrintJob } from "../../lib/printQueueMonitor";
 import { printIssuedPraSlip } from "../../lib/praIssueFlow";
 import { preparePraReceiptFooter } from "../../lib/praReceiptFooter";
 import { PraPeriodReportsPanel } from "../../components/PraPeriodReportsPanel";
@@ -597,6 +598,13 @@ export function TaxPage(): JSX.Element {
 
       // FBR — best-effort print of reference
       const ref = inv.authorityInvoiceNumber ?? inv.qrPayload ?? inv.sourceRef;
+      const tracker = trackPrintJob({
+        branchCode,
+        kind: "fbr",
+        orderRef: String(ref),
+        source: "pc",
+        deviceLabel: "desktop-launcher",
+      });
       const html = `<!DOCTYPE html><html><head><title>FBR ${ref}</title>
         <style>body{font-family:system-ui,sans-serif;padding:24px;color:#111}
         h1{font-size:16px;margin:0 0 8px} p{margin:4px 0;font-size:13px}</style></head>
@@ -608,8 +616,13 @@ export function TaxPage(): JSX.Element {
         <p><strong>Tax:</strong> Rs ${inv.taxAmountPkr.toLocaleString()}</p>
         </body></html>`;
       const opened = await printHtmlDocumentAndWait(html, `FBR ${ref}`);
-      if (!opened) setError("Could not open FBR print dialog.");
-      else setMessage(`Printed FBR reference ${ref}`);
+      if (!opened) {
+        tracker.finish(false, "Could not open FBR print dialog.");
+        setError("Could not open FBR print dialog.");
+      } else {
+        tracker.finish(true);
+        setMessage(`Printed FBR reference ${ref}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Print failed");
     } finally {

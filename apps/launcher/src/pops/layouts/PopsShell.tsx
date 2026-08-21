@@ -16,6 +16,7 @@ import { UiZoomControls } from "../../components/UiZoomControls";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
 import { ThemeToggle } from "../../components/ThemeToggle";
+import { LiveServerBadge } from "../../components/LiveServerBadge";
 import { PopsAlertCenter } from "../components/PopsAlertCenter";
 import { LicencePaymentAlertBanner } from "../components/LicencePaymentAlertBanner";
 import { BranchAutoConnect } from "../components/BranchAutoConnect";
@@ -196,9 +197,10 @@ export function PopsShell(): JSX.Element {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <LiveServerBadge compact />
               <UiZoomControls compact />
               <ThemeToggle compact />
-              {systemId === "restaurant" ? <PopsAlertCenter /> : null}
+              <PopsAlertCenter />
               <Button variant="ghost" className="text-xs" onClick={() => navigate("/pops/branches")}>
                 Switch branch
               </Button>
@@ -218,6 +220,7 @@ export function PopsShell(): JSX.Element {
         ) : isPosRoute ? (
           /* POS can hide the full header — keep zoom reachable in a slim strip. */
           <div className="flex items-center justify-end gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900/30">
+            <LiveServerBadge compact />
             <UiZoomControls compact />
           </div>
         ) : null}

@@ -1,14 +1,19 @@
+import { subscribeRequestQueueSlow } from "@platform/auth-client";
 import { useIsFocused } from "@react-navigation/native";
 import { useEffect, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
+const SLOW_INTERVAL_MULTIPLIER = 3;
+
 /**
  * Poll only when this screen is focused and the app is in the foreground.
- * Prevents Home+Order+Orders from all hammering the API at once (major lag source).
+ * When the shared HTTP queue detects slow RTT, stretch the interval so fewer
+ * requests pile onto the API.
  */
 export function useLiveRefetchInterval(ms: number): number | false {
   const focused = useIsFocused();
   const [active, setActive] = useState(AppState.currentState === "active");
+  const [slow, setSlow] = useState(false);
 
   useEffect(() => {
     const onChange = (next: AppStateStatus) => setActive(next === "active");
@@ -16,6 +21,8 @@ export function useLiveRefetchInterval(ms: number): number | false {
     return () => sub.remove();
   }, []);
 
+  useEffect(() => subscribeRequestQueueSlow(setSlow), []);
+
   if (!focused || !active) return false;
-  return ms;
+  return slow ? ms * SLOW_INTERVAL_MULTIPLIER : ms;
 }

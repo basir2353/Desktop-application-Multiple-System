@@ -1,4 +1,41 @@
 const fs = require("fs");
+const path = require("path");
+
+const root = path.join(__dirname, "..");
+
+function readJson(rel) {
+  return JSON.parse(fs.readFileSync(path.join(root, rel), "utf8"));
+}
+
+function writeJson(rel, data) {
+  fs.writeFileSync(path.join(root, rel), `${JSON.stringify(data, null, 2)}\n`);
+}
+
+function bumpPatch(version) {
+  const parts = String(version).trim().split(".").map((n) => Number(n) || 0);
+  while (parts.length < 3) parts.push(0);
+  parts[2] += 1;
+  return parts.join(".");
+}
+
+function replaceVersionInFile(rel, oldVer, newVer) {
+  const full = path.join(root, rel);
+  if (!fs.existsSync(full)) return;
+  const text = fs.readFileSync(full, "utf8");
+  if (!text.includes(`"${oldVer}"`)) return;
+  fs.writeFileSync(full, text.replaceAll(`"${oldVer}"`, `"${newVer}"`));
+}
+
+const launcherPkg = readJson("apps/launcher/package.json");
+const mobilePkg = readJson("apps/waiter-mobile/package.json");
+const appJson = readJson("apps/waiter-mobile/app.json");
+
+const oldDesktop = launcherPkg.version;
+const newDesktop = bumpPatch(oldDesktop);
+const oldMobile = mobilePkg.version;
+const newMobile = bumpPatch(oldMobile);
+const oldCode = Number(appJson.expo?.android?.versionCode ?? 1100);
+const newCode = oldCode + 1;
 
 const desktopFiles = [
   "apps/launcher/package.json",
@@ -9,24 +46,18 @@ const desktopFiles = [
   "apps/launcher/src-tauri/tauri.general-store.conf.json",
 ];
 
-for (const f of desktopFiles) {
-  const s = fs.readFileSync(f, "utf8").replaceAll('"version": "0.3.29"', '"version": "0.3.30"');
-  fs.writeFileSync(f, s);
+for (const rel of desktopFiles) {
+  replaceVersionInFile(rel, oldDesktop, newDesktop);
 }
 
+replaceVersionInFile("apps/waiter-mobile/package.json", oldMobile, newMobile);
+replaceVersionInFile("apps/waiter-mobile/app.json", oldMobile, newMobile);
+
+const appJsonPath = path.join(root, "apps/waiter-mobile/app.json");
+const appRaw = fs.readFileSync(appJsonPath, "utf8");
 fs.writeFileSync(
-  "apps/waiter-mobile/package.json",
-  fs.readFileSync("apps/waiter-mobile/package.json", "utf8").replaceAll('"version": "1.1.27"', '"version": "1.1.28"'),
+  appJsonPath,
+  appRaw.replace(`"versionCode": ${oldCode}`, `"versionCode": ${newCode}`),
 );
 
-fs.writeFileSync(
-  "apps/waiter-mobile/app.json",
-  fs
-    .readFileSync("apps/waiter-mobile/app.json", "utf8")
-    .replaceAll('"version": "1.1.27"', '"version": "1.1.28"')
-    .replaceAll('"versionCode": 1127', '"versionCode": 1128'),
-);
-
-console.log("desktop", JSON.parse(fs.readFileSync("apps/launcher/package.json", "utf8")).version);
-console.log("mobile", JSON.parse(fs.readFileSync("apps/waiter-mobile/package.json", "utf8")).version);
-console.log("app.json", JSON.parse(fs.readFileSync("apps/waiter-mobile/app.json", "utf8")).expo.version, JSON.parse(fs.readFileSync("apps/waiter-mobile/app.json", "utf8")).expo.android.versionCode);
+console.log(JSON.stringify({ desktop: newDesktop, mobile: newMobile, versionCode: newCode }, null, 2));

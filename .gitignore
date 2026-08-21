@@ -14,6 +14,7 @@ target/
 !.env.example
 !**/.env.example
 *.local
+local/live-env.json
 
 # Logs & test artifacts
 *.log

@@ -2,7 +2,12 @@ import "reflect-metadata";
 import { join } from "node:path";
 import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
+import compression from "compression";
 import { AppModule } from "./app.module";
+import { createRequestConcurrencyMiddleware } from "./load/requestConcurrency";
+
+const compressionMiddleware =
+  (compression as unknown as { default?: typeof compression }).default ?? compression;
 
 function desktopCorsPatterns(): RegExp[] {
   return [
@@ -36,6 +41,8 @@ async function bootstrap(): Promise<void> {
   console.log(`[api] Bootstrapping on ${host}:${port} (NODE_ENV=${process.env.NODE_ENV ?? "development"})`);
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  app.use(compressionMiddleware());
+  app.use(createRequestConcurrencyMiddleware());
   app.enableCors({
     origin: parseCorsOrigins(),
     credentials: true,

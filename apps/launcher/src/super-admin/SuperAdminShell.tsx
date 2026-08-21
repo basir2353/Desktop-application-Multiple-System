@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { fetchPlatformBusinesses, fetchPlatformSettings, fetchPlatformUsers } from "../lib/platformApi";
 import { useSessionStore } from "../stores/sessionStore";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { pageTitleForPath } from "./superAdminHelpers";
+import { SuperAdminEnvSwitch } from "./SuperAdminEnvSwitch";
+import { useSuperAdminEnvStore } from "../stores/superAdminEnvStore";
+import { activateSyncEnv } from "../lib/syncAgent";
 import {
   saBtnGhostClass,
   saHeaderClass,
@@ -63,18 +66,24 @@ export function SuperAdminShell(): JSX.Element {
   const [search, setSearch] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const env = useSuperAdminEnvStore((s) => s.env);
+
+  useEffect(() => {
+    void activateSyncEnv(env);
+  }, [env]);
+
   const settings = useQuery({
-    queryKey: ["platform", "settings"],
+    queryKey: ["platform", "settings", env],
     queryFn: fetchPlatformSettings,
     staleTime: 60_000,
   });
   const businesses = useQuery({
-    queryKey: ["platform", "businesses"],
+    queryKey: ["platform", "businesses", env],
     queryFn: fetchPlatformBusinesses,
     staleTime: 30_000,
   });
   const users = useQuery({
-    queryKey: ["platform", "users"],
+    queryKey: ["platform", "users", env],
     queryFn: fetchPlatformUsers,
     staleTime: 60_000,
   });
@@ -206,6 +215,7 @@ export function SuperAdminShell(): JSX.Element {
               <h2 className={`truncate ${saPageTitleClass}`}>{title}</h2>
             </div>
             <ThemeToggle />
+            <SuperAdminEnvSwitch />
             <div className="relative w-full sm:w-80">
               <input
                 value={search}

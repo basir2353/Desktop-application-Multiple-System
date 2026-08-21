@@ -4,16 +4,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  createPlatformUser,
+  fetchPlatformBusinesses,
   fetchPlatformUsers,
   resetPlatformUserPassword,
   updatePlatformUser,
   deletePlatformUser,
 } from "../lib/platformApi";
+import { SuperAdminAddUserModal } from "./SuperAdminAddUserModal";
 import { SuperAdminUserViewModal } from "./SuperAdminUserViewModal";
 import type { PlatformUser } from "@platform/contracts";
 import {
   saBtnAccentClass,
   saBtnDangerClass,
+  saBtnPrimaryClass,
   saInputClass,
   saLinkClass,
   saMutedClass,
@@ -30,6 +34,10 @@ const mutedClass = saMutedClass;
 export function SuperAdminUsersPage(): JSX.Element {
   const qc = useQueryClient();
   const users = useQuery({ queryKey: ["platform", "users"], queryFn: fetchPlatformUsers });
+  const businesses = useQuery({
+    queryKey: ["platform", "businesses"],
+    queryFn: fetchPlatformBusinesses,
+  });
   const [resetFor, setResetFor] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -37,6 +45,8 @@ export function SuperAdminUsersPage(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");
   const [viewUser, setViewUser] = useState<PlatformUser | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -97,14 +107,46 @@ export function SuperAdminUsersPage(): JSX.Element {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Delete failed"),
   });
 
+  const createMut = useMutation({
+    mutationFn: createPlatformUser,
+    onSuccess: async (created) => {
+      setAddOpen(false);
+      setMessage(`User ${created.email} added. Password saved — use Show password to view.`);
+      await qc.invalidateQueries({ queryKey: ["platform", "users"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Create failed"),
+  });
+
+  function userKey(u: PlatformUser): string {
+    return `${u.id}-${u.businessId ?? "platform"}`;
+  }
+
+  function togglePassword(u: PlatformUser): void {
+    const key = userKey(u);
+    setRevealed((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className={`text-lg font-semibold ${headingClass}`}>All users</h2>
-        <p className={`mt-1 text-sm ${saPageSubClass}`}>
-          Manage live accounts across every business — activate, suspend, or delete (archived
-          backup; removed from this list). Customer emails are separate from login emails.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className={`text-lg font-semibold ${headingClass}`}>All users</h2>
+          <p className={`mt-1 text-sm ${saPageSubClass}`}>
+            Manage live accounts across every business — add users, view saved passwords, activate,
+            suspend, or delete (archived backup; removed from this list).
+          </p>
+        </div>
+        <button
+          type="button"
+          className={saBtnPrimaryClass}
+          disabled={businesses.isLoading || (businesses.data?.length ?? 0) === 0}
+          onClick={() => {
+            setMessage(null);
+            setAddOpen(true);
+          }}
+        >
+          Add user
+        </button>
       </div>
 
       {message ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{message}</p> : null}
@@ -153,13 +195,14 @@ export function SuperAdminUsersPage(): JSX.Element {
                 <th className="px-4 py-3">Role</th>
                 <th className="px-4 py-3">Business / system</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Password</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/10">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className={`px-4 py-8 text-center ${mutedClass}`}>
+                  <td colSpan={6} className={`px-4 py-8 text-center ${mutedClass}`}>
                     No users match your filters.
                   </td>
                 </tr>
@@ -188,6 +231,24 @@ export function SuperAdminUsersPage(): JSX.Element {
                     </td>
                     <td className="px-4 py-3 capitalize">{u.status}</td>
                     <td className="px-4 py-3">
+                      {u.lastSetPassword?.trim() ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] dark:bg-slate-800">
+                            {revealed[userKey(u)] ? u.lastSetPassword : "••••••••"}
+                          </code>
+                          <button
+                            type="button"
+                            className="text-xs text-teal-700 hover:underline dark:text-teal-300"
+                            onClick={() => togglePassword(u)}
+                          >
+                            {revealed[userKey(u)] ? "Hide" : "Show"}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className={`text-xs ${mutedClass}`}>Not stored</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         <button
                           type="button"
@@ -199,6 +260,15 @@ export function SuperAdminUsersPage(): JSX.Element {
                         >
                           View
                         </button>
+                        {u.lastSetPassword?.trim() ? (
+                          <button
+                            type="button"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
+                            onClick={() => togglePassword(u)}
+                          >
+                            {revealed[userKey(u)] ? "Hide password" : "See password"}
+                          </button>
+                        ) : null}
                         {u.platformRole !== "super_admin" ? (
                           u.status !== "active" ? (
                             <button
@@ -309,6 +379,15 @@ export function SuperAdminUsersPage(): JSX.Element {
           onClose={() => setViewUser(null)}
           resetPending={resetMut.isPending}
           onResetPassword={(userId, pw) => resetMut.mutate({ userId, password: pw })}
+        />
+      ) : null}
+
+      {addOpen && businesses.data && businesses.data.length > 0 ? (
+        <SuperAdminAddUserModal
+          businesses={businesses.data}
+          pending={createMut.isPending}
+          onClose={() => setAddOpen(false)}
+          onCreate={(input) => createMut.mutate(input)}
         />
       ) : null}
     </div>

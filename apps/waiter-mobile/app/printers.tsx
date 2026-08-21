@@ -1,9 +1,9 @@
 import { Redirect, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import type { BranchPrintServer } from "@platform/contracts";
-import { fetchBranchPrintServers } from "../src/api/printing";
-import { Button, Card, Input, Muted, Notice, Screen, SectionHeader, colors } from "../src/components/ui";
+import { fetchBranchPrintServers, fetchPrintQueue } from "../src/api/printing";
+import { Button, Card, Chip, Input, Muted, Notice, Screen, SectionHeader, colors } from "../src/components/ui";
 import { useThemedStyleSheet } from "../src/theme/useThemedStyleSheet";
 import {
   discoverBranchPrintServers,
@@ -19,9 +19,27 @@ import {
   saveMobilePrinterSettings,
   type MobilePrinterSettings,
 } from "../src/lib/mobilePrinterSettings";
+import {
+  DEFAULT_MOBILE_DISPLAY_SETTINGS,
+  loadMobileDisplaySettings,
+  saveMobileDisplaySettings,
+  type MobileDisplaySettings,
+} from "../src/lib/mobileDisplaySettings";
 import { resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
+
+function classifySource(deviceLabel?: string | null): "mobile" | "pc" | "unknown" {
+  const s = (deviceLabel ?? "").toLowerCase();
+  if (!s.trim()) return "unknown";
+  if (s.includes("mobile") || s.includes("waiter") || s.includes("android") || s.includes("staff")) {
+    return "mobile";
+  }
+  if (s.includes("desktop") || s.includes("launcher") || s.includes("pc") || s.includes("windows")) {
+    return "pc";
+  }
+  return "unknown";
+}
 
 export default function PrintersScreen() {
   const styles = useScreenStyles();
@@ -33,6 +51,9 @@ export default function PrintersScreen() {
     ...DEFAULT_MOBILE_PRINTER_SETTINGS,
     kitchenPrinters: [...DEFAULT_MOBILE_PRINTER_SETTINGS.kitchenPrinters],
   });
+  const [display, setDisplay] = useState<MobileDisplaySettings>({
+    ...DEFAULT_MOBILE_DISPLAY_SETTINGS,
+  });
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [preferred, setPreferred] = useState<MobileDiscoveredServer | null>(null);
@@ -42,6 +63,18 @@ export default function PrintersScreen() {
   const [scanning, setScanning] = useState(false);
   const [loadingCloud, setLoadingCloud] = useState(false);
   const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [reportFilter, setReportFilter] = useState<"all" | "mobile" | "pc" | "missed">("all");
+  const [queueRows, setQueueRows] = useState<
+    Array<{
+      id: string;
+      status: string;
+      printerName?: string | null;
+      orderId?: string | null;
+      deviceLabel?: string | null;
+      error?: string | null;
+    }>
+  >([]);
+  const [loadingQueue, setLoadingQueue] = useState(false);
 
   const refreshCloudServers = useCallback(async () => {
     if (!branch?.code) return;
@@ -72,14 +105,66 @@ export default function PrintersScreen() {
 
   useEffect(() => {
     void loadMobilePrinterSettings().then(setSettings);
+    void loadMobileDisplaySettings().then(setDisplay);
     void loadPreferredBranchServer().then(setPreferred);
   }, []);
+
+  const refreshQueue = useCallback(async () => {
+    if (!branch?.code) return;
+    setLoadingQueue(true);
+    try {
+      const rows = await fetchPrintQueue(branch.code);
+      setQueueRows(rows);
+    } catch {
+      setQueueRows([]);
+    } finally {
+      setLoadingQueue(false);
+    }
+  }, [branch?.code]);
 
   useEffect(() => {
     if (accessToken && branch?.code) {
       void refreshCloudServers();
+      void refreshQueue();
+      const id = setInterval(() => void refreshQueue(), 8000);
+      return () => clearInterval(id);
     }
-  }, [accessToken, branch?.code, refreshCloudServers]);
+  }, [accessToken, branch?.code, refreshCloudServers, refreshQueue]);
+
+  const reportStats = useMemo(() => {
+    let mobile = 0;
+    let pc = 0;
+    let failed = 0;
+    for (const row of queueRows) {
+      const src = classifySource(row.deviceLabel);
+      if (src === "mobile") mobile += 1;
+      else if (src === "pc") pc += 1;
+      if (
+        row.status === "failed" ||
+        row.status === "error" ||
+        row.status === "dead" ||
+        Boolean(row.error)
+      ) {
+        failed += 1;
+      }
+    }
+    return { total: queueRows.length, mobile, pc, failed };
+  }, [queueRows]);
+
+  const filteredQueue = useMemo(() => {
+    return queueRows.filter((row) => {
+      if (reportFilter === "all") return true;
+      if (reportFilter === "missed") {
+        return (
+          row.status === "failed" ||
+          row.status === "error" ||
+          row.status === "dead" ||
+          Boolean(row.error)
+        );
+      }
+      return classifySource(row.deviceLabel) === reportFilter;
+    });
+  }, [queueRows, reportFilter]);
 
   if (!accessToken) return <Redirect href="/" />;
   if (resolveStaffRole(claims) === "rider") return <Redirect href="/rider-home" />;
@@ -97,11 +182,12 @@ export default function PrintersScreen() {
     setSaving(true);
     try {
       await saveMobilePrinterSettings(settings);
+      await saveMobileDisplaySettings(display);
       // Legacy key: any LAN mode on keeps old toggle compatible
       await saveUseBranchPrintServer(settings.modeIp || settings.modeServer);
       setNotice(
         settings.autoPrint
-          ? "Saved. Silent modes: Live → IP/Server → Expo fallback."
+          ? "Saved. Silent modes + display. Live → IP/Server → Expo fallback."
           : "Saved. Auto-print is OFF — Order/Pay will not print.",
       );
     } catch (err) {
@@ -363,6 +449,89 @@ export default function PrintersScreen() {
               onChangeText={(text) => setSettings((prev) => ({ ...prev, billPrinter: text }))}
             />
           </View>
+        </Card>
+
+        <Card style={styles.card}>
+          <Text style={styles.cardTitle}>Display · Full screen menu</Text>
+          <View style={styles.row}>
+            <Text style={styles.label}>Enable Full Screen Menu</Text>
+            <Switch
+              value={display.fullScreenMenuEnabled}
+              onValueChange={(v) => setDisplay((prev) => ({ ...prev, fullScreenMenuEnabled: v }))}
+            />
+          </View>
+          <Muted>
+            Order screen pe Full Screen Menu button. Category wise ya All items choose karo.
+          </Muted>
+          <View style={styles.rowBtns}>
+            <Chip
+              label="Category wise"
+              selected={display.menuViewMode === "category"}
+              onPress={() => setDisplay((prev) => ({ ...prev, menuViewMode: "category" }))}
+            />
+            <Chip
+              label="All items"
+              selected={display.menuViewMode === "all"}
+              onPress={() => setDisplay((prev) => ({ ...prev, menuViewMode: "all" }))}
+            />
+          </View>
+        </Card>
+
+        <Card style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.cardTitle}>Print report</Text>
+            <Button
+              label={loadingQueue ? "…" : "Refresh"}
+              variant="ghost"
+              onPress={() => void refreshQueue()}
+              loading={loadingQueue}
+            />
+          </View>
+          <Muted>Cloud queue — mobile vs PC source + missed/fail alert.</Muted>
+          <View style={styles.rowBtns}>
+            <Chip label="All" selected={reportFilter === "all"} onPress={() => setReportFilter("all")} />
+            <Chip
+              label={`Mobile (${reportStats.mobile})`}
+              selected={reportFilter === "mobile"}
+              onPress={() => setReportFilter("mobile")}
+            />
+            <Chip
+              label={`PC (${reportStats.pc})`}
+              selected={reportFilter === "pc"}
+              onPress={() => setReportFilter("pc")}
+            />
+            <Chip
+              label={`Missed (${reportStats.failed})`}
+              selected={reportFilter === "missed"}
+              onPress={() => setReportFilter("missed")}
+            />
+          </View>
+          {reportStats.failed > 0 ? (
+            <Notice>
+              Missed print alert: {reportStats.failed} failed/error job(s). Desktop EXE / printer check
+              karein.
+            </Notice>
+          ) : (
+            <Muted>No missed prints in queue right now.</Muted>
+          )}
+          {filteredQueue.length === 0 ? (
+            <Muted>No jobs for this filter.</Muted>
+          ) : (
+            filteredQueue.slice(0, 40).map((row) => {
+              const src = classifySource(row.deviceLabel);
+              return (
+                <View key={row.id} style={styles.serverCard}>
+                  <Text style={styles.serverTitle}>
+                    {row.status.toUpperCase()} · {src === "mobile" ? "Mobile" : src === "pc" ? "PC" : "?"}
+                  </Text>
+                  <Muted>
+                    {row.deviceLabel || "—"} · {row.printerName || "printer?"} · {row.orderId || "order?"}
+                    {row.error ? ` · ${row.error}` : ""}
+                  </Muted>
+                </View>
+              );
+            })
+          )}
         </Card>
 
         <Button label={saving ? "Saving…" : "Save printers"} onPress={() => void onSave()} loading={saving} />

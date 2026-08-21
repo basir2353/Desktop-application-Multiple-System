@@ -262,6 +262,8 @@ export function SettingsPage(): JSX.Element {
     const local = loadPosSettings(branch.code);
     const fromCloud = posSettingsFromTaxApi(cloudTaxQuery.data, {
       showBillNotes: local.showBillNotes,
+      fullScreenMenuEnabled: local.fullScreenMenuEnabled,
+      menuViewMode: local.menuViewMode,
     });
     // Prefer cloud when it has explicit posCharges; otherwise keep local custom rates
     // but push local → cloud once so mobile can see them.
@@ -595,6 +597,54 @@ export function SettingsPage(): JSX.Element {
         <p className="mt-1 text-[10px] text-slate-500">
           On: bill note / item note fields appear on New order. Off: those fields are hidden.
         </p>
+
+        <div className="mt-4 rounded-lg border border-slate-700/80 bg-slate-950/40 p-3">
+          <div className="text-xs font-semibold text-slate-300">Display · Full screen menu</div>
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={draft.fullScreenMenuEnabled}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, fullScreenMenuEnabled: e.target.checked }))
+              }
+            />
+            Enable Full Screen Menu button on POS
+          </label>
+          <p className="mt-1 text-[10px] text-slate-500">
+            After Dine-in / Takeaway / Delivery, show a Full Screen control so waiters can browse the
+            menu on the whole screen during rush.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!draft.fullScreenMenuEnabled}
+              onClick={() => setDraft((prev) => ({ ...prev, menuViewMode: "category" }))}
+              className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                draft.menuViewMode === "category"
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-slate-800 text-slate-300 ring-1 ring-slate-700 disabled:opacity-40"
+              }`}
+            >
+              Category wise
+            </button>
+            <button
+              type="button"
+              disabled={!draft.fullScreenMenuEnabled}
+              onClick={() => setDraft((prev) => ({ ...prev, menuViewMode: "all" }))}
+              className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                draft.menuViewMode === "all"
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-slate-800 text-slate-300 ring-1 ring-slate-700 disabled:opacity-40"
+              }`}
+            >
+              All items
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Category wise: categories on top, items below. All items: every dish in one list.
+          </p>
+        </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="block text-xs text-slate-400">

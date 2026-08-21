@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { popsRoleSchema } from "./users";
 
 /**
  * Canonical business system types.
@@ -414,6 +415,18 @@ export const platformUserSchema = z.object({
 export const resetPlatformUserPasswordSchema = z.object({
   password: z.string().min(8).max(128),
 });
+
+export const createPlatformUserSchema = z.object({
+  businessId: z.string().uuid(),
+  name: z.string().min(1).max(200).optional(),
+  email: z.string().min(3).max(320),
+  password: z.string().min(8).max(128),
+  role: popsRoleSchema,
+  branchScope: z.string().min(1).max(64).default("All"),
+  pinRequired: z.boolean().default(false),
+  staffPin: z.string().regex(/^\d{4}$/).optional(),
+});
+export type CreatePlatformUser = z.infer<typeof createPlatformUserSchema>;
 
 export const USER_ACCOUNT_STATUSES = ["active", "inactive", "suspended", "deleted"] as const;
 export const userAccountStatusSchema = z.enum(USER_ACCOUNT_STATUSES);

@@ -6,7 +6,14 @@ export const KITCHEN_SLOW_ALERT_MINS = 20;
 
 export type PopsAlertTone = "info" | "warning" | "danger";
 
-export type PopsAlertKind = "new_order" | "kitchen_slow" | "low_stock";
+export type PopsAlertKind =
+  | "new_order"
+  | "kitchen_slow"
+  | "low_stock"
+  | "print_failed"
+  | "print_slow"
+  | "print_stuck"
+  | "print_timeout";
 
 export type PopsAlert = {
   id: string;
@@ -97,7 +104,15 @@ export function mergeAlerts(...groups: PopsAlert[][]): PopsAlert[] {
   }
 
   const toneRank: Record<PopsAlertTone, number> = { danger: 0, warning: 1, info: 2 };
-  const kindRank: Record<PopsAlertKind, number> = { kitchen_slow: 0, low_stock: 1, new_order: 2 };
+  const kindRank: Record<PopsAlertKind, number> = {
+    print_failed: 0,
+    print_stuck: 1,
+    print_slow: 2,
+    print_timeout: 3,
+    kitchen_slow: 4,
+    low_stock: 5,
+    new_order: 6,
+  };
 
   return merged.sort((a, b) => {
     const toneDiff = toneRank[a.tone] - toneRank[b.tone];

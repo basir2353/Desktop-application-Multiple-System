@@ -70,6 +70,39 @@ export async function createCloudPrintJob(input: {
   }
 }
 
+/** Live cloud print queue for this org/branch (includes deviceLabel). */
+export async function fetchPrintQueue(branchCode?: string): Promise<
+  Array<{
+    id: string;
+    status: string;
+    printerName?: string | null;
+    orderId?: string | null;
+    deviceLabel?: string | null;
+    error?: string | null;
+    updatedAt?: string | null;
+  }>
+> {
+  const params = new URLSearchParams();
+  if (branchCode?.trim()) params.set("branchCode", branchCode.trim());
+  const qs = params.toString();
+  const res = await authFetch(`/v1/printing/queue${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Print queue failed: ${res.status}`);
+  }
+  const rows = (await res.json()) as Array<Record<string, unknown>>;
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => ({
+    id: String(r.id ?? ""),
+    status: String(r.status ?? ""),
+    printerName: (r.printerName ?? r.printer_name ?? null) as string | null,
+    orderId: (r.orderId ?? r.order_id ?? null) as string | null,
+    deviceLabel: (r.deviceLabel ?? r.device_label ?? null) as string | null,
+    error: (r.error ?? null) as string | null,
+    updatedAt: (r.updatedAt ?? r.updated_at ?? null) as string | null,
+  }));
+}
+
 function normalizeServer(row: unknown): BranchPrintServer | null {
   if (!row || typeof row !== "object") return null;
   const r = row as Record<string, unknown>;

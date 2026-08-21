@@ -34,7 +34,13 @@ function AlertRow({ alert, onNavigate }: { alert: PopsAlert; onNavigate?: () => 
           <p className="mt-0.5 line-clamp-2 text-[11px] text-slate-300">{alert.message}</p>
         </div>
         <Badge tone={alert.tone === "danger" ? "danger" : alert.tone === "warning" ? "warning" : "info"}>
-          {alert.kind === "new_order" ? "Order" : alert.kind === "kitchen_slow" ? "Kitchen" : "Stock"}
+          {alert.kind === "new_order"
+            ? "Order"
+            : alert.kind === "kitchen_slow"
+              ? "Kitchen"
+              : alert.kind.startsWith("print_")
+                ? "Print"
+                : "Stock"}
         </Badge>
       </div>
     </div>
@@ -128,7 +134,7 @@ export function PopsAlertCenter(): JSX.Element {
             <div className="max-h-80 space-y-2 overflow-y-auto p-2">
               {alerts.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs text-slate-500">
-                  No alerts — kitchen and stock look good.
+                  No alerts — kitchen, stock, and prints look good.
                 </p>
               ) : (
                 alerts.map((alert) => (
@@ -137,7 +143,7 @@ export function PopsAlertCenter(): JSX.Element {
               )}
             </div>
             <div className="border-t border-slate-800 px-3 py-2 text-[10px] text-slate-500">
-              New orders · kitchen delays (15m+) · low stock ·{" "}
+              New orders · kitchen delays · missed prints · low stock ·{" "}
               <Link to="/pops/notifications" onClick={() => setOpen(false)} className="text-amber-400/90 hover:text-amber-300">
                 Message log
               </Link>

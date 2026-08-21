@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useAdaptiveRefetchInterval } from "../../lib/useAdaptiveRefetchInterval";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
 import { fetchAccountingDashboard } from "../api/accounting";
@@ -61,6 +62,10 @@ export function PopsDashboardPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const canViewDashboard = sessionCanManageUsers(claims);
+  const ordersPollMs = useAdaptiveRefetchInterval(10_000);
+  const dashboardPollMs = useAdaptiveRefetchInterval(30_000);
+  const pendingPollMs = useAdaptiveRefetchInterval(5_000);
+  const accountingPollMs = useAdaptiveRefetchInterval(60_000);
 
   useEffect(() => {
     if (!canViewDashboard) {
@@ -101,28 +106,28 @@ export function PopsDashboardPage(): JSX.Element {
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code],
     enabled: Boolean(branch?.code),
-    refetchInterval: 10_000,
+    refetchInterval: ordersPollMs,
     queryFn: () => fetchCompletedOrders(branch!.code),
   });
 
   const dashboardQuery = useQuery({
     queryKey: ["operations", "dashboard", accessToken, branch?.code],
     enabled: Boolean(accessToken && branch?.code),
-    refetchInterval: 30_000,
+    refetchInterval: dashboardPollMs,
     queryFn: () => fetchDashboard(branch!.code),
   });
 
   const pendingQuery = useQuery({
     queryKey: ["kitchen", branch?.code],
     enabled: Boolean(branch?.code),
-    refetchInterval: 5_000,
+    refetchInterval: pendingPollMs,
     queryFn: () => fetchKitchenTickets(branch!.code),
   });
 
   const accountingQuery = useQuery({
     queryKey: ["accounting", "dashboard", branch?.code],
     enabled: Boolean(branch?.code),
-    refetchInterval: 60_000,
+    refetchInterval: accountingPollMs,
     queryFn: () => fetchAccountingDashboard(branch!.code),
   });
 

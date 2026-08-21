@@ -107,6 +107,8 @@ export type PrintTicketInput = {
   isOrderUpdate?: boolean;
   /** FPRA/Real PRA footer (invoice # + QR) printed under the order receipt. */
   praFiscal?: PraReceiptFooter | null;
+  /** Override activity log kind (e.g. test page while using a live branchCode). */
+  historyKind?: import("./printHistory").PrintKind;
   /**
    * Optional company logo for the receipt header (data URL preferred).
    * When omitted, Content Updation business logo is loaded from branchCode.
@@ -2820,6 +2822,36 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
     return { ok: false, usedNamedPrinter: false, error: "No lines to print." };
   }
 
+  const { trackPrintJob } = await import("./printQueueMonitor");
+  const kind: import("./printHistory").PrintKind =
+    input.historyKind ??
+    (input.branchCode.trim().toUpperCase() === "TEST"
+      ? "test"
+      : input.praFiscal
+        ? "pra"
+        : input.kind === "receipt"
+          ? "receipt"
+          : "kot");
+  const tracker = trackPrintJob({
+    branchCode: input.branchCode,
+    kind,
+    orderRef: input.orderRef ?? input.billRef,
+    printerName: input.systemPrinterName ?? input.printerName,
+    source: "pc",
+    deviceLabel: "desktop-launcher",
+  });
+
+  try {
+    const result = await printTicketDetailedCore(input);
+    tracker.finish(result.ok, result.error);
+    return result;
+  } catch (err) {
+    tracker.finish(false, err instanceof Error ? err.message : "Print failed");
+    throw err;
+  }
+}
+
+async function printTicketDetailedCore(input: PrintTicketInput): Promise<PrintJobResult> {
   const docTitle = input.printerName
     ? `${input.kind === "receipt" ? "Receipt" : "KOT"} · ${input.printerName}`
     : input.kind === "receipt"
@@ -3009,6 +3041,7 @@ export async function printTestPageAsync(
     ...sample,
     notes,
     kind: "receipt",
+    historyKind: "test",
     paperSize: paper,
     thermal,
     copies,

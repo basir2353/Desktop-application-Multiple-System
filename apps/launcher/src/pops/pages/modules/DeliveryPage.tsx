@@ -3,6 +3,7 @@ import type { Bill, DeliveryStatus, KitchenTicket } from "@platform/contracts";
 import { DELIVERY_STATUS_LABELS, DELIVERY_STATUS_VALUES } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useAdaptiveRefetchInterval } from "../../../lib/useAdaptiveRefetchInterval";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { sessionCanManageUsers } from "../../lib/roleAccess";
@@ -169,6 +170,7 @@ export function DeliveryPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const claims = useSessionStore((s) => s.claims);
   const canManageRiderLogins = sessionCanManageUsers(claims);
+  const livePollMs = useAdaptiveRefetchInterval(5_000);
   const [tab, setTab] = useState<DeliveryTab>("orders");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"all" | "active">("all");
@@ -223,7 +225,7 @@ export function DeliveryPage(): JSX.Element {
     queryKey: ["orders", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchCompletedOrders(branch!.code),
-    refetchInterval: 5_000,
+    refetchInterval: livePollMs,
   });
 
   // Warm UUID→name cache so print "By" shows staff name, not user id.
@@ -237,7 +239,7 @@ export function DeliveryPage(): JSX.Element {
     queryKey: ["kitchen", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchKitchenTickets(branch!.code),
-    refetchInterval: 5_000,
+    refetchInterval: livePollMs,
   });
 
   const branchesQuery = useQuery({

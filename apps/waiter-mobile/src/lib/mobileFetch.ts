@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { enqueueHttpRequest } from "@platform/auth-client";
 
 const ANDROID_TIMEOUT_MS = 45_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -109,8 +110,7 @@ async function nativeFetchOnce(
   }
 }
 
-/** RN-safe fetch with plain headers, long timeout, retries, and Android XHR fallback. */
-export async function mobileFetch(url: string, init?: RequestInit): Promise<Response> {
+async function mobileFetchWithRetries(url: string, init?: RequestInit): Promise<Response> {
   const headers = plainHeaders(init);
   const method = (init?.method ?? "GET").toUpperCase();
   const body = init?.body;
@@ -136,4 +136,14 @@ export async function mobileFetch(url: string, init?: RequestInit): Promise<Resp
     }
   }
   throw lastError;
+}
+
+/** RN-safe fetch with queue, plain headers, long timeout, retries, and Android XHR fallback. */
+export async function mobileFetch(url: string, init?: RequestInit): Promise<Response> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const isSafeMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
+  return enqueueHttpRequest(() => mobileFetchWithRetries(url, init), {
+    method,
+    key: isSafeMethod ? `${method} ${url}` : undefined,
+  });
 }
