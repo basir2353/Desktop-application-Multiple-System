@@ -595,7 +595,7 @@ export function SettingsPage(): JSX.Element {
           Show bill note on POS ticket
         </label>
         <p className="mt-1 text-[10px] text-slate-500">
-          On: bill note / item note fields appear on New order. Off: those fields are hidden.
+          On: a Note button appears on New order — tap to add bill / item notes in a popup. Off: notes are hidden.
         </p>
 
         <div className="mt-4 rounded-lg border border-slate-700/80 bg-slate-950/40 p-3">

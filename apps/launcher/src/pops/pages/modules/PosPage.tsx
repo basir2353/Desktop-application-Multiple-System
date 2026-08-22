@@ -38,6 +38,7 @@ import { fetchBranchFloor } from "../../api/tables";
 import { PosDishVariantModal } from "../../components/PosDishVariantModal";
 import { PosItemPromptModal } from "../../components/PosItemPromptModal";
 import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
+import { PosOrderNotesModal } from "../../components/PosOrderNotesModal";
 import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
 import { PosFullScreenMenuOverlay } from "../../components/PosFullScreenMenuOverlay";
 import { PosSeatingModal } from "../../components/PosSeatingModal";
@@ -205,7 +206,7 @@ const POS_ACTION_BTN =
   "inline-flex w-full min-w-0 items-center justify-center rounded-lg px-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
 const POS_PRIMARY_ORDER_BTN = `${POS_ACTION_BTN} h-10 border-0 bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 hover:bg-amber-400`;
 const POS_PRIMARY_PAY_BTN = `${POS_ACTION_BTN} h-10 border-0 bg-emerald-600 text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-500`;
-const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-9 border border-slate-200 bg-white font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white`;
+const POS_SECONDARY_BTN = `${POS_ACTION_BTN} h-10 border border-slate-200 bg-white font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white`;
 const POS_TOOLBAR_BTN =
   "inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1.5 text-[10px] font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white";
 const POS_KEYS_BTN =
@@ -308,6 +309,7 @@ export function PosPage(): JSX.Element {
     item: ApiMenuItem;
     variant: MenuItemVariant | null;
   } | null>(null);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [discountPctInput, setDiscountPctInput] = useState(0);
   const [discountAmountInput, setDiscountAmountInput] = useState(0);
   const [discountEditedAs, setDiscountEditedAs] = useState<"pct" | "amount">("pct");
@@ -1026,6 +1028,24 @@ export function PosPage(): JSX.Element {
     });
   }
 
+  function updateCartItemNote(itemKey: string, note: string): void {
+    const trimmed = note.trim();
+    setCart((prev) =>
+      prev.map((l) => {
+        if (l.key !== itemKey) return l;
+        const nextNote = trimmed || undefined;
+        const baseKey = `${l.item.id}${l.variant?.id ? `:${l.variant.id}` : ""}`;
+        const nextKey = nextNote ? `${baseKey}::note:${nextNote}` : baseKey;
+        return { ...l, lineNote: nextNote, key: nextKey };
+      }),
+    );
+    const line = cart.find((l) => l.key === itemKey);
+    if (!line) return;
+    const baseKey = `${line.item.id}${line.variant?.id ? `:${line.variant.id}` : ""}`;
+    const nextKey = trimmed ? `${baseKey}::note:${trimmed}` : baseKey;
+    setSelectedCartKey(nextKey);
+  }
+
   function beginAddToCart(item: ApiMenuItem, variant: MenuItemVariant | null): void {
     if (itemNeedsPosPrompt(item)) {
       setItemPrompt({ item, variant });
@@ -1106,6 +1126,13 @@ export function PosPage(): JSX.Element {
   const displayCart = useMemo(
     () => sortCartLinesNewestFirst(effectiveCart),
     [effectiveCart],
+  );
+
+  const hasOrderNotes = useMemo(
+    () =>
+      Boolean(kitchenNote.trim()) ||
+      displayCart.some((line) => Boolean(line.lineNote?.trim())),
+    [kitchenNote, displayCart],
   );
 
   const cartListRef = useRef<HTMLDivElement>(null);
@@ -2754,6 +2781,19 @@ export function PosPage(): JSX.Element {
         />
       ) : null}
 
+      {posSettings.showBillNotes ? (
+        <PosOrderNotesModal
+          open={notesModalOpen}
+          kitchenNote={kitchenNote}
+          cartLines={displayCart}
+          selectedItemKey={selectedCartKey}
+          onKitchenNoteChange={setKitchenNote}
+          onItemNoteChange={updateCartItemNote}
+          onSelectItemKey={setSelectedCartKey}
+          onClose={() => setNotesModalOpen(false)}
+        />
+      ) : null}
+
       {/* Main POS grid — UI zoom is applied globally from the top nav */}
       <div className="grid flex-1 grid-cols-12 gap-3 lg:items-start">
         {/* Menu column */}
@@ -3434,7 +3474,26 @@ export function PosPage(): JSX.Element {
               </div>
             ) : null}
 
-            <div className="mt-2 flex items-center justify-end gap-2">
+            <div className="mt-2 flex items-center justify-between gap-2">
+              {posSettings.showBillNotes ? (
+                <button
+                  type="button"
+                  onClick={() => setNotesModalOpen(true)}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
+                    hasOrderNotes
+                      ? "border-amber-500/50 bg-amber-500/15 text-amber-900 dark:text-amber-100"
+                      : "border-slate-300 bg-white text-slate-600 hover:border-amber-400/60 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:text-white"
+                  }`}
+                  title="Bill note & item notes"
+                >
+                  Note
+                  {hasOrderNotes ? (
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+                  ) : null}
+                </button>
+              ) : (
+                <span />
+              )}
               <div
                 className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-950"
                 role="group"
@@ -3489,52 +3548,6 @@ export function PosPage(): JSX.Element {
                 </button>
               </div>
             </div>
-
-            {posSettings.showBillNotes ? (
-              <>
-                <input
-                  type="text"
-                  value={kitchenNote}
-                  onChange={(e) => setKitchenNote(e.target.value.slice(0, 200))}
-                  placeholder="Bill note (optional) — whole order, e.g. birthday table"
-                  maxLength={200}
-                  className={`mt-1.5 ${TICKET_INPUT_CLASS} py-1.5`}
-                  title="General note for this bill / kitchen"
-                />
-
-                {selectedCartLine && !selectedCartLine.isComplimentary ? (
-                  <input
-                    type="text"
-                    value={selectedCartLine.lineNote ?? ""}
-                    onChange={(e) => {
-                      const note = e.target.value.slice(0, 80);
-                      setCart((prev) =>
-                        prev.map((l) => {
-                          if (l.key !== selectedCartLine.key) return l;
-                          const nextNote = note.trim() || undefined;
-                          const baseKey = `${l.item.id}${l.variant?.id ? `:${l.variant.id}` : ""}`;
-                          const nextKey = nextNote ? `${baseKey}::note:${nextNote}` : baseKey;
-                          return { ...l, lineNote: nextNote, key: nextKey };
-                        }),
-                      );
-                      const baseKey = `${selectedCartLine.item.id}${
-                        selectedCartLine.variant?.id ? `:${selectedCartLine.variant.id}` : ""
-                      }`;
-                      const nextKey = note.trim() ? `${baseKey}::note:${note.trim()}` : baseKey;
-                      setSelectedCartKey(nextKey);
-                    }}
-                    placeholder={`Item note — e.g. بدون مرچ (${selectedCartLine.lineLabel})`}
-                    maxLength={80}
-                    className={`mt-1.5 ${TICKET_INPUT_CLASS} py-1.5`}
-                    title="Note for selected item only (KOT + bill)"
-                  />
-                ) : (
-                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
-                    Select an item below to add an item note.
-                  </p>
-                )}
-              </>
-            ) : null}
 
             {happyHourLive && happyHourActiveSlot ? (
               <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
