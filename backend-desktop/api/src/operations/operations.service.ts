@@ -540,7 +540,9 @@ export class OperationsService implements OnModuleInit {
 
     let orders: CompletedOrder[] = [];
     try {
-      const listed = await this.billing.listOrders(organizationId, branchCode);
+      const listed = await this.billing.listOrders(organizationId, branchCode, {
+        scope: "dashboard",
+      });
       orders = listed.orders;
     } catch {
       orders = [];

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import {
+  isBusinessSystemId,
   resolveBusinessSystemFromPath,
   type BusinessSystemId,
 } from "../lib/businessSystems";
@@ -12,12 +13,13 @@ export function useActiveSystemId(): BusinessSystemId {
   const systemId = useSystemStore((s) => s.systemId);
   const setSystem = useSystemStore((s) => s.setSystem);
   const fromPath = resolveBusinessSystemFromPath(pathname);
+  const stored = systemId && isBusinessSystemId(systemId) ? systemId : null;
 
   useEffect(() => {
-    if (fromPath && fromPath !== systemId) {
+    if (fromPath && fromPath !== stored) {
       setSystem(fromPath);
     }
-  }, [fromPath, systemId, setSystem]);
+  }, [fromPath, stored, setSystem]);
 
-  return fromPath ?? systemId ?? "restaurant";
+  return fromPath ?? stored ?? "restaurant";
 }

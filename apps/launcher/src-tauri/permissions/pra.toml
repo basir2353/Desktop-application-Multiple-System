@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-pra-http-post"
+description = "Allow Real PRA PostData HTTPS from the desktop shell."
+commands.allow = ["pra_http_post"]

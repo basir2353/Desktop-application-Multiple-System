@@ -52,8 +52,20 @@ export class BillingController {
 
   @Get("orders")
   @RequirePermissions("pops.read")
-  listOrders(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
-    return this.billing.listOrders(user.organizationId, branchCode?.trim() ?? "");
+  listOrders(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("scope") scope?: string,
+    @Query("since") since?: string,
+  ) {
+    const parsedScope =
+      scope === "active" || scope === "dashboard" || scope === "all" ? scope : undefined;
+    const parsedSince = since?.trim() ? new Date(since.trim()) : undefined;
+    return this.billing.listOrders(user.organizationId, branchCode?.trim() ?? "", {
+      scope: parsedScope,
+      since:
+        parsedSince && !Number.isNaN(parsedSince.getTime()) ? parsedSince : undefined,
+    });
   }
 
   @Post("bills")

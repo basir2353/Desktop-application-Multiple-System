@@ -8,7 +8,7 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from "@nestjs/common";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, or } from "drizzle-orm";
 import type { CompleteBill, CreateBill, CreateWaiter, UpdateBill, UpdateWaiter } from "@platform/contracts";
 import { permissionsForPopsRole } from "@platform/contracts";
 import {
@@ -245,16 +245,32 @@ export class BillingService implements OnApplicationBootstrap {
     return membership;
   }
 
-  async listOrders(organizationId: string, branchCode: string) {
+  async listOrders(
+    organizationId: string,
+    branchCode: string,
+    opts?: { since?: Date; scope?: "all" | "active" | "dashboard" },
+  ) {
     const branch = await this.resolveBranch(organizationId, branchCode);
+    const scope = opts?.scope ?? "all";
+
+    let dateFilter;
+    if (scope === "active") {
+      const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      dateFilter = or(inArray(popsBills.status, ["held", "open"]), gte(popsBills.createdAt, since));
+    } else if (scope === "dashboard") {
+      const since = opts?.since ?? new Date(Date.now() - 2 * 86_400_000);
+      dateFilter = or(inArray(popsBills.status, ["held", "open"]), gte(popsBills.createdAt, since));
+    } else if (opts?.since) {
+      dateFilter = gte(popsBills.createdAt, opts.since);
+    }
+
     const rows = await this.db
       .select()
       .from(popsBills)
       .where(
-        and(
-          eq(popsBills.branchId, branch.id),
-          ne(popsBills.status, "void"),
-        ),
+        dateFilter
+          ? and(eq(popsBills.branchId, branch.id), ne(popsBills.status, "void"), dateFilter)
+          : and(eq(popsBills.branchId, branch.id), ne(popsBills.status, "void")),
       )
       .orderBy(desc(popsBills.createdAt));
 

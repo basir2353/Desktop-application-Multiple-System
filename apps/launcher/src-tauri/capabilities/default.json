@@ -7,7 +7,7 @@
     "core:default",
     "shell:allow-open",
     "updater:default",
-    "process:default"
+    "process:default",
+    "allow-pra-http-post"
   ]
 }
-

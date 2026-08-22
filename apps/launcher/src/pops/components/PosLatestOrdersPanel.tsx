@@ -594,11 +594,28 @@ export function PosLatestOrdersPanel({
         return;
       }
 
-      const hasPra = Boolean(built.input.praFiscal?.invoiceNumber);
+      const fiscal = built.input.praFiscal;
+      const hasPra = Boolean(fiscal?.invoiceNumber);
+      const mode =
+        fiscal?.mode ??
+        (praRealEnabled ? "real" : praFakeEnabled ? "fake" : null);
+      const modeLabel = mode === "real" ? "Real PRA" : mode === "fake" ? "FPRA" : "PRA";
+
       if (!hasPra) {
-        window.alert(
+        // buildPaidReceiptInput already alerts when it has a notice (e.g. not connected).
+        if (!built.notice) {
+          const missing =
+            mode === "real"
+              ? `Order ${order.ref} Closed.\n\nReal PRA invoice nahi bani (Invoice # / QR missing).\n\nSettings → Tax → Real PRA: Connect / Registered + Production token check karein, phir Close dobara try karein.`
+              : `Order ${order.ref} Closed.\n\nFPRA invoice nahi bani (Invoice # / QR missing).\n\nSettings → Tax → FPRA Active check karein. Simple slip ke liye Print use karein.`;
+          window.alert(missing);
+        }
+        onNotice?.(
           built.notice ||
-            `Order ${order.ref} Closed, lekin PRA invoice issue nahi hui (Invoice # / QR missing).\n\nFPRA Active check karein. Simple slip ke liye Print use karein.`,
+            (mode === "real"
+              ? `Order ${order.ref} Closed — Real PRA Invoice # / QR missing.`
+              : `Order ${order.ref} Closed — FPRA Invoice # / QR missing.`),
+          "error",
         );
         return;
       }
@@ -607,11 +624,11 @@ export function PosLatestOrdersPanel({
         input: built.input,
         printerName: built.printerName,
         systemPrinterName: built.systemPrinterName,
-        title: `Real invoice (PRA) · ${order.ref}`,
-        subtitle: `PRA Invoice # ${built.input.praFiscal!.invoiceNumber} · QR + logo`,
+        title: `${modeLabel} invoice · ${order.ref}`,
+        subtitle: `${modeLabel} Invoice # ${fiscal!.invoiceNumber} · QR + logo`,
       });
       if (built.notice) onNotice?.(built.notice, "success");
-      else onNotice?.(`Order ${order.ref} Closed — PRA invoice ready.`, "success");
+      else onNotice?.(`Order ${order.ref} Closed — ${modeLabel} invoice ready.`, "success");
     })();
   }
 

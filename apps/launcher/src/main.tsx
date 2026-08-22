@@ -20,7 +20,9 @@ try {
     localStorage.removeItem("platform-session-v1");
   }
   // Force Live Railway API (local Vite UI → hosted backend).
-  if (params.get("api") === "live" || params.get("api") === "railway") {
+  // Also honor ?api=live|railway. Default this session to Live when ?api=local is absent.
+  const apiParam = params.get("api");
+  if (apiParam === "live" || apiParam === "railway" || apiParam !== "local") {
     localStorage.setItem(
       "platform-data-mode-v2",
       JSON.stringify({

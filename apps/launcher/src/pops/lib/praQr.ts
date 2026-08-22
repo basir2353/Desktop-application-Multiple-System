@@ -1,12 +1,13 @@
 import QRCode from "qrcode";
 import type { PraInvoiceMode } from "@platform/contracts";
-import { getLiveApiUrl } from "../../lib/apiBase";
+import { getApiBaseUrl } from "../../lib/apiBase";
 
 /** Official PRA public invoice lookup (manual search — ignores query params). */
 export const PRA_EIMS_VERIFY_URL = "https://e.pra.punjab.gov.pk/public/eims.xhtml";
 
 function praApiBase(): string {
-  return getLiveApiUrl().replace(/\/$/, "");
+  // Use the API this POS is actually talking to (Local or Live) so QR verify works.
+  return getApiBaseUrl().replace(/\/$/, "");
 }
 
 /** e-IMS fiscal # pattern e.g. 197476FGYI38421035 */

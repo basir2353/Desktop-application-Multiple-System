@@ -108,7 +108,11 @@ export function BranchSelectPage(): JSX.Element {
   }, [claims?.role, setDisplayRole]);
 
   useEffect(() => {
-    if (selected && !allBranches.some((b) => b.id === selected.id)) {
+    if (allBranches.length === 0) {
+      if (selected) setSelected(null);
+      return;
+    }
+    if (!selected || !allBranches.some((b) => b.id === selected.id)) {
       setSelected(allBranches.find((b) => !isMonitoringBranch(b.code)) ?? allBranches[0] ?? null);
     }
   }, [allBranches, selected]);
@@ -151,6 +155,7 @@ export function BranchSelectPage(): JSX.Element {
     }
     if (!selected) return;
     setBranch(selected);
+    setDisplayRole(assignedRole);
     navigate(erpEntryPathForRole(systemId, assignedRole));
   }
 

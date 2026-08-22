@@ -11,7 +11,20 @@ import { fetchTaxAuthorityStatus } from "../../lib/taxAuthorityApi";
 import { printPraFiscalSlip } from "./printPraFiscal";
 
 export const REAL_PRA_NOT_CONNECTED_MSG =
-  "Real PRA is not connected. Please connect your PRA account before uploading invoices.";
+  "Real PRA is not Connected / Registered. Settings → Tax → Real PRA mein Connect karein, phir Close dobara try karein.";
+
+/** Mode-specific Close / issue notices (FPRA vs Real PRA “voice”). */
+export function praCloseIssueNotice(mode: PraInvoiceMode | null, kind: "missing" | "blocked"): string {
+  if (mode === "real" || kind === "blocked") {
+    return kind === "blocked"
+      ? REAL_PRA_NOT_CONNECTED_MSG
+      : "Real PRA did not return Invoice # / QR. Connect / Registered + Production token check karein.";
+  }
+  if (mode === "fake") {
+    return "FPRA invoice issue nahi hui (Invoice # / QR missing). Settings → Tax → FPRA Active check karein.";
+  }
+  return "PRA invoice issue nahi hui (Invoice # / QR missing).";
+}
 
 /** Issue FPRA/Real PRA for a completed bill (does not print). */
 export async function issuePraForBill(input: {
@@ -194,7 +207,7 @@ export async function autoIssuePraForCompletedBill(input: {
         return {
           mode,
           fiscal: null,
-          notice: REAL_PRA_NOT_CONNECTED_MSG,
+          notice: praCloseIssueNotice("real", "blocked"),
           failed: true,
           blockedReal: true,
         };
@@ -203,7 +216,7 @@ export async function autoIssuePraForCompletedBill(input: {
       return {
         mode,
         fiscal: null,
-        notice: REAL_PRA_NOT_CONNECTED_MSG,
+        notice: praCloseIssueNotice("real", "blocked"),
         failed: true,
         blockedReal: true,
       };
@@ -221,10 +234,7 @@ export async function autoIssuePraForCompletedBill(input: {
       return {
         mode,
         fiscal: null,
-        notice:
-          mode === "real"
-            ? "Real PRA did not return invoice number/QR yet."
-            : "PRA issued but invoice number/QR missing.",
+        notice: praCloseIssueNotice(mode, "missing"),
         failed: true,
         blockedReal: false,
       };

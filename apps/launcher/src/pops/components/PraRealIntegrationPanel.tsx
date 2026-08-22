@@ -80,7 +80,7 @@ function formatWhen(iso: string | null | undefined): string {
 }
 
 function connectionLabel(status: string): string {
-  if (status === "connected") return "Connected";
+  if (status === "connected") return "Connected / Registered";
   if (status === "error") return "Authentication Failed";
   if (status === "expired") return "Token Expired";
   return "Not Connected";

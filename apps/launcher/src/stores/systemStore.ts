@@ -35,12 +35,18 @@ export const useSystemStore = create<SystemState>()(
         if (lockedSystemId) {
           return { ...current, ...p, systemId: lockedSystemId };
         }
+        const persistedId =
+          p.systemId && isBusinessSystemId(p.systemId) ? p.systemId : null;
+        const currentId =
+          current.systemId && isBusinessSystemId(current.systemId)
+            ? current.systemId
+            : null;
         // Prefer an in-memory selection set before rehydration finishes; otherwise
         // async hydrate can overwrite setSystem() and bounce the user back to "/".
         return {
           ...current,
           ...p,
-          systemId: current.systemId ?? p.systemId ?? null,
+          systemId: currentId ?? persistedId ?? null,
         };
       },
     },

@@ -826,7 +826,7 @@ export class StoreService implements OnModuleInit {
       .values({
         organizationId,
         branchId: branch.id,
-        sku: input.sku,
+        sku: input.sku?.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
         name: input.name,
         description: input.description ?? null,
         categoryId: input.categoryId ?? null,

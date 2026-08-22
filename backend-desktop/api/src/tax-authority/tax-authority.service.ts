@@ -641,7 +641,7 @@ export class TaxAuthorityService {
       connectedAt: iso(profile.praConnectedAt)!,
       tokenExpiresAt: iso(profile.praTokenExpiresAt),
       message:
-        "Connection Successful. Credentials saved. Leave Access Code / Token blank next time to keep them. Pay submits PRA from this POS.",
+        "Connection Successful — Connected / Registered. Credentials saved. Leave Access Code / Token blank next time to keep them. Close submits Real PRA from this POS.",
     };
   }
 
@@ -1655,7 +1655,7 @@ const responsePayload = {
     const profile = await this.requireProfile(organizationId, branch.id);
     if (profile.praStatus !== "connected" && profile.praStatus !== "expired") {
       throw new BadRequestException(
-        "Real PRA is not connected. Please connect your PRA account before uploading invoices.",
+        "Real PRA is not Connected / Registered. Please connect your PRA account before uploading invoices.",
       );
     }
 
@@ -2646,6 +2646,27 @@ const responsePayload = {
     return body.slice(0, 50) || `USIN${Date.now()}`.slice(0, 50);
   }
 
+  /** PRA e-IMS DateTime must be `YYYY-MM-DD HH:MM:SS` in Pakistan wall clock. */
+  private formatPraDateTime(date: Date): string {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Karachi",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).formatToParts(date);
+      const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+      const hour = get("hour") === "24" ? "00" : get("hour");
+      return `${get("year")}-${get("month")}-${get("day")} ${hour}:${get("minute")}:${get("second")}`;
+    } catch {
+      return date.toISOString().replace("T", " ").slice(0, 19);
+    }
+  }
+
   private parseLines(raw: string | null): PraSourceLine[] {
     return parsePraSourceLines(raw);
   }
@@ -2736,9 +2757,8 @@ const responsePayload = {
       InvoiceNumber: "",
       POSID: Number(profile.praRegistrationNumber) || 0,
       USIN: this.buildPraUsin(source.id, source.ref),
-      DateTime: invoiceDate.includes("T")
-        ? invoiceDate.replace("T", " ").slice(0, 19)
-        : invoiceDate,
+      // PRA e-IMS requires wall-clock DateTime (YYYY-MM-DD HH:MM:SS), not date-only.
+      DateTime: this.formatPraDateTime(source.date),
       BuyerPNTN: "",
       BuyerCNIC: "",
       BuyerName: "Walking Customer",

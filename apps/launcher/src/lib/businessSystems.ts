@@ -96,8 +96,9 @@ export function isBusinessSystemId(value: string): value is BusinessSystemId {
   return value === "restaurant" || value === "pharmacy" || value === "general-store";
 }
 
-export function getBusinessSystem(id: BusinessSystemId): BusinessSystem {
-  return businessSystems[id];
+export function getBusinessSystem(id: BusinessSystemId | string | null | undefined): BusinessSystem {
+  if (id && isBusinessSystemId(id)) return businessSystems[id];
+  return businessSystems.restaurant;
 }
 
 export function getSystemHomePath(_id: BusinessSystemId): string {

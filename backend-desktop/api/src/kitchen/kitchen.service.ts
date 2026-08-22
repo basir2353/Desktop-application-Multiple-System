@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { and, asc, desc, eq, gte, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import type { CreateBill, CreateKitchenTicket, KitchenTicketStatus, UpdateKitchenTicket } from "@platform/contracts";
 import {
   popsBills,
@@ -59,14 +59,48 @@ export class KitchenService {
 
     return {
       branchCode: branch.code,
-      tickets: await Promise.all(rows.map((row) => this.mapTicketForResponse(row))),
+      tickets: await this.mapTicketsForResponse(rows),
     };
   }
 
+  private async mapTicketsForResponse(rows: (typeof popsKitchenTickets.$inferSelect)[]) {
+    if (rows.length === 0) return [];
+
+    const riderNames = await this.delivery.loadRiderNames(
+      rows.map((row) => row.riderId).filter((id): id is string => Boolean(id)),
+    );
+
+    const menuRows = await this.db
+      .select({
+        id: popsMenuItems.id,
+        name: popsMenuItems.name,
+        portion: popsMenuItems.portion,
+        price: popsMenuItems.pricePkr,
+      })
+      .from(popsMenuItems)
+      .where(and(eq(popsMenuItems.branchId, rows[0]!.branchId), eq(popsMenuItems.isActive, true)));
+
+    return rows.map((row) => this.mapTicketForResponseCached(row, riderNames, menuRows));
+  }
+
   private async mapTicketForResponse(row: typeof popsKitchenTickets.$inferSelect) {
-    const ticket = await this.delivery.mapTicketWithRider(row);
-    const lines = await this.enrichLinesFromMenu(
-      row.branchId,
+    const [ticket] = await this.mapTicketsForResponse([row]);
+    return ticket!;
+  }
+
+  private mapTicketForResponseCached(
+    row: typeof popsKitchenTickets.$inferSelect,
+    riderNames: Map<string, string>,
+    menuRows: {
+      id: string;
+      name: string;
+      portion: string | null;
+      price: number;
+    }[],
+  ) {
+    const ticket = this.delivery.mapTicketWithRiderCached(row, riderNames);
+    const lines = this.enrichLinesFromMenuCached(
+      menuRows,
       (ticket.lines ?? []).map((line) => {
         const menuItemId =
           "menuItemId" in line && typeof line.menuItemId === "string" ? line.menuItemId : undefined;
@@ -580,6 +614,18 @@ export class KitchenService {
       .from(popsMenuItems)
       .where(and(eq(popsMenuItems.branchId, branchId), eq(popsMenuItems.isActive, true)));
 
+    return this.enrichLinesFromMenuCached(menuRows, lines);
+  }
+
+  private enrichLinesFromMenuCached(
+    menuRows: {
+      id: string;
+      name: string;
+      portion: string | null;
+      price: number;
+    }[],
+    lines: CreateBill["lines"],
+  ): CreateBill["lines"] {
     return lines.map((line) => {
       if (line.unitPrice > 0 && line.menuItemId) return line;
 

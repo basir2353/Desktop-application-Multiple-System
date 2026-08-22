@@ -1,7 +1,7 @@
 /**
  * Single live Railway API for the whole app (staff, POS, Super Admin).
  */
-export const RAILWAY_API_URL = "https://backend-desktop-production-600b.up.railway.app";
+export const RAILWAY_API_URL = "https://backend-desktop-production-5505.up.railway.app";
 
 /** Baked at build time — overrides default when set. */
 const BAKED_API_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");

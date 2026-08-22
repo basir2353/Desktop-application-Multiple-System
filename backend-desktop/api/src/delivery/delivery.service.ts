@@ -8,7 +8,7 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from "@nestjs/common";
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { permissionsForPopsRole, type CreateRider, type RiderDeliveryStatusUpdate, type UpdateDeliveryOrder, type UpdateRider } from "@platform/contracts";
 import {
   organizationMemberships,
@@ -109,7 +109,7 @@ export class DeliveryService implements OnApplicationBootstrap {
     const rows = await this.fetchDeliveryTickets(organizationId, branch.id);
     return {
       branchCode: branch.code,
-      orders: await Promise.all(rows.map((row) => this.mapDeliveryOrder(row))),
+      orders: await this.mapDeliveryOrdersBatch(rows),
     };
   }
 
@@ -140,7 +140,7 @@ export class DeliveryService implements OnApplicationBootstrap {
     });
     return {
       branchCode: riderBranch.code,
-      orders: await Promise.all(rows.map((row) => this.mapDeliveryOrder(row))),
+      orders: await this.mapDeliveryOrdersBatch(rows),
     };
   }
 
@@ -181,9 +181,8 @@ export class DeliveryService implements OnApplicationBootstrap {
 
   async listRiders(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
-    // Rider logins created via Users often lack a pops_riders row for this branch —
-    // sync them so POS / mobile Delivery dropdowns are never empty for active riders.
-    await this.ensureRiderProfilesForBranch(organizationId, branch);
+    // Sync missing rider profiles in the background — don't block dropdown reads.
+    void this.ensureRiderProfilesForBranch(organizationId, branch).catch(() => {});
 
     const rows = await this.db
       .select({
@@ -508,16 +507,17 @@ export class DeliveryService implements OnApplicationBootstrap {
   }
 
   async mapTicketWithRider(row: typeof popsKitchenTickets.$inferSelect) {
-    let riderName: string | null = null;
-    if (row.riderId) {
-      const riders = await this.db
-        .select({ name: popsRiders.name })
-        .from(popsRiders)
-        .where(eq(popsRiders.id, row.riderId))
-        .limit(1);
-      riderName = riders[0]?.name ?? null;
-    }
+    const riderNames = row.riderId
+      ? await this.loadRiderNames([row.riderId])
+      : new Map<string, string>();
+    return this.mapTicketWithRiderCached(row, riderNames);
+  }
 
+  mapTicketWithRiderCached(
+    row: typeof popsKitchenTickets.$inferSelect,
+    riderNames: Map<string, string>,
+  ) {
+    const riderName = row.riderId ? (riderNames.get(row.riderId) ?? null) : null;
     const anchor = row.startedAt ?? row.createdAt;
     const mins = Math.max(0, Math.floor((Date.now() - anchor.getTime()) / 60_000));
 
@@ -548,6 +548,18 @@ export class DeliveryService implements OnApplicationBootstrap {
     };
   }
 
+  async loadRiderNames(riderIds: string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(riderIds.filter(Boolean))];
+    if (unique.length === 0) return new Map();
+
+    const rows = await this.db
+      .select({ id: popsRiders.id, name: popsRiders.name })
+      .from(popsRiders)
+      .where(inArray(popsRiders.id, unique));
+
+    return new Map(rows.map((row) => [row.id, row.name]));
+  }
+
   private mapRider(
     row: typeof popsRiders.$inferSelect,
     email: string | null = null,
@@ -569,24 +581,38 @@ export class DeliveryService implements OnApplicationBootstrap {
   }
 
   private async mapDeliveryOrder(row: typeof popsKitchenTickets.$inferSelect) {
-    const ticket = await this.mapTicketWithRider(row);
-    const lines = await this.enrichLinesFromMenu(row.branchId, ticket.lines ?? []);
-    const contact = this.parseDeliveryContact(row.itemsSummary);
-    return {
-      ...ticket,
-      lines,
-      customerName: contact.customer,
-      customerAddress: contact.address,
-    };
+    const [order] = await this.mapDeliveryOrdersBatch([row]);
+    return order!;
   }
 
-  private async enrichLinesFromMenu(
-    branchId: string,
-    lines: { label: string; qty: number; unitPrice: number; menuItemId?: string }[],
-  ): Promise<{ label: string; qty: number; unitPrice: number; menuItemId?: string }[]> {
-    if (lines.length === 0) return lines;
+  private async mapDeliveryOrdersBatch(rows: (typeof popsKitchenTickets.$inferSelect)[]) {
+    if (rows.length === 0) return [];
 
-    const menuRows = await this.db
+    const riderNames = await this.loadRiderNames(
+      rows.map((row) => row.riderId).filter((id): id is string => Boolean(id)),
+    );
+
+    const menuByBranch = new Map<string, Awaited<ReturnType<DeliveryService["loadActiveMenuForBranch"]>>>();
+    for (const branchId of new Set(rows.map((row) => row.branchId))) {
+      menuByBranch.set(branchId, await this.loadActiveMenuForBranch(branchId));
+    }
+
+    return rows.map((row) => {
+      const ticket = this.mapTicketWithRiderCached(row, riderNames);
+      const menuRows = menuByBranch.get(row.branchId) ?? [];
+      const lines = this.enrichLinesFromMenuCached(menuRows, ticket.lines ?? []);
+      const contact = this.parseDeliveryContact(row.itemsSummary);
+      return {
+        ...ticket,
+        lines,
+        customerName: contact.customer,
+        customerAddress: contact.address,
+      };
+    });
+  }
+
+  private async loadActiveMenuForBranch(branchId: string) {
+    return this.db
       .select({
         id: popsMenuItems.id,
         name: popsMenuItems.name,
@@ -595,6 +621,13 @@ export class DeliveryService implements OnApplicationBootstrap {
       })
       .from(popsMenuItems)
       .where(and(eq(popsMenuItems.branchId, branchId), eq(popsMenuItems.isActive, true)));
+  }
+
+  private enrichLinesFromMenuCached(
+    menuRows: Awaited<ReturnType<DeliveryService["loadActiveMenuForBranch"]>>,
+    lines: { label: string; qty: number; unitPrice: number; menuItemId?: string }[],
+  ): { label: string; qty: number; unitPrice: number; menuItemId?: string }[] {
+    if (lines.length === 0) return lines;
 
     return lines.map((line) => {
       if (line.unitPrice > 0 && line.menuItemId) return line;
@@ -625,6 +658,15 @@ export class DeliveryService implements OnApplicationBootstrap {
         menuItemId: match.id,
       };
     });
+  }
+
+  private async enrichLinesFromMenu(
+    branchId: string,
+    lines: { label: string; qty: number; unitPrice: number; menuItemId?: string }[],
+  ): Promise<{ label: string; qty: number; unitPrice: number; menuItemId?: string }[]> {
+    if (lines.length === 0) return lines;
+    const menuRows = await this.loadActiveMenuForBranch(branchId);
+    return this.enrichLinesFromMenuCached(menuRows, lines);
   }
 
   private parseDeliveryContact(text: string | null | undefined): { customer: string; address: string } {

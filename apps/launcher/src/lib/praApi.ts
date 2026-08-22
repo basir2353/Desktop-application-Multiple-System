@@ -134,8 +134,31 @@ export function isPraNetworkFailureMessage(message: string): boolean {
   );
 }
 
+function isHtmlResponseBody(text: string): boolean {
+  const t = text.trim().slice(0, 80).toLowerCase();
+  return t.startsWith("<!doctype html") || t.startsWith("<html");
+}
+
+function shortenPraClientError(text: string): string {
+  if (isHtmlResponseBody(text)) {
+    return "Got an HTML page instead of PRA JSON (proxy/SPA miss). Desktop will retry via native PRA post.";
+  }
+  return text.replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function isTauriRuntime(): boolean {
+  const w = window as Window & {
+    __TAURI_INTERNALS__?: unknown;
+    __TAURI__?: unknown;
+    isTauri?: boolean;
+  };
+  return Boolean(w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri);
+}
+
 /**
- * Post PRAL Live/PostData from this machine (shop IP). Prefer Vite proxy, then Tauri, then direct.
+ * Post PRAL Live/PostData from this machine (shop IP).
+ * Desktop (Tauri) uses native HTTPS first — Vite /pra-ims is browser-dev only and
+ * often returns the SPA HTML shell in packaged builds.
  */
 export async function postPraPayloadFromClient(input: {
   postUrl: string;
@@ -152,6 +175,11 @@ export async function postPraPayloadFromClient(input: {
   const tryFetch = async (url: string) => {
     const res = await fetch(url, { method: "POST", headers, body });
     const text = await res.text();
+    if (isHtmlResponseBody(text)) {
+      throw new Error(
+        "PRA proxy returned HTML (not e-IMS). Use desktop native post or fix /pra-ims proxy.",
+      );
+    }
     let json: unknown = null;
     try {
       json = JSON.parse(text) as unknown;
@@ -163,26 +191,8 @@ export async function postPraPayloadFromClient(input: {
 
   const errors: string[] = [];
 
-  // 1) Vite /pra-ims proxy (browser dev)
-  const proxied = praPostUrlForClient(input.postUrl);
-  if (proxied !== input.postUrl) {
-    try {
-      const r = await tryFetch(proxied);
-      const parsed = parsePraPostResponse(r.status, r.json, r.text);
-      if (parsed) return parsed;
-      errors.push(r.text.slice(0, 160));
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  // 2) Tauri native HTTP (desktop EXE — no CORS)
-  const w = window as Window & {
-    __TAURI_INTERNALS__?: unknown;
-    __TAURI__?: unknown;
-    isTauri?: boolean;
-  };
-  if (w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri) {
+  // 1) Tauri native HTTPS first (desktop EXE + tauri dev) — real shop IP, no CORS/proxy.
+  if (isTauriRuntime()) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const text = await invoke<string>("pra_http_post", {
@@ -190,6 +200,9 @@ export async function postPraPayloadFromClient(input: {
         token: input.bearerToken,
         body,
       });
+      if (isHtmlResponseBody(text)) {
+        throw new Error("Native PRA post returned HTML — unexpected.");
+      }
       let json: unknown = null;
       try {
         json = JSON.parse(text) as unknown;
@@ -198,25 +211,39 @@ export async function postPraPayloadFromClient(input: {
       }
       const parsed = parsePraPostResponse(200, json, text);
       if (parsed) return parsed;
-      errors.push(text.slice(0, 160));
+      errors.push(shortenPraClientError(text));
     } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
+      errors.push(shortenPraClientError(err instanceof Error ? err.message : String(err)));
     }
   }
 
-  // 3) Direct (works only if CORS allows — uncommon)
+  // 2) Vite /pra-ims proxy (browser `pnpm dev:web` only)
+  const proxied = praPostUrlForClient(input.postUrl);
+  if (proxied !== input.postUrl) {
+    try {
+      const r = await tryFetch(proxied);
+      const parsed = parsePraPostResponse(r.status, r.json, r.text);
+      if (parsed) return parsed;
+      errors.push(shortenPraClientError(r.text));
+    } catch (err) {
+      errors.push(shortenPraClientError(err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  // 3) Direct (rare — CORS usually blocks browsers)
   try {
     const r = await tryFetch(input.postUrl);
     const parsed = parsePraPostResponse(r.status, r.json, r.text);
     if (parsed) return parsed;
-    errors.push(r.text.slice(0, 160));
+    errors.push(shortenPraClientError(r.text));
   } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err));
+    errors.push(shortenPraClientError(err instanceof Error ? err.message : String(err)));
   }
 
+  const detail = errors.find((e) => e && !/html page|spa miss|proxy returned html/i.test(e)) || errors[0];
   throw new Error(
-    errors[0]
-      ? `PRA client post failed: ${errors[0]}`
+    detail
+      ? `PRA client post failed: ${detail}`
       : "PRA client post failed — could not reach e-IMS from this machine.",
   );
 }
@@ -240,6 +267,9 @@ export async function pingPraFromClient(input: {
   const tryOnce = async (url: string) => {
     const res = await fetch(url, { method: "POST", headers, body });
     const text = await res.text();
+    if (isHtmlResponseBody(text)) {
+      throw new Error("PRA proxy returned HTML (not e-IMS)");
+    }
     if (res.status === 401 || res.status === 403) {
       throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
     }
@@ -251,22 +281,8 @@ export async function pingPraFromClient(input: {
   };
 
   const errors: string[] = [];
-  const proxied = praPostUrlForClient(input.postUrl);
-  if (proxied !== input.postUrl) {
-    try {
-      const detail = await tryOnce(proxied);
-      return { ok: true, detail };
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
 
-  const w = window as Window & {
-    __TAURI_INTERNALS__?: unknown;
-    __TAURI__?: unknown;
-    isTauri?: boolean;
-  };
-  if (w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri) {
+  if (isTauriRuntime()) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const text = await invoke<string>("pra_http_post", {
@@ -274,10 +290,23 @@ export async function pingPraFromClient(input: {
         token: input.bearerToken,
         body,
       });
+      if (isHtmlResponseBody(text)) {
+        throw new Error("Native PRA ping returned HTML");
+      }
       if (/401|403|unauthorized|invalid/i.test(text)) {
         throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
       }
       return { ok: true, detail: text.slice(0, 180) };
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const proxied = praPostUrlForClient(input.postUrl);
+  if (proxied !== input.postUrl) {
+    try {
+      const detail = await tryOnce(proxied);
+      return { ok: true, detail };
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
@@ -298,30 +327,76 @@ function parsePraPostResponse(
   json: unknown,
   text: string,
 ): { invoiceNumber: string; raw: unknown } | null {
+  if (isHtmlResponseBody(text)) {
+    throw new Error(
+      "PRA endpoint returned HTML instead of JSON (proxy/SPA miss). Retry on desktop native post.",
+    );
+  }
   if (status === 401 || status === 403) {
     throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
   }
-  const code =
-    typeof json === "object" && json && "Code" in json
-      ? String((json as { Code: unknown }).Code)
-      : "";
-  const responseMsg =
-    typeof json === "object" && json && "Response" in json
-      ? String((json as { Response: unknown }).Response)
-      : typeof json === "object" && json && "message" in json
-        ? String((json as { message: unknown }).message)
+  const obj = typeof json === "object" && json ? (json as Record<string, unknown>) : null;
+  const code = obj && "Code" in obj ? String(obj.Code) : "";
+  const rawMsg =
+    obj && "Response" in obj
+      ? String(obj.Response)
+      : obj && "message" in obj
+        ? String(obj.message)
         : text.slice(0, 200);
+  const responseMsg = isHtmlResponseBody(rawMsg) ? "" : rawMsg;
+
   if (status >= 200 && status < 300 && (!code || code === "100")) {
-    const invoiceNumber =
-      typeof json === "object" && json && "InvoiceNumber" in json
-        ? String((json as { InvoiceNumber: unknown }).InvoiceNumber)
-        : "";
-    if (invoiceNumber && !/^not available$/i.test(invoiceNumber)) {
+    const invoiceNumber = extractPraInvoiceNumber(obj, text);
+    if (invoiceNumber) {
       return { invoiceNumber, raw: json };
     }
+    // Success-shaped response without a usable InvoiceNumber — fail loudly so Close
+    // does not silently print a blank Real PRA slip.
+    throw new Error(
+      responseMsg ||
+        "PRA accepted the request but did not return InvoiceNumber. Check POS ID / Production token / IP whitelist.",
+    );
   }
   if (code && code !== "100") {
     throw new Error(responseMsg || `PRA rejected invoice (Code ${code})`);
   }
   return null;
+}
+
+/** Pull InvoiceNumber from common PRA / proxy response shapes. */
+function extractPraInvoiceNumber(
+  obj: Record<string, unknown> | null,
+  text: string,
+): string {
+  const candidates: unknown[] = [];
+  if (obj) {
+    candidates.push(
+      obj.InvoiceNumber,
+      obj.invoiceNumber,
+      obj.InvoiceNo,
+      obj.invoiceNo,
+      obj.INVOICENUMBER,
+    );
+    const data = obj.data;
+    if (typeof data === "object" && data) {
+      const nested = data as Record<string, unknown>;
+      candidates.push(nested.InvoiceNumber, nested.invoiceNumber, nested.InvoiceNo);
+    }
+    const result = obj.result;
+    if (typeof result === "object" && result) {
+      const nested = result as Record<string, unknown>;
+      candidates.push(nested.InvoiceNumber, nested.invoiceNumber, nested.InvoiceNo);
+    }
+  }
+  for (const value of candidates) {
+    const num = String(value ?? "").trim();
+    if (num && !/^not available$/i.test(num) && !/^null$/i.test(num)) {
+      return num;
+    }
+  }
+  const match = text.match(/"InvoiceNumber"\s*:\s*"([^"]+)"/i);
+  if (match?.[1] && !/^not available$/i.test(match[1].trim())) {
+    return match[1].trim();
+  }
+  return "";
 }
