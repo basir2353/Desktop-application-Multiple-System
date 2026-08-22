@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, boolean, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { users } from "./users";
 
@@ -25,5 +25,8 @@ export const organizationMemberships = pgTable(
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.organizationId, t.userId] })],
+  (t) => [
+    primaryKey({ columns: [t.organizationId, t.userId] }),
+    index("organization_memberships_user_id_idx").on(t.userId),
+  ],
 );

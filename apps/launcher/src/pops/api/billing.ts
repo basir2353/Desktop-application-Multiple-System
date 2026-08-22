@@ -82,10 +82,15 @@ export async function updateWaiter(waiterId: string, input: UpdateWaiter): Promi
   return waiterOptionSchema.parse(await res.json());
 }
 
-export async function fetchCompletedOrders(branchCode: string): Promise<Bill[]> {
+export async function fetchCompletedOrders(
+  branchCode: string,
+  opts?: { scope?: "all" | "active" | "dashboard"; since?: string },
+): Promise<Bill[]> {
   const offline = loadOfflineBills();
   try {
     const params = new URLSearchParams({ branchCode });
+    if (opts?.scope) params.set("scope", opts.scope);
+    if (opts?.since) params.set("since", opts.since);
     const res = await authFetch(`/v1/billing/orders?${params}`);
     if (!res.ok) {
       const err = (await res.json().catch(() => null)) as { message?: string } | null;

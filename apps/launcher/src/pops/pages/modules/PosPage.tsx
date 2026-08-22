@@ -618,7 +618,7 @@ export function PosPage(): JSX.Element {
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code],
     enabled: Boolean(branch?.code),
-    queryFn: () => fetchCompletedOrders(branch!.code),
+    queryFn: () => fetchCompletedOrders(branch!.code, { scope: "active" }),
     refetchInterval: 20_000,
   });
 

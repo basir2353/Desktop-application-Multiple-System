@@ -4,7 +4,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { autoSyncIfNeeded } from "../lib/offlineSync";
 import { useDataModeStore } from "../stores/dataModeStore";
 
-const AUTO_SYNC_INTERVAL_MS = 15_000;
+const AUTO_SYNC_INTERVAL_MS = 30_000;
 
 /** Re-sync local queues and outbox when online (cloud mode only). */
 export function useOfflineSync(): void {

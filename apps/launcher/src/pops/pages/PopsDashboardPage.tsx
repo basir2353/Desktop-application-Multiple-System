@@ -62,9 +62,9 @@ export function PopsDashboardPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const canViewDashboard = sessionCanManageUsers(claims);
-  const ordersPollMs = useAdaptiveRefetchInterval(10_000);
-  const dashboardPollMs = useAdaptiveRefetchInterval(30_000);
-  const pendingPollMs = useAdaptiveRefetchInterval(5_000);
+  const ordersPollMs = useAdaptiveRefetchInterval(15_000);
+  const dashboardPollMs = useAdaptiveRefetchInterval(45_000);
+  const pendingPollMs = useAdaptiveRefetchInterval(8_000);
   const accountingPollMs = useAdaptiveRefetchInterval(60_000);
 
   useEffect(() => {
@@ -104,10 +104,14 @@ export function PopsDashboardPage(): JSX.Element {
   }, [branch?.code]);
 
   const ordersQuery = useQuery({
-    queryKey: ["orders", branch?.code],
+    queryKey: ["orders", branch?.code, fromDate, toDate],
     enabled: Boolean(branch?.code),
     refetchInterval: ordersPollMs,
-    queryFn: () => fetchCompletedOrders(branch!.code),
+    queryFn: () =>
+      fetchCompletedOrders(branch!.code, {
+        scope: "dashboard",
+        since: fromDate ? `${fromDate}T00:00:00.000+05:00` : undefined,
+      }),
   });
 
   const dashboardQuery = useQuery({

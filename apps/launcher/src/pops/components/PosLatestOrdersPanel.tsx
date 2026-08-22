@@ -366,7 +366,7 @@ export function PosLatestOrdersPanel({
     let bill = order.bill ?? null;
     if (!options?.skipBillRefresh) {
       try {
-        const bills = await fetchCompletedOrders(branch.code);
+        const bills = await fetchCompletedOrders(branch.code, { scope: "active" });
         const billId = bill?.id;
         const orderRef = (order.ref || order.bill?.orderRef || order.bill?.billRef || "")
           .trim()
