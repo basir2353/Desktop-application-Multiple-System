@@ -23,10 +23,12 @@ import {
   posRecentOrderToReceiptPrint,
   billToPrintInput,
   printReceiptAsync,
+  printReceiptDetailed,
   resolveSessionPrintName,
   type PrintTicketInput,
 } from "../lib/printTicket";
 import { asPrinterName } from "../lib/asPrinterName";
+import { describeAutoPrintReadiness } from "../lib/canDirectThermalPrint";
 import { resolvePraFooterForPaidBill } from "../lib/praPaidPrint";
 import {
   canEmbedPraOnSlip,
@@ -346,7 +348,7 @@ export function PosLatestOrdersPanel({
   /** Paid / held / open → customer receipt. Pass embedPra on Close only (Print stays simple). */
   async function buildPaidReceiptInput(
     order: PosRecentOrder,
-    options?: { embedPra?: boolean },
+    options?: { embedPra?: boolean; issueIfMissing?: boolean; skipBillRefresh?: boolean },
   ): Promise<{
     input: Omit<PrintTicketInput, "kind">;
     printerName?: string;
@@ -360,26 +362,28 @@ export function PosLatestOrdersPanel({
     const profile = resolveReceiptPrinter(branch.code, printUserId);
     const assigned = printUserId ? getWaiterPrinter(branch.code, printUserId) : null;
 
-    // Always prefer this order’s bill by id so Close/Print never pick another ORD’s totals.
+    // Quick Print P uses cached bill — never block on a full orders API round-trip.
     let bill = order.bill ?? null;
-    try {
-      const bills = await fetchCompletedOrders(branch.code);
-      const billId = bill?.id;
-      const orderRef = (order.ref || order.bill?.orderRef || order.bill?.billRef || "")
-        .trim()
-        .toLowerCase();
-      const fresh =
-        (billId ? bills.find((b) => b.id === billId) : undefined) ??
-        (orderRef
-          ? bills.find(
-              (b) =>
-                (b.orderRef ?? "").trim().toLowerCase() === orderRef ||
-                (b.billRef ?? "").trim().toLowerCase() === orderRef,
-            )
-          : undefined);
-      if (fresh) bill = fresh;
-    } catch {
-      /* use cached bill */
+    if (!options?.skipBillRefresh) {
+      try {
+        const bills = await fetchCompletedOrders(branch.code);
+        const billId = bill?.id;
+        const orderRef = (order.ref || order.bill?.orderRef || order.bill?.billRef || "")
+          .trim()
+          .toLowerCase();
+        const fresh =
+          (billId ? bills.find((b) => b.id === billId) : undefined) ??
+          (orderRef
+            ? bills.find(
+                (b) =>
+                  (b.orderRef ?? "").trim().toLowerCase() === orderRef ||
+                  (b.billRef ?? "").trim().toLowerCase() === orderRef,
+              )
+            : undefined);
+        if (fresh) bill = fresh;
+      } catch {
+        /* use cached bill */
+      }
     }
 
     const base = bill
@@ -398,7 +402,7 @@ export function PosLatestOrdersPanel({
         const resolved = await resolvePraFooterForPaidBill({
           branchCode: branch.code,
           bill,
-          issueIfMissing: true,
+          issueIfMissing: options?.issueIfMissing ?? true,
         });
         praFiscal = resolved.footer;
         notice = resolved.notice;
@@ -431,9 +435,71 @@ export function PosLatestOrdersPanel({
     };
   }
 
+  /** Print P / shortcut P — instant auto-print (no preview modal, no orders API wait). */
+  async function quickPrintOrder(order: PosRecentOrder): Promise<void> {
+    const isPaidBill =
+      order.bill?.status === "completed" ||
+      Boolean(order.bill?.praInvoiceNumber) ||
+      modeFilter === "Paid";
+
+    onNotice?.(`Printing ${order.ref}…`, "success");
+
+    const built = await buildPaidReceiptInput(order, {
+      embedPra: isPaidBill,
+      issueIfMissing: false,
+      skipBillRefresh: true,
+    });
+    if (!built) {
+      onNotice?.("Print failed — branch not loaded.", "error");
+      return;
+    }
+
+    const readiness = describeAutoPrintReadiness({
+      systemPrinterName: built.systemPrinterName,
+      claims: useSessionStore.getState().claims,
+      displayRole: usePopsStore.getState().displayRole,
+    });
+
+    const result = await printReceiptDetailed({
+      ...built.input,
+      kind: "receipt",
+      printerName: built.printerName,
+      systemPrinterName: built.systemPrinterName,
+    });
+
+    if (result.ok) {
+      onNotice?.(
+        result.usedNamedPrinter && built.systemPrinterName
+          ? `${order.ref} auto-printed on ${built.systemPrinterName}.`
+          : readiness.ready
+            ? `${order.ref} sent to printer.`
+            : `${order.ref} print dialog opened.${readiness.hint ? ` ${readiness.hint}` : ""}`,
+        "success",
+      );
+      return;
+    }
+
+    onNotice?.(
+      result.error?.trim() ||
+        readiness.hint ||
+        "Auto print failed — link receipt printer in Settings → Printers.",
+      "error",
+    );
+    setPrintPreview({
+      input: built.input,
+      printerName: built.printerName,
+      systemPrinterName: built.systemPrinterName,
+      title: isPaidBill && built.input.praFiscal ? "PRA invoice" : isPaidBill ? "Paid invoice" : "Simple invoice",
+      subtitle: isPaidBill
+        ? built.input.praFiscal
+          ? `PRA Invoice # ${built.input.praFiscal.invoiceNumber} · QR + logo`
+          : "Paid reprint (PRA unavailable — use Close to issue)"
+        : "Print = simple slip (FPRA)",
+    });
+  }
+
   function openPrintPreview(order: PosRecentOrder): void {
     void (async () => {
-      // Paid / Closed bills → PRA logo invoice. Open/held → simple slip (or KOT path elsewhere).
       const isPaidBill =
         order.bill?.status === "completed" ||
         Boolean(order.bill?.praInvoiceNumber) ||
@@ -463,7 +529,7 @@ export function PosLatestOrdersPanel({
    */
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
-    openPrintPreview(order);
+    void quickPrintOrder(order);
   }
 
   const printOrderRef = useRef(printOrder);

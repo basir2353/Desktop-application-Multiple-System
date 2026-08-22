@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 import type { PlatformSqliteDb } from "@platform/database-sqlite";
 import { outbox as outboxTable } from "@platform/database-sqlite";
 export type OutboxEnqueueInput = {
@@ -32,6 +32,7 @@ export async function listPendingOutbox(
     attempts: number;
   }[]
 > {
+  const now = new Date().toISOString();
   return db
     .select({
       id: outboxTable.id,
@@ -40,7 +41,12 @@ export async function listPendingOutbox(
       attempts: outboxTable.attempts,
     })
     .from(outboxTable)
-    .where(eq(outboxTable.status, "pending"))
+    .where(
+      and(
+        or(eq(outboxTable.status, "pending"), eq(outboxTable.status, "failed")),
+        or(isNull(outboxTable.nextRetryAt), lte(outboxTable.nextRetryAt, now)),
+      ),
+    )
     .limit(limit);
 }
 
@@ -56,6 +62,6 @@ export async function markOutboxFailed(
 ): Promise<void> {
   await db
     .update(outboxTable)
-    .set({ status: "failed", attempts, nextRetryAt: nextRetryAtIso })
+    .set({ status: "pending", attempts, nextRetryAt: nextRetryAtIso })
     .where(eq(outboxTable.id, id));
 }

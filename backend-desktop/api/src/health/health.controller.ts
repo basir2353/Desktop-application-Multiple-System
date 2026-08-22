@@ -84,53 +84,6 @@ export class HealthController {
       checks.membershipFullError = err instanceof Error ? err.message : String(err);
     }
 
-    // General Store: patch missing columns that cause dashboard Internal server error.
-    const storeAlters = [
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS description text`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS subcategory_id uuid`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS variant_of_id uuid`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS barcode text`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS qr_code text`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS image_url text`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS purchase_price_pkr integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS selling_price_pkr integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS tax_pct integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS reorder_level integer NOT NULL DEFAULT 10`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS available_stock integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS reserved_stock integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS damaged_stock integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS expired_stock integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS in_transit_stock integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS track_batch text NOT NULL DEFAULT 'no'`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS track_serial text NOT NULL DEFAULT 'no'`,
-      `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS is_weighed text NOT NULL DEFAULT 'no'`,
-      `ALTER TABLE store_suppliers ADD COLUMN IF NOT EXISTS opening_balance_pkr integer NOT NULL DEFAULT 0`,
-      `ALTER TABLE store_customers ADD COLUMN IF NOT EXISTS membership_tier text NOT NULL DEFAULT 'standard'`,
-      `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS lot_number text`,
-      `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS manufacturing_date date`,
-      `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
-    ];
-    let storePatched = 0;
-    for (const statement of storeAlters) {
-      try {
-        await this.db.execute(sql.raw(statement));
-        storePatched += 1;
-      } catch {
-        // table may not exist yet — drizzle push / ensure-schema handles creation
-      }
-    }
-    checks.storeSchemaPatched = storePatched;
-
-    try {
-      await this.db.execute(
-        sql`select id, reserved_stock, track_serial, is_weighed from store_products limit 1`,
-      );
-      checks.storeProductsSelect = true;
-    } catch (err) {
-      checks.storeProductsSelect = false;
-      checks.storeProductsError = err instanceof Error ? err.message : String(err);
-    }
-
     const ready =
       checks.connected === true &&
       checks.table_users === true &&

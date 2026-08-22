@@ -1,4 +1,5 @@
 import { SyncEngine, listPendingOutbox } from "@platform/sync-engine";
+import { platformFetch } from "@platform/auth-client";
 import { isOnline } from "@platform/connectivity";
 import { getApiBaseUrl } from "./apiBase";
 import { getRuntimeDb, persistRuntimeDb } from "./runtimeDb";
@@ -63,7 +64,11 @@ export async function flushAllOfflineData(accessToken: string): Promise<SyncSumm
 
   try {
     const { db } = await getRuntimeDb();
-    const engine = new SyncEngine({ apiBaseUrl: getApiBaseUrl(), accessToken });
+    const engine = new SyncEngine({
+      apiBaseUrl: getApiBaseUrl(),
+      accessToken,
+      fetchImpl: platformFetch,
+    });
     const result = await engine.flushOnce(db);
     summary.outboxPushed = result.pushed;
     if (result.pushed > 0) await persistRuntimeDb();

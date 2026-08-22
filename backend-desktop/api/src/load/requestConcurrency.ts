@@ -14,9 +14,9 @@ export function createRequestConcurrencyMiddleware(opts?: {
 }) {
   const maxConcurrent = Math.max(
     1,
-    opts?.maxConcurrent ?? Number(process.env.API_MAX_CONCURRENT ?? 40),
+    opts?.maxConcurrent ?? Number(process.env.API_MAX_CONCURRENT ?? 60),
   );
-  const maxQueue = Math.max(0, opts?.maxQueue ?? Number(process.env.API_QUEUE_MAX ?? 100));
+  const maxQueue = Math.max(0, opts?.maxQueue ?? Number(process.env.API_QUEUE_MAX ?? 150));
 
   let active = 0;
   const waiters: Waiter[] = [];

@@ -16,6 +16,6 @@ if errorlevel 1 exit /b 1
 
 echo.
 echo Done: apps\waiter-mobile\dist\pops-rider-release.apk
-echo Live API: https://backend-desktop-production-5505.up.railway.app
+echo Live API: https://backend-desktop-production-600b.up.railway.app
 echo Rider login: rider1@platform.local / changeme-please-01
 endlocal

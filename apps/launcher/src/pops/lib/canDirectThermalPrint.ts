@@ -1,5 +1,6 @@
 import type { AccessTokenClaims } from "../../lib/jwt";
 import type { PopsRole } from "../../stores/popsStore";
+import { isDesktopAppRuntime, isVirtualSystemPrinter } from "./systemPrinters";
 
 const POS_PRINT_STATION_KEY = "pops-pos-print-station-v1";
 
@@ -51,4 +52,41 @@ export function canDirectThermalPrint(
 
 export function directThermalPrintBlockedMessage(): string {
   return "Direct thermal print is disabled on this PC (Option 19). Use Export PDF / Export Excel, or enable “This PC is POS print station” under Settings → Printers on the cashier POS only.";
+}
+
+/** Why silent auto-print may still fall back to the Windows dialog. */
+export function describeAutoPrintReadiness(input: {
+  systemPrinterName?: string | null;
+  claims?: AccessTokenClaims | null;
+  displayRole?: PopsRole | string | null;
+}): { ready: boolean; hint?: string } {
+  if (!isDesktopAppRuntime()) {
+    return {
+      ready: false,
+      hint: "Browser silent print nahi karta — Desktop EXE (v0.3.37) install karke wahan se chalayein.",
+    };
+  }
+  const osName = (input.systemPrinterName ?? "").trim();
+  if (!osName) {
+    return {
+      ready: false,
+      hint: "Receipt printer par Windows OS printer link karein: Printer → Receipt → Link OS printer (EPSON/XP name).",
+    };
+  }
+  if (isVirtualSystemPrinter(osName)) {
+    return {
+      ready: false,
+      hint: `“${osName}” PDF/XPS hai — physical thermal printer link karein.`,
+    };
+  }
+  if (!canDirectThermalPrint(input.claims, input.displayRole)) {
+    return { ready: false, hint: directThermalPrintBlockedMessage() };
+  }
+  if (!isPosPrintStationEnabled()) {
+    return {
+      ready: false,
+      hint: "Printer settings mein “This PC is POS print station” ON karein.",
+    };
+  }
+  return { ready: true };
 }

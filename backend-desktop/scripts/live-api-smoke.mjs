@@ -2,7 +2,7 @@
  * Live API smoke test for restaurant owner (basit@gmail.com).
  * Usage: node backend-desktop/scripts/live-api-smoke.mjs
  */
-const BASE = process.env.API_BASE_URL ?? "https://backend-desktop-production-5505.up.railway.app";
+const BASE = process.env.API_BASE_URL ?? "https://backend-desktop-production-600b.up.railway.app";
 const EMAIL = process.env.TEST_EMAIL ?? "basit@gmail.com";
 const PASSWORD = process.env.TEST_PASSWORD ?? "basit@gmail.com";
 

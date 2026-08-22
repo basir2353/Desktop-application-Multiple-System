@@ -22,7 +22,7 @@ const variant =
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   loadEnvValue("EXPO_PUBLIC_API_BASE_URL") ||
-  "https://backend-desktop-production-5505.up.railway.app";
+  "https://backend-desktop-production-600b.up.railway.app";
 
 const variants = {
   /** Combined Waiter + Rider APK — two role tabs, Email | PIN login. */

@@ -45,5 +45,5 @@ if errorlevel 1 (
 
 echo.
 echo Done: apps\waiter-mobile\dist\pops-staff-release.apk
-echo Live API: https://backend-desktop-production-5505.up.railway.app
+echo Live API: https://backend-desktop-production-600b.up.railway.app
 endlocal

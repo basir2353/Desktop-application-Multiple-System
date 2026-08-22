@@ -4,7 +4,9 @@ import { useSessionStore } from "../stores/sessionStore";
 import { autoSyncIfNeeded } from "../lib/offlineSync";
 import { useDataModeStore } from "../stores/dataModeStore";
 
-/** Re-sync local queues and outbox when connectivity returns (cloud mode only). */
+const AUTO_SYNC_INTERVAL_MS = 15_000;
+
+/** Re-sync local queues and outbox when online (cloud mode only). */
 export function useOfflineSync(): void {
   const accessToken = useSessionStore((s) => s.accessToken);
   const dataMode = useDataModeStore((s) => s.dataMode);
@@ -18,8 +20,14 @@ export function useOfflineSync(): void {
     }
 
     sync();
-    return subscribeConnectivity((online) => {
+    const intervalId = setInterval(sync, AUTO_SYNC_INTERVAL_MS);
+    const unsub = subscribeConnectivity((online) => {
       if (online) sync();
     });
+
+    return () => {
+      clearInterval(intervalId);
+      unsub();
+    };
   }, [accessToken, dataMode]);
 }

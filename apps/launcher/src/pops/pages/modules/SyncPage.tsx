@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { isOnline, subscribeConnectivity } from "@platform/connectivity";
 import { getApiBaseUrl, describeApiServer } from "../../../lib/apiBase";
 import { LiveServerBadge } from "../../../components/LiveServerBadge";
-import { useSuperAdminEnvStore } from "../../../stores/superAdminEnvStore";
 import { countPendingOutbox, flushAllOfflineData } from "../../../lib/offlineSync";
 import { loadOfflineQueue } from "../../../store/lib/storePosSync";
 import { countOfflinePopsOrders } from "../../lib/popsOfflineOrders";
@@ -30,7 +29,6 @@ export function SyncPage(): JSX.Element {
   const dataMode = useDataModeStore((s) => s.dataMode);
   const lastSyncedAt = useDataModeStore((s) => s.lastSyncedAt);
   const setDataMode = useDataModeStore((s) => s.setDataMode);
-  const liveEnv = useSuperAdminEnvStore((s) => s.env);
   const apiInfo = describeApiServer();
 
   const [online, setOnline] = useState(isOnline());
@@ -103,10 +101,8 @@ export function SyncPage(): JSX.Element {
         <Badge tone={dataMode === "cloud" ? "info" : "neutral"}>
           {dataMode === "cloud" ? "Cloud database" : "Local only"}
         </Badge>
-        {apiInfo.preset === "live" && apiInfo.liveLabel ? (
-          <Badge tone={liveEnv === "new" ? "info" : "warning"}>
-            Server · {apiInfo.liveLabel} Active
-          </Badge>
+        {apiInfo.preset === "live" ? (
+          <Badge tone="info">Live server</Badge>
         ) : null}
         <span className="text-slate-400">Last sync · {formatRelativeTime(lastSyncedAt)}</span>
         <span className="text-slate-600">|</span>
@@ -161,7 +157,7 @@ export function SyncPage(): JSX.Element {
           ) : null}
           <p className="break-all text-xs text-slate-500">{getApiBaseUrl()}</p>
           <p className="text-[11px] text-slate-500">
-            Super Admin → Health par OLD/NEW switch karo — poora restaurant yahi server use karega.
+            Cloud mode uses the live Railway API shown above.
           </p>
         </div>
       </div>

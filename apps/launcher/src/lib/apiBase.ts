@@ -1,25 +1,10 @@
 /**
- * One live Railway at a time for the whole app (staff, POS, Super Admin).
- * No role split — Active OLD = everyone on OLD; Active NEW = everyone on NEW.
+ * Single live Railway API for the whole app (staff, POS, Super Admin).
  */
-export const OLD_RAILWAY_API_URL = "https://backend-desktop-production-5505.up.railway.app";
-export const NEW_RAILWAY_API_URL = "https://backend-desktop-production-600b.up.railway.app";
+export const RAILWAY_API_URL = "https://backend-desktop-production-600b.up.railway.app";
 
-export type LiveServerEnv = "old" | "new";
-
-/** Baked at build time from local/live-env.json — used on fresh install before any switch. */
+/** Baked at build time — overrides default when set. */
 const BAKED_API_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");
-const BAKED_LIVE_ENV: LiveServerEnv =
-  import.meta.env.VITE_LIVE_ENV === "new"
-    ? "new"
-    : import.meta.env.VITE_LIVE_ENV === "old"
-      ? "old"
-      : BAKED_API_URL.includes("600b")
-        ? "new"
-        : "old";
-
-/** Fallback when no live env is stored yet. */
-export const RAILWAY_API_URL = BAKED_API_URL || OLD_RAILWAY_API_URL;
 
 export const LOCAL_API_URL = "http://127.0.0.1:3000";
 
@@ -41,43 +26,23 @@ function readPersistedApiChoice(): { apiPreset: ApiPreset; cloudApiUrl: string }
   }
 }
 
-function readLiveEnv(): LiveServerEnv {
-  try {
-    const raw = localStorage.getItem("platform-sa-env-v1");
-    if (!raw) return BAKED_LIVE_ENV;
-    const parsed = JSON.parse(raw) as { state?: { env?: string } };
-    return parsed.state?.env === "new" ? "new" : "old";
-  } catch {
-    return BAKED_LIVE_ENV;
-  }
-}
-
 export function getLiveApiUrl(): string {
-  return readLiveEnv() === "new" ? NEW_RAILWAY_API_URL : OLD_RAILWAY_API_URL;
-}
-
-export function getLiveServerEnv(): LiveServerEnv {
-  return readLiveEnv();
+  return BAKED_API_URL || RAILWAY_API_URL;
 }
 
 export function describeLiveServer(): {
-  env: LiveServerEnv;
-  label: "OLD" | "NEW";
   url: string;
   dbLabel: string;
 } {
-  const env = readLiveEnv();
   return {
-    env,
-    label: env === "new" ? "NEW" : "OLD",
-    url: env === "new" ? NEW_RAILWAY_API_URL : OLD_RAILWAY_API_URL,
-    dbLabel: env === "new" ? "NEW Postgres (acela)" : "OLD Postgres (hayabusa)",
+    url: getLiveApiUrl(),
+    dbLabel: "Postgres (acela)",
   };
 }
 
 export function describeApiServer(): {
   preset: ApiPreset;
-  liveLabel: "OLD" | "NEW" | null;
+  liveLabel: string | null;
   url: string;
   dbLabel: string | null;
 } {
@@ -91,7 +56,7 @@ export function describeApiServer(): {
   const live = describeLiveServer();
   return {
     preset: "live",
-    liveLabel: live.label,
+    liveLabel: "Live",
     url: live.url,
     dbLabel: live.dbLabel,
   };
@@ -105,8 +70,7 @@ export function getApiBaseUrl(): string {
   return getLiveApiUrl();
 }
 
-/** Same as getLiveApiUrl — used by POS/PRA and the Live preset hint. */
-export const LIVE_API_URL = OLD_RAILWAY_API_URL;
+export const LIVE_API_URL = RAILWAY_API_URL;
 
 export function describeApiPreset(_preset?: string): string {
   return getApiBaseUrl();

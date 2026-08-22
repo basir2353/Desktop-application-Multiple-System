@@ -3,6 +3,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { clearDeviceInstall } from "./lib/deviceInstall";
+import { getLiveApiUrl } from "./lib/apiBase";
 import "./index.css";
 import "./theme-overrides.css";
 import "./floor-modal.css";
@@ -31,6 +32,11 @@ try {
 } catch {
   // ignore storage errors
 }
+
+// Warm Railway API on startup (cold starts can take 10–15 s).
+void fetch(`${getLiveApiUrl()}/health`, { method: "GET" }).catch(() => {
+  /* ignore — login/sync will retry */
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {

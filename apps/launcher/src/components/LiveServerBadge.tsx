@@ -1,14 +1,12 @@
 import { describeApiServer } from "../lib/apiBase";
-import { useSuperAdminEnvStore } from "../stores/superAdminEnvStore";
 
 type Props = {
   compact?: boolean;
   showUrl?: boolean;
 };
 
-/** Shows which live Railway server the whole app uses (OLD or NEW). */
+/** Shows which API server the app uses. */
 export function LiveServerBadge({ compact = false, showUrl = false }: Props): JSX.Element | null {
-  const env = useSuperAdminEnvStore((s) => s.env);
   const info = describeApiServer();
   const size = compact ? "text-[10px]" : "text-xs";
 
@@ -34,20 +32,13 @@ export function LiveServerBadge({ compact = false, showUrl = false }: Props): JS
     );
   }
 
-  const label = env === "new" ? "NEW" : "OLD";
-  const active = env === "new";
-
   return (
     <div className="flex flex-col items-end gap-0.5">
       <span
-        className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-semibold ring-1 ${size} ${
-          active
-            ? "bg-teal-100 text-teal-900 ring-teal-600/30 dark:bg-teal-500/15 dark:text-teal-200 dark:ring-teal-500/40"
-            : "bg-amber-100 text-amber-950 ring-amber-600/30 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/40"
-        }`}
-        title={`Active server: ${label} · ${info.url}`}
+        className={`inline-flex items-center rounded-full bg-teal-100 px-2.5 py-0.5 font-semibold text-teal-900 ring-1 ring-teal-600/30 dark:bg-teal-500/15 dark:text-teal-200 dark:ring-teal-500/40 ${size}`}
+        title={info.url}
       >
-        Server · {label} Active
+        Live API
       </span>
       {showUrl ? (
         <span className="max-w-[14rem] truncate text-[10px] text-slate-500 dark:text-slate-400" title={info.url}>

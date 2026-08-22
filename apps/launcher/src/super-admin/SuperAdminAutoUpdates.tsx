@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import launcherPkg from "../../package.json";
 import mobilePkg from "../../../waiter-mobile/package.json";
 import { fetchAutoUpdateStatus } from "../lib/autoUpdateFeeds";
-import { getLiveApiUrl, describeLiveServer } from "../lib/apiBase";
+import { getLiveApiUrl } from "../lib/apiBase";
 import {
   saBadgeActiveClass,
   saCardClass,
@@ -22,7 +22,6 @@ function readPackageVersions(): { desktop: string; mobile: string } {
 
 /** Super Admin — auto-update feed status + release commands. */
 export function SuperAdminAutoUpdates(): JSX.Element {
-  const live = describeLiveServer();
   const versions = readPackageVersions();
 
   const feeds = useQuery({
@@ -114,7 +113,7 @@ export function SuperAdminAutoUpdates(): JSX.Element {
       {allLive && !feeds.isLoading ? (
         <div className={`${saSuccessPanelClass} mt-4`}>
           Installed apps will auto-update to v{versions.desktop} desktop / v{versions.mobile} mobile on
-          next check ({live.label} API active).
+          next check (live API).
         </div>
       ) : !feeds.isLoading && feeds.data?.some((r) => r.id.startsWith("desktop-") && r.publishedVersion === versions.desktop) ? (
         <div className={`${saSuccessPanelClass} mt-4`}>
@@ -126,14 +125,6 @@ export function SuperAdminAutoUpdates(): JSX.Element {
       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 p-3 text-xs dark:border-white/10 dark:bg-white/5">
         <p className="font-semibold text-slate-700 dark:text-slate-200">Fast release (~15 min warm)</p>
         <ol className={`mt-2 list-decimal space-y-1 pl-4 ${saMutedClass}`}>
-          <li>Super Admin → set Active OLD or NEW (sync agent + builds follow this)</li>
-          <li>
-            Run{" "}
-            <code className="rounded bg-slate-900/10 px-1 py-0.5 font-mono dark:bg-black/30">
-              local\start-sync-agent.bat
-            </code>{" "}
-            (keep open)
-          </li>
           <li>
             Run{" "}
             <code className="rounded bg-slate-900/10 px-1 py-0.5 font-mono dark:bg-black/30">

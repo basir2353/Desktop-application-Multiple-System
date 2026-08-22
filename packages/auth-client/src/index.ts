@@ -27,11 +27,56 @@ function requestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+const GET_TIMEOUT_MS = 30_000;
+const MUTATION_TIMEOUT_MS = 45_000;
+const MAX_FETCH_ATTEMPTS = 2;
+
+function isRetryableStatus(status: number): boolean {
+  return status === 503 || status === 502 || status === 504 || status === 429;
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const timeoutMs =
+    method === "GET" || method === "HEAD" || method === "OPTIONS"
+      ? GET_TIMEOUT_MS
+      : MUTATION_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await globalThis.fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resilientFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(input, init);
+      if (isRetryableStatus(res.status) && attempt < MAX_FETCH_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MAX_FETCH_ATTEMPTS && isLikelyNetworkFailure(err)) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Request failed");
+}
+
 /** Bound fetch for WebView/Tauri — bare `fetch` throws "Failed to fetch" in WebView2. */
 export function platformFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? "GET").toUpperCase();
   const url = requestUrl(input);
-  return enqueueHttpRequest(() => globalThis.fetch(input, init), {
+  return enqueueHttpRequest(() => resilientFetch(input, init), {
     method,
     key: method === "GET" || method === "HEAD" ? `${method} ${url}` : undefined,
   });

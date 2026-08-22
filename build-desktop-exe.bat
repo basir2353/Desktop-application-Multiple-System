@@ -22,7 +22,7 @@ if exist "%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-gnu\bin\carg
 
 REM Build under TEMP so Smart App Control is less likely to block build scripts
 set "CARGO_TARGET_DIR=%TEMP%\pops-launcher-cargo-target"
-set "VITE_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app"
+set "VITE_API_BASE_URL=https://backend-desktop-production-600b.up.railway.app"
 set "CARGO_BUILD_JOBS=4"
 
 echo.

@@ -8,8 +8,6 @@ echo  URL: http://127.0.0.1:1420/
 echo ============================================
 echo.
 echo Keep this window OPEN while using the browser.
-echo Optional sync agent (2nd window):
-echo   node local\sync-old-to-new.mjs
 echo.
 
 where pnpm >nul 2>&1

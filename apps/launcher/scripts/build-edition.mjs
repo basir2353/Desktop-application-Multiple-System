@@ -32,37 +32,14 @@ function withSigningEnv(baseEnv) {
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(__dirname, "..", "..", "..");
 const tauriDir = join(__dirname, "..", "src-tauri");
 
-const OLD = "https://backend-desktop-production-5505.up.railway.app";
-const NEW = "https://backend-desktop-production-600b.up.railway.app";
-const liveEnvPath = join(repoRoot, "local", "live-env.json");
-
-function readLiveEnvFile() {
-  try {
-    if (existsSync(liveEnvPath)) {
-      const parsed = JSON.parse(readFileSync(liveEnvPath, "utf8"));
-      return parsed.active === "new" ? "new" : "old";
-    }
-  } catch {
-    // fall through
-  }
-  return "old";
-}
+const LIVE = "https://backend-desktop-production-600b.up.railway.app";
 
 function resolveApiUrl() {
   const fromEnv = (process.env.VITE_API_BASE_URL ?? "").trim();
   if (fromEnv) return fromEnv;
-  return readLiveEnvFile() === "new" ? NEW : OLD;
-}
-
-function resolveLiveEnv(apiUrl) {
-  const fromEnv = (process.env.VITE_LIVE_ENV ?? "").trim();
-  if (fromEnv === "new" || fromEnv === "old") return fromEnv;
-  if (apiUrl.includes("600b")) return "new";
-  if (apiUrl.includes("5505")) return "old";
-  return readLiveEnvFile();
+  return LIVE;
 }
 
 const VALID = new Set(["restaurant", "general-store", "pharmacy", "suite"]);
@@ -95,9 +72,7 @@ const args = ["exec", "tauri", "build"];
 args.push(...extraArgs);
 
 const apiUrl = resolveApiUrl();
-const liveEnv = resolveLiveEnv(apiUrl);
 process.env.VITE_API_BASE_URL = apiUrl;
-process.env.VITE_LIVE_ENV = liveEnv;
 if (!apiUrl) {
   console.error(
     "[build-edition] VITE_API_BASE_URL is required.\n" +
@@ -120,7 +95,7 @@ if (icons.status !== 0) {
   process.exit(icons.status ?? 1);
 }
 
-console.log(`[build-edition] Building "${edition}" installer (API: ${apiUrl}, live: ${liveEnv})…`);
+console.log(`[build-edition] Building "${edition}" installer (API: ${apiUrl})…`);
 
 // PLATFORM_EDITION flows into the Vite build via tauri's beforeBuildCommand.
 const result = spawnSync("pnpm", args, {
@@ -130,7 +105,6 @@ const result = spawnSync("pnpm", args, {
     ...process.env,
     PLATFORM_EDITION: edition,
     VITE_API_BASE_URL: apiUrl,
-    VITE_LIVE_ENV: liveEnv,
   }),
   shell: process.platform === "win32",
 });
