@@ -35,7 +35,7 @@ export function normalizeTaxFeatures(raw: Partial<TaxAuthorityFeatures>): TaxAut
     praRealEnabled = true;
   }
   if (praFakeEnabled && praRealEnabled) {
-    praRealEnabled = false;
+    praFakeEnabled = false;
   }
   const fbrEnabled = Boolean(raw.fbrEnabled);
   return {
@@ -213,6 +213,21 @@ export async function postPraPayloadFromClient(input: {
   if (res.status === 401 || res.status === 403) {
     throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
   }
+  if (res.status >= 400) {
+    const code =
+      typeof json === "object" && json && "Code" in json
+        ? String((json as { Code: unknown }).Code)
+        : "";
+    const responseMsg =
+      typeof json === "object" && json && "Response" in json
+        ? String((json as { Response: unknown }).Response)
+        : typeof json === "object" && json && "message" in json
+          ? String((json as { message: unknown }).message)
+          : text.slice(0, 200);
+    throw new Error(
+      responseMsg || `PRA rejected invoice (HTTP ${res.status}${code ? `, Code ${code}` : ""})`,
+    );
+  }
 
   const code =
     typeof json === "object" && json && "Code" in json
@@ -225,7 +240,11 @@ export async function postPraPayloadFromClient(input: {
         ? String((json as { message: unknown }).message)
         : text.slice(0, 200);
 
-  if (res.status >= 200 && res.status < 300 && (!code || code === "100")) {
+  if (code && code !== "100") {
+    throw new Error(responseMsg || `PRA rejected invoice (Code ${code})`);
+  }
+
+  if (res.status >= 200 && res.status < 300) {
     const invoiceNumber =
       typeof json === "object" && json && "InvoiceNumber" in json
         ? String((json as { InvoiceNumber: unknown }).InvoiceNumber)
@@ -233,9 +252,6 @@ export async function postPraPayloadFromClient(input: {
     if (invoiceNumber && !/^not available$/i.test(invoiceNumber)) {
       return { invoiceNumber, raw: json };
     }
-  }
-  if (code && code !== "100") {
-    throw new Error(responseMsg || `PRA rejected invoice (Code ${code})`);
   }
   throw new Error(
     responseMsg || `PRA client post failed (HTTP ${res.status}). Use shop Wi‑Fi if IP is whitelisted.`,

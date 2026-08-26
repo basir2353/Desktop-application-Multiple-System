@@ -8,6 +8,7 @@ import {
   setPosPrintStationEnabled,
 } from "../../lib/canDirectThermalPrint";
 import { KotCustomizationPanel } from "../../components/KotCustomizationPanel";
+import { BranchSettingsBackupPanel } from "../../components/BranchSettingsBackupPanel";
 import {
   PRINTER_PRESETS,
   loadPrinterAssignments,
@@ -52,13 +53,14 @@ import {
   togglePrinterForSection,
   toggleUserPrinter,
   updatePrinterProfile,
+  ensureReceiptPrinterLinked,
   type PrinterPaperSize,
   type PrinterProfile,
   type PrinterRoutingState,
   type PrinterTextScale,
   type PrinterType,
 } from "../../lib/printerRouting";
-import { listSystemPrintersDetailed, type SystemPrinterInfo } from "../../lib/systemPrinters";
+import { listSystemPrintersDetailed, isDesktopAppRuntime, type SystemPrinterInfo } from "../../lib/systemPrinters";
 import {
   classifyPrintSource,
   clearPrintHistory,
@@ -77,6 +79,12 @@ import {
   QUEUE_STUCK_MS,
 } from "../../lib/printQueueMonitor";
 import { authFetch } from "../../../lib/authFetch";
+import {
+  branchPrintQueueAction,
+  cloudPrintQueueAction,
+  ensureBranchPrintWorker,
+  ensureCloudPrintPoller,
+} from "../../lib/branchPrintClient";
 import { printTestPageAsync } from "../../lib/printTicket";
 import {
   clampCustomPaperWidthMm,
@@ -2543,9 +2551,22 @@ function PrinterRoutingPreviewTab({
   );
 }
 
+function canReprintQueueJob(status: string): boolean {
+  return (
+    status === "failed" ||
+    status === "error" ||
+    status === "dead" ||
+    status === "cancelled" ||
+    status === "expired" ||
+    status === "paused"
+  );
+}
+
 function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
   const [historyTick, setHistoryTick] = useState(0);
   const [monitorTick, setMonitorTick] = useState(0);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  const [queueActionBusy, setQueueActionBusy] = useState<string | null>(null);
   const history = useMemo(() => {
     void historyTick;
     return loadPrintHistory(branchCode);
@@ -2654,6 +2675,37 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
       window.clearInterval(id);
     };
   }, [branchCode]);
+
+  async function reprintBranchJob(jobId: string): Promise<void> {
+    setQueueActionBusy(jobId);
+    setQueueNotice(null);
+    try {
+      const updated = await branchPrintQueueAction(jobId, "reprint");
+      if (!updated) {
+        setQueueNotice("Print again failed — Desktop EXE open hona chahiye.");
+        return;
+      }
+      setQueueNotice(`Print again queued — ${updated.orderId ?? jobId}`);
+      ensureBranchPrintWorker();
+    } finally {
+      setQueueActionBusy(null);
+    }
+  }
+
+  async function reprintCloudJob(jobId: string): Promise<void> {
+    setQueueActionBusy(jobId);
+    setQueueNotice(null);
+    try {
+      const result = await cloudPrintQueueAction(jobId, branchCode, "reprint");
+      if (!result.ok) {
+        setQueueNotice(result.error ?? "Print again failed.");
+        return;
+      }
+      setQueueNotice("Print again queued — desktop EXE job claim karega.");
+    } finally {
+      setQueueActionBusy(null);
+    }
+  }
 
   const summary = useMemo(() => summarizePrintHistory(history), [history]);
   const missedLive = liveQueue.filter(
@@ -2831,6 +2883,12 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
         )}
       </div>
 
+      {queueNotice ? (
+        <div className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
+          {queueNotice}
+        </div>
+      ) : null}
+
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">Live branch queue</div>
         <p className="mt-1 text-xs text-slate-500">
@@ -2845,12 +2903,13 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
                 <th className="px-2.5 py-2">Printer</th>
                 <th className="px-2.5 py-2">Order</th>
                 <th className="px-2.5 py-2">Error</th>
+                <th className="px-2.5 py-2">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
               {liveQueue.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-2.5 py-4 text-center text-slate-500">
+                  <td colSpan={6} className="px-2.5 py-4 text-center text-slate-500">
                     No live queue jobs.
                   </td>
                 </tr>
@@ -2864,6 +2923,21 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
                     <td className="px-2.5 py-2 text-slate-300">{row.printerName ?? "—"}</td>
                     <td className="px-2.5 py-2 text-slate-300">{row.orderId ?? "—"}</td>
                     <td className="px-2.5 py-2 text-red-300">{row.error ?? "—"}</td>
+                    <td className="px-2.5 py-2">
+                      {canReprintQueueJob(row.status) || row.error ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="text-[10px] text-amber-300"
+                          disabled={queueActionBusy === row.id}
+                          onClick={() => void reprintBranchJob(row.id)}
+                        >
+                          {queueActionBusy === row.id ? "…" : "Print again"}
+                        </Button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
@@ -2887,12 +2961,13 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
                 <th className="px-2.5 py-2">Printer</th>
                 <th className="px-2.5 py-2">Order</th>
                 <th className="px-2.5 py-2">Error</th>
+                <th className="px-2.5 py-2">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
               {cloudJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-2.5 py-4 text-center text-slate-500">
+                  <td colSpan={7} className="px-2.5 py-4 text-center text-slate-500">
                     No cloud queue jobs.
                   </td>
                 </tr>
@@ -2907,6 +2982,21 @@ function PrintQueueTab({ branchCode }: { branchCode: string }): JSX.Element {
                     <td className="px-2.5 py-2 text-slate-300">{row.printerName ?? "—"}</td>
                     <td className="px-2.5 py-2 text-slate-300">{row.orderId ?? "—"}</td>
                     <td className="px-2.5 py-2 text-red-300">{row.error ?? "—"}</td>
+                    <td className="px-2.5 py-2">
+                      {canReprintQueueJob(row.status) || row.error ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="text-[10px] text-amber-300"
+                          disabled={queueActionBusy === row.id}
+                          onClick={() => void reprintCloudJob(row.id)}
+                        >
+                          {queueActionBusy === row.id ? "…" : "Print again"}
+                        </Button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
@@ -3192,6 +3282,12 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
               }}
             />
           </label>
+          <BranchSettingsBackupPanel
+            compact
+            branchCode={branchCode}
+            onNotice={notify}
+            onError={(m) => notify(m)}
+          />
         </div>
       </div>
 
@@ -3288,7 +3384,12 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
             allSystemPrinters={allSystemPrinters}
             systemPrintersLoading={systemPrintersQuery.isLoading || systemPrintersQuery.isFetching}
             systemPrintersError={systemPrintersError}
-            onRefreshSystemPrinters={() => void systemPrintersQuery.refetch()}
+            onRefreshSystemPrinters={async () => {
+              if (isDesktopAppRuntime()) {
+                await ensureReceiptPrinterLinked(branchCode);
+              }
+              await systemPrintersQuery.refetch();
+            }}
             categories={categories}
             items={items}
             notify={notify}

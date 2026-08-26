@@ -1666,12 +1666,18 @@ const responsePayload = {
       input.sourceId,
       "real",
     );
-    if (
-      existing &&
-      (existing.status === "verified" || existing.status === "submitted") &&
-      !input.force
-    ) {
-      const invoice = this.mapInvoice(existing);
+
+    const env = profile.praEnvironment === "production" ? "production" : "sandbox";
+    const { invoiceUrl } = resolvePraUrls(env);
+    if (!invoiceUrl) {
+      throw new BadRequestException("PRA invoice URL is not configured on the server.");
+    }
+
+    const returnAlreadySubmitted = async (
+      row: typeof taxAuthorityInvoices.$inferSelect,
+      message: string,
+    ): Promise<PreparePraClientPostResult> => {
+      const invoice = this.mapInvoice(row);
       const fiscal = await this.buildFiscalFromInvoice(
         organizationId,
         input.branchCode,
@@ -1680,19 +1686,47 @@ const responsePayload = {
         "real",
         invoice,
       );
+      await this.syncBillPraFromRealInvoiceRow(organizationId, input.sourceType, input.sourceId, row);
       return {
-        invoiceDbId: existing.id,
+        invoiceDbId: row.id,
         postUrl: "",
         bearerToken: "",
         payload: {},
         alreadySubmitted: true,
         fiscal,
         invoice,
-        message: "Invoice Already Submitted",
+        message,
       };
+    };
+
+    if (
+      existing &&
+      (existing.status === "verified" || existing.status === "submitted")
+    ) {
+      return returnAlreadySubmitted(existing, "Invoice Already Submitted");
     }
 
     const token = await this.ensureToken(organizationId, branch.code, "pra", profile);
+
+    // Retry path: PRA accepted PostData but confirm failed — reuse same USIN payload.
+    if (existing?.status === "submitting" && existing.requestJson) {
+      try {
+        const stored = JSON.parse(existing.requestJson) as Record<string, unknown>;
+        if (stored && typeof stored === "object" && Object.keys(stored).length > 0) {
+          return {
+            invoiceDbId: existing.id,
+            postUrl: invoiceUrl,
+            bearerToken: token,
+            payload: stored,
+            alreadySubmitted: false,
+            message: "Retry PRA upload from POS (same USIN).",
+          };
+        }
+      } catch {
+        /* rebuild below */
+      }
+    }
+
     const source = await this.loadSourceDocument(
       organizationId,
       branch.id,
@@ -1700,11 +1734,6 @@ const responsePayload = {
       input.sourceId,
     );
     const payload = this.buildInvoicePayload("pra", profile, source);
-    const env = profile.praEnvironment === "production" ? "production" : "sandbox";
-    const { invoiceUrl } = resolvePraUrls(env);
-    if (!invoiceUrl) {
-      throw new BadRequestException("PRA invoice URL is not configured on the server.");
-    }
 
     const now = new Date();
     let row = existing;
@@ -1787,6 +1816,36 @@ const responsePayload = {
     if (!invoiceNumber || /^not available$/i.test(invoiceNumber)) {
       throw new BadRequestException("PRA did not return InvoiceNumber");
     }
+
+    if (row.status === "verified" && row.authorityInvoiceNumber?.trim()) {
+      const savedNum = row.authorityInvoiceNumber.trim();
+      if (savedNum === invoiceNumber) {
+        await this.syncBillPraFromRealInvoiceRow(
+          organizationId,
+          row.sourceType,
+          row.sourceId,
+          row,
+        );
+        const invoice = this.mapInvoice(row);
+        const fiscal = await this.buildFiscalFromInvoice(
+          organizationId,
+          input.branchCode,
+          row.sourceType as TaxInvoiceSourceType,
+          row.sourceId,
+          "real",
+          invoice,
+        );
+        return {
+          invoice,
+          fiscal,
+          message: "Invoice already confirmed",
+        };
+      }
+      throw new BadRequestException(
+        `PRA invoice already saved as ${savedNum}. Refusing to overwrite with ${invoiceNumber}.`,
+      );
+    }
+
     const qrPayload = invoiceNumber;
     const raw: Record<string, unknown> =
       input.raw && typeof input.raw === "object"
@@ -2407,6 +2466,40 @@ const responsePayload = {
         praIssuedAt: fields.praIssuedAt,
       })
       .where(and(eq(popsBills.id, billId), eq(popsBills.organizationId, organizationId)));
+  }
+
+  /** Keep pops_bills in sync when Real PRA invoice row exists but bill still shows FPRA. */
+  private async syncBillPraFromRealInvoiceRow(
+    organizationId: string,
+    sourceType: string,
+    sourceId: string,
+    row: typeof taxAuthorityInvoices.$inferSelect,
+  ): Promise<void> {
+    if (sourceType !== "bill" || !row.authorityInvoiceNumber?.trim()) return;
+
+    let invoiceId = row.authorityInvoiceNumber.trim();
+    let issuedAt = row.updatedAt ?? new Date();
+    if (row.responseJson) {
+      try {
+        const parsed = JSON.parse(row.responseJson) as Record<string, unknown>;
+        if (typeof parsed.invoiceId === "string" && parsed.invoiceId) {
+          invoiceId = parsed.invoiceId;
+        }
+        if (typeof parsed.issuedAt === "string" && parsed.issuedAt) {
+          issuedAt = new Date(parsed.issuedAt);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    await this.updateBillPraFields(organizationId, sourceId, {
+      praMode: "real",
+      praInvoiceNumber: row.authorityInvoiceNumber.trim(),
+      praInvoiceId: invoiceId,
+      praQrPayload: row.qrPayload?.trim() || row.authorityInvoiceNumber.trim(),
+      praIssuedAt: issuedAt,
+    });
   }
 
   private async buildFiscalFromInvoice(

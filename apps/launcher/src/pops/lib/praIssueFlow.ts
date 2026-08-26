@@ -61,6 +61,31 @@ export async function issuePraForSource(input: {
   return { fiscal: result.fiscal, message: result.message };
 }
 
+/** Confirm saves bill + invoice row — retry when API blips after PRA already accepted PostData. */
+async function confirmPraClientPostWithRetry(
+  input: Parameters<typeof confirmPraClientPost>[0],
+): Promise<Awaited<ReturnType<typeof confirmPraClientPost>>> {
+  const delaysMs = [0, 1200, 3000];
+  let lastErr: unknown;
+  for (const delay of delaysMs) {
+    if (delay > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+    }
+    try {
+      return await confirmPraClientPost(input);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  const msg =
+    lastErr instanceof Error
+      ? lastErr.message
+      : "Could not save Real PRA invoice on server after PRA accepted it.";
+  throw new Error(
+    `${msg} PRA may have the invoice — tap RPRA again to retry save (same USIN, no duplicate).`,
+  );
+}
+
 /**
  * Real PRA: always PostData from this POS (shop IP). Never use Railway cloud submit —
  * that only produces "Cloud cannot reach PRA" noise.
@@ -91,7 +116,7 @@ async function issueRealPraWithClientRelay(input: {
       payload: prep.payload,
     });
 
-    const confirmed = await confirmPraClientPost({
+    const confirmed = await confirmPraClientPostWithRetry({
       branchCode: input.branchCode,
       invoiceDbId: prep.invoiceDbId,
       invoiceNumber: posted.invoiceNumber,
@@ -102,7 +127,7 @@ async function issueRealPraWithClientRelay(input: {
     const msg = err instanceof Error ? err.message : String(err);
     if (isPraNetworkFailureMessage(msg) || /failed to fetch|cors|pra-ims/i.test(msg)) {
       throw new Error(
-        `${msg} Tip: Environment must be Production for Musa live token. Restart pnpm dev:web so /pra-ims proxy works, then Pay again.`,
+        `${msg} POPS API is connected. Real PRA PostData goes from this PC to ims.pral.com.pk — check shop internet/firewall and Production token.`,
       );
     }
     throw err instanceof Error ? err : new Error(msg);
@@ -137,8 +162,11 @@ export async function printIssuedPraSlip(
   });
 }
 
-export function praIssuedNotice(_mode: PraInvoiceMode, invoiceNumber: string): string {
-  return `PRA invoice issued — ${invoiceNumber}`;
+export function praIssuedNotice(mode: PraInvoiceMode, invoiceNumber: string): string {
+  if (mode === "real") {
+    return `Real PRA uploaded — ${invoiceNumber}. Check PRA portal: e.pra.punjab.gov.pk → e-IMS`;
+  }
+  return `FPRA issued (local only) — ${invoiceNumber}. Tap RPRA to upload to PRA portal.`;
 }
 
 /** Resolve which PRA mode to run automatically (null = skip). Prefer real if both somehow true. */

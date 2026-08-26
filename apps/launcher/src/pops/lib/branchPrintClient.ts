@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { CreatePrintJob, MenuItem, PrintJob, PrintJobPayload } from "@platform/contracts";
+import { authFetch } from "../../lib/authFetch";
 import {
   BRANCH_PRINT_SERVER_DEFAULT_PORT,
   PRINTING_ENTERPRISE_ENABLED_KEY,
@@ -326,6 +327,28 @@ export async function branchPrintQueueAction(
     return mapJob(raw);
   } catch {
     return null;
+  }
+}
+
+/** Re-queue a cloud (Live API) print job — mobile → API → desktop claim. */
+export async function cloudPrintQueueAction(
+  jobId: string,
+  branchCode: string,
+  action: "retry" | "reprint" | "pause" | "resume" | "cancel" = "reprint",
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await authFetch(`/v1/printing/queue/${encodeURIComponent(jobId)}/${action}`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, error: text.trim() || `HTTP ${res.status}` };
+    }
+    ensureBranchPrintWorker();
+    ensureCloudPrintPoller(branchCode);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -820,6 +843,16 @@ async function printPngToResolvedPrinter(input: {
   copies?: number;
   paperSize?: string | null;
 }): Promise<{ ok: boolean; error?: string; printer?: string }> {
+  const isReceipt = String(input.kind).toLowerCase() !== "kot";
+  if (isReceipt) {
+    try {
+      const { ensureReceiptPrinterLinked } = await import("./printerRouting");
+      await ensureReceiptPrinterLinked(input.branchCode, input.userId);
+    } catch {
+      // ignore — resolveSilentSystemPrinterName will report missing printer
+    }
+  }
+
   let printer = await resolveSilentSystemPrinterName({
     branchCode: input.branchCode,
     kind: input.kind,

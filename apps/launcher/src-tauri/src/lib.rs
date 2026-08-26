@@ -682,8 +682,14 @@ try {{
     ))
 }
 
+#[derive(serde::Serialize)]
+struct PraHttpPostResult {
+    status: u16,
+    body: String,
+}
+
 #[tauri::command]
-fn pra_http_post(url: String, token: String, body: String) -> Result<String, String> {
+fn pra_http_post(url: String, token: String, body: String) -> Result<PraHttpPostResult, String> {
     if !(url.starts_with("https://ims.pral.com.pk/") || url.starts_with("https://ims.pral.com.pk")) {
         return Err("PRA URL host is not allowed".into());
     }
@@ -691,11 +697,18 @@ fn pra_http_post(url: String, token: String, body: String) -> Result<String, Str
         .set("Authorization", &format!("Bearer {token}"))
         .set("Content-Type", "application/json")
         .set("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(25))
+        .timeout(std::time::Duration::from_secs(45))
         .send_string(&body)
-        .map_err(|e| format!("PRA network error: {e}"))?;
-    resp.into_string()
-        .map_err(|e| format!("PRA response read failed: {e}"))
+        .map_err(|e| {
+            format!(
+                "PRA network error: {e}. POPS cloud is OK — this PC could not complete HTTPS to ims.pral.com.pk (firewall, PRA downtime, or TLS)."
+            )
+        })?;
+    let status = resp.status();
+    let body = resp
+        .into_string()
+        .map_err(|e| format!("PRA response read failed: {e}"))?;
+    Ok(PraHttpPostResult { status, body })
 }
 
 pub fn run() {

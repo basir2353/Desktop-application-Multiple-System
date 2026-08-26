@@ -897,3 +897,49 @@ export function importPrinterConfig(branchCode: string, json: string): void {
   savePrinterSections(branchCode, parsed.sections);
   saveState(branchCode, normalizeState(parsed.routing));
 }
+
+/**
+ * Link the Windows default (or first available) printer as POS Receipt when none is assigned.
+ * Queue workers call this so mobile/cloud jobs can print without manual setup every time.
+ */
+export async function ensureReceiptPrinterLinked(
+  branchCode: string,
+  userId?: string | null,
+): Promise<PrinterProfile | null> {
+  const { asPrinterName } = await import("./asPrinterName");
+  const existing = resolveReceiptPrinter(branchCode, userId);
+  if (asPrinterName(existing?.systemPrinterName)) return existing;
+
+  try {
+    const { listSystemPrintersDetailed } = await import("./systemPrinters");
+    const listed = await listSystemPrintersDetailed();
+    const pick =
+      listed.usable.find((p) => p.isDefault && !p.isVirtual) ??
+      listed.usable.find((p) => !p.isVirtual) ??
+      listed.usable.find((p) => p.isDefault) ??
+      listed.usable[0] ??
+      listed.printers.find((p) => !p.isVirtual) ??
+      listed.printers[0];
+    if (!pick?.name) return existing ?? null;
+
+    if (existing) {
+      updatePrinterProfile(branchCode, existing.id, {
+        systemPrinterName: pick.name,
+        printerType:
+          existing.printerType === "kitchen" || existing.printerType === "bar"
+            ? "receipt"
+            : existing.printerType,
+      });
+      setReceiptPrinter(branchCode, existing.id);
+    } else {
+      const created = addPrinterProfile(branchCode, "POS Receipt", {
+        printerType: "receipt",
+        systemPrinterName: pick.name,
+      });
+      setReceiptPrinter(branchCode, created.id);
+    }
+    return resolveReceiptPrinter(branchCode, userId);
+  } catch {
+    return existing ?? null;
+  }
+}

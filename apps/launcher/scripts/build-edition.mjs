@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readLiveApiUrl } from "../../../local/live-api-url.mjs";
 
 /** Ensure Tauri updater signing key is in env (PATH var alone is unreliable on Windows). */
 function withSigningEnv(baseEnv) {
@@ -34,7 +35,7 @@ function withSigningEnv(baseEnv) {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const tauriDir = join(__dirname, "..", "src-tauri");
 
-const LIVE = "https://backend-desktop-production-600b.up.railway.app";
+const LIVE = readLiveApiUrl();
 
 function resolveApiUrl() {
   const fromEnv = (process.env.VITE_API_BASE_URL ?? "").trim();
@@ -76,7 +77,7 @@ process.env.VITE_API_BASE_URL = apiUrl;
 if (!apiUrl) {
   console.error(
     "[build-edition] VITE_API_BASE_URL is required.\n" +
-      "Set it in the repo-root .env to your hosted API (e.g. https://your-api.up.railway.app).",
+      "Set it in the repo-root .env to your hosted API (e.g. https://backend-desktop-production-600b.up.railway.app).",
   );
   process.exit(1);
 }

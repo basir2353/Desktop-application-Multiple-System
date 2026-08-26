@@ -3,7 +3,6 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
-import { ensureCriticalSchema } from "./ensure-schema.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(scriptDir, "..");
@@ -115,8 +114,16 @@ if (skipPush) {
   console.warn("[railway] Schema push reported errors; starting API with existing schema.");
 }
 
-if (!ensureCriticalSchema()) {
-  console.warn("[railway] ensure-schema had errors — continuing; login may fail if columns are missing.");
+// Skip ensure-schema on boot by default — speeds deploy health checks (~30–90s saved).
+// Set RAILWAY_RUN_ENSURE_SCHEMA=1 once after schema/index migrations.
+const runEnsure = (process.env.RAILWAY_RUN_ENSURE_SCHEMA ?? "0") === "1";
+if (runEnsure) {
+  const { ensureCriticalSchema } = await import("./ensure-schema.mjs");
+  if (!ensureCriticalSchema({ quiet: true })) {
+    console.warn("[railway] ensure-schema had errors — continuing; login may fail if columns are missing.");
+  }
+} else {
+  console.warn("[railway] Skipping ensure-schema on boot (RAILWAY_RUN_ENSURE_SCHEMA=0). Set =1 to apply indexes/columns.");
 }
 
 // Skip slow seed boot on Railway by default (was delaying/blocking healthy rollouts).

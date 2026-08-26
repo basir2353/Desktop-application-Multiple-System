@@ -89,6 +89,10 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
     : `<div class="pra-qr-fallback">${escapeHtml((pra.qrPayload || "").slice(0, 48))}</div>`;
   const invoiceNo = escapeHtml(pra.invoiceNumber || "");
   const logoSrc = pra.logoDataUrl || praLogoDataUrl();
+  const modeHint =
+    pra.mode === "real"
+      ? "Registered on PRA e-IMS"
+      : "FPRA (local only — tap RPRA to upload to PRA portal)";
 
   return `
   <div class="pra-fbr-block">
@@ -96,6 +100,7 @@ export function buildPraReceiptFooterHtml(pra: PraReceiptFooter): string {
     <div class="pra-invoice-block">
       <div class="pra-invoice-label">PRA Invoice #</div>
       <div class="pra-invoice-number">${invoiceNo}</div>
+      <div class="pra-mode-hint">${escapeHtml(modeHint)}</div>
     </div>
     <table class="pra-qr-table" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;border-collapse:collapse;">
       <tr>
@@ -197,6 +202,16 @@ export const PRA_RECEIPT_FOOTER_CSS = `
       font-family: ui-monospace, "Cascadia Mono", "Consolas", "Courier New", monospace;
       word-break: break-all;
       overflow-wrap: anywhere;
+    }
+    .pra-mode-hint {
+      display: block;
+      width: 100%;
+      margin-top: 4px;
+      text-align: center !important;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1.25;
+      color: #333;
     }
     /* Legacy single-line class (if any old HTML still references it). */
     .pra-invoice-line {

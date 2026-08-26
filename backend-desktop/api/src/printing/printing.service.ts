@@ -399,13 +399,18 @@ export class PrintingService {
             ? "pending"
             : job.status;
 
+    const requeue = action === "retry" || action === "reprint";
+    const now = new Date();
+
     const [updated] = await this.db
       .update(printJobsCloud)
       .set({
         status,
-        retryCount: action === "retry" || action === "reprint" ? job.retryCount + 1 : job.retryCount,
-        error: action === "retry" || action === "reprint" ? null : job.error,
-        updatedAt: new Date(),
+        retryCount: requeue ? job.retryCount + 1 : job.retryCount,
+        error: requeue ? null : job.error,
+        updatedAt: now,
+        // Fresh timestamp so "Print again" is not instantly expired by the 5-minute claim rule.
+        ...(requeue ? { createdAt: now } : {}),
       })
       .where(eq(printJobsCloud.id, jobId))
       .returning();

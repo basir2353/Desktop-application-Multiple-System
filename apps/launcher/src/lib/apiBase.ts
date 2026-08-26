@@ -1,10 +1,24 @@
 /**
  * Single live Railway API for the whole app (staff, POS, Super Admin).
  */
-export const RAILWAY_API_URL = "https://backend-desktop-production-5505.up.railway.app";
+export const RAILWAY_API_URL = "https://backend-desktop-production-600b.up.railway.app";
+
+const API_RESOLVED_KEY = "pops-railway-api-resolved-v1";
+
+/** Retired Railway hosts — redirect to the active 600b service. */
+const DEPRECATED_LIVE_URLS = new Set([
+  "https://backend-desktop-production-5505.up.railway.app",
+  "https://platformapi-production-39aa.up.railway.app",
+]);
 
 /** Baked at build time — overrides default when set. */
 const BAKED_API_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");
+
+function normalizeLiveUrl(url: string): string {
+  const trimmed = url.trim().replace(/\/$/, "");
+  if (!trimmed || DEPRECATED_LIVE_URLS.has(trimmed)) return RAILWAY_API_URL;
+  return trimmed;
+}
 
 export const LOCAL_API_URL = "http://127.0.0.1:3000";
 
@@ -26,8 +40,26 @@ function readPersistedApiChoice(): { apiPreset: ApiPreset; cloudApiUrl: string }
   }
 }
 
+function readResolvedLiveUrl(): string | null {
+  try {
+    const v = localStorage.getItem(API_RESOLVED_KEY);
+    if (!v) return null;
+    return normalizeLiveUrl(v);
+  } catch {
+    return null;
+  }
+}
+
+export function persistResolvedLiveUrl(url: string): void {
+  try {
+    localStorage.setItem(API_RESOLVED_KEY, normalizeLiveUrl(url));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function getLiveApiUrl(): string {
-  return BAKED_API_URL || RAILWAY_API_URL;
+  return normalizeLiveUrl(BAKED_API_URL || RAILWAY_API_URL);
 }
 
 export function describeLiveServer(): {
@@ -66,8 +98,18 @@ export function describeApiServer(): {
 export function getApiBaseUrl(): string {
   const { apiPreset, cloudApiUrl } = readPersistedApiChoice();
   if (apiPreset === "local") return LOCAL_API_URL;
-  if (apiPreset === "custom" && cloudApiUrl) return cloudApiUrl;
-  return getLiveApiUrl();
+  if (apiPreset === "custom" && cloudApiUrl) return normalizeLiveUrl(cloudApiUrl);
+  return readResolvedLiveUrl() ?? getLiveApiUrl();
+}
+
+export async function resolveLiveApiBaseUrl(): Promise<string> {
+  const { apiPreset, cloudApiUrl } = readPersistedApiChoice();
+  if (apiPreset === "local") return LOCAL_API_URL;
+  if (apiPreset === "custom" && cloudApiUrl) return normalizeLiveUrl(cloudApiUrl);
+
+  const live = getLiveApiUrl();
+  persistResolvedLiveUrl(live);
+  return live;
 }
 
 export const LIVE_API_URL = RAILWAY_API_URL;

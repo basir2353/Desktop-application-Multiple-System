@@ -405,13 +405,14 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS organization_memberships_user_id_idx
     ON organization_memberships (user_id)`,
 ];
-export function ensureCriticalSchema() {
+export function ensureCriticalSchema(options) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.error("[ensure-schema] DATABASE_URL missing");
     return false;
   }
 
+  const quiet = options?.quiet ?? process.env.RAILWAY_ENSURE_SCHEMA_QUIET !== "0";
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const apiRoot = join(scriptDir, "..");
   const appRoot = resolveWorkspaceRoot(apiRoot);
@@ -420,6 +421,7 @@ export function ensureCriticalSchema() {
   const runner = `
 const { Client } = require("pg");
 const statements = ${JSON.stringify(STATEMENTS)};
+const quiet = ${quiet ? "true" : "false"};
 (async () => {
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
@@ -429,15 +431,30 @@ const statements = ${JSON.stringify(STATEMENTS)};
       : undefined,
   });
   await client.connect();
-  for (const sql of statements) {
-    try {
-      await client.query(sql);
-      console.log("[ensure-schema] OK:", sql.slice(0, 80));
-    } catch (err) {
-      console.warn("[ensure-schema] skip:", err && err.message ? err.message : err);
+  let ok = 0;
+  let skipped = 0;
+  // One round-trip batch — avoids 100+ sequential queries on every Railway deploy.
+  const batchSql = statements
+    .map((sql) => sql.replace(/;/g, "").trim())
+    .filter(Boolean)
+    .join(";\\n");
+  try {
+    await client.query(batchSql);
+    ok = statements.length;
+  } catch (err) {
+    if (!quiet) console.warn("[ensure-schema] batch failed, falling back per-statement:", err?.message || err);
+    for (const sql of statements) {
+      try {
+        await client.query(sql);
+        ok += 1;
+      } catch (e) {
+        skipped += 1;
+        if (!quiet) console.warn("[ensure-schema] skip:", e?.message || e);
+      }
     }
   }
   await client.end();
+  console.log("[ensure-schema] done — applied " + ok + ", skipped " + skipped);
 })().catch((err) => {
   console.error("[ensure-schema] failed:", err && err.message ? err.message : err);
   process.exit(1);

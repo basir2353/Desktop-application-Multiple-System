@@ -86,7 +86,7 @@ export function ApiEndpointSelector({ compact = false }: Props): JSX.Element {
         <div className="text-xs font-medium text-slate-300">Custom URL (optional)</div>
         <input
           className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-          placeholder="https://your-api.up.railway.app"
+          placeholder="https://backend-desktop-production-600b.up.railway.app"
           value={customDraft}
           onChange={(e) => setCustomDraft(e.target.value)}
         />

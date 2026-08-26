@@ -6,7 +6,7 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from "@nestjs/common";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import type {
   CloseCashSession,
   CreateBankAccount,
@@ -59,21 +59,29 @@ export class AccountingService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    try {
-      await this.ensurePayrollColumns();
-      await this.seedChartForAllBranches();
-    } catch (err) {
-      this.logger.warn(`Accounting bootstrap skipped: ${err instanceof Error ? err.message : String(err)}`);
-    }
     // Nest runs OnApplicationBootstrap inside init() *before* listen().
-    // Backfilling every completed bill here blocks /health and fails Railway deploys.
-    void this.backfillSalesEntries()
-      .then(() => this.logger.log("Accounting sales backfill complete"))
-      .catch((err) =>
-        this.logger.warn(
-          `Accounting backfill skipped: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
+    // Do not await — blocking here fails Railway /health.
+    void this.runDeferredBootstrap().catch((err) =>
+      this.logger.warn(
+        `Accounting bootstrap skipped: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+  }
+
+  private async runDeferredBootstrap(): Promise<void> {
+    await this.ensurePayrollColumns();
+    // Seeding charts for every branch at boot loads the whole platform into RAM
+    // and OOMs Railway (heap ~512MB). Charts seed lazily on first accounting use.
+    if (process.env.RAILWAY_SEED_ALL_CHARTS === "1") {
+      await this.seedChartForAllBranches();
+    } else {
+      this.logger.log("Skipping full chart seed on boot");
+    }
+    // Full historical backfill can lock the event loop and drop /health (502).
+    if (process.env.RAILWAY_ACCOUNTING_BACKFILL === "1") {
+      await this.backfillSalesEntries();
+      this.logger.log("Accounting sales backfill complete");
+    }
   }
 
   private async ensurePayrollColumns(): Promise<void> {
@@ -176,48 +184,75 @@ export class AccountingService implements OnApplicationBootstrap {
   }
 
   private async backfillBranchEntries(branchId?: string): Promise<void> {
-    const billConditions = [eq(popsBills.status, "completed")];
-    if (branchId) billConditions.push(eq(popsBills.branchId, branchId));
+    const pageSize = 10;
+    let afterBillId: string | undefined;
+    for (;;) {
+      const billConditions = [eq(popsBills.status, "completed")];
+      if (branchId) billConditions.push(eq(popsBills.branchId, branchId));
+      if (afterBillId) billConditions.push(gt(popsBills.id, afterBillId));
 
-    const bills = await this.db
-      .select()
-      .from(popsBills)
-      .where(and(...billConditions))
-      .orderBy(popsBills.createdAt);
+      const bills = await this.db
+        .select({
+          id: popsBills.id,
+          organizationId: popsBills.organizationId,
+          branchId: popsBills.branchId,
+          billRef: popsBills.billRef,
+          tableLabel: popsBills.tableLabel,
+          waiterName: popsBills.waiterName,
+          paymentsJson: popsBills.paymentsJson,
+          subtotalPkr: popsBills.subtotalPkr,
+          discountPkr: popsBills.discountPkr,
+          servicePkr: popsBills.servicePkr,
+          taxPkr: popsBills.taxPkr,
+          totalPkr: popsBills.totalPkr,
+          createdAt: popsBills.createdAt,
+        })
+        .from(popsBills)
+        .where(and(...billConditions))
+        .orderBy(popsBills.id)
+        .limit(pageSize);
 
-    const postedSaleRefs = await this.db
-      .select({ sourceRef: popsJournalEntries.sourceRef })
-      .from(popsJournalEntries)
-      .where(
-        and(
-          eq(popsJournalEntries.source, "sale"),
-          ...(branchId ? [eq(popsJournalEntries.branchId, branchId)] : []),
-        ),
-      );
-    const posted = new Set(postedSaleRefs.map((row) => row.sourceRef));
+      if (bills.length === 0) break;
 
-    for (const bill of bills) {
-      if (posted.has(bill.billRef)) continue;
-      await this.hooks.ensureBranchChart(bill.organizationId, bill.branchId);
-      await this.hooks.recordSaleFromBill(bill.organizationId, bill.branchId, bill);
+      for (const bill of bills) {
+        await this.hooks.recordSaleFromBill(bill.organizationId, bill.branchId, {
+          ...bill,
+          linesJson: "[]",
+          notes: null,
+          orderRef: null,
+          waiterId: null,
+        } as typeof popsBills.$inferSelect);
+        afterBillId = bill.id;
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
-    const grnConditions = branchId ? [eq(popsGoodsReceipts.branchId, branchId)] : [];
-    const grns = await this.db
-      .select()
-      .from(popsGoodsReceipts)
-      .where(grnConditions.length > 0 ? and(...grnConditions) : undefined);
+    let afterGrnId: string | undefined;
+    for (;;) {
+      const grnConditions = [
+        ...(branchId ? [eq(popsGoodsReceipts.branchId, branchId)] : []),
+        ...(afterGrnId ? [gt(popsGoodsReceipts.id, afterGrnId)] : []),
+      ];
+      const grns = await this.db
+        .select()
+        .from(popsGoodsReceipts)
+        .where(grnConditions.length > 0 ? and(...grnConditions) : undefined)
+        .orderBy(popsGoodsReceipts.id)
+        .limit(pageSize);
 
-    for (const grn of grns) {
-      await this.hooks.ensureBranchChart(grn.organizationId, grn.branchId);
-      await this.hooks.recordPurchaseFromGrn(grn.organizationId, grn.branchId, grn);
+      if (grns.length === 0) break;
+
+      for (const grn of grns) {
+        await this.hooks.recordPurchaseFromGrn(grn.organizationId, grn.branchId, grn);
+        afterGrnId = grn.id;
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
 
   async getDashboard(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.ensureBranchChart(organizationId, branch.id);
-    await this.backfillBranchEntries(branch.id);
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString().slice(0, 10);

@@ -12,3 +12,8 @@ api/data/uploads/*
 *.md
 !README.md
 !RAILWAY.md
+scripts/e2e-*
+scripts/test-*
+**/*.test.ts
+**/__tests__
+**/.gitkeep

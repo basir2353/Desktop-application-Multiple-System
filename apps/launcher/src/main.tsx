@@ -3,7 +3,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { clearDeviceInstall } from "./lib/deviceInstall";
-import { getLiveApiUrl } from "./lib/apiBase";
+import { resolveLiveApiBaseUrl } from "./lib/apiBase";
+import { maybeAutoBackupOnAppUpdate } from "./pops/lib/branchSettingsBackup";
+import launcherPkg from "../package.json";
 import "./index.css";
 import "./theme-overrides.css";
 import "./floor-modal.css";
@@ -35,8 +37,13 @@ try {
   // ignore storage errors
 }
 
-// Warm Railway API on startup (cold starts can take 10–15 s).
-void fetch(`${getLiveApiUrl()}/health`, { method: "GET" }).catch(() => {
+try {
+  maybeAutoBackupOnAppUpdate(launcherPkg.version);
+} catch {
+  // ignore backup errors
+}
+
+void resolveLiveApiBaseUrl().catch(() => {
   /* ignore — login/sync will retry */
 });
 

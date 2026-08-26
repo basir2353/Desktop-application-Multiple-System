@@ -14,7 +14,7 @@ Do **not** ship separate Waiter-only or Rider-only APKs for production — use *
 ## Live API
 
 ```env
-EXPO_PUBLIC_API_BASE_URL=https://backend-desktop-production-5505.up.railway.app
+EXPO_PUBLIC_API_BASE_URL=https://backend-desktop-production-600b.up.railway.app
 ```
 
 ## Build (Windows)

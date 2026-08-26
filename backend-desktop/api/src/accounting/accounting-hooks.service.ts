@@ -366,7 +366,6 @@ export class AccountingHooksService {
     const totalDebit = resolved.reduce((s, l) => s + l.debit, 0);
     const totalCredit = resolved.reduce((s, l) => s + l.credit, 0);
     if (totalDebit !== totalCredit) {
-      this.logger.warn(`Unbalanced entry ${input.entryRef}: ${totalDebit} vs ${totalCredit}`);
       return null;
     }
 

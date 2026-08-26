@@ -194,6 +194,24 @@ function browserVirtualPrinterResult(): ListSystemPrintersResult {
   };
 }
 
+const DESKTOP_BRIDGE_ERROR =
+  "Desktop printer bridge unavailable. Close and reopen the Desktop EXE, then click Refresh printers. USB/thermal printers only work in the .exe — not in a browser tab.";
+
+async function invokeListSystemPrinters(maxAttempts = 3): Promise<RawSystemPrinter[]> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      if (attempt > 0) {
+        await new Promise((r) => window.setTimeout(r, 350 * attempt));
+      }
+      return await invoke<RawSystemPrinter[]>("list_system_printers");
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 /** Enumerates printers from the OS via Tauri; in browser, exposes Windows PDF/XPS virtual printers. */
 export async function listSystemPrintersDetailed(): Promise<ListSystemPrintersResult> {
   if (!isDesktopAppRuntime()) {
@@ -201,7 +219,7 @@ export async function listSystemPrintersDetailed(): Promise<ListSystemPrintersRe
   }
 
   try {
-    const raw = await invoke<RawSystemPrinter[]>("list_system_printers");
+    const raw = await invokeListSystemPrinters();
     const printers = (raw ?? []).map(toSystemPrinterInfo);
     // Every installed printer is assignable (PDF/XPS included).
     const usable = printers;
@@ -210,11 +228,12 @@ export async function listSystemPrintersDetailed(): Promise<ListSystemPrintersRe
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isDesktopBridgeUnavailable(message)) {
-      // Dev / broken bridge — still offer PDF/XPS so browser-like testing works.
       return {
-        ...browserVirtualPrinterResult(),
-        error:
-          "Desktop printer bridge unavailable — showing Windows PDF/XPS. Use the print dialog for all printers.",
+        printers: [],
+        usable: [],
+        virtual: [],
+        error: DESKTOP_BRIDGE_ERROR,
+        browserMode: false,
       };
     }
     return { printers: [], usable: [], virtual: [], error: message };

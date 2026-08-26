@@ -8,11 +8,12 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
-watchPatterns = ["api/**", "packages/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json"]
+watchPatterns = ["api/**", "packages/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json", "Dockerfile", "railway.toml", "railway.json", ".npmrc"]
 
 [deploy]
 startCommand = "node /app/api/scripts/start-railway.mjs"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
+# Redeploy trigger: keep 600b healthcheck window at 5 minutes.
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

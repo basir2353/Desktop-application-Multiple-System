@@ -107,7 +107,7 @@ Future: an in-installer component picker (NSIS custom pages) can be added on top
 
 ```bash
 # 1. Set your Railway API in repo-root .env
-VITE_API_BASE_URL=https://your-api.up.railway.app
+VITE_API_BASE_URL=https://backend-desktop-production-600b.up.railway.app
 
 # 2. Install deps and build
 pnpm install

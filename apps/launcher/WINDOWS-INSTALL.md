@@ -58,7 +58,7 @@ apps/launcher/src-tauri/target/release/bundle/nsis/POPS-Launcher_0.1.0_x64-setup
 1. Push the repo to GitHub.
 2. Open **Actions** → **Build Windows Installer** → **Run workflow**.
 3. Edition: `suite` (or `restaurant` / `pharmacy` / `general-store`).
-4. API URL: your hosted Railway API (e.g. `https://platformapi-production-39aa.up.railway.app`).
+4. API URL: your hosted Railway API (e.g. `https://backend-desktop-production-600b.up.railway.app`).
 5. When the job finishes, download the artifact **`windows-suite-installer`** (or the matching edition name).
 
 ---

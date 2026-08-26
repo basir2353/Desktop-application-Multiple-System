@@ -3,7 +3,7 @@ import { AuthClient } from "@platform/auth-client";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { decodeAccessToken, isSuperAdminClaims } from "../lib/jwt";
-import { getApiBaseUrl } from "../lib/apiBase";
+import { resolveLiveApiBaseUrl } from "../lib/apiBase";
 import {
   businessSystemIdFromSystemType,
   getBusinessSystem,
@@ -28,6 +28,7 @@ import {
 } from "../lib/loginRoles";
 import { useSystemStore } from "../stores/systemStore";
 import { ThemeToggle } from "../components/ThemeToggle";
+import launcherPkg from "../../package.json";
 import { fieldInputClass, loginCardClass, mutedClass, subtleClass } from "../pops/lib/themeClasses";
 import { useSessionStore } from "../stores/sessionStore";
 import { usePopsStore } from "../stores/popsStore";
@@ -177,7 +178,8 @@ export function LoginPage(): JSX.Element {
     setError(null);
     setLoading(true);
     try {
-      const client = new AuthClient({ baseUrl: getApiBaseUrl() });
+      const baseUrl = await resolveLiveApiBaseUrl();
+      const client = new AuthClient({ baseUrl });
       const tokens = await client.login(email, password);
       await completeLogin(tokens.accessToken, tokens.refreshToken);
     } catch (err) {
@@ -209,7 +211,8 @@ export function LoginPage(): JSX.Element {
     }
     setLoading(true);
     try {
-      const client = new AuthClient({ baseUrl: getApiBaseUrl() });
+      const baseUrl = await resolveLiveApiBaseUrl();
+      const client = new AuthClient({ baseUrl });
       const tokens = await client.login(pinEmail.trim(), password);
       await completeLogin(tokens.accessToken, tokens.refreshToken);
     } catch (err) {
@@ -238,7 +241,7 @@ export function LoginPage(): JSX.Element {
           <ThemeToggle />
         </div>
         <div className="mb-3 rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-center text-xs font-semibold text-teal-800 dark:text-teal-200">
-          Design refresh · Desktop v0.3.0 · auto-update live
+          Design refresh · Desktop v{launcherPkg.version} · auto-update live
         </div>
         <div className={`${loginCardClass} border-teal-500/20 shadow-lg shadow-teal-900/5 ring-1 ring-teal-500/35`}>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-700 dark:text-teal-300">

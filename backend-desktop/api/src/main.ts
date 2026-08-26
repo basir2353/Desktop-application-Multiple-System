@@ -40,7 +40,10 @@ async function bootstrap(): Promise<void> {
   const host = process.env.HOST ?? "0.0.0.0";
   console.log(`[api] Bootstrapping on ${host}:${port} (NODE_ENV=${process.env.NODE_ENV ?? "development"})`);
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: false });
+  if (process.env.NODE_ENV === "production") {
+    app.useLogger(["error", "warn", "log"]);
+  }
   app.use(compressionMiddleware());
   app.use(createRequestConcurrencyMiddleware());
   app.enableCors({

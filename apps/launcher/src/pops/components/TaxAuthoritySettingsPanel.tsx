@@ -153,6 +153,11 @@ export function TaxAuthoritySettingsPanel({
           </Link>
         ) : null}
       </div>
+
+      <p className={`text-[11px] ${mutedClass}`}>
+        PRA/FBR credentials are saved on the server. If printer or slip settings break after an
+        update, use <strong>Settings → Backup & restore settings</strong> on this PC.
+      </p>
     </div>
   );
 }

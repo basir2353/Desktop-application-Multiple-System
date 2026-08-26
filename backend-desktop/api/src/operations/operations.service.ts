@@ -250,7 +250,9 @@ export class OperationsService implements OnModuleInit {
 
   private async runDeferredBootstrap(): Promise<void> {
     await this.seedIfEmpty();
-    await this.backfillSalesFromDailyRollups();
+    if (process.env.RAILWAY_OPS_BACKFILL === "1") {
+      await this.backfillSalesFromDailyRollups();
+    }
   }
 
   /** One-time alignment: move legacy daily rollups into sale rows so live totals match transactions. */

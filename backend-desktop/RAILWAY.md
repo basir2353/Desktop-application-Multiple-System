@@ -2,8 +2,28 @@
 
 Host the NestJS API (`backend-desktop/api`) on [Railway](https://railway.com) with a managed PostgreSQL database.
 
-**Live API:** https://backend-desktop-production-5505.up.railway.app  
-**Health:** https://backend-desktop-production-5505.up.railway.app/health
+**Live API:** https://backend-desktop-production-600b.up.railway.app  
+**Health:** https://backend-desktop-production-600b.up.railway.app/health
+
+## Fast deploy (from this PC)
+
+```bat
+local\deploy-api-fast.bat
+```
+
+Or from `backend-desktop/`:
+
+```bash
+railway up --detach
+```
+
+**Typical times:** warm Docker cache **3–8 min** · cold first build **10–15 min** · old boot (ensure-schema every deploy) was **+1–2 min** extra — now skipped by default.
+
+| Variable | Default | When to change |
+| --- | --- | --- |
+| `RAILWAY_SKIP_SCHEMA_PUSH` | `1` | Leave `1` on live DB |
+| `RAILWAY_SKIP_SEED_BOOT` | `1` | Leave `1` after first seed |
+| `RAILWAY_RUN_ENSURE_SCHEMA` | `0` | Set `1` **once** after adding DB columns/indexes, redeploy, then back to `0` |
 
 Quick checklist: **[RAILWAY-FIX.md](./RAILWAY-FIX.md)**
 
@@ -21,11 +41,12 @@ Quick checklist: **[RAILWAY-FIX.md](./RAILWAY-FIX.md)**
 
 On each deploy Railway will:
 
-1. Build the Docker image from **`backend-desktop/`** using `Dockerfile` (`COPY api`, `COPY packages`)
-2. Skip full `drizzle-kit push` by default (`RAILWAY_SKIP_SCHEMA_PUSH=1`); run `ensureCriticalSchema` instead
-3. Skip seed boot by default (`RAILWAY_SKIP_SEED_BOOT=1`)
-4. Start the API on `PORT` (set automatically by Railway) via `node /app/api/scripts/start-railway.mjs`
-5. Health-check `GET /health`
+1. Build the Docker image from **`backend-desktop/`** using `Dockerfile` (pnpm cache layer + filtered turbo build)
+2. Skip full `drizzle-kit push` by default (`RAILWAY_SKIP_SCHEMA_PUSH=1`)
+3. Skip `ensure-schema` by default (`RAILWAY_RUN_ENSURE_SCHEMA=0`) — faster health checks
+4. Skip seed boot by default (`RAILWAY_SKIP_SEED_BOOT=1`)
+5. Start the API on `PORT` (set automatically by Railway) via `node /app/api/scripts/start-railway.mjs`
+6. Health-check `GET /health` (timeout 120s)
 
 ## Step-by-step
 
@@ -96,7 +117,7 @@ SSL to Postgres is enabled automatically in production (see `packages/database-p
 ### 6. Generate a public URL
 
 1. API service → **Settings** → **Networking** → **Generate Domain**
-2. You get a URL like `https://backend-desktop-production-5505.up.railway.app`
+2. You get a URL like `https://backend-desktop-production-600b.up.railway.app`
 
 ### 7. Seed the live database (first deploy)
 
@@ -186,7 +207,7 @@ To keep uploads across deploys:
 ```
 Railway Project
 ├── PostgreSQL          → DATABASE_URL (auto)
-└── API (Docker)        → https://backend-desktop-production-5505.up.railway.app
+└── API (Docker)        → https://backend-desktop-production-600b.up.railway.app
          ↑
     Web / Desktop / Mobile clients (VITE_API_BASE_URL)
 ```

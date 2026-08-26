@@ -5,7 +5,6 @@ import {
   withPrinterProfile,
   type PrintTicketInput,
 } from "../../pops/lib/printTicket";
-import { asPrinterName } from "../../pops/lib/asPrinterName";
 import { resolvePraFooterForSource } from "../../pops/lib/praPaidPrint";
 import { praIssuedNotice } from "../../pops/lib/praIssueFlow";
 import {
@@ -16,14 +15,11 @@ import {
 } from "../../pops/lib/kotPrintSettings";
 import type { BillPrintSettings } from "../../pops/lib/billPrintSettings";
 import {
-  addPrinterProfile,
+  ensureReceiptPrinterLinked,
   resolveReceiptPrinter,
-  setReceiptPrinter,
-  updatePrinterProfile,
   type PrinterProfile,
 } from "../../pops/lib/printerRouting";
 import { logPrintEvent } from "../../pops/lib/printHistory";
-import { listSystemPrintersDetailed } from "../../pops/lib/systemPrinters";
 import { useSessionStore } from "../../stores/sessionStore";
 import {
   cartLineDisplayName,
@@ -50,40 +46,7 @@ export async function ensureStorePosPrinter(
   branchCode: string,
   userId?: string | null,
 ): Promise<PrinterProfile | null> {
-  const existing = resolveReceiptPrinter(branchCode, userId);
-  if (asPrinterName(existing?.systemPrinterName)) return existing;
-
-  try {
-    const listed = await listSystemPrintersDetailed();
-    const pick =
-      listed.usable.find((p) => p.isDefault && !p.isVirtual) ??
-      listed.usable.find((p) => !p.isVirtual) ??
-      listed.usable.find((p) => p.isDefault) ??
-      listed.usable[0] ??
-      listed.printers.find((p) => !p.isVirtual) ??
-      listed.printers[0];
-    if (!pick?.name) return existing;
-
-    if (existing) {
-      updatePrinterProfile(branchCode, existing.id, {
-        systemPrinterName: pick.name,
-        printerType:
-          existing.printerType === "kitchen" || existing.printerType === "bar"
-            ? "receipt"
-            : existing.printerType,
-      });
-      setReceiptPrinter(branchCode, existing.id);
-    } else {
-      const created = addPrinterProfile(branchCode, "POS Receipt", {
-        printerType: "receipt",
-        systemPrinterName: pick.name,
-      });
-      setReceiptPrinter(branchCode, created.id);
-    }
-    return resolveReceiptPrinter(branchCode, userId);
-  } catch {
-    return existing;
-  }
+  return ensureReceiptPrinterLinked(branchCode, userId);
 }
 
 function resolveCashierName(fallback?: string): string | undefined {

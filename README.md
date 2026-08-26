@@ -71,7 +71,7 @@ The desktop app is built with **Tauri** and ships as a standard Windows setup fi
 In repo-root `.env`:
 
 ```bash
-VITE_API_BASE_URL=https://platformapi-production-39aa.up.railway.app
+VITE_API_BASE_URL=https://backend-desktop-production-600b.up.railway.app
 ```
 
 On Railway, add `tauri://localhost` to `CORS_ORIGINS` so the desktop app can call the API:
@@ -133,8 +133,8 @@ Details: [apps/launcher/INSTALLER.md](./apps/launcher/INSTALLER.md)
 5. Point clients at it:
 
 ```bash
-VITE_API_BASE_URL=https://platformapi-production-39aa.up.railway.app
-EXPO_PUBLIC_API_BASE_URL=https://platformapi-production-39aa.up.railway.app
+VITE_API_BASE_URL=https://backend-desktop-production-600b.up.railway.app
+EXPO_PUBLIC_API_BASE_URL=https://backend-desktop-production-600b.up.railway.app
 ```
 
 Full guide: **[backend-desktop/RAILWAY.md](./backend-desktop/RAILWAY.md)**

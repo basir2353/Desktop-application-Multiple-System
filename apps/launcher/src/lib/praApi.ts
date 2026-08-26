@@ -195,11 +195,12 @@ export async function postPraPayloadFromClient(input: {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      const text = await invoke<string>("pra_http_post", {
+      const result = await invoke<{ status: number; body: string }>("pra_http_post", {
         url: input.postUrl,
         token: input.bearerToken,
         body,
       });
+      const text = result.body;
       if (isHtmlResponseBody(text)) {
         throw new Error("Native PRA post returned HTML — unexpected.");
       }
@@ -209,7 +210,7 @@ export async function postPraPayloadFromClient(input: {
       } catch {
         json = { message: text };
       }
-      const parsed = parsePraPostResponse(200, json, text);
+      const parsed = parsePraPostResponse(result.status, json, text);
       if (parsed) return parsed;
       errors.push(shortenPraClientError(text));
     } catch (err) {
@@ -285,13 +286,20 @@ export async function pingPraFromClient(input: {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      const text = await invoke<string>("pra_http_post", {
+      const result = await invoke<{ status: number; body: string }>("pra_http_post", {
         url: input.postUrl,
         token: input.bearerToken,
         body,
       });
+      const text = result.body;
       if (isHtmlResponseBody(text)) {
         throw new Error("Native PRA ping returned HTML");
+      }
+      if (result.status === 401 || result.status === 403) {
+        throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
+      }
+      if (result.status >= 500) {
+        throw new Error(`PRA Server Unavailable (${result.status})`);
       }
       if (/401|403|unauthorized|invalid/i.test(text)) {
         throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
@@ -335,6 +343,21 @@ function parsePraPostResponse(
   if (status === 401 || status === 403) {
     throw new Error("Invalid Credentials — check Bearer Token / IP whitelist");
   }
+  if (status >= 400) {
+    const obj = typeof json === "object" && json ? (json as Record<string, unknown>) : null;
+    const code = obj && "Code" in obj ? String(obj.Code) : "";
+    const rawMsg =
+      obj && "Response" in obj
+        ? String(obj.Response)
+        : obj && "message" in obj
+          ? String(obj.message)
+          : text.slice(0, 200);
+    throw new Error(
+      rawMsg && !isHtmlResponseBody(rawMsg)
+        ? rawMsg
+        : `PRA rejected invoice (HTTP ${status}${code ? `, Code ${code}` : ""})`,
+    );
+  }
   const obj = typeof json === "object" && json ? (json as Record<string, unknown>) : null;
   const code = obj && "Code" in obj ? String(obj.Code) : "";
   const rawMsg =
@@ -345,20 +368,19 @@ function parsePraPostResponse(
         : text.slice(0, 200);
   const responseMsg = isHtmlResponseBody(rawMsg) ? "" : rawMsg;
 
-  if (status >= 200 && status < 300 && (!code || code === "100")) {
+  if (code && code !== "100") {
+    throw new Error(responseMsg || `PRA rejected invoice (Code ${code})`);
+  }
+
+  if (status >= 200 && status < 300) {
     const invoiceNumber = extractPraInvoiceNumber(obj, text);
     if (invoiceNumber) {
       return { invoiceNumber, raw: json };
     }
-    // Success-shaped response without a usable InvoiceNumber — fail loudly so Close
-    // does not silently print a blank Real PRA slip.
     throw new Error(
       responseMsg ||
         "PRA accepted the request but did not return InvoiceNumber. Check POS ID / Production token / IP whitelist.",
     );
-  }
-  if (code && code !== "100") {
-    throw new Error(responseMsg || `PRA rejected invoice (Code ${code})`);
   }
   return null;
 }

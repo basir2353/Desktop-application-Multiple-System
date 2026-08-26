@@ -52,6 +52,7 @@ import {
 } from "../../lib/terminalAuth";
 import { computeTicketTotals } from "../../lib/posDiscount";
 import { DashboardBusinessDaySettings } from "../../components/dashboard/DashboardBusinessDaySettings";
+import { BranchSettingsBackupPanel } from "../../components/BranchSettingsBackupPanel";
 import { TaxAuthoritySettingsPanel } from "../../components/TaxAuthoritySettingsPanel";
 import {
   isTaxAuthorityEnabled,
@@ -419,6 +420,18 @@ export function SettingsPage(): JSX.Element {
 
         {canResetData ? (
           <DataResetPanel
+            onNotice={(m) => {
+              setTaxError(null);
+              setNotice(m);
+            }}
+            onError={(m) => {
+              setNotice(null);
+              setTaxError(m);
+            }}
+          />
+        ) : null}
+        {canManageTaxFeatures ? (
+          <BranchSettingsBackupPanel
             onNotice={(m) => {
               setTaxError(null);
               setNotice(m);
@@ -1064,6 +1077,20 @@ export function SettingsPage(): JSX.Element {
       <div className="max-w-xl">
         <DashboardBusinessDaySettings branchCode={branch.code} />
       </div>
+
+      {canEditBranch || sessionCanManageUsers(claims) ? (
+        <BranchSettingsBackupPanel
+          branchCode={branch.code}
+          onNotice={(m) => {
+            setTaxError(null);
+            setNotice(m);
+          }}
+          onError={(m) => {
+            setNotice(null);
+            setTaxError(m);
+          }}
+        />
+      ) : null}
 
       {canResetData ? (
         <DataResetPanel

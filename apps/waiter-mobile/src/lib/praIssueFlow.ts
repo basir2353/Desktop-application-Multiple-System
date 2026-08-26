@@ -51,6 +51,28 @@ export async function issuePraForSource(input: {
  * Real PRA: PostData from this device (shop Wi‑Fi IP when possible).
  * Never rely on Railway cloud submit alone for live e-IMS.
  */
+async function confirmPraClientPostWithRetry(
+  input: Parameters<typeof confirmPraClientPost>[0],
+): Promise<Awaited<ReturnType<typeof confirmPraClientPost>>> {
+  const delaysMs = [0, 1200, 3000];
+  let lastErr: unknown;
+  for (const delay of delaysMs) {
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    try {
+      return await confirmPraClientPost(input);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  const msg =
+    lastErr instanceof Error
+      ? lastErr.message
+      : "Could not save Real PRA invoice on server after PRA accepted it.";
+  throw new Error(`${msg} Tap RPRA again to retry save.`);
+}
+
 async function issueRealPraWithClientRelay(input: {
   branchCode: string;
   sourceType: "bill" | "store_sale" | "pharmacy_sale";
@@ -79,7 +101,7 @@ async function issueRealPraWithClientRelay(input: {
       payload: prep.payload,
     });
 
-    const confirmed = await confirmPraClientPost({
+    const confirmed = await confirmPraClientPostWithRetry({
       branchCode: input.branchCode,
       invoiceDbId: prep.invoiceDbId,
       invoiceNumber: posted.invoiceNumber,

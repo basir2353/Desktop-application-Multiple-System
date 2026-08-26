@@ -402,14 +402,17 @@ export function EnterprisePrintDashboard({
                     <span className="text-slate-500"> · {job.orderId ?? "—"}</span>
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    {(["retry", "pause", "cancel"] as const).map((action) => (
+                    {(job.status === "failed" || job.error
+                      ? (["reprint"] as const)
+                      : (["retry", "pause", "cancel"] as const)
+                    ).map((action) => (
                       <button
                         key={action}
                         type="button"
                         className="rounded px-1 text-amber-300/90 hover:bg-amber-500/10"
                         onClick={() => void branchPrintQueueAction(job.id, action).then(() => refresh())}
                       >
-                        {action}
+                        {action === "reprint" ? "Print again" : action}
                       </button>
                     ))}
                   </div>
