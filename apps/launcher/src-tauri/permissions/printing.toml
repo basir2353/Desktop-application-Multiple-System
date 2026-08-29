@@ -1,0 +1,21 @@
+[[permission]]
+identifier = "allow-printing"
+description = "Allow Windows printer listing, silent print, and the branch print server from the desktop shell."
+commands.allow = [
+  "list_system_printers",
+  "print_to_printer",
+  "print_image_to_printer",
+  "start_branch_print_server",
+  "stop_branch_print_server",
+  "get_branch_print_server_status",
+  "enqueue_branch_print_job",
+  "list_branch_print_queue",
+  "branch_print_queue_action",
+  "upsert_branch_printer",
+  "list_branch_printers",
+  "claim_next_branch_print_job",
+  "complete_branch_print_job",
+  "discover_branch_print_servers",
+  "get_local_lan_ip",
+  "print_raw_tcp"
+]

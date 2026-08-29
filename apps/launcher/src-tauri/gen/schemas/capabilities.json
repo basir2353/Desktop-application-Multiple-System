@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default window capability set for the launcher shell.","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open","updater:default","process:default","allow-pra-http-post"]}}
+{"default":{"identifier":"default","description":"Default window capability set for the launcher shell.","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open","updater:default","process:default","allow-pra-http-post","allow-printing"]}}

@@ -153,10 +153,26 @@ Get-Printer | Select-Object Name, DriverName, PortName, Shared, Default, Printer
         .collect()
 }
 
-/// Enumerates printers installed on the OS (Windows Print Spooler / CUPS).
+fn merge_printer_lists(
+    primary: Vec<SystemPrinterInfo>,
+    extra: Vec<SystemPrinterInfo>,
+) -> Vec<SystemPrinterInfo> {
+    let mut out = primary;
+    for printer in extra {
+        if !out
+            .iter()
+            .any(|existing| existing.name.eq_ignore_ascii_case(&printer.name))
+        {
+            out.push(printer);
+        }
+    }
+    out
+}
+
+/// Enumerates every printer Windows knows about (USB, network, shared, PDF/XPS).
 #[tauri::command]
 fn list_system_printers() -> Vec<SystemPrinterInfo> {
-    let mut printers: Vec<SystemPrinterInfo> = get_printers()
+    let crate_list: Vec<SystemPrinterInfo> = get_printers()
         .into_iter()
         .map(|p| SystemPrinterInfo {
             name: p.name.clone(),
@@ -169,11 +185,8 @@ fn list_system_printers() -> Vec<SystemPrinterInfo> {
             is_virtual: is_virtual_printer(&p.name, &p.driver_name, &p.port_name),
         })
         .collect();
-
-    if printers.is_empty() {
-        printers = list_printers_via_powershell();
-    }
-    printers
+    // Always merge Get-Printer so USB/network devices the crate misses still appear.
+    merge_printer_lists(crate_list, list_printers_via_powershell())
 }
 
 fn escape_powershell_single_quoted(value: &str) -> String {
