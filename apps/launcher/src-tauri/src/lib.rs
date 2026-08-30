@@ -588,8 +588,8 @@ fn print_via_gdi_image(
     let width_mm = normalize_paper_width_mm(paper_width_mm);
     // Hundredths of an inch.
     let width_hi = mm_to_hundredths_inch(width_mm);
-    // Continuous thermal roll (~3276mm). Short forms like 80x297 cause driver/PDF-style zoom.
-    let height_hi = 12897;
+    // Extra blank after the last line so the thermal cutter does not slice "Net Total".
+    let bottom_feed_hi = mm_to_hundredths_inch(14);
 
     let script = format!(
         r#"
@@ -599,11 +599,15 @@ $printerName = '{printer}'
 $path = '{path}'
 $jobName = '{job}'
 $copies = {copies}
-$targetWidth = {width_hi}
 $widthHi = {width_hi}
-$heightHi = {height_hi}
+$bottomFeedHi = {bottom_feed_hi}
 $img = [System.Drawing.Image]::FromFile($path)
 try {{
+  # One continuous slip: paper height = image height (scaled) + cutter feed.
+  # Multi-page GDI jobs make the driver cut mid-receipt ("Net Total" half on next page).
+  $scale = $widthHi / [double][math]::Max(1, $img.Width)
+  $contentH = [math]::Max(1, [math]::Ceiling($img.Height * $scale))
+  $paperH = [math]::Min(12897, $contentH + $bottomFeedHi)
   for ($c = 1; $c -le $copies; $c++) {{
     $doc = New-Object System.Drawing.Printing.PrintDocument
     $doc.PrinterSettings.PrinterName = $printerName
@@ -611,24 +615,9 @@ try {{
     $doc.DocumentName = if ($copies -gt 1) {{ "$jobName ($c/$copies)" }} else {{ $jobName }}
     $doc.PrinterSettings.Copies = 1
     $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
-    # Exact custom PaperSize for the requested mm — avoid nearest 58/80 that mismatches
-    # the PNG canvas (stretch-to-page then looks like zoom / "khich").
-    $paper = New-Object System.Drawing.Printing.PaperSize('POPS Receipt', $widthHi, $heightHi)
+    $paper = New-Object System.Drawing.Printing.PaperSize('POPS Receipt', $widthHi, [int]$paperH)
     try {{ $doc.DefaultPageSettings.PaperSize = $paper }} catch {{ }}
-    $exact = $null
-    foreach ($ps in $doc.PrinterSettings.PaperSizes) {{
-      $w = [int]$ps.Width
-      $h = [int]$ps.Height
-      if ([math]::Abs($w - $targetWidth) -le 2 -and $h -ge 1000) {{
-        $exact = $ps
-        if ([string]$ps.PaperName -match '3276|GIANT') {{ break }}
-      }}
-    }}
-    if ($exact -ne $null) {{
-      $doc.DefaultPageSettings.PaperSize = $exact
-    }}
     $doc.DefaultPageSettings.Landscape = $false
-    $script:srcY = 0
     $doc.add_PrintPage({{
       param($s, $e)
       $e.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Display
@@ -639,22 +628,16 @@ try {{
       $originX = [math]::Max(0, -$e.PageSettings.HardMarginX)
       $originY = [math]::Max(0, -$e.PageSettings.HardMarginY)
       $pageW = [math]::Max(1, $e.PageBounds.Width - 1)
-      $pageH = [math]::Max(1, $e.PageBounds.Height - 1)
-      # Draw at the *intended* roll width (hundredths of an inch), not PageBounds.
-      # If the driver falls back to Letter/A4, stretching to PageBounds zooms the slip.
       $drawW = [int]$widthHi
       if ($drawW -gt $pageW) {{ $drawW = $pageW }}
       if ($drawW -lt 1) {{ $drawW = $pageW }}
-      $scale = $drawW / [double]$img.Width
-      $remain = $img.Height - $script:srcY
-      $srcH = [math]::Min($remain, [math]::Ceiling($pageH / $scale))
-      $drawH = [math]::Ceiling($srcH * $scale)
+      $drawScale = $drawW / [double][math]::Max(1, $img.Width)
+      $drawH = [math]::Ceiling($img.Height * $drawScale)
       $x = [int]($originX + [math]::Max(0, ($pageW - $drawW) / 2))
-      $srcRect = New-Object System.Drawing.Rectangle(0, [int]$script:srcY, $img.Width, [int]$srcH)
       $destRect = New-Object System.Drawing.Rectangle($x, [int]$originY, [int]$drawW, [int]$drawH)
-      $e.Graphics.DrawImage($img, $destRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
-      $script:srcY += [int]$srcH
-      $e.HasMorePages = ($script:srcY -lt $img.Height)
+      $e.Graphics.DrawImage($img, $destRect)
+      # Never paginate — thermal auto-cut between pages slices the last lines.
+      $e.HasMorePages = $false
     }})
     # Silent spool — no Windows "Printing / Page 1 of…" status dialog (that freezes the app).
     $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
@@ -670,7 +653,7 @@ try {{
         job = escape_powershell_single_quoted(job_name),
         copies = copies,
         width_hi = width_hi,
-        height_hi = height_hi,
+        bottom_feed_hi = bottom_feed_hi,
     );
 
     let output = command_no_window("powershell")

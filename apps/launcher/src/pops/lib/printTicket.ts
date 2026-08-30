@@ -2687,6 +2687,9 @@ export async function renderTicketHtmlToPngBytes(
     body.style.color = "#000";
     body.style.setProperty("-webkit-font-smoothing", "none");
     body.style.setProperty("font-smooth", "never");
+    // White tail so the thermal cutter clears "Net Total" / footer (not mid-line).
+    const cutClearPx = Math.max(36, Math.round(widthPx * 0.12));
+    body.style.paddingBottom = `${cutClearPx}px`;
 
     const height = Math.ceil(
       Math.max(
