@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   approveStoreAdjustment,
   approveStoreAudit,
@@ -67,6 +67,16 @@ export function StoreTransfersPage(): JSX.Element {
   const transfersQuery = useQuery({ queryKey: ["store", "transfers", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchStoreTransfers(branch!.code) });
   const warehousesQuery = useQuery({ queryKey: ["store", "warehouses", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchStoreWarehouses(branch!.code) });
   const productsQuery = useQuery({ queryKey: ["store", "products", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchStoreProducts(branch!.code) });
+
+  useEffect(() => {
+    const warehouses = warehousesQuery.data ?? [];
+    if (!fromId && warehouses.length) {
+      setFromId(warehouses.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ?? warehouses[0].id);
+    }
+    if (!toId && warehouses.length) {
+      setToId(warehouses.find((warehouse) => warehouse.code === "KITCHEN")?.id ?? warehouses.find((warehouse) => warehouse.id !== fromId)?.id ?? "");
+    }
+  }, [fromId, toId, warehousesQuery.data]);
 
   const createMutation = useMutation({
     mutationFn: () => createStoreTransfer({ branchCode: branch!.code, fromWarehouseId: fromId, toWarehouseId: toId, items }),

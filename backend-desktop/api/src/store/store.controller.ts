@@ -41,7 +41,7 @@ import { StoreGroceryService } from "./store-grocery.service";
 
 @Controller("v1/store")
 @UseGuards(JwtAuthGuard, PermissionsGuard, SystemTypeGuard)
-@RequireSystemType("general_store", "grocery", "retail")
+@RequireSystemType("restaurant", "general_store", "grocery", "retail")
 export class StoreController {
   constructor(
     private readonly store: StoreService,

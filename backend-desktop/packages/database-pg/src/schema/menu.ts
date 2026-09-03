@@ -1,6 +1,7 @@
 import { boolean, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
+import { storeCookingUnits } from "./store";
 
 export const popsMenuCategories = pgTable("pops_menu_categories", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -13,6 +14,7 @@ export const popsMenuCategories = pgTable("pops_menu_categories", {
   name: text("name").notNull(),
   /** Public URL path served by the API, e.g. /uploads/menu/... */
   imageUrl: text("image_url"),
+  cookingUnitId: uuid("cooking_unit_id").references(() => storeCookingUnits.id, { onDelete: "set null" }),
   sortOrder: integer("sort_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

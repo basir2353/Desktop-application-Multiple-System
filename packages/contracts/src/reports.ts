@@ -33,6 +33,7 @@ export const RESTAURANT_REPORT_DEFS = [
   { id: "universal-ledger", name: "Universal Ledger", category: "Ledgers" },
   { id: "ingredients-usage", name: "Ingredients usage", category: "Inventory" },
   { id: "ingredients-stock", name: "Ingredients stock", category: "Inventory" },
+  { id: "cooking-unit-profit", name: "Cooking Unit stock, usage & profit", category: "Inventory" },
 ] as const;
 
 export type RestaurantReportId = (typeof RESTAURANT_REPORT_DEFS)[number]["id"];

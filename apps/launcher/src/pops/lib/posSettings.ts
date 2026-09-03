@@ -60,6 +60,12 @@ export type PosSettings = {
    * Local UI preference (not synced to mobile tax API).
    */
   menuViewMode: "category" | "all";
+  autoPrintOrderDineIn: boolean;
+  autoPrintOrderTakeaway: boolean;
+  autoPrintOrderDelivery: boolean;
+  autoPrintFinalDineIn: boolean;
+  autoPrintFinalTakeaway: boolean;
+  autoPrintFinalDelivery: boolean;
 };
 
 export const DEFAULT_POS_SETTINGS: PosSettings = {
@@ -87,6 +93,12 @@ export const DEFAULT_POS_SETTINGS: PosSettings = {
   showBillNotes: true,
   fullScreenMenuEnabled: true,
   menuViewMode: "category",
+  autoPrintOrderDineIn: false,
+  autoPrintOrderTakeaway: false,
+  autoPrintOrderDelivery: false,
+  autoPrintFinalDineIn: true,
+  autoPrintFinalTakeaway: true,
+  autoPrintFinalDelivery: true,
 };
 
 export const POS_SETTINGS_CHANGED_EVENT = "pops-pos-settings-changed";
@@ -124,7 +136,27 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     showBillNotes: input.showBillNotes ?? DEFAULT_POS_SETTINGS.showBillNotes,
     fullScreenMenuEnabled: input.fullScreenMenuEnabled ?? DEFAULT_POS_SETTINGS.fullScreenMenuEnabled,
     menuViewMode: input.menuViewMode === "all" ? "all" : "category",
+    autoPrintOrderDineIn: input.autoPrintOrderDineIn ?? DEFAULT_POS_SETTINGS.autoPrintOrderDineIn,
+    autoPrintOrderTakeaway: input.autoPrintOrderTakeaway ?? DEFAULT_POS_SETTINGS.autoPrintOrderTakeaway,
+    autoPrintOrderDelivery: input.autoPrintOrderDelivery ?? DEFAULT_POS_SETTINGS.autoPrintOrderDelivery,
+    autoPrintFinalDineIn: input.autoPrintFinalDineIn ?? DEFAULT_POS_SETTINGS.autoPrintFinalDineIn,
+    autoPrintFinalTakeaway: input.autoPrintFinalTakeaway ?? DEFAULT_POS_SETTINGS.autoPrintFinalTakeaway,
+    autoPrintFinalDelivery: input.autoPrintFinalDelivery ?? DEFAULT_POS_SETTINGS.autoPrintFinalDelivery,
   };
+}
+
+export function autoPrintOrderForMode(settings: PosSettings, mode: PosOrderMode | string): boolean {
+  if (mode === "takeaway") return settings.autoPrintOrderTakeaway;
+  if (mode === "delivery") return settings.autoPrintOrderDelivery;
+  if (mode === "dine-in") return settings.autoPrintOrderDineIn;
+  return false;
+}
+
+export function autoPrintFinalForMode(settings: PosSettings, mode: PosOrderMode | string): boolean {
+  if (mode === "takeaway") return settings.autoPrintFinalTakeaway;
+  if (mode === "delivery") return settings.autoPrintFinalDelivery;
+  if (mode === "dine-in") return settings.autoPrintFinalDineIn;
+  return false;
 }
 
 function serviceEnabledForMode(
@@ -214,7 +246,9 @@ export function savePosSettings(branchCode: string, settings: PosSettings): void
 export function posSettingsFromTaxApi(
   tax: TaxSettings,
   /** Preserve local-only UI flags across cloud sync. */
-  localUi?: Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "menuViewMode">,
+  localUi?: Partial<Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "menuViewMode" |
+    "autoPrintOrderDineIn" | "autoPrintOrderTakeaway" | "autoPrintOrderDelivery" |
+    "autoPrintFinalDineIn" | "autoPrintFinalTakeaway" | "autoPrintFinalDelivery">>,
 ): PosSettings {
   const charges = tax.posCharges;
   if (charges) {
@@ -225,6 +259,12 @@ export function posSettingsFromTaxApi(
       showBillNotes: localUi?.showBillNotes,
       fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
       menuViewMode: localUi?.menuViewMode,
+      autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
+      autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
+      autoPrintOrderDelivery: localUi?.autoPrintOrderDelivery,
+      autoPrintFinalDineIn: localUi?.autoPrintFinalDineIn,
+      autoPrintFinalTakeaway: localUi?.autoPrintFinalTakeaway,
+      autoPrintFinalDelivery: localUi?.autoPrintFinalDelivery,
     });
   }
   return normalizePosSettings({
@@ -236,6 +276,12 @@ export function posSettingsFromTaxApi(
     showBillNotes: localUi?.showBillNotes,
     fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
     menuViewMode: localUi?.menuViewMode,
+    autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
+    autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
+    autoPrintOrderDelivery: localUi?.autoPrintOrderDelivery,
+    autoPrintFinalDineIn: localUi?.autoPrintFinalDineIn,
+    autoPrintFinalTakeaway: localUi?.autoPrintFinalTakeaway,
+    autoPrintFinalDelivery: localUi?.autoPrintFinalDelivery,
   });
 }
 
@@ -273,6 +319,12 @@ export async function savePosSettingsSynced(
       taxOnOnline: next.taxOnOnline,
       taxOnFoodpanda: next.taxOnFoodpanda,
       taxOnStaffFood: next.taxOnStaffFood,
+      autoPrintOrderDineIn: next.autoPrintOrderDineIn,
+      autoPrintOrderTakeaway: next.autoPrintOrderTakeaway,
+      autoPrintOrderDelivery: next.autoPrintOrderDelivery,
+      autoPrintFinalDineIn: next.autoPrintFinalDineIn,
+      autoPrintFinalTakeaway: next.autoPrintFinalTakeaway,
+      autoPrintFinalDelivery: next.autoPrintFinalDelivery,
     },
   });
   return next;

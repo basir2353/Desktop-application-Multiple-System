@@ -9,6 +9,7 @@ import {
 import { and, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import type {
   CloseCashSession,
+  CreateAccountHead,
   CreateBankAccount,
   CreateBankTransaction,
   CreateCustomerInvoice,
@@ -369,6 +370,72 @@ export class AccountingService implements OnApplicationBootstrap {
       balance: a.balance,
       active: a.active,
     }));
+  }
+
+  async createAccountHead(
+    organizationId: string,
+    userEmail: string,
+    input: CreateAccountHead,
+  ) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    await this.hooks.ensureBranchChart(organizationId, branch.id);
+
+    const accounts = await this.db
+      .select({ code: popsAccounts.code })
+      .from(popsAccounts)
+      .where(
+        and(eq(popsAccounts.organizationId, organizationId), eq(popsAccounts.branchId, branch.id)),
+      );
+    const usedCodes = new Set(accounts.map((account) => account.code));
+    const requestedCode = input.code?.trim();
+    let code = requestedCode;
+
+    if (!code) {
+      const prefixByType = {
+        asset: "1",
+        liability: "2",
+        equity: "3",
+        income: "4",
+        expense: "5",
+      } as const;
+      const prefix = prefixByType[input.type];
+      const largest = accounts.reduce((max, account) => {
+        if (!new RegExp(`^${prefix}\\d+$`).test(account.code)) return max;
+        return Math.max(max, Number(account.code));
+      }, Number(`${prefix}100`));
+      code = String(largest + 1);
+      while (usedCodes.has(code)) code = String(Number(code) + 1);
+    }
+
+    if (usedCodes.has(code)) {
+      throw new BadRequestException(`Account code already exists: ${code}`);
+    }
+
+    const [account] = await this.db
+      .insert(popsAccounts)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        code,
+        name: input.name.trim(),
+        type: input.type,
+        subtype: input.subtype?.trim() || null,
+      })
+      .returning();
+    if (!account) throw new BadRequestException("Could not create account head");
+
+    await this.audit(
+      organizationId,
+      branch.id,
+      "account",
+      account.id,
+      "created",
+      userEmail,
+      null,
+      { code: account.code, name: account.name, type: account.type, subtype: account.subtype },
+    );
+
+    return { ...account, balance: 0 };
   }
 
   async listJournal(

@@ -5,10 +5,10 @@ export const RAILWAY_API_URL = "https://backend-desktop-production-600b.up.railw
 
 const API_RESOLVED_KEY = "pops-railway-api-resolved-v1";
 
-/** Retired Railway hosts — redirect to the active 600b service. */
+/** Retired Railway hosts — redirect to the active live service. */
 const DEPRECATED_LIVE_URLS = new Set([
-  "https://backend-desktop-production-5505.up.railway.app",
   "https://platformapi-production-39aa.up.railway.app",
+  "https://backend-desktop-production-5505.up.railway.app",
 ]);
 
 /** Baked at build time — overrides default when set. */
@@ -68,7 +68,7 @@ export function describeLiveServer(): {
 } {
   return {
     url: getLiveApiUrl(),
-    dbLabel: "Postgres (acela)",
+    dbLabel: "Postgres (Railway)",
   };
 }
 

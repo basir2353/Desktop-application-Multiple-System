@@ -1,8 +1,14 @@
 import { PO_STATUSES, type PoStatus, type PurchaseOrder } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { createPurchaseOrder, fetchBranchInventory, updatePurchaseOrder, updatePurchaseOrderStatus } from "../../../api/inventory";
+import {
+  createPurchaseOrder,
+  fetchBranchInventory,
+  fetchInventoryWarehouses,
+  updatePurchaseOrder,
+  updatePurchaseOrderStatus,
+} from "../../../api/inventory";
 import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import {
@@ -53,12 +59,27 @@ export function PurchaseOrdersPage(): JSX.Element {
   const [lines, setLines] = useState<PoLineRow[]>([]);
   const [editingPoId, setEditingPoId] = useState<string | null>(null);
   const [editingPoNumber, setEditingPoNumber] = useState<string | null>(null);
+  const [warehouseId, setWarehouseId] = useState("");
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchBranchInventory(branch!.code),
   });
+  const warehousesQuery = useQuery({
+    queryKey: ["inventory", "warehouses", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchInventoryWarehouses(branch!.code),
+  });
+
+  useEffect(() => {
+    if (!warehouseId && warehousesQuery.data?.warehouses.length) {
+      setWarehouseId(
+        warehousesQuery.data.warehouses.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ??
+          warehousesQuery.data.warehouses[0].id,
+      );
+    }
+  }, [warehouseId, warehousesQuery.data]);
 
   function updateLine(index: number, patch: Partial<PoLineRow>): void {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
@@ -107,6 +128,7 @@ export function PurchaseOrdersPage(): JSX.Element {
       const body = {
         branchCode: branch!.code,
         supplierId: meta.supplierId,
+        warehouseId,
         expectedDate: meta.expectedDate || undefined,
         requestedBy: meta.requestedBy || undefined,
         chef: meta.chef || undefined,
@@ -296,6 +318,20 @@ export function PurchaseOrdersPage(): JSX.Element {
                 <label>
                   <FieldLabel>Expected date</FieldLabel>
                   <input className={inputClass} type="date" value={meta.expectedDate} onChange={(e) => setMeta({ ...meta, expectedDate: e.target.value })} />
+                </label>
+                <label>
+                  <FieldLabel>Purchase warehouse</FieldLabel>
+                  <select
+                    className={selectClass}
+                    value={warehouseId}
+                    onChange={(e) => setWarehouseId(e.target.value)}
+                    required
+                  >
+                    <option value="">Select warehouse</option>
+                    {(warehousesQuery.data?.warehouses ?? []).map((warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   <FieldLabel>Requested by</FieldLabel>

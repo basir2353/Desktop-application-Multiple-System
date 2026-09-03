@@ -36,7 +36,7 @@ function parseCorsOrigins(): boolean | (string | RegExp)[] {
 }
 
 async function bootstrap(): Promise<void> {
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? (process.env.NODE_ENV === "production" ? 8080 : 3000));
   const host = process.env.HOST ?? "0.0.0.0";
   console.log(`[api] Bootstrapping on ${host}:${port} (NODE_ENV=${process.env.NODE_ENV ?? "development"})`);
 

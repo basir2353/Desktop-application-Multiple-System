@@ -122,6 +122,14 @@ export const storeWarehouseSchema = z.object({
   totalStock: z.number(),
 });
 
+export const storeWarehouseStockSchema = z.object({
+  warehouseId: z.string().uuid(),
+  productId: z.string().uuid(),
+  quantity: z.number(),
+  reservedQuantity: z.number(),
+  unitCost: z.number(),
+});
+
 export const storeBinLocationSchema = z.object({
   id: z.string().uuid(),
   code: z.string(),
@@ -145,6 +153,7 @@ export const storePurchaseOrderSchema = z.object({
   poNumber: z.string(),
   supplierId: z.string().uuid().nullable(),
   supplierName: z.string().nullable(),
+  warehouseId: z.string().uuid().nullable(),
   status: storePoStatusSchema,
   totalAmount: z.number(),
   expectedDelivery: z.string().nullable(),
@@ -192,6 +201,8 @@ export const storeInventoryTransactionSchema = z.object({
   qty: z.number(),
   reference: z.string().nullable(),
   notes: z.string().nullable(),
+  warehouseId: z.string().uuid().nullable().optional(),
+  cookingUnitId: z.string().uuid().nullable().optional(),
   createdAt: z.string(),
 });
 
@@ -404,6 +415,7 @@ export const createStorePurchaseRequisitionSchema = z.object({
 export const createStorePurchaseOrderSchema = z.object({
   branchCode: z.string().min(1),
   supplierId: z.string().uuid(),
+  warehouseId: z.string().uuid(),
   requisitionId: z.string().uuid().optional(),
   expectedDelivery: z.string().optional(),
   items: z.array(
@@ -415,7 +427,7 @@ export const createStoreGrnSchema = z.object({
   branchCode: z.string().min(1),
   purchaseOrderId: z.string().uuid().optional(),
   supplierId: z.string().uuid().optional(),
-  warehouseId: z.string().uuid().optional(),
+  warehouseId: z.string().uuid(),
   invoiceNumber: z.string().optional(),
   items: z.array(
     z.object({
@@ -599,6 +611,7 @@ export type StoreUnit = z.infer<typeof storeUnitSchema>;
 export type StoreSupplier = z.infer<typeof storeSupplierSchema>;
 export type StoreCustomer = z.infer<typeof storeCustomerSchema>;
 export type StoreWarehouse = z.infer<typeof storeWarehouseSchema>;
+export type StoreWarehouseStock = z.infer<typeof storeWarehouseStockSchema>;
 export type StoreSale = z.infer<typeof storeSaleSchema>;
 export type StoreDashboard = z.infer<typeof storeDashboardSchema>;
 export type StorePurchaseOrder = z.infer<typeof storePurchaseOrderSchema>;

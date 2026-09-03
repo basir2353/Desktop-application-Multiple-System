@@ -31,6 +31,7 @@ import type {
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import {
   popsBranches,
+  popsIngredients,
   storeBrands,
   storeCashMovements,
   storeCategories,
@@ -58,6 +59,7 @@ import {
   storeSuppliers,
   storeUnits,
   storeWarehouses,
+  storeWarehouseStock,
   storeZones,
   type PlatformPgDb,
 } from "@platform/database-pg";
@@ -99,15 +101,17 @@ export class StoreService implements OnModuleInit {
     private readonly taxAuthority: TaxAuthorityService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    try {
-      await this.ensureStoreSchema();
-      await this.seedAllBranches();
-    } catch (err) {
-      this.logger.warn(
-        `Store bootstrap skipped — run pnpm db:push if schema changed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
+  onModuleInit(): void {
+    void (async () => {
+      try {
+        await this.ensureStoreSchema();
+        await this.seedAllBranches();
+      } catch (err) {
+        this.logger.warn(
+          `Store bootstrap skipped — run pnpm db:push if schema changed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    })();
   }
 
   /** Idempotent ALTERs so Railway DBs catch up without a full drizzle push. */
@@ -136,6 +140,20 @@ export class StoreService implements OnModuleInit {
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS lot_number text`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS manufacturing_date date`,
       `ALTER TABLE store_product_batches ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
+      `ALTER TABLE store_purchase_orders ADD COLUMN IF NOT EXISTS warehouse_id uuid`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS store_warehouses_org_branch_code_uidx ON store_warehouses(organization_id, branch_id, code)`,
+      `CREATE TABLE IF NOT EXISTS store_warehouse_stock (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        branch_id uuid NOT NULL REFERENCES pops_branches(id) ON DELETE CASCADE,
+        warehouse_id uuid NOT NULL REFERENCES store_warehouses(id) ON DELETE CASCADE,
+        product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+        quantity integer NOT NULL DEFAULT 0,
+        reserved_quantity integer NOT NULL DEFAULT 0,
+        unit_cost_pkr integer NOT NULL DEFAULT 0,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
       `CREATE TABLE IF NOT EXISTS store_product_serials (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
@@ -180,6 +198,129 @@ export class StoreService implements OnModuleInit {
       if (created) return created;
     }
     throw new NotFoundException(`Branch not found: ${code}`);
+  }
+
+  private async ensureRestaurantWarehouses(organizationId: string, branchId: string) {
+    const existing = await this.db
+      .select()
+      .from(storeWarehouses)
+      .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branchId)));
+
+    const ensure = async (code: string, name: string, isDefault: boolean) => {
+      const found = existing.find((w) => w.code === code || w.name.toLowerCase() === name.toLowerCase());
+      if (found) return found;
+      const [created] = await this.db
+        .insert(storeWarehouses)
+        .values({
+          organizationId,
+          branchId,
+          code,
+          name,
+          isDefault: isDefault ? "yes" : "no",
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        await this.db.insert(storeZones).values({ warehouseId: created.id, name: "Zone A" }).onConflictDoNothing();
+        return created;
+      }
+      const [raced] = await this.db
+        .select()
+        .from(storeWarehouses)
+        .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branchId), eq(storeWarehouses.code, code)))
+        .limit(1);
+      if (!raced) throw new BadRequestException(`Could not create warehouse ${name}`);
+      return raced;
+    };
+
+    const simpleStore = await ensure("SIMPLE-STORE", "Simple Store", true);
+    const kitchen = await ensure("KITCHEN", "Kitchen", false);
+    const products = await this.db
+      .select()
+      .from(storeProducts)
+      .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branchId)));
+    for (const product of products) {
+      const rows = await this.db
+        .select({ id: storeWarehouseStock.id })
+        .from(storeWarehouseStock)
+        .where(
+          and(
+            eq(storeWarehouseStock.organizationId, organizationId),
+            eq(storeWarehouseStock.branchId, branchId),
+            eq(storeWarehouseStock.productId, product.id),
+            eq(storeWarehouseStock.warehouseId, simpleStore.id),
+          ),
+        )
+        .limit(1);
+      if (rows.length === 0 && product.availableStock > 0) {
+        await this.db.insert(storeWarehouseStock).values({
+          organizationId,
+          branchId,
+          warehouseId: simpleStore.id,
+          productId: product.id,
+          quantity: product.availableStock,
+          unitCostPkr: product.purchasePricePkr,
+        });
+      }
+    }
+    return { simpleStore, kitchen };
+  }
+
+  private async ensureWarehouseStock(
+    organizationId: string,
+    branchId: string,
+    warehouseId: string,
+    productId: string,
+    initialQuantity = 0,
+    unitCostPkr = 0,
+  ) {
+    const [row] = await this.db
+      .select()
+      .from(storeWarehouseStock)
+      .where(
+        and(
+          eq(storeWarehouseStock.organizationId, organizationId),
+          eq(storeWarehouseStock.branchId, branchId),
+          eq(storeWarehouseStock.warehouseId, warehouseId),
+          eq(storeWarehouseStock.productId, productId),
+        ),
+      )
+      .limit(1);
+    if (row) return row;
+    const [created] = await this.db
+      .insert(storeWarehouseStock)
+      .values({
+        organizationId,
+        branchId,
+        warehouseId,
+        productId,
+        quantity: initialQuantity,
+        unitCostPkr,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (created) return created;
+    const [raced] = await this.db
+      .select()
+      .from(storeWarehouseStock)
+      .where(and(
+        eq(storeWarehouseStock.organizationId, organizationId),
+        eq(storeWarehouseStock.branchId, branchId),
+        eq(storeWarehouseStock.warehouseId, warehouseId),
+        eq(storeWarehouseStock.productId, productId),
+      ))
+      .limit(1);
+    if (!raced) throw new BadRequestException("Could not initialize warehouse stock");
+    return raced;
+  }
+
+  private async syncProductAggregate(productId: string): Promise<void> {
+    const rows = await this.db
+      .select({ quantity: storeWarehouseStock.quantity })
+      .from(storeWarehouseStock)
+      .where(eq(storeWarehouseStock.productId, productId));
+    const availableStock = rows.reduce((sum, row) => sum + row.quantity, 0);
+    await this.db.update(storeProducts).set({ availableStock }).where(eq(storeProducts.id, productId));
   }
 
   private nextSeq(branchId: string, prefix: string): string {
@@ -255,7 +396,10 @@ export class StoreService implements OnModuleInit {
       .from(storeProducts)
       .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branchId)))
       .limit(1);
-    if (existing) return;
+    if (existing) {
+      await this.ensureRestaurantWarehouses(organizationId, branchId);
+      return;
+    }
 
     const catMap = new Map<string, string>();
     const subMap = new Map<string, string>();
@@ -352,6 +496,8 @@ export class StoreService implements OnModuleInit {
         });
       }
     }
+
+    await this.ensureRestaurantWarehouses(organizationId, branchId);
   }
 
   async getDashboard(organizationId: string, branchCode: string) {
@@ -856,6 +1002,15 @@ export class StoreService implements OnModuleInit {
     }
 
     if (product && input.availableStock > 0) {
+      const { simpleStore } = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+      await this.ensureWarehouseStock(
+        organizationId,
+        branch.id,
+        simpleStore.id,
+        product.id,
+        input.availableStock,
+        input.purchasePrice,
+      );
       await this.db.insert(storeInventoryTransactions).values({
         organizationId,
         branchId: branch.id,
@@ -913,6 +1068,20 @@ export class StoreService implements OnModuleInit {
 
   async recordStockMovement(organizationId: string, input: StockMovement) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const { simpleStore } = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    const warehouseId = input.warehouseId ?? simpleStore.id;
+    const warehouse = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(
+        and(
+          eq(storeWarehouses.id, warehouseId),
+          eq(storeWarehouses.organizationId, organizationId),
+          eq(storeWarehouses.branchId, branch.id),
+        ),
+      )
+      .limit(1);
+    if (!warehouse[0]) throw new NotFoundException("Warehouse not found");
     const [product] = await this.db
       .select()
       .from(storeProducts)
@@ -920,14 +1089,23 @@ export class StoreService implements OnModuleInit {
       .limit(1);
     if (!product) throw new NotFoundException("Product not found");
 
+    const stock = await this.ensureWarehouseStock(
+      organizationId,
+      branch.id,
+      warehouseId,
+      product.id,
+      0,
+      product.purchasePricePkr,
+    );
     const delta = input.type === "stock_out" ? -input.qty : input.qty;
-    const newStock = product.availableStock + delta;
-    if (newStock < 0) throw new BadRequestException("Insufficient stock");
+    const newWarehouseStock = stock.quantity + delta;
+    if (newWarehouseStock < 0) throw new BadRequestException("Insufficient warehouse stock");
 
     await this.db
-      .update(storeProducts)
-      .set({ availableStock: newStock })
-      .where(eq(storeProducts.id, input.productId));
+      .update(storeWarehouseStock)
+      .set({ quantity: newWarehouseStock, updatedAt: new Date() })
+      .where(eq(storeWarehouseStock.id, stock.id));
+    await this.syncProductAggregate(product.id);
 
     if (input.batchNumber && input.type === "stock_in") {
       await this.db.insert(storeProductBatches).values({
@@ -935,7 +1113,7 @@ export class StoreService implements OnModuleInit {
         batchNumber: input.batchNumber,
         expiryDate: input.expiryDate ?? null,
         quantity: input.qty,
-        warehouseId: input.warehouseId ?? null,
+        warehouseId,
       });
     }
 
@@ -946,7 +1124,7 @@ export class StoreService implements OnModuleInit {
       type: input.type,
       qty: input.qty,
       notes: input.notes ?? null,
-      warehouseId: input.warehouseId ?? null,
+      warehouseId,
     });
 
     const [updated] = await this.db.select().from(storeProducts).where(eq(storeProducts.id, input.productId)).limit(1);
@@ -1103,12 +1281,17 @@ export class StoreService implements OnModuleInit {
   async listWarehouses(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(organizationId, branch.id);
+    await this.ensureRestaurantWarehouses(organizationId, branch.id);
     const warehouses = await this.db
       .select()
       .from(storeWarehouses)
       .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branch.id)));
 
     const zones = await this.db.select().from(storeZones);
+    const stockRows = await this.db
+      .select()
+      .from(storeWarehouseStock)
+      .where(and(eq(storeWarehouseStock.organizationId, organizationId), eq(storeWarehouseStock.branchId, branch.id)));
     const products = await this.db
       .select()
       .from(storeProducts)
@@ -1122,7 +1305,9 @@ export class StoreService implements OnModuleInit {
       address: w.address,
       isDefault: w.isDefault === "yes",
       zoneCount: zones.filter((z) => z.warehouseId === w.id).length,
-      totalStock: w.isDefault === "yes" ? totalStock : 0,
+      totalStock: stockRows.length > 0
+        ? stockRows.filter((row) => row.warehouseId === w.id).reduce((sum, row) => sum + row.quantity, 0)
+        : w.isDefault === "yes" ? totalStock : 0,
     }));
   }
 
@@ -1211,6 +1396,7 @@ export class StoreService implements OnModuleInit {
         poNumber: o.poNumber,
         supplierId: o.supplierId,
         supplierName: supplier?.name ?? null,
+        warehouseId: o.warehouseId,
         status: o.status as "Draft" | "Pending Approval" | "Approved" | "Partially Received" | "Received" | "Cancelled",
         totalAmount: o.totalPkr,
         expectedDelivery: o.expectedDelivery ? String(o.expectedDelivery) : null,
@@ -1249,6 +1435,7 @@ export class StoreService implements OnModuleInit {
       poNumber: order.poNumber,
       supplierId: order.supplierId,
       supplierName: supplier?.name ?? null,
+      warehouseId: order.warehouseId,
       status: order.status as "Draft" | "Pending Approval" | "Approved" | "Partially Received" | "Received" | "Cancelled",
       totalAmount: order.totalPkr,
       expectedDelivery: order.expectedDelivery ? String(order.expectedDelivery) : null,
@@ -1274,6 +1461,20 @@ export class StoreService implements OnModuleInit {
 
   async createPurchaseOrder(organizationId: string, input: CreateStorePurchaseOrder) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    const warehouseId = input.warehouseId;
+    const [warehouse] = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(
+        and(
+          eq(storeWarehouses.id, warehouseId),
+          eq(storeWarehouses.organizationId, organizationId),
+          eq(storeWarehouses.branchId, branch.id),
+        ),
+      )
+      .limit(1);
+    if (!warehouse) throw new NotFoundException("Warehouse not found");
     const poNumber = this.nextSeq(branch.id, "PO");
     const totalPkr = input.items.reduce((sum, i) => sum + i.qty * i.unitPrice, 0);
 
@@ -1285,6 +1486,7 @@ export class StoreService implements OnModuleInit {
         poNumber,
         supplierId: input.supplierId,
         requisitionId: input.requisitionId ?? null,
+        warehouseId,
         status: "Pending Approval",
         totalPkr,
         expectedDelivery: input.expectedDelivery ?? null,
@@ -1354,6 +1556,32 @@ export class StoreService implements OnModuleInit {
 
   async createGrn(organizationId: string, input: CreateStoreGrn) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    let warehouseId = input.warehouseId;
+    if (input.purchaseOrderId) {
+      const [purchaseOrder] = await this.db
+        .select({ warehouseId: storePurchaseOrders.warehouseId })
+        .from(storePurchaseOrders)
+        .where(
+          and(
+            eq(storePurchaseOrders.id, input.purchaseOrderId),
+            eq(storePurchaseOrders.organizationId, organizationId),
+            eq(storePurchaseOrders.branchId, branch.id),
+          ),
+        )
+        .limit(1);
+      if (purchaseOrder?.warehouseId) warehouseId = purchaseOrder.warehouseId;
+    }
+    const [warehouse] = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(and(
+        eq(storeWarehouses.id, warehouseId),
+        eq(storeWarehouses.organizationId, organizationId),
+        eq(storeWarehouses.branchId, branch.id),
+      ))
+      .limit(1);
+    if (!warehouse) throw new NotFoundException("Receipt warehouse not found");
     const grnNumber = this.nextSeq(branch.id, "GRN");
     const totalPkr = input.items.reduce((sum, i) => sum + i.qty * i.unitPrice, 0);
 
@@ -1365,7 +1593,7 @@ export class StoreService implements OnModuleInit {
         grnNumber,
         purchaseOrderId: input.purchaseOrderId ?? null,
         supplierId: input.supplierId ?? null,
-        warehouseId: input.warehouseId ?? null,
+        warehouseId,
         totalPkr,
         invoiceNumber: input.invoiceNumber ?? null,
         status: "Received",
@@ -1384,10 +1612,26 @@ export class StoreService implements OnModuleInit {
 
       const [product] = await this.db.select().from(storeProducts).where(eq(storeProducts.id, item.productId)).limit(1);
       if (product) {
+        const warehouseStock = await this.ensureWarehouseStock(
+          organizationId,
+          branch.id,
+          warehouseId,
+          item.productId,
+          0,
+          item.unitPrice,
+        );
         await this.db
           .update(storeProducts)
           .set({ availableStock: product.availableStock + item.qty, purchasePricePkr: item.unitPrice })
           .where(eq(storeProducts.id, item.productId));
+        await this.db
+          .update(storeWarehouseStock)
+          .set({
+            quantity: warehouseStock.quantity + item.qty,
+            unitCostPkr: item.unitPrice,
+            updatedAt: new Date(),
+          })
+          .where(eq(storeWarehouseStock.id, warehouseStock.id));
 
         if (item.batchNumber) {
           await this.db.insert(storeProductBatches).values({
@@ -1395,7 +1639,7 @@ export class StoreService implements OnModuleInit {
             batchNumber: item.batchNumber,
             expiryDate: item.expiryDate ?? null,
             quantity: item.qty,
-            warehouseId: input.warehouseId ?? null,
+            warehouseId,
           });
         }
 
@@ -1406,7 +1650,7 @@ export class StoreService implements OnModuleInit {
           type: "grn_received",
           qty: item.qty,
           reference: grnNumber,
-          warehouseId: input.warehouseId ?? null,
+          warehouseId,
         });
       }
 
@@ -1475,38 +1719,108 @@ export class StoreService implements OnModuleInit {
 
   async createStockTransfer(organizationId: string, input: CreateStoreStockTransfer) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
-    const transferNumber = this.nextSeq(branch.id, "TRF");
-    const [transfer] = await this.db
-      .insert(storeStockTransfers)
-      .values({
-        organizationId,
-        branchId: branch.id,
-        transferNumber,
-        fromWarehouseId: input.fromWarehouseId,
-        toWarehouseId: input.toWarehouseId,
-        status: "Pending",
-      })
-      .returning();
-
+    await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    if (input.fromWarehouseId === input.toWarehouseId) {
+      throw new BadRequestException("Source and destination warehouses must be different");
+    }
+    const warehouses = await this.db
+      .select()
+      .from(storeWarehouses)
+      .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branch.id)));
+    if (!warehouses.some((w) => w.id === input.fromWarehouseId) || !warehouses.some((w) => w.id === input.toWarehouseId)) {
+      throw new NotFoundException("Source or destination warehouse not found");
+    }
     for (const item of input.items) {
-      await this.db.insert(storeStockTransferItems).values({ transferId: transfer!.id, productId: item.productId, qty: item.qty });
-      const [product] = await this.db.select().from(storeProducts).where(eq(storeProducts.id, item.productId)).limit(1);
-      if (product) {
-        await this.db
-          .update(storeProducts)
-          .set({ availableStock: product.availableStock - item.qty, inTransitStock: product.inTransitStock + item.qty })
-          .where(eq(storeProducts.id, item.productId));
+      const [product] = await this.db
+        .select()
+        .from(storeProducts)
+        .where(and(eq(storeProducts.id, item.productId), eq(storeProducts.organizationId, organizationId)))
+        .limit(1);
+      if (!product) throw new NotFoundException(`Product not found: ${item.productId}`);
+      const source = await this.ensureWarehouseStock(
+        organizationId,
+        branch.id,
+        input.fromWarehouseId,
+        item.productId,
+        0,
+        product.purchasePricePkr,
+      );
+      if (source.quantity < item.qty) {
+        throw new BadRequestException(`Insufficient stock in ${warehouses.find((w) => w.id === input.fromWarehouseId)?.name ?? "source warehouse"} for ${product.name}`);
       }
+    }
+    const transferNumber = this.nextSeq(branch.id, "TRF");
+    const transfer = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(storeStockTransfers)
+        .values({
+          organizationId,
+          branchId: branch.id,
+          transferNumber,
+          fromWarehouseId: input.fromWarehouseId,
+          toWarehouseId: input.toWarehouseId,
+          status: "Pending",
+        })
+        .returning();
+      if (!created) throw new BadRequestException("Failed to create stock transfer");
+
+      for (const item of input.items) {
+        await tx.insert(storeStockTransferItems).values({ transferId: created.id, productId: item.productId, qty: item.qty });
+        const [product] = await tx.select().from(storeProducts).where(eq(storeProducts.id, item.productId)).limit(1);
+        if (!product) throw new NotFoundException(`Product not found: ${item.productId}`);
+        const [source] = await tx
+          .select()
+          .from(storeWarehouseStock)
+          .where(and(
+            eq(storeWarehouseStock.warehouseId, input.fromWarehouseId),
+            eq(storeWarehouseStock.productId, item.productId),
+          ))
+          .limit(1);
+        if (!source || source.quantity < item.qty) {
+          throw new BadRequestException(`Insufficient stock in ${warehouses.find((w) => w.id === input.fromWarehouseId)?.name ?? "source warehouse"} for ${product.name}`);
+        }
+        const [updatedSource] = await tx
+          .update(storeWarehouseStock)
+          .set({ quantity: sql`${storeWarehouseStock.quantity} - ${item.qty}`, updatedAt: new Date() })
+          .where(and(eq(storeWarehouseStock.id, source.id), gte(storeWarehouseStock.quantity, item.qty)))
+          .returning({ id: storeWarehouseStock.id });
+        if (!updatedSource) {
+          throw new BadRequestException(`Insufficient stock in ${warehouses.find((w) => w.id === input.fromWarehouseId)?.name ?? "source warehouse"} for ${product.name}`);
+        }
+        await tx
+          .update(storeProducts)
+          .set({ inTransitStock: sql`${storeProducts.inTransitStock} + ${item.qty}` })
+          .where(eq(storeProducts.id, item.productId));
+        await tx.insert(storeInventoryTransactions).values({
+          organizationId,
+          branchId: branch.id,
+          productId: item.productId,
+          type: "transfer_out",
+          qty: item.qty,
+          reference: transferNumber,
+          warehouseId: input.fromWarehouseId,
+        });
+        if (warehouses.find((w) => w.id === input.fromWarehouseId)?.code === "KITCHEN") {
+          await tx
+            .update(popsIngredients)
+            .set({ currentStock: sql`GREATEST(0, ${popsIngredients.currentStock} - ${item.qty})` })
+            .where(and(eq(popsIngredients.branchId, branch.id), eq(popsIngredients.storeProductId, item.productId)));
+        }
+      }
+      return created;
+    });
+    for (const item of input.items) {
+      await this.syncProductAggregate(item.productId);
     }
 
     return {
-      id: transfer!.id,
-      transferNumber: transfer!.transferNumber,
-      fromWarehouseName: null,
-      toWarehouseName: null,
-      status: transfer!.status,
+      id: transfer.id,
+      transferNumber: transfer.transferNumber,
+      fromWarehouseName: warehouses.find((w) => w.id === input.fromWarehouseId)?.name ?? null,
+      toWarehouseName: warehouses.find((w) => w.id === input.toWarehouseId)?.name ?? null,
+      status: transfer.status,
       itemCount: input.items.length,
-      createdAt: transfer!.createdAt.toISOString(),
+      createdAt: transfer.createdAt.toISOString(),
     };
   }
 
@@ -1517,27 +1831,63 @@ export class StoreService implements OnModuleInit {
       .where(and(eq(storeStockTransfers.id, transferId), eq(storeStockTransfers.organizationId, organizationId)))
       .limit(1);
     if (!transfer) throw new NotFoundException("Transfer not found");
+    if (transfer.status === "Completed") return { ok: true };
 
     const items = await this.db.select().from(storeStockTransferItems).where(eq(storeStockTransferItems.transferId, transferId));
-    for (const item of items) {
-      const [product] = await this.db.select().from(storeProducts).where(eq(storeProducts.id, item.productId)).limit(1);
-      if (product) {
-        await this.db
-          .update(storeProducts)
-          .set({ inTransitStock: Math.max(0, product.inTransitStock - item.qty) })
+    const [destinationWarehouse] = await this.db
+      .select({ code: storeWarehouses.code })
+      .from(storeWarehouses)
+      .where(eq(storeWarehouses.id, transfer.toWarehouseId!))
+      .limit(1);
+    await this.db.transaction(async (tx) => {
+      for (const item of items) {
+        const [product] = await tx.select().from(storeProducts).where(eq(storeProducts.id, item.productId)).limit(1);
+        if (!product) throw new NotFoundException(`Product not found: ${item.productId}`);
+        const [destination] = await tx
+          .select()
+          .from(storeWarehouseStock)
+          .where(and(
+            eq(storeWarehouseStock.warehouseId, transfer.toWarehouseId!),
+            eq(storeWarehouseStock.productId, item.productId),
+          ))
+          .limit(1);
+        if (destination) {
+          await tx.update(storeWarehouseStock)
+            .set({ quantity: sql`${storeWarehouseStock.quantity} + ${item.qty}`, updatedAt: new Date() })
+            .where(eq(storeWarehouseStock.id, destination.id));
+        } else {
+          await tx.insert(storeWarehouseStock).values({
+            organizationId,
+            branchId: transfer.branchId,
+            warehouseId: transfer.toWarehouseId!,
+            productId: item.productId,
+            quantity: item.qty,
+            unitCostPkr: product.purchasePricePkr,
+          });
+        }
+        await tx.update(storeProducts)
+          .set({ inTransitStock: sql`GREATEST(0, ${storeProducts.inTransitStock} - ${item.qty})` })
           .where(eq(storeProducts.id, item.productId));
+        if (destinationWarehouse?.code === "KITCHEN") {
+          await tx.update(popsIngredients)
+            .set({ currentStock: sql`${popsIngredients.currentStock} + ${item.qty}` })
+            .where(and(eq(popsIngredients.branchId, transfer.branchId), eq(popsIngredients.storeProductId, item.productId)));
+        }
+        await tx.insert(storeInventoryTransactions).values({
+          organizationId,
+          branchId: transfer.branchId,
+          productId: item.productId,
+          type: "transfer_complete",
+          qty: item.qty,
+          reference: transfer.transferNumber,
+          warehouseId: transfer.toWarehouseId,
+        });
       }
-      await this.db.insert(storeInventoryTransactions).values({
-        organizationId,
-        branchId: transfer.branchId,
-        productId: item.productId,
-        type: "transfer_complete",
-        qty: item.qty,
-        reference: transfer.transferNumber,
-      });
+      await tx.update(storeStockTransfers).set({ status: "Completed" }).where(eq(storeStockTransfers.id, transferId));
+    });
+    for (const item of items) {
+      await this.syncProductAggregate(item.productId);
     }
-
-    await this.db.update(storeStockTransfers).set({ status: "Completed" }).where(eq(storeStockTransfers.id, transferId));
     return { ok: true };
   }
 

@@ -2,6 +2,7 @@ import { boolean, date, integer, pgTable, text, timestamp, uuid } from "drizzle-
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
 import { popsMenuItems } from "./menu";
+import { storeProducts, storeWarehouses } from "./store";
 
 export const popsInventoryCategories = pgTable("pops_inventory_categories", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -25,6 +26,8 @@ export const popsIngredients = pgTable("pops_ingredients", {
     .notNull()
     .references(() => popsBranches.id, { onDelete: "cascade" }),
   categoryId: uuid("category_id").references(() => popsInventoryCategories.id, { onDelete: "set null" }),
+  /** Optional shared-catalog link used when Store stock feeds Kitchen recipes. */
+  storeProductId: uuid("store_product_id").references(() => storeProducts.id, { onDelete: "set null" }),
   sku: text("sku").notNull(),
   name: text("name").notNull(),
   unit: text("unit").notNull(),
@@ -67,6 +70,7 @@ export const popsPurchaseOrders = pgTable("pops_purchase_orders", {
   supplierId: uuid("supplier_id")
     .notNull()
     .references(() => popsSuppliers.id, { onDelete: "restrict" }),
+  warehouseId: uuid("warehouse_id").references(() => storeWarehouses.id, { onDelete: "set null" }),
   status: text("status").notNull().default("Draft"),
   totalAmountPkr: integer("total_amount_pkr").notNull().default(0),
   expectedDate: date("expected_date"),
@@ -101,6 +105,7 @@ export const popsGoodsReceipts = pgTable("pops_goods_receipts", {
   supplierId: uuid("supplier_id")
     .notNull()
     .references(() => popsSuppliers.id, { onDelete: "restrict" }),
+  warehouseId: uuid("warehouse_id").references(() => storeWarehouses.id, { onDelete: "set null" }),
   purchaseOrderId: uuid("purchase_order_id").references(() => popsPurchaseOrders.id, {
     onDelete: "set null",
   }),

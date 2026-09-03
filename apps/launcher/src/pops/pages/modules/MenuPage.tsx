@@ -21,6 +21,7 @@ import {
   updateMenuItem,
   uploadMenuImage,
 } from "../../api/menu";
+import { fetchInventoryCookingUnits } from "../../api/inventory";
 import { accentValueClass, amberPillActiveClass, linkActionClass, linkDangerClass, linkWarningClass, mutedClass, noticeSuccessClass, pillInactiveClass } from "../../lib/themeClasses";
 import { Badge } from "../../ui/Badge";
 import { MenuImagePicker, MenuImageThumb } from "../../ui/MenuImagePicker";
@@ -600,6 +601,7 @@ export function MenuPage(): JSX.Element {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryImage, setNewCategoryImage] = useState<File | null>(null);
+  const [newCategoryCookingUnitId, setNewCategoryCookingUnitId] = useState("");
   const [itemForm, setItemForm] = useState<ItemFormState>({
     name: "",
     secondaryName: "",
@@ -668,6 +670,11 @@ export function MenuPage(): JSX.Element {
     queryKey: ["menu", "admin", branch?.code],
     enabled: Boolean(branch?.code && canCreate),
     queryFn: () => fetchBranchMenuAdmin(branch!.code),
+  });
+  const cookingUnitsQuery = useQuery({
+    queryKey: ["inventory", "cooking-units", branch?.code],
+    enabled: Boolean(branch?.code && (canCreate || canEdit)),
+    queryFn: () => fetchInventoryCookingUnits(branch!.code),
   });
 
   const categories = menuQuery.data?.categories ?? [];
@@ -801,12 +808,14 @@ export function MenuPage(): JSX.Element {
         name,
         sortOrder: categories.length,
         imageUrl,
+        cookingUnitId: newCategoryCookingUnitId || null,
       });
     },
     onSuccess: (cat) => {
       invalidate();
       setNewCategoryName("");
       setNewCategoryImage(null);
+      setNewCategoryCookingUnitId("");
       setSelectedCategoryId(cat.id);
       setError(null);
     },
@@ -1157,6 +1166,25 @@ export function MenuPage(): JSX.Element {
                 onClear={() => setNewCategoryImage(null)}
                 disabled={createCategoryMutation.isPending}
               />
+              <label className="block">
+                <span className="text-xs font-medium text-slate-400">Kitchen section</span>
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                  value={newCategoryCookingUnitId}
+                  onChange={(event) => setNewCategoryCookingUnitId(event.target.value)}
+                  disabled={createCategoryMutation.isPending}
+                >
+                  <option value="">Kitchen / Unassigned</option>
+                  {(cookingUnitsQuery.data?.units ?? []).map((unit) => (
+                    <option key={unit.id} value={unit.id} disabled={!unit.isActive}>
+                      {unit.name}{unit.isActive ? "" : " (inactive)"}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-[10px] text-slate-500">
+                  Links this menu category to a kitchen section for stock and recipe deduction.
+                </span>
+              </label>
             </form>
             <ul className="mt-3 space-y-1">
               {categories.map((cat) => (
@@ -1171,7 +1199,12 @@ export function MenuPage(): JSX.Element {
                     }`}
                   >
                     <MenuImageThumb imageUrl={cat.imageUrl} alt={cat.name} />
-                    <span className="min-w-0 flex-1 truncate">{cat.name}</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="block">{cat.name}</span>
+                      <span className="block text-[10px] text-slate-500">
+                        {cookingUnitsQuery.data?.units.find((unit) => unit.id === cat.cookingUnitId)?.name ?? "Kitchen / Unassigned"}
+                      </span>
+                    </span>
                     {!cat.isActive ? <Badge tone="neutral">Off</Badge> : null}
                   </button>
                 </li>
@@ -1202,6 +1235,33 @@ export function MenuPage(): JSX.Element {
             ) : null}
             {selectedCategory && canEdit ? (
               <div className="mt-4 space-y-3 border-t border-slate-800 pt-3">
+                <label className="block">
+                  <span className="text-xs font-medium text-slate-400">Kitchen section</span>
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    value={selectedCategory.cookingUnitId ?? ""}
+                    onChange={(event) => {
+                      void updateMenuCategory(selectedCategory.id, {
+                        cookingUnitId: event.target.value || null,
+                      })
+                        .then(() => {
+                          invalidate();
+                          setError(null);
+                        })
+                        .catch((err: Error) => setError(err.message));
+                    }}
+                  >
+                    <option value="">Kitchen / Unassigned</option>
+                    {(cookingUnitsQuery.data?.units ?? []).map((unit) => (
+                      <option key={unit.id} value={unit.id} disabled={!unit.isActive}>
+                        {unit.name}{unit.isActive ? "" : " (inactive)"}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-[10px] text-slate-500">
+                    Recipe deductions and unit-wise sales use this category mapping.
+                  </span>
+                </label>
                 <MenuImagePicker
                   label="Category photo"
                   value={selectedCategory.imageUrl}

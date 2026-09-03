@@ -29,7 +29,7 @@ import {
 import {
   printIssuedPraSlip,
 } from "../../lib/praIssueFlow";
-import { fetchCustomerInvoices, fetchOpenCashSession } from "../../api/accounting";
+import { fetchCustomerInvoices, fetchOpenCashSession, fetchTaxSettings } from "../../api/accounting";
 import { fetchClosingStatus } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
 import { createKitchenTicket, fetchKitchenTickets, isKitchenTicketMissingError, updateKitchenTicket } from "../../api/kitchen";
@@ -59,6 +59,7 @@ import {
 } from "../../lib/posOrderMode";
 import {
   buildCartLine,
+  cartLineKey,
   cartLinePrintLabel,
   cartLineGross,
   canEditLineDiscount,
@@ -86,6 +87,7 @@ import {
 import {
   formatSessionPrintName,
   printKotDetailed,
+  printReceiptDetailed,
   resolveSessionPrintName,
   withPrinterProfile,
   type PrintTicketInput,
@@ -98,7 +100,7 @@ import {
 } from "../../lib/branchPrintClient";
 import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
-import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
+import { loadWhatsAppShareSettings, shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { resolveMenuImageUrl } from "../../lib/menuImageUrl";
 import { buildPosRecentOrders, canChangePosRecentOrderTable, canPayPosRecentOrder, type PosRecentOrder } from "../../lib/recentOrders";
 import {
@@ -153,7 +155,10 @@ import {
 import {
   effectiveServicePctForMode,
   effectiveTaxPctForMode,
+  autoPrintOrderForMode,
   loadPosSettings,
+  posSettingsFromTaxApi,
+  savePosSettings,
   POS_SETTINGS_CHANGED_EVENT,
   type PosSettings,
 } from "../../lib/posSettings";
@@ -225,11 +230,11 @@ const POS_MODE_BTN = (active: boolean) =>
 /** Ticket cart: 3 cols × 2 rows (6 items) visible; scroll when more. */
 const POS_CART_COLS = 3;
 const POS_CART_VISIBLE_ROWS = 2;
-const POS_CART_CARD_ROW_PX = 112;
-const POS_CART_LIST_ROW_PX = 52;
+const POS_CART_CARD_ROW_PX = 92;
+const POS_CART_LIST_ROW_PX = 44;
 const POS_CART_GRID_GAP_PX = 8;
 const POS_CART_VISIBLE_COUNT = POS_CART_COLS * POS_CART_VISIBLE_ROWS;
-const POS_CART_LIST_VISIBLE_COUNT = 5;
+const POS_CART_LIST_VISIBLE_COUNT = 6;
 const POS_CART_LIST_MAX_PX =
   POS_CART_CARD_ROW_PX * POS_CART_VISIBLE_ROWS + POS_CART_GRID_GAP_PX * (POS_CART_VISIBLE_ROWS - 1);
 
@@ -392,6 +397,7 @@ export function PosPage(): JSX.Element {
   /** After Close → Pay succeeds, open Closed + PRA for this bill id. */
   const [closeAfterPayBillId, setCloseAfterPayBillId] = useState<string | null>(null);
   const pendingCloseAfterPayRef = useRef(false);
+  const autoPrintedOrderKeysRef = useRef<Set<string>>(new Set());
   const latestOrdersQuickPrintRef = useRef<(() => boolean) | null>(null);
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
@@ -411,6 +417,13 @@ export function PosPage(): JSX.Element {
     queryFn: () => fetchBranchMenu(branch!.code),
   });
 
+  const cloudPosSettingsQuery = useQuery({
+    queryKey: ["accounting", "tax", "pos-charges", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchTaxSettings(branch!.code),
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
     setPosSettings(loadPosSettings(branch?.code));
     setHappyHourSettings(loadHappyHourSettings(branch?.code));
@@ -418,6 +431,24 @@ export function PosPage(): JSX.Element {
     const settings = loadPosSettings(branch?.code);
     setMenuView(settings.menuViewMode === "all" ? "all" : "category");
   }, [branch?.code]);
+
+  useEffect(() => {
+    if (!branch?.code || !cloudPosSettingsQuery.data?.posCharges) return;
+    const local = loadPosSettings(branch.code);
+    const synced = posSettingsFromTaxApi(cloudPosSettingsQuery.data, {
+      showBillNotes: local.showBillNotes,
+      fullScreenMenuEnabled: local.fullScreenMenuEnabled,
+      menuViewMode: local.menuViewMode,
+      autoPrintOrderDineIn: local.autoPrintOrderDineIn,
+      autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
+      autoPrintOrderDelivery: local.autoPrintOrderDelivery,
+      autoPrintFinalDineIn: local.autoPrintFinalDineIn,
+      autoPrintFinalTakeaway: local.autoPrintFinalTakeaway,
+      autoPrintFinalDelivery: local.autoPrintFinalDelivery,
+    });
+    savePosSettings(branch.code, synced);
+    setPosSettings(synced);
+  }, [branch?.code, cloudPosSettingsQuery.data]);
 
   useEffect(() => {
     function onOrderModeVisibilityChanged(event: Event): void {
@@ -1062,6 +1093,20 @@ export function PosPage(): JSX.Element {
     beginAddToCart(item, pickDefaultVariant(item));
   }
 
+  function decrementItemFromCart(item: ApiMenuItem): void {
+    const lines = cart.filter((line) => line.item.id === item.id && !line.isComplimentary);
+    if (lines.length === 0) return;
+    const defaultVariant = pickDefaultVariant(item);
+    const preferredKey = cartLineKey(item.id, defaultVariant?.id);
+    const preferred =
+      lines.find((line) => line.key === preferredKey) ??
+      lines.find((line) => line.key.startsWith(`${preferredKey}::`)) ??
+      sortCartLinesNewestFirst(lines)[0];
+    if (!preferred) return;
+    setSelectedCartKey(preferred.key);
+    setQty(preferred.key, preferred.qty - 1);
+  }
+
   function setLineDiscount(
     lineKey: string,
     mode: LineDiscountMode,
@@ -1172,6 +1217,7 @@ export function PosPage(): JSX.Element {
   const happyHourLive = isHappyHourActive(happyHourSettings);
 
   const subtotal = effectiveCart.reduce((s, l) => s + cartLineNet(l), 0);
+  const totalQty = effectiveCart.reduce((s, l) => s + l.qty, 0);
 
   const itemEligibility = useMemo(() => {
     const discountableSubtotal = effectiveCart.reduce((s, l) => {
@@ -1790,6 +1836,20 @@ export function PosPage(): JSX.Element {
       const printed = await printKitchenKotsOnPay(ticket.orderRef ?? orderRef);
       const kotOk = printed.errors.length === 0;
       const printErrors = printed.errors;
+      if (!wasTicketEdit && autoPrintOrderForMode(posSettings, mode)) {
+        const printKey = `${ticket.id}:order-receipt`;
+        if (!autoPrintedOrderKeysRef.current.has(printKey)) {
+          autoPrintedOrderKeysRef.current.add(printKey);
+          const printUserId = resolvePrintUserId(useSessionStore.getState().claims?.sub, shiftWaiterId || null);
+          const profile = resolveReceiptPrinter(branch?.code, printUserId);
+          const invoiceResult = await printReceiptDetailed({
+            ...withPrinterProfile(buildPrintPayload(), profile),
+          });
+          if (!invoiceResult.ok) {
+            printErrors.push(`Invoice: ${invoiceResult.error ?? "print failed"}`);
+          }
+        }
+      }
       if (!wasTicketEdit) {
         await persistStaffFoodRecord();
       }
@@ -2036,7 +2096,12 @@ export function PosPage(): JSX.Element {
         });
         const phone = phoneFromBillNotes(bill.notes);
         if (phone || mode === "delivery") {
-          shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
+          shareBillViaWhatsApp(
+            bill,
+            branch?.name ?? "POPS",
+            phone,
+            loadWhatsAppShareSettings(branch?.code),
+          );
         }
         return;
       }
@@ -2049,7 +2114,12 @@ export function PosPage(): JSX.Element {
       });
       const phone = phoneFromBillNotes(bill.notes);
       if (phone || mode === "delivery") {
-        shareBillViaWhatsApp(bill, branch?.name ?? "POPS", phone);
+        shareBillViaWhatsApp(
+          bill,
+          branch?.name ?? "POPS",
+          phone,
+          loadWhatsAppShareSettings(branch?.code),
+        );
       }
     },
     onError: (err: Error) => {
@@ -2523,7 +2593,7 @@ export function PosPage(): JSX.Element {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-4.25rem)] flex-col gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-2">
       {terminalBlocked ? (
         <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
           This terminal is not authorized for POS access. Ask an admin to authorize it under Settings →
@@ -2734,6 +2804,9 @@ export function PosPage(): JSX.Element {
         <PosFullScreenMenuOverlay
           categories={categories}
           items={menuItems}
+          cartLines={effectiveCart}
+          totalQty={totalQty}
+          total={total}
           initialViewMode={posSettings.menuViewMode}
           priceLabel={(item) => {
             const original = menuItemDisplayPrice(item);
@@ -2745,9 +2818,11 @@ export function PosPage(): JSX.Element {
             }
             return { display: original };
           }}
-          onPickItem={(item) => {
+          onAddItem={(item) => {
             onDishClick(item);
           }}
+          onDecrementItem={decrementItemFromCart}
+          onDone={() => setFullScreenMenuOpen(false)}
           onClose={() => setFullScreenMenuOpen(false)}
         />
       ) : null}
@@ -2795,9 +2870,9 @@ export function PosPage(): JSX.Element {
       ) : null}
 
       {/* Main POS grid — UI zoom is applied globally from the top nav */}
-      <div className="grid flex-1 grid-cols-12 gap-3 lg:items-start">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-3 lg:grid-rows-1 lg:items-stretch">
         {/* Menu column */}
-        <div className="col-span-12 flex min-h-0 flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
+        <div className="flex min-h-0 min-w-0 flex-col">
           {/* Category pills — list or icon tiles */}
           {categories.length > 0 ? (
             <div className="mb-2.5 shrink-0 rounded-xl bg-amber-50 p-2 ring-1 ring-amber-200/80 dark:bg-slate-900/80 dark:ring-amber-500/20">
@@ -2883,7 +2958,7 @@ export function PosPage(): JSX.Element {
                       setMenuView("all");
                       setCategoryId(null);
                     }}
-                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold transition ${
+                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-xs font-semibold transition ${
                       showAllItems
                         ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
                         : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
@@ -2895,7 +2970,7 @@ export function PosPage(): JSX.Element {
                   <button
                     type="button"
                     onClick={() => setMenuView("featured")}
-                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold transition ${
+                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-xs font-semibold transition ${
                       showFeaturedOnly
                         ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
                         : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
@@ -2923,7 +2998,7 @@ export function PosPage(): JSX.Element {
                           setMenuView("category");
                           setCategoryId(c.id);
                         }}
-                        className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold transition ${
+                        className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-xs font-semibold transition ${
                           active
                             ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
                             : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
@@ -2936,7 +3011,7 @@ export function PosPage(): JSX.Element {
                   })}
                 </div>
               ) : (
-                <div className="grid max-h-44 grid-cols-4 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-5">
+                <div className="grid max-h-44 grid-cols-3 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-4">
                   <button
                     type="button"
                     onClick={() => {
@@ -2950,7 +3025,7 @@ export function PosPage(): JSX.Element {
                     }`}
                   >
                     <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-bold ${
+                      className={`flex h-11 w-11 items-center justify-center rounded-md text-sm font-bold ${
                         showAllItems ? "bg-slate-950/15" : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
                       }`}
                     >
@@ -3062,7 +3137,7 @@ export function PosPage(): JSX.Element {
                     : "No items in this category."}
               </p>
             ) : (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4">
                 {filteredMenu.map((item) => {
                   const img = resolveMenuImageUrl(item.imageUrl);
                   const variants = resolvePosSellableVariants(item);
@@ -3079,22 +3154,22 @@ export function PosPage(): JSX.Element {
                       key={item.id}
                       type="button"
                       onClick={() => onDishClick(item)}
-                      className="flex flex-col rounded-md border border-slate-800/80 bg-slate-900/40 p-1.5 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
+                      className="flex flex-col rounded-lg border border-slate-800/80 bg-slate-900/40 p-2 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
                     >
                       {img ? (
                         <img
                           src={img}
                           alt=""
-                          className="mb-0.5 h-9 w-full rounded-sm object-cover"
+                          className="mb-1 h-14 w-full rounded-md object-cover"
                         />
                       ) : (
-                        <div className="mb-0.5 flex h-9 items-center justify-center rounded-sm bg-slate-950/60 text-[8px] text-slate-600">
+                        <div className="mb-1 flex h-14 items-center justify-center rounded-md bg-slate-950/60 text-[10px] text-slate-600">
                           {isSearching || showFeaturedOnly || showAllItems
                             ? categoryById.get(item.categoryId)
                             : "—"}
                         </div>
                       )}
-                      <span className="line-clamp-2 text-[10px] font-medium leading-tight text-slate-100">
+                      <span className="line-clamp-2 text-xs font-medium leading-snug text-slate-100">
                         {item.featured ? (
                           <span className="mr-0.5 text-amber-700 dark:text-amber-300" aria-hidden>
                             ★
@@ -3102,7 +3177,7 @@ export function PosPage(): JSX.Element {
                         ) : null}
                         {item.name}
                       </span>
-                      <span className="mt-px text-[10px] font-semibold text-amber-200/90">
+                      <span className="mt-0.5 text-xs font-semibold text-amber-200/90">
                         {hasPicker ? "From " : ""}{displayPrice.toLocaleString()}
                         {showHappyHourPrice ? (
                           <span className="ml-1 font-normal text-slate-500 line-through">
@@ -3132,7 +3207,7 @@ export function PosPage(): JSX.Element {
         </div>
 
         {/* Current ticket — cart shows 6 items (3×2); scroll for the rest */}
-        <div className="col-span-12 flex min-h-[36rem] flex-col rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)] lg:min-h-0 dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
+        <div className="flex min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:min-h-0 lg:h-full dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
           <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
@@ -3646,7 +3721,12 @@ export function PosPage(): JSX.Element {
                             {line.isComplimentary ? (
                               <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
                             ) : (
-                              <span>Rs {line.unitPrice.toLocaleString()}</span>
+                              <span>
+                                Rs {line.unitPrice.toLocaleString()} × {line.qty} ={" "}
+                                <strong className="text-slate-800 dark:text-slate-200">
+                                  Rs {cartLineNet(line).toLocaleString()}
+                                </strong>
+                              </span>
                             )}
                             {line.lineNote?.trim() ? (
                               <span className="truncate text-amber-700 dark:text-amber-300">
@@ -3675,8 +3755,8 @@ export function PosPage(): JSX.Element {
                             >
                               −
                             </button>
-                            <span className="min-w-[1.1rem] text-center text-[11px] font-semibold tabular-nums text-slate-900 dark:text-white">
-                              {line.qty}
+                            <span className="min-w-[2.2rem] text-center text-[10px] font-semibold tabular-nums text-slate-900 dark:text-white">
+                              Qty {line.qty}
                             </span>
                             <button
                               type="button"
@@ -3723,7 +3803,7 @@ export function PosPage(): JSX.Element {
                           Note: {line.lineNote.trim()}
                         </div>
                       ) : null}
-                      <div className="mt-1 text-[10px] tabular-nums text-slate-500">
+                      <div className="mt-1 flex items-center justify-between gap-1 text-[10px] tabular-nums text-slate-500">
                         {line.isComplimentary ? (
                           <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
                         ) : (
@@ -3736,6 +3816,9 @@ export function PosPage(): JSX.Element {
                             ) : null}
                           </>
                         )}
+                        <span className="shrink-0 font-semibold text-slate-800 dark:text-slate-200">
+                          Qty {line.qty} · Rs {cartLineNet(line).toLocaleString()}
+                        </span>
                       </div>
                       {!line.isComplimentary && !isMenuItemDiscountable(line.item) ? (
                         <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-rose-600 dark:text-rose-400">
@@ -3833,7 +3916,7 @@ export function PosPage(): JSX.Element {
             )}
           </div>
 
-          <div className="mt-auto shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
+          <div className="sticky bottom-0 z-20 mt-auto shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
               {autoDiscountEnabled && autoDiscountAmount > 0 ? (
                 <div className="mb-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2">
@@ -3900,6 +3983,10 @@ export function PosPage(): JSX.Element {
                   selected — Disc % / Disc Rs hidden. Tap a normal item to show discount.
                 </p>
               ) : null}
+              <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                <span>Order summary</span>
+                <span>{displayCart.length} items · Qty {totalQty}</span>
+              </div>
               <div
                 className={`${autoDiscountEnabled || showTicketDiscount ? "mt-3" : ""} space-y-1.5 text-xs`}
               >
@@ -3925,7 +4012,7 @@ export function PosPage(): JSX.Element {
                     </span>
                   </div>
                 ) : null}
-                {ticketServicePct > 0 && service > 0 ? (
+                {ticketServicePct > 0 ? (
                   <div className="flex justify-between text-slate-600 dark:text-slate-400">
                     <span>Service {ticketServicePct}%</span>
                     <span className="tabular-nums text-slate-900 dark:text-slate-300">
@@ -4018,7 +4105,7 @@ export function PosPage(): JSX.Element {
         </div>
 
         {/* Latest orders sidebar */}
-        <div className="col-span-12 flex min-h-[18rem] flex-col lg:col-span-4 lg:sticky lg:top-0 lg:h-[calc(100vh-9rem)] lg:max-h-[calc(100vh-9rem)]">
+        <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <PosLatestOrdersPanel
             orders={recentOrders}
             isLoading={kitchenQuery.isLoading || ordersQuery.isLoading}

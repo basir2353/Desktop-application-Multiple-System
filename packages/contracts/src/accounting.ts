@@ -31,6 +31,14 @@ export const accountSchema = z.object({
   active: z.boolean(),
 });
 
+export const createAccountHeadSchema = z.object({
+  branchCode: z.string().min(1),
+  code: z.string().trim().min(1).max(20).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  name: z.string().trim().min(1).max(120),
+  type: accountTypeSchema,
+  subtype: z.string().trim().max(80).optional(),
+});
+
 export const journalLineSchema = z.object({
   id: z.string().uuid(),
   accountId: z.string().uuid(),
@@ -226,6 +234,12 @@ export const taxSettingsSchema = z.object({
       taxOnOnline: z.boolean().optional(),
       taxOnFoodpanda: z.boolean().optional(),
       taxOnStaffFood: z.boolean().optional(),
+      autoPrintOrderDineIn: z.boolean().optional(),
+      autoPrintOrderTakeaway: z.boolean().optional(),
+      autoPrintOrderDelivery: z.boolean().optional(),
+      autoPrintFinalDineIn: z.boolean().optional(),
+      autoPrintFinalTakeaway: z.boolean().optional(),
+      autoPrintFinalDelivery: z.boolean().optional(),
     })
     .optional(),
 });
@@ -413,6 +427,12 @@ export const updateTaxSettingsSchema = z.object({
       taxOnOnline: z.boolean().optional(),
       taxOnFoodpanda: z.boolean().optional(),
       taxOnStaffFood: z.boolean().optional(),
+      autoPrintOrderDineIn: z.boolean().optional(),
+      autoPrintOrderTakeaway: z.boolean().optional(),
+      autoPrintOrderDelivery: z.boolean().optional(),
+      autoPrintFinalDineIn: z.boolean().optional(),
+      autoPrintFinalTakeaway: z.boolean().optional(),
+      autoPrintFinalDelivery: z.boolean().optional(),
     })
     .optional(),
 });
@@ -438,6 +458,7 @@ export type AccountingAuditLog = z.infer<typeof accountingAuditLogSchema>;
 export type AccountingReport = z.infer<typeof accountingReportSchema>;
 export type CreateExpense = z.infer<typeof createExpenseSchema>;
 export type CreateJournalEntry = z.infer<typeof createJournalEntrySchema>;
+export type CreateAccountHead = z.infer<typeof createAccountHeadSchema>;
 export type CreateBankAccount = z.infer<typeof createBankAccountSchema>;
 export type CreateBankTransaction = z.infer<typeof createBankTransactionSchema>;
 export type OpenCashSession = z.infer<typeof openCashSessionSchema>;

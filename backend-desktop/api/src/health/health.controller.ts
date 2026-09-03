@@ -20,6 +20,23 @@ export class HealthController {
   }> {
     const checks: Record<string, boolean | number | string> = {};
 
+    // Safe diagnostics (no password): which DB host this API is using.
+    try {
+      const raw = (process.env.DATABASE_URL ?? "").trim();
+      if (!raw) {
+        checks.databaseUrlSet = false;
+      } else {
+        checks.databaseUrlSet = true;
+        const u = new URL(raw.replace(/^postgresql:/i, "postgres:"));
+        checks.dbHost = u.hostname || "(unknown)";
+        checks.dbPort = u.port || "5432";
+        checks.dbName = (u.pathname || "/").replace(/^\//, "") || "(unknown)";
+      }
+    } catch {
+      checks.databaseUrlSet = true;
+      checks.dbHost = "(unparseable)";
+    }
+
     try {
       await this.db.execute(sql`select 1`);
       checks.connected = true;
@@ -61,6 +78,29 @@ export class HealthController {
         checks[`col_memberships_${col}`] = (rows.rows?.length ?? 0) > 0;
       } catch {
         checks[`col_memberships_${col}`] = false;
+      }
+    }
+
+    try {
+      await this.db.execute(
+        sql`select id, email, password_hash, status, platform_role from users limit 1`,
+      );
+      checks.usersLoginSelect = true;
+    } catch (err) {
+      checks.usersLoginSelect = false;
+      checks.usersLoginSelectError = err instanceof Error ? err.message : String(err);
+    }
+
+    for (const col of ["status", "platform_role", "last_set_password"] as const) {
+      try {
+        const rows = await this.db.execute(
+          sql.raw(
+            `select 1 from information_schema.columns where table_schema='public' and table_name='users' and column_name='${col}' limit 1`,
+          ),
+        );
+        checks[`col_users_${col}`] = (rows.rows?.length ?? 0) > 0;
+      } catch {
+        checks[`col_users_${col}`] = false;
       }
     }
 

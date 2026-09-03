@@ -1,4 +1,12 @@
-import { Inject, Injectable, InternalServerErrorException, OnModuleInit, UnauthorizedException } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  OnModuleInit,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
@@ -29,6 +37,8 @@ import { PLATFORM_SENTINEL_ORG_ID, type AccessJwtPayload } from "./jwt.types";
 
 @Injectable()
 export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly jwt: JwtService,
@@ -36,8 +46,14 @@ export class AuthService implements OnModuleInit {
     private readonly security: SecurityService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    await this.seedIfEmpty();
+  onModuleInit(): void {
+    void this.seedIfEmpty().catch((err) => {
+      this.logger.warn(
+        `Auth bootstrap skipped — database seed will retry on the next deployment: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
   }
 
   async seedIfEmpty(): Promise<void> {
@@ -319,33 +335,45 @@ export class AuthService implements OnModuleInit {
 
   async login(email: string, password: string) {
     const normalizedEmail = email.trim().toLowerCase();
-    const row = await this.db
-      .select({
-        id: users.id,
-        email: users.email,
-        passwordHash: users.passwordHash,
-        status: users.status,
-        platformRole: users.platformRole,
-      })
-      .from(users)
-      .where(eq(users.email, normalizedEmail))
-      .limit(1);
-    // Case-insensitive fallback for older rows stored with mixed case.
-    const user =
-      row[0] ??
-      (
-        await this.db
-          .select({
-            id: users.id,
-            email: users.email,
-            passwordHash: users.passwordHash,
-            status: users.status,
-            platformRole: users.platformRole,
-          })
-          .from(users)
-          .where(sql`lower(${users.email}) = ${normalizedEmail}`)
-          .limit(1)
-      )[0];
+    let user:
+      | {
+          id: string;
+          email: string;
+          passwordHash: string;
+          status: string;
+          platformRole: string | null;
+        }
+      | undefined;
+    try {
+      const row = await this.db
+        .select({
+          id: users.id,
+          email: users.email,
+          passwordHash: users.passwordHash,
+          status: users.status,
+          platformRole: users.platformRole,
+        })
+        .from(users)
+        .where(eq(users.email, normalizedEmail))
+        .limit(1);
+      user =
+        row[0] ??
+        (
+          await this.db
+            .select({
+              id: users.id,
+              email: users.email,
+              passwordHash: users.passwordHash,
+              status: users.status,
+              platformRole: users.platformRole,
+            })
+            .from(users)
+            .where(sql`lower(${users.email}) = ${normalizedEmail}`)
+            .limit(1)
+        )[0];
+    } catch (err) {
+      this.rethrowAuthDbError(err, "Could not read user account");
+    }
     if (!user) {
       await this.security.logEvent({
         eventType: "login_failed",
@@ -373,16 +401,19 @@ export class AuthService implements OnModuleInit {
       return false;
     });
     if (!ok) {
-      const membership = await this.loadMembershipLite(user.id);
-
-      await this.security.logEvent({
-        organizationId: membership?.organizationId ?? null,
-        eventType: "login_failed",
-        userEmail: normalizedEmail,
-        userId: user.id,
-        action: "Login failed",
-        detail: "Invalid password",
-      });
+      try {
+        const membership = await this.loadMembershipLite(user.id);
+        await this.security.logEvent({
+          organizationId: membership?.organizationId ?? null,
+          eventType: "login_failed",
+          userEmail: normalizedEmail,
+          userId: user.id,
+          action: "Login failed",
+          detail: "Invalid password",
+        });
+      } catch (err) {
+        this.rethrowAuthDbError(err, "Could not record failed login");
+      }
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -416,15 +447,23 @@ export class AuthService implements OnModuleInit {
       }
     }
 
-    const membership = await this.db
-      .select({
-        membership: organizationMemberships,
-        org: organizations,
-      })
-      .from(organizationMemberships)
-      .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
-      .where(eq(organizationMemberships.userId, user.id))
-      .limit(1);
+    let membership: Array<{
+      membership: typeof organizationMemberships.$inferSelect;
+      org: typeof organizations.$inferSelect;
+    }>;
+    try {
+      membership = await this.db
+        .select({
+          membership: organizationMemberships,
+          org: organizations,
+        })
+        .from(organizationMemberships)
+        .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+        .where(eq(organizationMemberships.userId, user.id))
+        .limit(1);
+    } catch (err) {
+      this.rethrowAuthDbError(err, "Could not load organization membership");
+    }
 
     const row0 = membership[0];
     if (!row0) throw new UnauthorizedException("No organization membership");
@@ -687,6 +726,25 @@ export class AuthService implements OnModuleInit {
       .where(eq(organizationMemberships.userId, userId))
       .limit(1);
     return rows[0];
+  }
+
+  private rethrowAuthDbError(err: unknown, context: string): never {
+    if (err instanceof UnauthorizedException || err instanceof InternalServerErrorException) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[auth] ${context}:`, message);
+    if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|timeout expired|connection terminated/i.test(message)) {
+      throw new ServiceUnavailableException(
+        "Database is unavailable. Start Postgres locally (local\\start-local.bat) or fix DATABASE_URL on the server.",
+      );
+    }
+    if (/column|relation|does not exist|undefined column/i.test(message)) {
+      throw new InternalServerErrorException(
+        "Database schema is out of date. Run: pnpm db:push then node backend-desktop/api/scripts/ensure-schema.mjs",
+      );
+    }
+    throw new InternalServerErrorException(`${context}. ${message}`);
   }
 
   private async touchLastActivity(organizationId: string, userId: string): Promise<void> {

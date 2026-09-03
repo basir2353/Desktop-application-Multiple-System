@@ -1,4 +1,4 @@
-import { boolean, date, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
 import { popsSuppliers } from "./inventory";
@@ -17,7 +17,13 @@ export const popsAccounts = pgTable("pops_accounts", {
   subtype: text("subtype"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  organizationBranchCodeUid: uniqueIndex("pops_accounts_org_branch_code_uidx").on(
+    t.organizationId,
+    t.branchId,
+    t.code,
+  ),
+}));
 
 export const popsJournalEntries = pgTable("pops_journal_entries", {
   id: uuid("id").defaultRandom().primaryKey(),

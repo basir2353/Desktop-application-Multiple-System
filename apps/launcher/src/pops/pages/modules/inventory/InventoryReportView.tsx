@@ -196,6 +196,39 @@ export function InventoryReportView({
         />
       );
 
+    case "stock-transfers":
+      return (
+        <SimpleTable
+          rowKey={(r) => cell(r.id)}
+          columns={[
+            { key: "date", header: "Date", render: (r) => cell(r.date) },
+            { key: "reference", header: "Voucher", render: (r) => cell(r.reference) },
+            { key: "fromWarehouse", header: "From", render: (r) => cell(r.fromWarehouse) },
+            { key: "toWarehouse", header: "To", render: (r) => cell(r.toWarehouse) },
+            { key: "productName", header: "Product", render: (r) => cell(r.productName) },
+            { key: "qty", header: "Qty", render: (r) => `${cell(r.qty)} ${cell(r.unit)}` },
+            { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
+          ]}
+          rows={rows.filter(isRecord)}
+        />
+      );
+
+    case "cooking-unit-stock":
+      return (
+        <SimpleTable
+          rowKey={(r) => cell(r.id)}
+          columns={[
+            { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
+            { key: "productCategory", header: "Product category", render: (r) => cell(r.productCategory) },
+            { key: "sku", header: "SKU", render: (r) => cell(r.sku) },
+            { key: "productName", header: "Product", render: (r) => cell(r.productName) },
+            { key: "quantity", header: "Qty", render: (r) => `${cell(r.quantity)} ${cell(r.unit)}` },
+            { key: "stockValue", header: "Value (Rs)", render: (r) => formatPkrCell(r.stockValue) },
+          ]}
+          rows={rows.filter(isRecord)}
+        />
+      );
+
     default: {
       const typedRows = rows.filter(isRecord);
       const keys = Object.keys(typedRows[0] ?? {}).slice(0, 6);

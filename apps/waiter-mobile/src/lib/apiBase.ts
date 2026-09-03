@@ -2,7 +2,6 @@
 export const RAILWAY_API_BASE_URL = "https://backend-desktop-production-600b.up.railway.app";
 
 const DEPRECATED_LIVE_URLS = new Set([
-  "https://backend-desktop-production-5505.up.railway.app",
   "https://platformapi-production-39aa.up.railway.app",
 ]);
 

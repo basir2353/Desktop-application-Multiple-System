@@ -1,6 +1,7 @@
 import type { InventoryReportDateMode } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { fetchBranchInventory, fetchInventoryReport, INVENTORY_REPORTS } from "../../../api/inventory";
 import { inputClass, useInventoryAccess } from "../../../hooks/useInventory";
 import { cardClass, linkActionClass, linkWarningClass, mutedClass, panelTitleClass } from "../../../lib/themeClasses";
@@ -66,7 +67,17 @@ export function InventoryReportsPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Inventory reports"
-        subtitle="Stock, consumption, recipe cost, waste, purchase, and supplier reports."
+        subtitle="Stock, transfers, kitchen section stock, consumption, recipe cost, waste, purchase, and supplier reports."
+        actions={
+          <>
+            <Link to="/pops/reports/cooking-unit-profit" className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500">
+              Section profit report
+            </Link>
+            <Link to="/pops/inventory/stock-transfers" className="rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
+              Stock transfers
+            </Link>
+          </>
+        }
       />
       {error ? <InventoryError message={error} /> : null}
 

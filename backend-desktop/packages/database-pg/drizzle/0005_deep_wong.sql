@@ -1,0 +1,2 @@
+ALTER TABLE "store_inventory_transactions" ADD COLUMN "cooking_unit_id" uuid;--> statement-breakpoint
+ALTER TABLE "store_inventory_transactions" ADD CONSTRAINT "store_inventory_transactions_cooking_unit_id_store_cooking_units_id_fk" FOREIGN KEY ("cooking_unit_id") REFERENCES "public"."store_cooking_units"("id") ON DELETE set null ON UPDATE no action;

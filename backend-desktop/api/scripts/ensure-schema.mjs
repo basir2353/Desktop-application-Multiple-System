@@ -6,11 +6,37 @@
  */
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
 
-const STATEMENTS = [
+const AUTH_SCHEMA_STATEMENTS = [
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_role text`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_set_password text`,
+  `CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS pops_security_events (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid REFERENCES organizations(id) ON DELETE SET NULL,
+    branch_id uuid REFERENCES pops_branches(id) ON DELETE SET NULL,
+    event_type text NOT NULL,
+    user_email text NOT NULL,
+    user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    action text NOT NULL,
+    detail text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS organization_memberships_user_id_idx
+    ON organization_memberships (user_id)`,
+];
+
+const STATEMENTS = [
+  ...AUTH_SCHEMA_STATEMENTS,
   `ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true`,
   `ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS nav_allowlist jsonb`,
   `ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS last_activity_at timestamptz`,
@@ -402,10 +428,16 @@ const STATEMENTS = [
     ON pops_bills (branch_id, status, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS pops_kitchen_tickets_branch_status_idx
     ON pops_kitchen_tickets (branch_id, status)`,
-  `CREATE INDEX IF NOT EXISTS organization_memberships_user_id_idx
-    ON organization_memberships (user_id)`,
 ];
+export function ensureAuthSchema(options) {
+  return runStatements(AUTH_SCHEMA_STATEMENTS, options);
+}
+
 export function ensureCriticalSchema(options) {
+  return runStatements(STATEMENTS, options);
+}
+
+function runStatements(statements, options) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.error("[ensure-schema] DATABASE_URL missing");
@@ -420,7 +452,7 @@ export function ensureCriticalSchema(options) {
 
   const runner = `
 const { Client } = require("pg");
-const statements = ${JSON.stringify(STATEMENTS)};
+const statements = ${JSON.stringify(statements)};
 const quiet = ${quiet ? "true" : "false"};
 (async () => {
   const client = new Client({
@@ -472,6 +504,17 @@ const quiet = ${quiet ? "true" : "false"};
     console.error("[ensure-schema] aborted with status", result.status);
     return false;
   }
-  console.log("[ensure-schema] critical columns verified.");
+  console.log("[ensure-schema] statements verified.");
   return true;
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+const isCli = invokedPath === import.meta.url;
+if (isCli) {
+  const mode = process.argv[2] ?? "auth";
+  const ok =
+    mode === "full"
+      ? ensureCriticalSchema({ quiet: false })
+      : ensureAuthSchema({ quiet: false });
+  process.exit(ok ? 0 : 1);
 }

@@ -18,6 +18,7 @@ import {
   popsMenuCategories,
   popsMenuItemVariants,
   popsMenuItems,
+  storeCookingUnits,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
@@ -78,12 +79,10 @@ const DEFAULT_MENU: {
 export class MenuService implements OnModuleInit {
   constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
 
-  async onModuleInit(): Promise<void> {
-    try {
-      await this.seedDefaultMenus();
-    } catch {
-      /* schema may not be ready yet */
-    }
+  onModuleInit(): void {
+    void this.seedDefaultMenus().catch(() => {
+      /* schema may not be ready yet; the API must still become healthy */
+    });
   }
 
   async seedDefaultMenus(): Promise<void> {
@@ -186,6 +185,7 @@ export class MenuService implements OnModuleInit {
 
   async createCategory(organizationId: string, input: CreateMenuCategory) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    await this.validateCookingUnit(organizationId, branch.id, input.cookingUnitId);
     const [row] = await this.db
       .insert(popsMenuCategories)
       .values({
@@ -193,6 +193,7 @@ export class MenuService implements OnModuleInit {
         branchId: branch.id,
         name: input.name.trim(),
         imageUrl: input.imageUrl?.trim() || null,
+        cookingUnitId: input.cookingUnitId ?? null,
         sortOrder: input.sortOrder ?? 0,
       })
       .returning();
@@ -201,18 +202,21 @@ export class MenuService implements OnModuleInit {
       id: row.id,
       name: row.name,
       imageUrl: row.imageUrl ?? null,
+      cookingUnitId: row.cookingUnitId ?? null,
       sortOrder: row.sortOrder,
       isActive: row.isActive,
     };
   }
 
   async updateCategory(organizationId: string, categoryId: string, input: UpdateMenuCategory) {
-    await this.getCategory(organizationId, categoryId);
+    const category = await this.getCategory(organizationId, categoryId);
+    await this.validateCookingUnit(organizationId, category.branchId, input.cookingUnitId);
     const [row] = await this.db
       .update(popsMenuCategories)
       .set({
         ...(input.name !== undefined ? { name: input.name.trim() } : {}),
         ...(input.imageUrl !== undefined ? { imageUrl: input.imageUrl } : {}),
+        ...(input.cookingUnitId !== undefined ? { cookingUnitId: input.cookingUnitId } : {}),
         ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
         ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
       })
@@ -223,6 +227,7 @@ export class MenuService implements OnModuleInit {
       id: row.id,
       name: row.name,
       imageUrl: row.imageUrl ?? null,
+      cookingUnitId: row.cookingUnitId ?? null,
       sortOrder: row.sortOrder,
       isActive: row.isActive,
     };
@@ -358,6 +363,7 @@ export class MenuService implements OnModuleInit {
         id: c.id,
         name: c.name,
         imageUrl: c.imageUrl ?? null,
+        cookingUnitId: c.cookingUnitId ?? null,
         sortOrder: c.sortOrder,
         isActive: c.isActive,
       })),
@@ -467,6 +473,24 @@ export class MenuService implements OnModuleInit {
     }
     if (branchId && cat.branchId !== branchId) throw new NotFoundException("Category not found");
     return cat;
+  }
+
+  private async validateCookingUnit(
+    organizationId: string,
+    branchId: string,
+    cookingUnitId?: string | null,
+  ): Promise<void> {
+    if (!cookingUnitId) return;
+    const [unit] = await this.db
+      .select({ id: storeCookingUnits.id })
+      .from(storeCookingUnits)
+      .where(and(
+        eq(storeCookingUnits.id, cookingUnitId),
+        eq(storeCookingUnits.organizationId, organizationId),
+        eq(storeCookingUnits.branchId, branchId),
+      ))
+      .limit(1);
+    if (!unit) throw new BadRequestException("Cooking Unit does not belong to this branch");
   }
 
   private async getItem(organizationId: string, itemId: string) {

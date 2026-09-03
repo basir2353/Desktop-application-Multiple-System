@@ -39,6 +39,8 @@ export const popsNavItems: PopsNavItem[] = [
       { path: "inventory/purchase-orders", label: "Kitchen demand" },
       { path: "inventory/goods-receiving", label: "Goods receiving" },
       { path: "inventory/stock", label: "Stock management" },
+      { path: "inventory/stock-transfers", label: "Stock transfers" },
+      { path: "inventory/cooking-units", label: "Cooking units" },
       { path: "inventory/recipes", label: "Recipe management" },
       { path: "inventory/adjustments", label: "Stock adjustments" },
       { path: "inventory/waste", label: "Waste management" },

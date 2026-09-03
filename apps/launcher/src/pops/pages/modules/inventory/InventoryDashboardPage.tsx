@@ -13,6 +13,7 @@ import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { InventoryError, InventoryLoading } from "./InventoryUi";
 import { InventoryFlowBanner } from "./InventoryFlowBanner";
+import { InventoryWarehousePanel } from "./InventoryWarehousePanel";
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }): JSX.Element {
   return (
@@ -75,6 +76,12 @@ export function InventoryDashboardPage(): JSX.Element {
         subtitle="Overview of ingredients, stock levels, consumption, waste, and purchase activity."
         actions={
           <>
+            <Link to="/pops/inventory/stock-transfers" className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-indigo-500">
+              Stock transfer
+            </Link>
+            <Link to="/pops/inventory/cooking-units" className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
+              Cooking Units
+            </Link>
             <Link to="/pops/inventory/purchase-orders" className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
               Kitchen demand
             </Link>
@@ -89,6 +96,7 @@ export function InventoryDashboardPage(): JSX.Element {
       />
 
       <InventoryFlowBanner />
+      <InventoryWarehousePanel />
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
         <div className="text-sm font-medium text-white">Automatic quantity alerts</div>
@@ -167,6 +175,8 @@ export function InventoryDashboardPage(): JSX.Element {
               { to: "/pops/inventory/ingredients", label: "Ingredients" },
               { to: "/pops/inventory/recipes", label: "Recipes" },
               { to: "/pops/inventory/purchase-orders", label: "Kitchen demand / PO" },
+              { to: "/pops/inventory/stock-transfers", label: "Simple Store → Kitchen transfer" },
+              { to: "/pops/inventory/cooking-units", label: "Cooking Units" },
               { to: "/pops/inventory/waste", label: "Waste" },
               { to: "/pops/inventory/stock", label: "Stock management" },
               { to: "/pops/inventory/reports", label: "Reports" },

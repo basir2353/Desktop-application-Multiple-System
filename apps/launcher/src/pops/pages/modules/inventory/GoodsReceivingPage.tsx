@@ -2,7 +2,11 @@ import type { PurchaseOrder } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { createGoodsReceipt, fetchBranchInventory } from "../../../api/inventory";
+import {
+  createGoodsReceipt,
+  fetchBranchInventory,
+  fetchInventoryWarehouses,
+} from "../../../api/inventory";
 import { GrnIngredientPickerModal } from "../../../components/GrnIngredientPickerModal";
 import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { PageHeader } from "../../../ui/PageHeader";
@@ -39,7 +43,7 @@ const DEFAULT_LINE_VALUES = (): LineDefaults => ({
 
 function remainingPoQty(po: PurchaseOrder): GrnLine[] {
   return (po.lines ?? [])
-    .map((line) => {
+    .map((line): GrnLine | null => {
       const remaining = Math.max(0, line.qty - line.receivedQty);
       if (remaining <= 0) return null;
       return {
@@ -53,7 +57,7 @@ function remainingPoQty(po: PurchaseOrder): GrnLine[] {
         expiryDate: "",
         orderedQty: line.qty,
         alreadyReceivedQty: line.receivedQty,
-      } satisfies GrnLine;
+      };
     })
     .filter((line): line is GrnLine => line != null);
 }
@@ -68,6 +72,7 @@ export function GoodsReceivingPage(): JSX.Element {
   const [header, setHeader] = useState({
     supplierId: "",
     purchaseOrderId: "",
+    warehouseId: "",
     invoiceNumber: "",
     deliveryDate: new Date().toISOString().slice(0, 10),
     receivedBy: "",
@@ -80,6 +85,22 @@ export function GoodsReceivingPage(): JSX.Element {
     enabled: Boolean(branch?.code),
     queryFn: () => fetchBranchInventory(branch!.code),
   });
+  const warehousesQuery = useQuery({
+    queryKey: ["inventory", "warehouses", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchInventoryWarehouses(branch!.code),
+  });
+
+  useEffect(() => {
+    if (!header.warehouseId && warehousesQuery.data?.warehouses.length) {
+      setHeader((prev) => ({
+        ...prev,
+        warehouseId:
+          warehousesQuery.data.warehouses.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ??
+          warehousesQuery.data.warehouses[0].id,
+      }));
+    }
+  }, [header.warehouseId, warehousesQuery.data]);
 
   const ingredients = query.data?.ingredients ?? [];
   const ingredientById = useMemo(
@@ -105,6 +126,7 @@ export function GoodsReceivingPage(): JSX.Element {
       ...prev,
       purchaseOrderId: po.id,
       supplierId: po.supplierId,
+      warehouseId: po.warehouseId ?? prev.warehouseId,
     }));
     setLines(remaining);
     setError(null);
@@ -128,6 +150,7 @@ export function GoodsReceivingPage(): JSX.Element {
       ...prev,
       purchaseOrderId: po.id,
       supplierId: po.supplierId,
+      warehouseId: po.warehouseId ?? prev.warehouseId,
     }));
     setLines(remaining);
     setNotice(
@@ -143,6 +166,7 @@ export function GoodsReceivingPage(): JSX.Element {
       createGoodsReceipt({
         branchCode: branch!.code,
         supplierId: header.supplierId,
+        warehouseId: header.warehouseId,
         purchaseOrderId: header.purchaseOrderId || undefined,
         invoiceNumber: header.invoiceNumber || undefined,
         deliveryDate: header.deliveryDate,
@@ -261,7 +285,7 @@ export function GoodsReceivingPage(): JSX.Element {
           title="Record GRN"
           submitLabel="Receive goods"
           onSubmit={() => createMutation.mutate()}
-          disabled={!header.supplierId || lines.length === 0 || createMutation.isPending}
+          disabled={!header.supplierId || !header.warehouseId || lines.length === 0 || createMutation.isPending}
         >
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <select
@@ -289,6 +313,17 @@ export function GoodsReceivingPage(): JSX.Element {
                     ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
                     : " · Bal —"}
                 </option>
+              ))}
+            </select>
+            <select
+              className={selectClass}
+              value={header.warehouseId}
+              onChange={(e) => setHeader({ ...header, warehouseId: e.target.value })}
+              required
+            >
+              <option value="">Receiving warehouse</option>
+              {(warehousesQuery.data?.warehouses ?? []).map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
               ))}
             </select>
             <input

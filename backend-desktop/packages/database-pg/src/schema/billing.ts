@@ -35,6 +35,7 @@ export const popsBills = pgTable(
     deliveryChargePkr: integer("delivery_charge_pkr").notNull().default(0),
     status: text("status").notNull().default("open"),
     inventoryDeductedAt: timestamp("inventory_deducted_at", { withTimezone: true }),
+    inventoryReversedAt: timestamp("inventory_reversed_at", { withTimezone: true }),
     /** fake | real — which PRA path was issued for this bill. */
     praMode: text("pra_mode"),
     praInvoiceNumber: text("pra_invoice_number"),

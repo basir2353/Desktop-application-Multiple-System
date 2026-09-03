@@ -52,14 +52,12 @@ export class BillingService implements OnApplicationBootstrap {
     private readonly taxAuthority: TaxAuthorityService,
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
-    try {
-      await this.seedSampleBillsIfEmpty();
-    } catch (err) {
+  onApplicationBootstrap(): void {
+    void this.seedSampleBillsIfEmpty().catch((err) => {
       this.logger.warn(
         `Bill seed skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
-    }
+    });
   }
 
   private async seedSampleBillsIfEmpty(): Promise<void> {
@@ -468,6 +466,9 @@ export class BillingService implements OnApplicationBootstrap {
       throw new BadRequestException("Bill is already void");
     }
 
+    if (existing.status === "completed") {
+      await this.inventoryDeduction.reverseForVoidedBill(organizationId, existing);
+    }
     const [row] = await this.db
       .update(popsBills)
       .set({ status: "void" })
@@ -555,17 +556,18 @@ export class BillingService implements OnApplicationBootstrap {
     organizationId: string,
     row: typeof popsBills.$inferSelect,
   ): Promise<void> {
-    // Waiter / kitchen "Active" lists are ticket-status based. Closing the bill
-    // must mark matching KOTs done or they stay "open" on waiter apps.
-    await this.closeRelatedKitchenTickets(row);
-
+    // Inventory is part of bill completion: an incomplete recipe/short Kitchen
+    // stock must reject the completion instead of producing an untracked sale.
     try {
       await this.inventoryDeduction.deductForCompletedBill(organizationId, row);
     } catch (err) {
-      this.logger.warn(
-        `Inventory deduction failed for ${row.billRef}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      await this.db.update(popsBills).set({ status: "held" }).where(eq(popsBills.id, row.id));
+      throw err;
     }
+
+    // Waiter / kitchen "Active" lists are ticket-status based. Only close the
+    // related KOT after inventory has committed successfully.
+    await this.closeRelatedKitchenTickets(row);
 
     try {
       await this.accountingHooks.recordSaleFromBill(organizationId, row.branchId, row);

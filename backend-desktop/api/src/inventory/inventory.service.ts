@@ -5,10 +5,11 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import { and, asc, desc, eq, gte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import type {
   CompleteStockCount,
   CreateGoodsReceipt,
+  CreateInventoryCookingUnit,
   CreateIngredient,
   CreateInventoryCategory,
   CreateProductionBatch,
@@ -27,6 +28,9 @@ import type {
   UpdateRecipe,
   UpdateSupplier,
   UpdateWasteStatus,
+  CreateInventoryTransfer,
+  CreateIngredientLink,
+  UpdateInventoryCookingUnit,
 } from "@platform/contracts";
 import {
   popsBranches,
@@ -48,6 +52,17 @@ import {
   popsStockCounts,
   popsSuppliers,
   popsWasteRecords,
+  storeProducts,
+  storeCategories,
+  storeCookingUnits,
+  storeCookingUnitStock,
+  storeInventoryTransactions,
+  storeStockTransferItems,
+  storeStockTransfers,
+  storeUnits,
+  storeWarehouseStock,
+  storeWarehouses,
+  storeZones,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
@@ -92,6 +107,14 @@ const DEFAULT_SUPPLIERS = [
   { name: "National Foods", phone: "021-5551234", email: "supply@nationalfoods.com", address: "Port Qasim, Karachi", paymentTerms: "Net 7" },
 ];
 
+const DEFAULT_COOKING_UNITS = [
+  { code: "PAKISTANI", name: "Pakistani" },
+  { code: "FAST-FOOD", name: "Fast Food" },
+  { code: "CHINESE", name: "Chinese" },
+  { code: "CONTINENTAL", name: "Continental" },
+  { code: "GRILL", name: "Grill" },
+] as const;
+
 @Injectable()
 export class InventoryService implements OnModuleInit {
   constructor(
@@ -99,12 +122,30 @@ export class InventoryService implements OnModuleInit {
     private readonly accountingHooks: AccountingHooksService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    try {
-      await this.seedAllBranches();
-    } catch {
-      /* schema may not be ready */
-    }
+  onModuleInit(): void {
+    void (async () => {
+      try {
+        await this.db.execute(sql.raw("ALTER TABLE pops_ingredients ADD COLUMN IF NOT EXISTS store_product_id uuid"));
+        await this.db.execute(sql.raw("ALTER TABLE pops_purchase_orders ADD COLUMN IF NOT EXISTS warehouse_id uuid"));
+        await this.db.execute(sql.raw("ALTER TABLE pops_goods_receipts ADD COLUMN IF NOT EXISTS warehouse_id uuid"));
+        await this.db.execute(sql.raw("ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS inventory_reversed_at timestamptz"));
+        await this.db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS store_warehouse_stock (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          branch_id uuid NOT NULL REFERENCES pops_branches(id) ON DELETE CASCADE,
+          warehouse_id uuid NOT NULL REFERENCES store_warehouses(id) ON DELETE CASCADE,
+          product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+          quantity integer NOT NULL DEFAULT 0,
+          reserved_quantity integer NOT NULL DEFAULT 0,
+          unit_cost_pkr integer NOT NULL DEFAULT 0,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )`));
+        await this.seedAllBranches();
+      } catch {
+        /* schema may not be ready; the API must still become healthy */
+      }
+    })();
   }
 
   async seedAllBranches(): Promise<void> {
@@ -319,10 +360,90 @@ export class InventoryService implements OnModuleInit {
     reportId: string,
     query: { filterDate?: string; dateMode?: "activity" | "expiry" | "order" } = {},
   ) {
-    const data = await this.getBranchInventory(organizationId, branchCode);
     const today = new Date().toISOString().slice(0, 10);
     const filterDate = query.filterDate;
     const dateMode = query.dateMode ?? "activity";
+
+    if (reportId === "stock-transfers") {
+      const { transfers } = await this.listTransfers(organizationId, branchCode);
+      let rows = transfers.flatMap((transfer) =>
+        transfer.items.map((item) => ({
+          id: item.id,
+          reference: transfer.reference,
+          date: transfer.createdAt.slice(0, 10),
+          fromWarehouse: transfer.fromWarehouseName ?? "—",
+          toWarehouse: transfer.toWarehouseName ?? "—",
+          productName: item.productName,
+          sku: item.sku,
+          qty: item.qty,
+          unit: item.unit,
+          kitchenSection: item.cookingUnitName ?? "Kitchen / Unassigned",
+          notes: transfer.notes ?? "",
+        })),
+      );
+      if (filterDate) {
+        rows = rows.filter((row) => row.date === filterDate);
+      }
+      return {
+        id: reportId,
+        name: "Stock transfer history",
+        category: "Inventory",
+        description: "All warehouse transfers with kitchen section per line",
+        lastGenerated: today,
+        filterDate: filterDate ?? null,
+        dateMode: filterDate ? dateMode : null,
+        data: rows,
+      };
+    }
+
+    if (reportId === "cooking-unit-stock") {
+      const branch = await this.resolveBranch(organizationId, branchCode);
+      await this.ensureCookingUnits(organizationId, branch.id);
+      const stockRows = await this.db
+        .select({
+          id: storeCookingUnitStock.id,
+          cookingUnitId: storeCookingUnitStock.cookingUnitId,
+          cookingUnitName: storeCookingUnits.name,
+          productId: storeCookingUnitStock.productId,
+          productName: storeProducts.name,
+          sku: storeProducts.sku,
+          categoryName: storeCategories.name,
+          unit: storeUnits.name,
+          quantity: storeCookingUnitStock.quantity,
+          unitCostPkr: storeCookingUnitStock.unitCostPkr,
+        })
+        .from(storeCookingUnitStock)
+        .innerJoin(storeProducts, eq(storeProducts.id, storeCookingUnitStock.productId))
+        .innerJoin(storeCookingUnits, eq(storeCookingUnits.id, storeCookingUnitStock.cookingUnitId))
+        .leftJoin(storeCategories, eq(storeCategories.id, storeProducts.categoryId))
+        .leftJoin(storeUnits, eq(storeUnits.id, storeProducts.unitId))
+        .where(and(
+          eq(storeCookingUnitStock.organizationId, organizationId),
+          eq(storeCookingUnitStock.branchId, branch.id),
+        ));
+      const rows = stockRows.map((row) => ({
+        id: row.id,
+        kitchenSection: row.cookingUnitName,
+        productCategory: row.categoryName ?? "Uncategorized",
+        sku: row.sku,
+        productName: row.productName,
+        quantity: row.quantity,
+        unit: row.unit ?? "Piece",
+        stockValue: row.quantity * row.unitCostPkr,
+      }));
+      return {
+        id: reportId,
+        name: "Kitchen section stock",
+        category: "Restaurant",
+        description: "Ingredient stock by kitchen section and product category",
+        lastGenerated: today,
+        filterDate: null,
+        dateMode: null,
+        data: rows,
+      };
+    }
+
+    const data = await this.getBranchInventory(organizationId, branchCode);
 
     const reports: Record<string, { name: string; category: string; description: string; rows: unknown[] }> = {
       "current-stock": {
@@ -516,6 +637,7 @@ export class InventoryService implements OnModuleInit {
         organizationId,
         branchId: branch.id,
         categoryId: input.categoryId ?? null,
+        storeProductId: input.storeProductId ?? null,
         sku: input.sku.trim(),
         name: input.name.trim(),
         unit: input.unit,
@@ -552,6 +674,7 @@ export class InventoryService implements OnModuleInit {
       .update(popsIngredients)
       .set({
         ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+        ...(input.storeProductId !== undefined ? { storeProductId: input.storeProductId } : {}),
         ...(input.sku !== undefined ? { sku: input.sku.trim() } : {}),
         ...(input.name !== undefined ? { name: input.name.trim() } : {}),
         ...(input.unit !== undefined ? { unit: input.unit } : {}),
@@ -638,6 +761,18 @@ export class InventoryService implements OnModuleInit {
   async createPurchaseOrder(organizationId: string, userEmail: string, input: CreatePurchaseOrder) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     await this.getSupplier(organizationId, input.supplierId);
+    await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    const warehouseId = input.warehouseId;
+    const [purchaseWarehouse] = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(and(
+        eq(storeWarehouses.id, warehouseId),
+        eq(storeWarehouses.organizationId, organizationId),
+        eq(storeWarehouses.branchId, branch.id),
+      ))
+      .limit(1);
+    if (!purchaseWarehouse) throw new NotFoundException("Purchase warehouse not found for this branch");
 
     const totalAmount = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
     const poNumber = `PO-${Date.now().toString().slice(-6)}`;
@@ -649,6 +784,7 @@ export class InventoryService implements OnModuleInit {
         branchId: branch.id,
         poNumber,
         supplierId: input.supplierId,
+        warehouseId,
         status: "Draft",
         totalAmountPkr: totalAmount,
         expectedDate: input.expectedDate ?? null,
@@ -742,6 +878,30 @@ export class InventoryService implements OnModuleInit {
   async createGoodsReceipt(organizationId: string, userEmail: string, input: CreateGoodsReceipt) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     await this.getSupplier(organizationId, input.supplierId);
+    const { kitchen } = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    let warehouseId = input.warehouseId;
+    const [receiptWarehouse] = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(and(
+        eq(storeWarehouses.id, warehouseId),
+        eq(storeWarehouses.organizationId, organizationId),
+        eq(storeWarehouses.branchId, branch.id),
+      ))
+      .limit(1);
+    if (!receiptWarehouse) throw new NotFoundException("Receipt warehouse not found for this branch");
+    if (input.purchaseOrderId) {
+      const [purchaseOrder] = await this.db
+        .select({ warehouseId: popsPurchaseOrders.warehouseId })
+        .from(popsPurchaseOrders)
+        .where(and(
+          eq(popsPurchaseOrders.id, input.purchaseOrderId),
+          eq(popsPurchaseOrders.organizationId, organizationId),
+          eq(popsPurchaseOrders.branchId, branch.id),
+        ))
+        .limit(1);
+      if (purchaseOrder?.warehouseId) warehouseId = purchaseOrder.warehouseId;
+    }
 
     const totalCost = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
     const grnNumber = `GRN-${Date.now().toString().slice(-6)}`;
@@ -753,6 +913,7 @@ export class InventoryService implements OnModuleInit {
         branchId: branch.id,
         grnNumber,
         supplierId: input.supplierId,
+        warehouseId,
         purchaseOrderId: input.purchaseOrderId ?? null,
         invoiceNumber: input.invoiceNumber?.trim() || null,
         deliveryDate: input.deliveryDate,
@@ -777,7 +938,11 @@ export class InventoryService implements OnModuleInit {
       await this.db
         .update(popsIngredients)
         .set({
-          currentStock: ing.currentStock + line.qty,
+          // A mapped ingredient is Kitchen stock. Receiving its shared
+          // product into Simple Store must wait for an explicit transfer.
+          currentStock: ing.storeProductId && warehouseId !== kitchen.id
+            ? ing.currentStock
+            : ing.currentStock + line.qty,
           unitCostPkr: line.unitCost,
         })
         .where(eq(popsIngredients.id, line.ingredientId));
@@ -789,9 +954,47 @@ export class InventoryService implements OnModuleInit {
         qty: line.qty,
         batchNumber: line.batchNumber?.trim() || null,
         expiryDate: line.expiryDate ?? null,
-        location: "Main store",
+        location: warehouseId,
         unitCostPkr: line.unitCost,
       });
+
+      if (ing.storeProductId) {
+        const [product] = await this.db
+          .select()
+          .from(storeProducts)
+          .where(eq(storeProducts.id, ing.storeProductId))
+          .limit(1);
+        if (product) {
+          const [stock] = await this.db
+            .select()
+            .from(storeWarehouseStock)
+            .where(and(eq(storeWarehouseStock.warehouseId, warehouseId), eq(storeWarehouseStock.productId, product.id)))
+            .limit(1);
+          if (stock) {
+            await this.db.update(storeWarehouseStock)
+              .set({ quantity: stock.quantity + line.qty, unitCostPkr: line.unitCost, updatedAt: new Date() })
+              .where(eq(storeWarehouseStock.id, stock.id));
+          } else {
+            await this.db.insert(storeWarehouseStock).values({
+              organizationId,
+              branchId: branch.id,
+              warehouseId,
+              productId: product.id,
+              quantity: line.qty,
+              unitCostPkr: line.unitCost,
+            });
+          }
+          const stockRows = await this.db.select({ quantity: storeWarehouseStock.quantity })
+            .from(storeWarehouseStock)
+            .where(eq(storeWarehouseStock.productId, product.id));
+          await this.db.update(storeProducts)
+            .set({
+              availableStock: stockRows.reduce((sum, row) => sum + row.quantity, 0),
+              purchasePricePkr: line.unitCost,
+            })
+            .where(eq(storeProducts.id, product.id));
+        }
+      }
 
       if (input.purchaseOrderId) {
         const poLines = await this.db
@@ -1357,6 +1560,7 @@ export class InventoryService implements OnModuleInit {
           poNumber: po.poNumber,
           supplierId: po.supplierId,
           supplierName: supplier[0]?.name ?? "—",
+          warehouseId: po.warehouseId,
           status: po.status as PurchaseOrderStatus,
           items: lines.length,
           totalAmount: po.totalAmountPkr,
@@ -1403,6 +1607,7 @@ export class InventoryService implements OnModuleInit {
           grnNumber: grn.grnNumber,
           supplierId: grn.supplierId,
           supplierName: supplier[0]?.name ?? "—",
+          warehouseId: grn.warehouseId,
           invoiceNumber: grn.invoiceNumber,
           deliveryDate: grn.deliveryDate,
           poNumber,
@@ -1589,6 +1794,7 @@ export class InventoryService implements OnModuleInit {
       id: row.id,
       categoryId: row.categoryId,
       categoryName,
+      storeProductId: row.storeProductId,
       sku: row.sku,
       name: row.name,
       unit: row.unit as IngredientUnit,
@@ -1684,6 +1890,521 @@ export class InventoryService implements OnModuleInit {
       module,
       detail,
     });
+  }
+
+  private async ensureRestaurantWarehouses(organizationId: string, branchId: string) {
+    const rows = await this.db
+      .select()
+      .from(storeWarehouses)
+      .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branchId)));
+    const ensure = async (code: string, name: string, isDefault: boolean) => {
+      const found = rows.find((w) => w.code === code || w.name.toLowerCase() === name.toLowerCase());
+      if (found) return found;
+      const [created] = await this.db
+        .insert(storeWarehouses)
+        .values({ organizationId, branchId, code, name, isDefault: isDefault ? "yes" : "no" })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        await this.db.insert(storeZones).values({ warehouseId: created.id, name: "Zone A" }).onConflictDoNothing();
+        return created;
+      }
+      const [raced] = await this.db
+        .select()
+        .from(storeWarehouses)
+        .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branchId), eq(storeWarehouses.code, code)))
+        .limit(1);
+      if (!raced) throw new BadRequestException(`Could not create warehouse ${name}`);
+      return raced;
+    };
+    return {
+      simpleStore: await ensure("SIMPLE-STORE", "Simple Store", true),
+      kitchen: await ensure("KITCHEN", "Kitchen", false),
+    };
+  }
+
+  private async ensureCookingUnits(organizationId: string, branchId: string) {
+    const existing = await this.db
+      .select()
+      .from(storeCookingUnits)
+      .where(and(
+        eq(storeCookingUnits.organizationId, organizationId),
+        eq(storeCookingUnits.branchId, branchId),
+      ));
+    for (const [index, unit] of DEFAULT_COOKING_UNITS.entries()) {
+      if (existing.some((row) => row.code === unit.code)) continue;
+      await this.db
+        .insert(storeCookingUnits)
+        .values({
+          organizationId,
+          branchId,
+          code: unit.code,
+          name: unit.name,
+          sortOrder: index,
+        })
+        .onConflictDoNothing();
+    }
+    return this.db
+      .select()
+      .from(storeCookingUnits)
+      .where(and(
+        eq(storeCookingUnits.organizationId, organizationId),
+        eq(storeCookingUnits.branchId, branchId),
+      ))
+      .orderBy(asc(storeCookingUnits.sortOrder), asc(storeCookingUnits.name));
+  }
+
+  async listCookingUnits(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const units = await this.ensureCookingUnits(organizationId, branch.id);
+    const stock = await this.db
+      .select({
+        cookingUnitId: storeCookingUnitStock.cookingUnitId,
+        quantity: storeCookingUnitStock.quantity,
+      })
+      .from(storeCookingUnitStock)
+      .where(and(
+        eq(storeCookingUnitStock.organizationId, organizationId),
+        eq(storeCookingUnitStock.branchId, branch.id),
+      ));
+    return {
+      branchCode: branch.code,
+      units: units.map((unit) => ({
+        id: unit.id,
+        code: unit.code,
+        name: unit.name,
+        isActive: unit.isActive,
+        sortOrder: unit.sortOrder,
+        totalStock: stock
+          .filter((row) => row.cookingUnitId === unit.id)
+          .reduce((sum, row) => sum + row.quantity, 0),
+      })),
+    };
+  }
+
+  async listCookingUnitStock(
+    organizationId: string,
+    branchCode: string,
+    cookingUnitId?: string,
+  ) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    await this.ensureCookingUnits(organizationId, branch.id);
+    const rows = await this.db
+      .select({
+        id: storeCookingUnitStock.id,
+        cookingUnitId: storeCookingUnitStock.cookingUnitId,
+        productId: storeCookingUnitStock.productId,
+        productName: storeProducts.name,
+        sku: storeProducts.sku,
+        unit: storeUnits.name,
+        quantity: storeCookingUnitStock.quantity,
+        unitCostPkr: storeCookingUnitStock.unitCostPkr,
+      })
+      .from(storeCookingUnitStock)
+      .innerJoin(storeProducts, eq(storeProducts.id, storeCookingUnitStock.productId))
+      .leftJoin(storeUnits, eq(storeUnits.id, storeProducts.unitId))
+      .where(and(
+        eq(storeCookingUnitStock.organizationId, organizationId),
+        eq(storeCookingUnitStock.branchId, branch.id),
+        cookingUnitId ? eq(storeCookingUnitStock.cookingUnitId, cookingUnitId) : undefined,
+      ));
+    return rows.map((row) => ({ ...row, unit: row.unit ?? "Piece" }));
+  }
+
+  async createCookingUnit(
+    organizationId: string,
+    userEmail: string,
+    input: CreateInventoryCookingUnit,
+  ) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const code = (input.code?.trim() || input.name.trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 32) || `UNIT-${Date.now()}`).toUpperCase();
+    const existing = await this.db
+      .select({ id: storeCookingUnits.id })
+      .from(storeCookingUnits)
+      .where(and(
+        eq(storeCookingUnits.organizationId, organizationId),
+        eq(storeCookingUnits.branchId, branch.id),
+        eq(storeCookingUnits.code, code),
+      ))
+      .limit(1);
+    if (existing[0]) throw new BadRequestException(`Cooking Unit code already exists: ${code}`);
+    const [created] = await this.db
+      .insert(storeCookingUnits)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        code,
+        name: input.name.trim(),
+        sortOrder: input.sortOrder ?? 100,
+      })
+      .returning();
+    if (!created) throw new BadRequestException("Could not create Cooking Unit");
+    await this.audit(
+      organizationId,
+      branch.id,
+      userEmail,
+      "Cooking Unit created",
+      "Inventory",
+      `${created.name} (${created.code})`,
+    );
+    return created;
+  }
+
+  async updateCookingUnit(
+    organizationId: string,
+    userEmail: string,
+    cookingUnitId: string,
+    input: UpdateInventoryCookingUnit,
+  ) {
+    const [unit] = await this.db
+      .select()
+      .from(storeCookingUnits)
+      .where(and(
+        eq(storeCookingUnits.id, cookingUnitId),
+        eq(storeCookingUnits.organizationId, organizationId),
+      ))
+      .limit(1);
+    if (!unit) throw new NotFoundException("Cooking Unit not found");
+    if (input.code !== undefined) {
+      const normalizedCode = input.code.trim().toUpperCase();
+      const [duplicate] = await this.db
+        .select({ id: storeCookingUnits.id })
+        .from(storeCookingUnits)
+        .where(and(
+          eq(storeCookingUnits.organizationId, organizationId),
+          eq(storeCookingUnits.branchId, unit.branchId),
+          eq(storeCookingUnits.code, normalizedCode),
+        ))
+        .limit(1);
+      if (duplicate && duplicate.id !== unit.id) {
+        throw new BadRequestException(`Cooking Unit code already exists: ${normalizedCode}`);
+      }
+    }
+    const [updated] = await this.db
+      .update(storeCookingUnits)
+      .set({
+        ...(input.code !== undefined ? { code: input.code.trim().toUpperCase() } : {}),
+        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+        ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+      })
+      .where(eq(storeCookingUnits.id, unit.id))
+      .returning();
+    if (!updated) throw new BadRequestException("Could not update Cooking Unit");
+    await this.audit(
+      organizationId,
+      unit.branchId,
+      userEmail,
+      "Cooking Unit updated",
+      "Inventory",
+      `${updated.name} (${updated.code})`,
+    );
+    return updated;
+  }
+
+  async listWarehouses(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const warehouses = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    const rows = await this.db
+      .select()
+      .from(storeWarehouseStock)
+      .where(and(eq(storeWarehouseStock.organizationId, organizationId), eq(storeWarehouseStock.branchId, branch.id)));
+    const all = await this.db
+      .select()
+      .from(storeWarehouses)
+      .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branch.id)));
+    return {
+      branchCode: branch.code,
+      warehouses: all.map((warehouse) => ({
+        id: warehouse.id,
+        code: warehouse.code,
+        name: warehouse.name,
+        address: warehouse.address,
+        isDefault: warehouse.id === warehouses.simpleStore.id,
+        zoneCount: 0,
+        totalStock: rows.filter((row) => row.warehouseId === warehouse.id).reduce((sum, row) => sum + row.quantity, 0),
+      })),
+    };
+  }
+
+  async linkIngredientToStoreProduct(organizationId: string, input: CreateIngredientLink) {
+    const ingredient = await this.getIngredient(organizationId, input.ingredientId);
+    if (input.storeProductId) {
+      const [product] = await this.db
+        .select()
+        .from(storeProducts)
+        .where(and(eq(storeProducts.id, input.storeProductId), eq(storeProducts.organizationId, organizationId)))
+        .limit(1);
+      if (!product) throw new NotFoundException("Store product not found");
+      if (product.branchId !== ingredient.branchId) throw new BadRequestException("Product and ingredient must use the same branch");
+    }
+    const [updated] = await this.db
+      .update(popsIngredients)
+      .set({ storeProductId: input.storeProductId })
+      .where(eq(popsIngredients.id, ingredient.id))
+      .returning();
+    if (!updated) throw new NotFoundException("Ingredient not found");
+    return this.mapIngredient(updated);
+  }
+
+  async createTransfer(organizationId: string, userEmail: string, input: CreateInventoryTransfer) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    if (input.fromWarehouseId === input.toWarehouseId) {
+      throw new BadRequestException("Source and destination warehouses must be different");
+    }
+    const { kitchen } = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    const [fromWarehouse, toWarehouse] = await Promise.all([
+      this.db.select().from(storeWarehouses).where(and(eq(storeWarehouses.id, input.fromWarehouseId), eq(storeWarehouses.branchId, branch.id))).limit(1),
+      this.db.select().from(storeWarehouses).where(and(eq(storeWarehouses.id, input.toWarehouseId), eq(storeWarehouses.branchId, branch.id))).limit(1),
+    ]);
+    if (!fromWarehouse[0] || !toWarehouse[0]) throw new NotFoundException("Source or destination warehouse not found");
+
+    const itemMap = new Map<string, { productId: string; qty: number; cookingUnitId: string | null }>();
+    for (const item of input.items) {
+      const cookingUnitId = item.cookingUnitId ?? null;
+      const key = `${item.productId}:${cookingUnitId ?? "unassigned"}`;
+      const previous = itemMap.get(key);
+      itemMap.set(key, {
+        productId: item.productId,
+        qty: (previous?.qty ?? 0) + item.qty,
+        cookingUnitId,
+      });
+    }
+    const items = [...itemMap.values()];
+    const cookingUnits = await this.ensureCookingUnits(organizationId, branch.id);
+    const cookingUnitById = new Map(cookingUnits.map((unit) => [unit.id, unit]));
+    if (toWarehouse[0].id === kitchen.id) {
+      for (const item of items) {
+        if (!item.cookingUnitId) continue;
+        const unit = cookingUnitById.get(item.cookingUnitId);
+        if (!unit) throw new NotFoundException("Cooking Unit not found");
+        if (!unit.isActive) throw new BadRequestException(`Cooking Unit is inactive: ${unit.name}`);
+      }
+    }
+
+    const products = new Map<string, typeof storeProducts.$inferSelect>();
+    const sourceQtyByProduct = new Map<string, number>();
+    for (const item of items) {
+      const [product] = await this.db.select().from(storeProducts).where(and(eq(storeProducts.id, item.productId), eq(storeProducts.branchId, branch.id))).limit(1);
+      if (!product) throw new NotFoundException("Store product not found");
+      products.set(item.productId, product);
+      sourceQtyByProduct.set(item.productId, (sourceQtyByProduct.get(item.productId) ?? 0) + item.qty);
+    }
+    for (const [productId, requiredQty] of sourceQtyByProduct) {
+      const source = await this.db.select().from(storeWarehouseStock).where(
+        and(eq(storeWarehouseStock.warehouseId, input.fromWarehouseId), eq(storeWarehouseStock.productId, productId)),
+      ).limit(1);
+      if (!source[0] || source[0].quantity < requiredQty) {
+        throw new BadRequestException(
+          `Insufficient stock for ${products.get(productId)?.name ?? "product"} in ${fromWarehouse[0].name}`,
+        );
+      }
+    }
+
+    const reference = `TRF-${Date.now().toString(36).toUpperCase()}`;
+    await this.db.transaction(async (tx) => {
+      const [transfer] = await tx.insert(storeStockTransfers).values({
+        organizationId,
+        branchId: branch.id,
+        transferNumber: reference,
+        fromWarehouseId: input.fromWarehouseId,
+        toWarehouseId: input.toWarehouseId,
+        notes: input.notes?.trim() || null,
+        status: "Completed",
+      }).returning();
+      if (!transfer) throw new BadRequestException("Could not create transfer ledger entry");
+      for (const item of items) {
+        const [source] = await tx.select().from(storeWarehouseStock).where(
+          and(eq(storeWarehouseStock.warehouseId, input.fromWarehouseId), eq(storeWarehouseStock.productId, item.productId)),
+        ).limit(1);
+        if (!source || source.quantity < item.qty) {
+          throw new BadRequestException("Source stock changed; transfer was not completed");
+        }
+        await tx.update(storeWarehouseStock).set({ quantity: source.quantity - item.qty, updatedAt: new Date() }).where(eq(storeWarehouseStock.id, source.id));
+        const [dest] = await tx.select().from(storeWarehouseStock).where(
+          and(eq(storeWarehouseStock.warehouseId, input.toWarehouseId), eq(storeWarehouseStock.productId, item.productId)),
+        ).limit(1);
+        if (dest) {
+          await tx.update(storeWarehouseStock).set({ quantity: dest.quantity + item.qty, updatedAt: new Date() }).where(eq(storeWarehouseStock.id, dest.id));
+        } else {
+          await tx.insert(storeWarehouseStock).values({
+            organizationId,
+            branchId: branch.id,
+            warehouseId: input.toWarehouseId,
+            productId: item.productId,
+            quantity: item.qty,
+            unitCostPkr: products.get(item.productId)?.purchasePricePkr ?? 0,
+          });
+        }
+        const unit = item.cookingUnitId ? cookingUnitById.get(item.cookingUnitId) : undefined;
+        if (unit) {
+          const [unitStock] = await tx
+            .select()
+            .from(storeCookingUnitStock)
+            .where(and(
+              eq(storeCookingUnitStock.cookingUnitId, unit.id),
+              eq(storeCookingUnitStock.productId, item.productId),
+            ))
+            .limit(1);
+          if (toWarehouse[0].id === kitchen.id) {
+            if (unitStock) {
+              await tx.update(storeCookingUnitStock)
+                .set({
+                  quantity: sql`${storeCookingUnitStock.quantity} + ${item.qty}`,
+                  updatedAt: new Date(),
+                })
+                .where(eq(storeCookingUnitStock.id, unitStock.id));
+            } else {
+              await tx.insert(storeCookingUnitStock).values({
+                organizationId,
+                branchId: branch.id,
+                cookingUnitId: unit.id,
+                productId: item.productId,
+                quantity: item.qty,
+                unitCostPkr: products.get(item.productId)?.purchasePricePkr ?? 0,
+              });
+            }
+          } else if (fromWarehouse[0].id === kitchen.id) {
+            if (!unitStock || unitStock.quantity < item.qty) {
+              throw new BadRequestException(`Insufficient ${unit.name} stock for ${products.get(item.productId)?.name ?? "product"}`);
+            }
+            const [updatedUnitStock] = await tx.update(storeCookingUnitStock)
+              .set({
+                quantity: sql`${storeCookingUnitStock.quantity} - ${item.qty}`,
+                updatedAt: new Date(),
+              })
+              .where(and(
+                eq(storeCookingUnitStock.id, unitStock.id),
+                gte(storeCookingUnitStock.quantity, item.qty),
+              ))
+              .returning({ id: storeCookingUnitStock.id });
+            if (!updatedUnitStock) throw new BadRequestException("Cooking Unit stock changed; transfer was not completed");
+          }
+        }
+        const mappedIngredients = await tx
+          .select({ id: popsIngredients.id, currentStock: popsIngredients.currentStock })
+          .from(popsIngredients)
+          .where(and(
+            eq(popsIngredients.organizationId, organizationId),
+            eq(popsIngredients.branchId, branch.id),
+            eq(popsIngredients.storeProductId, item.productId),
+          ));
+        const kitchenDelta =
+          (toWarehouse[0].code === "KITCHEN" ? item.qty : 0) -
+          (fromWarehouse[0].code === "KITCHEN" ? item.qty : 0);
+        if (kitchenDelta !== 0) {
+          for (const ingredient of mappedIngredients) {
+            await tx.update(popsIngredients)
+              .set({ currentStock: Math.max(0, ingredient.currentStock + kitchenDelta) })
+              .where(eq(popsIngredients.id, ingredient.id));
+          }
+        }
+        const warehouseBalances = await tx
+          .select({ quantity: storeWarehouseStock.quantity })
+          .from(storeWarehouseStock)
+          .where(eq(storeWarehouseStock.productId, item.productId));
+        await tx.update(storeProducts)
+          .set({ availableStock: warehouseBalances.reduce((sum, row) => sum + row.quantity, 0) })
+          .where(eq(storeProducts.id, item.productId));
+        await tx.insert(storeInventoryTransactions).values([
+          {
+            organizationId,
+            branchId: branch.id,
+            productId: item.productId,
+            type: "transfer_out",
+            qty: item.qty,
+            reference,
+            warehouseId: input.fromWarehouseId,
+            cookingUnitId: item.cookingUnitId,
+          },
+          {
+            organizationId,
+            branchId: branch.id,
+            productId: item.productId,
+            type: "transfer_in",
+            qty: item.qty,
+            reference,
+            warehouseId: input.toWarehouseId,
+            notes: unit ? `Cooking Unit: ${unit.name}` : null,
+            cookingUnitId: item.cookingUnitId,
+          },
+        ]);
+        await tx.insert(storeStockTransferItems).values({
+          transferId: transfer.id,
+          productId: item.productId,
+          qty: item.qty,
+          cookingUnitId: item.cookingUnitId,
+        });
+      }
+    });
+    await this.audit(
+      organizationId,
+      branch.id,
+      userEmail,
+      "Stock transferred",
+      "Warehouse Transfer",
+      `${reference} · ${fromWarehouse[0].name} → ${toWarehouse[0].name} · ${items.length} lines`,
+    );
+    return {
+      reference,
+      fromWarehouseId: input.fromWarehouseId,
+      toWarehouseId: input.toWarehouseId,
+      itemCount: items.length,
+    };
+  }
+
+  async listTransfers(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const headers = await this.db
+      .select()
+      .from(storeStockTransfers)
+      .where(and(
+        eq(storeStockTransfers.organizationId, organizationId),
+        eq(storeStockTransfers.branchId, branch.id),
+      ))
+      .orderBy(desc(storeStockTransfers.createdAt))
+      .limit(50);
+    const transfers = await Promise.all(headers.map(async (header) => {
+      const [fromWarehouse, toWarehouse] = await Promise.all([
+        header.fromWarehouseId
+          ? this.db.select({ name: storeWarehouses.name }).from(storeWarehouses).where(eq(storeWarehouses.id, header.fromWarehouseId)).limit(1)
+          : Promise.resolve([]),
+        header.toWarehouseId
+          ? this.db.select({ name: storeWarehouses.name }).from(storeWarehouses).where(eq(storeWarehouses.id, header.toWarehouseId)).limit(1)
+          : Promise.resolve([]),
+      ]);
+      const items = await this.db
+        .select({
+          id: storeStockTransferItems.id,
+          productId: storeStockTransferItems.productId,
+          productName: storeProducts.name,
+          sku: storeProducts.sku,
+          unit: storeUnits.name,
+          qty: storeStockTransferItems.qty,
+          cookingUnitId: storeStockTransferItems.cookingUnitId,
+          cookingUnitName: storeCookingUnits.name,
+        })
+        .from(storeStockTransferItems)
+        .innerJoin(storeProducts, eq(storeProducts.id, storeStockTransferItems.productId))
+        .leftJoin(storeUnits, eq(storeUnits.id, storeProducts.unitId))
+        .leftJoin(storeCookingUnits, eq(storeCookingUnits.id, storeStockTransferItems.cookingUnitId))
+        .where(eq(storeStockTransferItems.transferId, header.id));
+      return {
+        id: header.id,
+        reference: header.transferNumber,
+        fromWarehouseName: fromWarehouse[0]?.name ?? null,
+        toWarehouseName: toWarehouse[0]?.name ?? null,
+        status: header.status,
+        notes: header.notes ?? null,
+        createdAt: header.createdAt.toISOString(),
+        items: items.map((item) => ({ ...item, unit: item.unit ?? "Piece", cookingUnitName: item.cookingUnitName ?? null })),
+      };
+    }));
+    return { branchCode: branch.code, transfers };
   }
 
   private async resolveBranch(organizationId: string, branchCode: string) {

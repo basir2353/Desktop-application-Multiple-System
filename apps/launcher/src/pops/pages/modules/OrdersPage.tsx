@@ -57,7 +57,11 @@ import { resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRout
 import { loadBillPrintSettings } from "../../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../../lib/billReceiptTemplateAssignments";
 import { isTypingTarget } from "../../lib/posShortcuts";
-import { shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
+import {
+  loadWhatsAppShareSettings,
+  shareBillViaWhatsApp,
+  phoneFromBillNotes,
+} from "../../lib/whatsappShare";
 import { getWaiterPrinter } from "../../lib/waiterPrinterSettings";
 import { PAYMENT_METHOD_LABELS } from "@platform/contracts";
 import {
@@ -935,6 +939,7 @@ export function OrdersPage(): JSX.Element {
                             r.bill,
                             branch?.name ?? "POPS",
                             phoneFromBillNotes(r.bill.notes),
+                            loadWhatsAppShareSettings(branch?.code),
                           );
                           setNotice(ok ? `WhatsApp share opened for ${r.bill.billRef}` : "Could not open WhatsApp.");
                         }}

@@ -20,6 +20,11 @@ import { linkDangerClass } from "../../lib/themeClasses";
 import { ModuleToolbar } from "../../ui/ModuleToolbar";
 import { Badge } from "../../ui/Badge";
 import { SimpleTable } from "../../ui/SimpleTable";
+import {
+  createTableQrDataUrl,
+  loadWhatsAppShareSettings,
+  printQrImage,
+} from "../../lib/whatsappShare";
 
 export function TablesPage(): JSX.Element {
   const queryClient = useQueryClient();
@@ -34,6 +39,7 @@ export function TablesPage(): JSX.Element {
   const [tableForm, setTableForm] = useState({ tableNumber: "", seats: "4" });
   const [tableSearch, setTableSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [tableQr, setTableQr] = useState<{ tableNumber: string; dataUrl: string } | null>(null);
 
   const floorQuery = useQuery({
     queryKey: ["tables", "admin", branch?.code],
@@ -121,6 +127,19 @@ export function TablesPage(): JSX.Element {
     },
     onError: (err: Error) => setError(err.message),
   });
+
+  async function generateTableQr(tableNumber: string): Promise<void> {
+    try {
+      const settings = loadWhatsAppShareSettings(branch?.code);
+      if (!settings.enabled) {
+        throw new Error("Enable WhatsApp sharing in Notifications before creating table QR codes.");
+      }
+      const dataUrl = await createTableQrDataUrl(branch!.code, tableNumber, settings.branchPhone);
+      setTableQr({ tableNumber, dataUrl });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate QR code");
+    }
+  }
 
   if (!branch?.code) {
     return <p className="text-sm text-slate-500">Select a branch to manage tables.</p>;
@@ -283,7 +302,18 @@ export function TablesPage(): JSX.Element {
                     : "No tables in this section yet."}
                 </p>
               ) : (
-                <SimpleTable
+                <>
+                  {tableQr ? (
+                    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                      <img src={tableQr.dataUrl} alt={`WhatsApp QR for table ${tableQr.tableNumber}`} className="h-28 w-28 rounded bg-white p-1" />
+                      <div className="text-xs text-slate-300">
+                        <div className="font-medium text-white">Table {tableQr.tableNumber} WhatsApp QR</div>
+                        <div className="mt-1 text-slate-500">Scan opens a pre-filled WhatsApp chat.</div>
+                        <Button type="button" className="mt-2 text-xs" onClick={() => printQrImage(tableQr.dataUrl, `Table ${tableQr.tableNumber}`)}>Print QR</Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <SimpleTable
                   rowKey={(r) => r.id}
                   rows={filteredSectionTables}
                   columns={[
@@ -315,23 +345,19 @@ export function TablesPage(): JSX.Element {
                             header: "",
                             id: "actions",
                             render: (r: RestaurantTable) => (
-                              <button
-                                type="button"
-                                className={`text-xs ${linkDangerClass}`}
-                                onClick={() => {
-                                  if (window.confirm(`Remove table ${r.tableNumber}?`)) {
-                                    deleteTableMutation.mutate(r.id);
-                                  }
-                                }}
-                              >
-                                Remove
-                              </button>
+                              <div className="flex items-center gap-3">
+                                <button type="button" className="text-xs text-emerald-300 hover:underline" onClick={() => void generateTableQr(r.tableNumber)}>WhatsApp QR</button>
+                                <button type="button" className={`text-xs ${linkDangerClass}`} onClick={() => {
+                                  if (window.confirm(`Remove table ${r.tableNumber}?`)) deleteTableMutation.mutate(r.id);
+                                }}>Remove</button>
+                              </div>
                             ),
                           },
                         ]
                       : []),
                   ]}
-                />
+                  />
+                </>
               )}
             </>
           ) : (

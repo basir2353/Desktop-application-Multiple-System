@@ -20,6 +20,12 @@ const WaiterPage = lazy(() => import("../pops/pages/modules/WaiterPage").then((m
 const InventoryDashboardPage = lazy(() =>
   import("../pops/pages/modules/inventory/InventoryDashboardPage").then((m) => ({ default: m.InventoryDashboardPage })),
 );
+const StockTransfersPage = lazy(() =>
+  import("../pops/pages/modules/inventory/InventoryWarehousePanel").then((m) => ({ default: m.StockTransfersPage })),
+);
+const CookingUnitsPage = lazy(() =>
+  import("../pops/pages/modules/inventory/CookingUnitsPage").then((m) => ({ default: m.CookingUnitsPage })),
+);
 const IngredientsPage = lazy(() =>
   import("../pops/pages/modules/inventory/IngredientsPage").then((m) => ({ default: m.IngredientsPage })),
 );
@@ -164,6 +170,8 @@ export function restaurantRoutes(): JSX.Element {
       <Route path="inventory/purchase-orders" element={<PurchaseOrdersPage />} />
       <Route path="inventory/goods-receiving" element={<GoodsReceivingPage />} />
       <Route path="inventory/stock" element={<StockManagementPage />} />
+      <Route path="inventory/stock-transfers" element={<StockTransfersPage />} />
+      <Route path="inventory/cooking-units" element={<CookingUnitsPage />} />
       <Route path="inventory/recipes" element={<RecipeManagementPage />} />
       <Route path="inventory/adjustments" element={<StockAdjustmentsPage />} />
       <Route path="inventory/waste" element={<WasteManagementPage />} />

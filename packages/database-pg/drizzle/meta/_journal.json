@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788162922421,
+      "tag": "0000_concerned_celestials",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788163078155,
+      "tag": "0001_blue_lady_deathstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788163638572,
+      "tag": "0002_tiresome_fixer",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788164267564,
+      "tag": "0003_organic_tomas",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788210134118,
+      "tag": "0004_unknown_riptide",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788210645448,
+      "tag": "0005_silent_tombstone",
+      "breakpoints": true
+    }
+  ]
+}

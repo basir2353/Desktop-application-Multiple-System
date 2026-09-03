@@ -9,6 +9,13 @@ import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { NotifyError, NotifyLoading } from "./NotifyUi";
+import { usePopsStore } from "../../../../stores/popsStore";
+import {
+  loadWhatsAppShareSettings,
+  saveWhatsAppShareSettings,
+  type WhatsAppShareSettings,
+} from "../../../lib/whatsappShare";
+import { useEffect, useState } from "react";
 
 type SettingKey = "smsEnabled" | "whatsappEnabled" | "printerAlertsEnabled";
 
@@ -21,6 +28,15 @@ const CHANNEL_CARDS: { key: SettingKey; label: string }[] = [
 export function NotificationsPage(): JSX.Element {
   const queryClient = useQueryClient();
   const { canManage } = useNotificationsAccess();
+  const branch = usePopsStore((state) => state.branch);
+  const [whatsappSettings, setWhatsappSettings] = useState<WhatsAppShareSettings>(() =>
+    loadWhatsAppShareSettings(branch?.code),
+  );
+  const [whatsappNotice, setWhatsappNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWhatsappSettings(loadWhatsAppShareSettings(branch?.code));
+  }, [branch?.code]);
 
   const overviewQuery = useQuery({
     queryKey: ["notifications", "overview"],
@@ -93,6 +109,47 @@ export function NotificationsPage(): JSX.Element {
       {!canManage ? (
         <p className="text-xs text-slate-500">Channel toggles require admin or manager access.</p>
       ) : null}
+
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+        <div className="text-sm font-medium text-white">WhatsApp QR sharing</div>
+        <p className="mt-1 text-xs text-slate-500">
+          The branch number is embedded in table QR links. Invoice sharing opens WhatsApp with a pre-filled message; it is not reported as sent by the server.
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="block text-xs text-slate-400">
+            Branch WhatsApp number
+            <input
+              className="mt-1 block w-56 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+              placeholder="0300 1234567"
+              value={whatsappSettings.branchPhone}
+              disabled={!canManage}
+              onChange={(event) => setWhatsappSettings((current) => ({ ...current, branchPhone: event.target.value }))}
+            />
+          </label>
+          <label className="flex items-center gap-2 pb-2 text-xs text-slate-300">
+            <input
+              type="checkbox"
+              checked={whatsappSettings.enabled}
+              disabled={!canManage}
+              onChange={(event) => setWhatsappSettings((current) => ({ ...current, enabled: event.target.checked }))}
+            />
+            Enable browser WhatsApp sharing
+          </label>
+          {canManage ? (
+            <button
+              type="button"
+              className="rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white"
+              onClick={() => {
+                if (branch?.code) saveWhatsAppShareSettings(branch.code, whatsappSettings);
+                setWhatsappNotice("WhatsApp sharing settings saved.");
+              }}
+            >
+              Save WhatsApp settings
+            </button>
+          ) : null}
+        </div>
+        {whatsappNotice ? <p className="mt-2 text-xs text-emerald-300">{whatsappNotice}</p> : null}
+      </div>
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
         <SimpleTable

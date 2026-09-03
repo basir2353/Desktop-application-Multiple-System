@@ -21,6 +21,9 @@ import {
   createSupplierSchema,
   createWasteRecordSchema,
   createProductionBatchSchema,
+  createIngredientLinkSchema,
+  createInventoryTransferSchema,
+  createInventoryCookingUnitSchema,
   updateAdjustmentStatusSchema,
   updateIngredientSchema,
   updateInventoryCategorySchema,
@@ -30,6 +33,7 @@ import {
   updateStockCountLineSchema,
   updateSupplierSchema,
   updateWasteStatusSchema,
+  updateInventoryCookingUnitSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -47,6 +51,82 @@ export class InventoryController {
   @RequirePermissions("pops.read")
   getDashboard(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.inventory.getDashboard(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Get("warehouses")
+  @RequirePermissions("pops.read")
+  listWarehouses(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.inventory.listWarehouses(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Get("cooking-units")
+  @RequirePermissions("pops.read")
+  listCookingUnits(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.inventory.listCookingUnits(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Get("cooking-units/stock")
+  @RequirePermissions("pops.read")
+  listCookingUnitStock(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode: string,
+    @Query("cookingUnitId") cookingUnitId?: string,
+  ) {
+    return this.inventory.listCookingUnitStock(
+      user.organizationId,
+      branchCode?.trim() ?? "",
+      cookingUnitId?.trim() || undefined,
+    );
+  }
+
+  @Get("transfers")
+  @RequirePermissions("pops.read")
+  listTransfers(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.inventory.listTransfers(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Post("cooking-units")
+  @RequirePermissions("pops.inventory.manage")
+  createCookingUnit(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.inventory.createCookingUnit(
+      user.organizationId,
+      user.sub,
+      createInventoryCookingUnitSchema.parse(body),
+    );
+  }
+
+  @Patch("cooking-units/:cookingUnitId")
+  @RequirePermissions("pops.inventory.manage")
+  updateCookingUnit(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("cookingUnitId") cookingUnitId: string,
+    @Body() body: unknown,
+  ) {
+    return this.inventory.updateCookingUnit(
+      user.organizationId,
+      user.sub,
+      cookingUnitId,
+      updateInventoryCookingUnitSchema.parse(body),
+    );
+  }
+
+  @Post("ingredient-links")
+  @RequirePermissions("pops.inventory.manage")
+  linkIngredient(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.inventory.linkIngredientToStoreProduct(
+      user.organizationId,
+      createIngredientLinkSchema.parse(body),
+    );
+  }
+
+  @Post("transfers")
+  @RequirePermissions("pops.inventory.manage")
+  createTransfer(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.inventory.createTransfer(
+      user.organizationId,
+      user.sub,
+      createInventoryTransferSchema.parse(body),
+    );
   }
 
   @Get()

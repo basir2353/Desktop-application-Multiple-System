@@ -64,12 +64,14 @@ import { useThemeStore } from "../../../stores/themeStore";
 type OrderTypeChargeKey = {
   service: keyof PosSettings;
   tax: keyof PosSettings;
+  orderPrint?: keyof PosSettings;
+  finalPrint?: keyof PosSettings;
 };
 
 const ORDER_TYPE_CHARGE_KEYS: Record<PosOrderMode, OrderTypeChargeKey> = {
-  "dine-in": { service: "serviceOnDineIn", tax: "taxOnDineIn" },
-  takeaway: { service: "serviceOnTakeaway", tax: "taxOnTakeaway" },
-  delivery: { service: "serviceOnDelivery", tax: "taxOnDelivery" },
+  "dine-in": { service: "serviceOnDineIn", tax: "taxOnDineIn", orderPrint: "autoPrintOrderDineIn", finalPrint: "autoPrintFinalDineIn" },
+  takeaway: { service: "serviceOnTakeaway", tax: "taxOnTakeaway", orderPrint: "autoPrintOrderTakeaway", finalPrint: "autoPrintFinalTakeaway" },
+  delivery: { service: "serviceOnDelivery", tax: "taxOnDelivery", orderPrint: "autoPrintOrderDelivery", finalPrint: "autoPrintFinalDelivery" },
   online: { service: "serviceOnOnline", tax: "taxOnOnline" },
   foodpanda: { service: "serviceOnFoodpanda", tax: "taxOnFoodpanda" },
   "staff-food": { service: "serviceOnStaffFood", tax: "taxOnStaffFood" },
@@ -265,6 +267,12 @@ export function SettingsPage(): JSX.Element {
       showBillNotes: local.showBillNotes,
       fullScreenMenuEnabled: local.fullScreenMenuEnabled,
       menuViewMode: local.menuViewMode,
+      autoPrintOrderDineIn: local.autoPrintOrderDineIn,
+      autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
+      autoPrintOrderDelivery: local.autoPrintOrderDelivery,
+      autoPrintFinalDineIn: local.autoPrintFinalDineIn,
+      autoPrintFinalTakeaway: local.autoPrintFinalTakeaway,
+      autoPrintFinalDelivery: local.autoPrintFinalDelivery,
     });
     // Prefer cloud when it has explicit posCharges; otherwise keep local custom rates
     // but push local → cloud once so mobile can see them.
@@ -705,6 +713,8 @@ export function SettingsPage(): JSX.Element {
                   <th className="pb-2 px-2 font-medium text-center">Show</th>
                   <th className="pb-2 px-2 font-medium text-center">Service</th>
                   <th className="pb-2 pl-2 font-medium text-center">Tax</th>
+                  <th className="pb-2 px-2 font-medium text-center">Order print</th>
+                  <th className="pb-2 px-2 font-medium text-center">Final bill</th>
                 </tr>
               </thead>
               <tbody>
@@ -752,6 +762,26 @@ export function SettingsPage(): JSX.Element {
                             setDraft((prev) => ({ ...prev, [keys.tax]: e.target.checked }))
                           }
                         />
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        {keys.orderPrint ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Auto-print order for ${label}`}
+                            checked={Boolean(draft[keys.orderPrint])}
+                            onChange={(e) => setDraft((prev) => ({ ...prev, [keys.orderPrint!]: e.target.checked }))}
+                          />
+                        ) : "—"}
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        {keys.finalPrint ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Auto-print final bill for ${label}`}
+                            checked={Boolean(draft[keys.finalPrint])}
+                            onChange={(e) => setDraft((prev) => ({ ...prev, [keys.finalPrint!]: e.target.checked }))}
+                          />
+                        ) : "—"}
                       </td>
                     </tr>
                   );

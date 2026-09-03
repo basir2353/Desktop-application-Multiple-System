@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import {
   closeCashSessionSchema,
+  createAccountHeadSchema,
   createBankAccountSchema,
   createBankTransactionSchema,
   createCustomerInvoiceSchema,
@@ -45,6 +46,16 @@ export class AccountingController {
   @RequirePermissions("pops.read")
   listAccounts(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.accounting.listAccounts(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Post("accounts")
+  @RequirePermissions("pops.accounting.manage")
+  createAccountHead(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.accounting.createAccountHead(
+      user.organizationId,
+      user.sub,
+      createAccountHeadSchema.parse(body),
+    );
   }
 
   @Get("journal")

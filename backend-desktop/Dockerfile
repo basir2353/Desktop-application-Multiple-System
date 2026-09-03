@@ -30,10 +30,12 @@ COPY --from=build /app/packages ./packages
 COPY --from=build /app/api ./api
 RUN find /app/node_modules/.bin -type f -o -type l | xargs chmod +x 2>/dev/null || true \
     && mkdir -p /app/api/data/uploads
-EXPOSE 3000
+EXPOSE 8080
 ENV HOST=0.0.0.0
+ENV PORT=8080
 ENV RAILWAY_SKIP_SCHEMA_PUSH=1
 ENV RAILWAY_SKIP_SEED_BOOT=1
+ENV RAILWAY_ENSURE_AUTH_SCHEMA=1
 ENV RAILWAY_RUN_ENSURE_SCHEMA=0
 ENV DATABASE_POOL_MAX=5
 ENV NODE_OPTIONS=--max-old-space-size=420

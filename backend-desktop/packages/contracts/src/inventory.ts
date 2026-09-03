@@ -40,6 +40,7 @@ export const ingredientSchema = z.object({
   id: z.string().uuid(),
   categoryId: z.string().uuid().nullable(),
   categoryName: z.string().nullable(),
+  storeProductId: z.string().uuid().nullable().optional(),
   sku: z.string(),
   name: z.string(),
   unit: ingredientUnitSchema,
@@ -82,6 +83,7 @@ export const purchaseOrderSchema = z.object({
   poNumber: z.string(),
   supplierId: z.string().uuid(),
   supplierName: z.string(),
+  warehouseId: z.string().uuid().nullable(),
   status: poStatusSchema,
   items: z.number(),
   totalAmount: z.number(),
@@ -108,6 +110,7 @@ export const goodsReceiptSchema = z.object({
   grnNumber: z.string(),
   supplierId: z.string().uuid(),
   supplierName: z.string(),
+  warehouseId: z.string().uuid().nullable(),
   invoiceNumber: z.string().nullable(),
   deliveryDate: z.string(),
   poNumber: z.string().nullable(),
@@ -314,6 +317,7 @@ export const updateInventoryCategorySchema = z.object({
 
 export const createIngredientSchema = branchCodeSchema.extend({
   categoryId: z.string().uuid().optional(),
+  storeProductId: z.string().uuid().nullable().optional(),
   sku: z.string().min(1).max(32),
   name: z.string().min(1).max(120),
   unit: ingredientUnitSchema,
@@ -326,6 +330,7 @@ export const createIngredientSchema = branchCodeSchema.extend({
 
 export const updateIngredientSchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
+  storeProductId: z.string().uuid().nullable().optional(),
   sku: z.string().min(1).max(32).optional(),
   name: z.string().min(1).max(120).optional(),
   unit: ingredientUnitSchema.optional(),
@@ -367,6 +372,7 @@ export const createPoLineSchema = z.object({
 
 export const createPurchaseOrderSchema = branchCodeSchema.extend({
   supplierId: z.string().uuid(),
+  warehouseId: z.string().uuid(),
   expectedDate: z.string().optional(),
   requestedBy: z.string().max(120).optional(),
   chef: z.string().max(120).optional(),
@@ -397,6 +403,7 @@ export const createGrnLineSchema = z.object({
 
 export const createGoodsReceiptSchema = branchCodeSchema.extend({
   supplierId: z.string().uuid(),
+  warehouseId: z.string().uuid(),
   purchaseOrderId: z.string().uuid().optional(),
   invoiceNumber: z.string().max(64).optional(),
   deliveryDate: z.string(),
@@ -474,6 +481,102 @@ export const createProductionBatchSchema = branchCodeSchema.extend({
   outputDescription: z.string().max(256).optional(),
 });
 
+export const inventoryWarehouseSchema = z.object({
+  id: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  address: z.string().nullable(),
+  isDefault: z.boolean(),
+  zoneCount: z.number(),
+  totalStock: z.number(),
+});
+
+export const inventoryWarehouseListSchema = z.object({
+  branchCode: z.string(),
+  warehouses: z.array(inventoryWarehouseSchema),
+});
+
+export const inventoryCookingUnitSchema = z.object({
+  id: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  isActive: z.boolean(),
+  sortOrder: z.number(),
+  totalStock: z.number(),
+});
+
+export const inventoryCookingUnitListSchema = z.object({
+  branchCode: z.string(),
+  units: z.array(inventoryCookingUnitSchema),
+});
+
+export const inventoryCookingUnitStockSchema = z.object({
+  id: z.string().uuid(),
+  cookingUnitId: z.string().uuid(),
+  productId: z.string().uuid(),
+  productName: z.string(),
+  sku: z.string(),
+  unit: z.string(),
+  quantity: z.number(),
+  unitCostPkr: z.number(),
+});
+
+export const inventoryTransferLineSchema = z.object({
+  id: z.string().uuid(),
+  productId: z.string().uuid(),
+  productName: z.string(),
+  sku: z.string(),
+  unit: z.string(),
+  qty: z.number(),
+  cookingUnitId: z.string().uuid().nullable(),
+  cookingUnitName: z.string().nullable(),
+});
+
+export const inventoryTransferSchema = z.object({
+  id: z.string().uuid(),
+  reference: z.string(),
+  fromWarehouseName: z.string().nullable(),
+  toWarehouseName: z.string().nullable(),
+  status: z.string(),
+  notes: z.string().nullable(),
+  createdAt: z.string(),
+  items: z.array(inventoryTransferLineSchema),
+});
+
+export const inventoryTransferListSchema = z.object({
+  branchCode: z.string(),
+  transfers: z.array(inventoryTransferSchema),
+});
+
+export const createInventoryCookingUnitSchema = branchCodeSchema.extend({
+  code: z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  name: z.string().trim().min(1).max(120),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const updateInventoryCookingUnitSchema = z.object({
+  code: z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const createInventoryTransferSchema = branchCodeSchema.extend({
+  fromWarehouseId: z.string().uuid(),
+  toWarehouseId: z.string().uuid(),
+  notes: z.string().trim().max(500).optional(),
+  items: z.array(z.object({
+    productId: z.string().uuid(),
+    qty: z.number().int().positive(),
+    cookingUnitId: z.string().uuid().nullable().optional(),
+  })).min(1),
+});
+
+export const createIngredientLinkSchema = z.object({
+  ingredientId: z.string().uuid(),
+  storeProductId: z.string().uuid().nullable(),
+});
+
 export type PoStatus = z.infer<typeof poStatusSchema>;
 export type IngredientUnit = z.infer<typeof ingredientUnitSchema>;
 export type InventoryCategory = z.infer<typeof inventoryCategorySchema>;
@@ -514,3 +617,11 @@ export type UpdateStockCountLine = z.infer<typeof updateStockCountLineSchema>;
 export type ProductionBatch = z.infer<typeof productionBatchSchema>;
 export type ProductionBatchLine = z.infer<typeof productionBatchLineSchema>;
 export type CreateProductionBatch = z.infer<typeof createProductionBatchSchema>;
+export type InventoryWarehouse = z.infer<typeof inventoryWarehouseSchema>;
+export type InventoryCookingUnit = z.infer<typeof inventoryCookingUnitSchema>;
+export type InventoryCookingUnitStock = z.infer<typeof inventoryCookingUnitStockSchema>;
+export type InventoryTransfer = z.infer<typeof inventoryTransferSchema>;
+export type CreateInventoryCookingUnit = z.infer<typeof createInventoryCookingUnitSchema>;
+export type UpdateInventoryCookingUnit = z.infer<typeof updateInventoryCookingUnitSchema>;
+export type CreateInventoryTransfer = z.infer<typeof createInventoryTransferSchema>;
+export type CreateIngredientLink = z.infer<typeof createIngredientLinkSchema>;

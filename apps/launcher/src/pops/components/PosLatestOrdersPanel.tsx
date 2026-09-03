@@ -53,10 +53,10 @@ import { loadBillPrintSettings } from "../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
 import { fetchCompletedOrders } from "../api/billing";
 import { useSessionStore } from "../../stores/sessionStore";
-import { POS_ORDER_MODES, formatPosStationDisplay } from "../lib/posOrderMode";
+import { POS_ORDER_MODES, formatPosStationDisplay, inferPosModeFromLabel } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
 import { sessionCanManageFloor } from "../lib/roleAccess";
-import { loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../lib/posSettings";
+import { autoPrintFinalForMode, loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../lib/posSettings";
 import {
   isPosOrderModeVisible,
   loadPosOrderModeVisibility,
@@ -188,6 +188,7 @@ export function PosLatestOrdersPanel({
   const [dismissedRevision, setDismissedRevision] = useState(0);
   const [, setTimeTick] = useState(0);
   const handledCloseAfterPayRef = useRef<string | null>(null);
+  const autoPrintedFinalKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const id = window.setInterval(() => setTimeTick((n) => n + 1), 30_000);
@@ -462,7 +463,6 @@ export function PosLatestOrdersPanel({
 
     const result = await printReceiptDetailed({
       ...built.input,
-      kind: "receipt",
       printerName: built.printerName,
       systemPrinterName: built.systemPrinterName,
     });
@@ -571,6 +571,48 @@ export function PosLatestOrdersPanel({
     closeOrderMutation.mutate(order);
   }
 
+  async function autoPrintFinalBill(
+    order: PosRecentOrder,
+    built: {
+      input: Omit<PrintTicketInput, "kind">;
+      printerName?: string;
+      systemPrinterName?: string;
+    },
+  ): Promise<boolean> {
+    const mode = inferPosModeFromLabel(order.stationLabel ?? order.orderMode ?? "");
+    if (!autoPrintFinalForMode(posSettings, mode)) return false;
+    const printKey = `${order.id}:final-bill`;
+    if (autoPrintedFinalKeysRef.current.has(printKey)) return true;
+    autoPrintedFinalKeysRef.current.add(printKey);
+    const result = await printReceiptDetailed({
+      ...built.input,
+      printerName: built.printerName,
+      systemPrinterName: built.systemPrinterName,
+    });
+    if (result.ok) {
+      onNotice?.(
+        result.usedNamedPrinter && built.systemPrinterName
+          ? `Order ${order.ref} closed and final bill printed on ${built.systemPrinterName}.`
+          : `Order ${order.ref} closed and final bill sent to printer.`,
+        "success",
+      );
+    } else {
+      autoPrintedFinalKeysRef.current.delete(printKey);
+      onNotice?.(
+        result.error ?? "Final bill auto-print failed — use Print to retry.",
+        "error",
+      );
+      setPrintPreview({
+        input: built.input,
+        printerName: built.printerName,
+        systemPrinterName: built.systemPrinterName,
+        title: "Final bill",
+        subtitle: "Auto-print failed — retry from this preview.",
+      });
+    }
+    return true;
+  }
+
   function openCloseInvoicePreview(order: PosRecentOrder): void {
     void (async () => {
       if (!branch) return;
@@ -579,6 +621,8 @@ export function PosLatestOrdersPanel({
       markOrderClosed(order);
 
       if (!praFakeEnabled && !praRealEnabled) {
+        const simple = await buildPaidReceiptInput(order, { embedPra: false });
+        if (simple && await autoPrintFinalBill(order, simple)) return;
         window.alert(
           "Order Closed.\n\nPRA invoice ke liye Settings → Tax mein FPRA ya Real PRA Active karein.\nSimple slip ke liye Print use karein.",
         );
@@ -619,6 +663,8 @@ export function PosLatestOrdersPanel({
         );
         return;
       }
+
+      if (await autoPrintFinalBill(order, built)) return;
 
       setPrintPreview({
         input: built.input,
@@ -834,7 +880,7 @@ export function PosLatestOrdersPanel({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {isLoading ? (
             <p className="px-1 py-3 text-xs text-slate-500">Loading orders…</p>
           ) : isError ? (
@@ -854,7 +900,7 @@ export function PosLatestOrdersPanel({
           ) : (
             <ul
               className={
-                layoutMode === "list" ? "flex flex-col gap-1" : "grid grid-cols-3 gap-1"
+                layoutMode === "list" ? "flex flex-col gap-0.5" : "grid grid-cols-1 gap-1"
               }
             >
               {displayedOrders.map((order) => {
@@ -986,7 +1032,7 @@ export function PosLatestOrdersPanel({
                           }
                         }}
                         className={[
-                          "flex items-center gap-2 rounded-lg border px-2 py-1.5 transition",
+                          "flex items-center gap-1.5 rounded-lg border px-1.5 py-1 transition",
                           isSelected
                             ? "border-amber-500 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-slate-900 dark:ring-amber-500/20"
                             : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-950/40 dark:hover:border-slate-700",

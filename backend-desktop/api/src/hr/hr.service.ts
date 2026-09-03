@@ -83,34 +83,36 @@ export class HrService implements OnModuleInit {
     private readonly accounting: AccountingService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    try {
-      await this.db.execute(sql`
-        ALTER TABLE pops_payroll_runs
-        ADD COLUMN IF NOT EXISTS paid_at timestamptz
-      `);
-      await this.db.execute(sql`
-        ALTER TABLE pops_payroll_runs
-        ADD COLUMN IF NOT EXISTS paid_by text
-      `);
-      await this.db.execute(sql`
-        ALTER TABLE pops_staff_food
-        ADD COLUMN IF NOT EXISTS supplier_id uuid
-      `);
-      await this.db.execute(sql`
-        ALTER TABLE pops_staff_food
-        ADD COLUMN IF NOT EXISTS expense_category text NOT NULL DEFAULT 'Staff Meals'
-      `);
-      await this.db.execute(sql`
-        ALTER TABLE pops_staff_food
-        ADD COLUMN IF NOT EXISTS expense_id uuid
-      `);
-      await this.seedDefaultBranch();
-    } catch (err) {
-      this.logger.warn(
-        `HR bootstrap skipped — run pnpm db:push if the schema changed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
+  onModuleInit(): void {
+    void (async () => {
+      try {
+        await this.db.execute(sql`
+          ALTER TABLE pops_payroll_runs
+          ADD COLUMN IF NOT EXISTS paid_at timestamptz
+        `);
+        await this.db.execute(sql`
+          ALTER TABLE pops_payroll_runs
+          ADD COLUMN IF NOT EXISTS paid_by text
+        `);
+        await this.db.execute(sql`
+          ALTER TABLE pops_staff_food
+          ADD COLUMN IF NOT EXISTS supplier_id uuid
+        `);
+        await this.db.execute(sql`
+          ALTER TABLE pops_staff_food
+          ADD COLUMN IF NOT EXISTS expense_category text NOT NULL DEFAULT 'Staff Meals'
+        `);
+        await this.db.execute(sql`
+          ALTER TABLE pops_staff_food
+          ADD COLUMN IF NOT EXISTS expense_id uuid
+        `);
+        await this.seedDefaultBranch();
+      } catch (err) {
+        this.logger.warn(
+          `HR bootstrap skipped — run pnpm db:push if the schema changed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    })();
   }
 
   async getDashboard(organizationId: string, branchCode: string) {

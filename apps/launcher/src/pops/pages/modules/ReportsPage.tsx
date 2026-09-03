@@ -76,6 +76,14 @@ export function ReportsPage(): JSX.Element {
             Label: r.label,
             Qty: r.qty ?? "",
             Amount: r.amount ?? "",
+            Received: r.receivedQty ?? "",
+            Usage: r.usageQty ?? "",
+            Sales: r.salesQty ?? "",
+            Revenue: r.revenue ?? "",
+            PurchaseCost: r.purchaseCost ?? "",
+            COGS: r.cogs ?? "",
+            Profit: r.profit ?? "",
+            Stock: r.stockQty ?? "",
             Debit: r.debit ?? "",
             Credit: r.credit ?? "",
             Balance: r.balance ?? "",
@@ -107,6 +115,7 @@ export function ReportsPage(): JSX.Element {
   const isCashReport = activeId === "cash-report";
   const isInOutReport = activeId === "in-out";
   const isUniversalLedger = activeId === "universal-ledger";
+  const isCookingUnitReport = activeId === "cooking-unit-profit";
 
   const moneyTotalKeys = new Set([
     "amount",
@@ -365,6 +374,23 @@ export function ReportsPage(): JSX.Element {
                   .
                 </p>
               ) : null}
+            </div>
+          ) : isCookingUnitReport ? (
+            <div className="mt-4 overflow-x-auto">
+              <SimpleTable
+                rowKey={(r) => `${String(r.label)}-${String(r.cookingUnitId ?? "unassigned")}`}
+                columns={[
+                  { key: "label", header: "Cooking Unit" },
+                  { key: "receivedQty", header: "Received", render: (r) => Number(r.receivedQty ?? 0).toLocaleString() },
+                  { key: "usageQty", header: "Usage", render: (r) => Number(r.usageQty ?? 0).toLocaleString() },
+                  { key: "salesQty", header: "Sales qty", render: (r) => Number(r.salesQty ?? 0).toLocaleString() },
+                  { key: "revenue", header: "Revenue", render: (r) => formatPkr(Number(r.revenue ?? 0)) },
+                  { key: "cogs", header: "COGS", render: (r) => formatPkr(Number(r.cogs ?? 0)) },
+                  { key: "profit", header: "Profit", render: (r) => formatPkr(Number(r.profit ?? 0)) },
+                  { key: "stockQty", header: "Current stock", render: (r) => Number(r.stockQty ?? 0).toLocaleString() },
+                ]}
+                rows={rows as unknown as Record<string, unknown>[]}
+              />
             </div>
           ) : (
             <div className="mt-4">

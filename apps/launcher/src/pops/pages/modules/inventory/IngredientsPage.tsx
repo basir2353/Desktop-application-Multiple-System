@@ -7,6 +7,7 @@ import {
   fetchBranchInventory,
   updateIngredient,
 } from "../../../api/inventory";
+import { fetchStoreProducts } from "../../../../store/api/store";
 import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { accentValueClass, linkActionClass, linkDangerClass } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
@@ -31,6 +32,7 @@ type IngredientRow = {
   reorderLevel: string;
   maxStock: string;
   unitCost: string;
+  storeProductId: string;
 };
 
 function emptyRow(): IngredientRow {
@@ -44,6 +46,7 @@ function emptyRow(): IngredientRow {
     reorderLevel: "0",
     maxStock: "0",
     unitCost: "0",
+    storeProductId: "",
   };
 }
 
@@ -61,6 +64,11 @@ export function IngredientsPage(): JSX.Element {
     queryKey: ["inventory", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchBranchInventory(branch!.code),
+  });
+  const productsQuery = useQuery({
+    queryKey: ["store", "products", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchStoreProducts(branch!.code),
   });
 
   function updateRow(index: number, patch: Partial<IngredientRow>): void {
@@ -89,6 +97,7 @@ export function IngredientsPage(): JSX.Element {
       reorderLevel: String(ing.reorderLevel),
       maxStock: String(ing.maxStock),
       unitCost: String(ing.unitCost),
+      storeProductId: ing.storeProductId ?? "",
     });
     setError(null);
   }
@@ -109,6 +118,7 @@ export function IngredientsPage(): JSX.Element {
           reorderLevel: Number(row.reorderLevel),
           maxStock: Number(row.maxStock),
           unitCost: Number(row.unitCost),
+          storeProductId: row.storeProductId || null,
         });
       }
     },
@@ -133,6 +143,7 @@ export function IngredientsPage(): JSX.Element {
         reorderLevel: Number(editForm.reorderLevel) || 0,
         maxStock: Number(editForm.maxStock) || 0,
         unitCost: Number(editForm.unitCost) || 0,
+        storeProductId: editForm.storeProductId || null,
       });
     },
     onSuccess: () => {
@@ -220,6 +231,16 @@ export function IngredientsPage(): JSX.Element {
                 </option>
               ))}
             </select>
+            <select
+              className={selectClass}
+              value={editForm.storeProductId}
+              onChange={(e) => setEditForm((f) => ({ ...f, storeProductId: e.target.value }))}
+            >
+              <option value="">Store product mapping</option>
+              {(productsQuery.data ?? []).map((product) => (
+                <option key={product.id} value={product.id}>{product.name}</option>
+              ))}
+            </select>
             <input
               className={inputClass}
               placeholder="Current stock"
@@ -284,6 +305,12 @@ export function IngredientsPage(): JSX.Element {
                 <select className={selectClass} value={row.categoryId} onChange={(e) => updateRow(index, { categoryId: e.target.value })}>
                   <option value="">Category</option>
                   {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <select className={selectClass} value={row.storeProductId} onChange={(e) => updateRow(index, { storeProductId: e.target.value })}>
+                  <option value="">Store product mapping</option>
+                  {(productsQuery.data ?? []).map((product) => (
+                    <option key={product.id} value={product.id}>{product.name}</option>
+                  ))}
                 </select>
                 <select className={selectClass} value={row.unit} onChange={(e) => updateRow(index, { unit: e.target.value as IngredientRow["unit"] })}>
                   {INGREDIENT_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}

@@ -14,7 +14,7 @@ fi
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
-export EXPO_PUBLIC_API_BASE_URL="${EXPO_PUBLIC_API_BASE_URL:-https://platformapi-production-39aa.up.railway.app}"
+export EXPO_PUBLIC_API_BASE_URL="${EXPO_PUBLIC_API_BASE_URL:-https://backend-desktop-production-600b.up.railway.app}"
 unset CI
 
 AVD="${ANDROID_AVD:-quran_flutter_avd}"

@@ -78,6 +78,7 @@ export function StorePurchaseOrdersPage(): JSX.Element {
   const { branch, canManage } = useStoreAccess();
   const invalidate = useInvalidateStore();
   const [supplierId, setSupplierId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [scan, setScan] = useState("");
   const [lines, setLines] = useState<
     Array<{
@@ -113,6 +114,15 @@ export function StorePurchaseOrdersPage(): JSX.Element {
     enabled: Boolean(branch?.code),
     queryFn: () => fetchStoreWarehouses(branch!.code),
   });
+
+  useEffect(() => {
+    if (!warehouseId && warehousesQuery.data?.length) {
+      setWarehouseId(
+        warehousesQuery.data.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ??
+          warehousesQuery.data[0].id,
+      );
+    }
+  }, [warehouseId, warehousesQuery.data]);
   const txQuery = useQuery({
     queryKey: ["store", "transactions", branch?.code],
     enabled: Boolean(branch?.code),
@@ -148,6 +158,7 @@ export function StorePurchaseOrdersPage(): JSX.Element {
       const po = await createStorePurchaseOrder({
         branchCode: branch!.code,
         supplierId,
+        warehouseId,
         items,
       });
       await approveStorePurchaseOrder(po.id);
@@ -155,7 +166,7 @@ export function StorePurchaseOrdersPage(): JSX.Element {
         branchCode: branch!.code,
         purchaseOrderId: po.id,
         supplierId,
-        warehouseId: warehousesQuery.data?.[0]?.id,
+        warehouseId,
         items: lines.map((l) => ({
           productId: l.product.id,
           qty: l.qty,
@@ -286,6 +297,14 @@ export function StorePurchaseOrdersPage(): JSX.Element {
                       ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
                       : " · Bal —"}
                   </option>
+                ))}
+              </StoreSelect>
+            </StoreField>
+            <StoreField label="Purchase warehouse" required>
+              <StoreSelect value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+                <option value="">Select warehouse</option>
+                {(warehousesQuery.data ?? []).map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
                 ))}
               </StoreSelect>
             </StoreField>
@@ -519,6 +538,7 @@ export function StoreGrnPage(): JSX.Element {
   const { branch, canManage } = useStoreAccess();
   const invalidate = useInvalidateStore();
   const [supplierId, setSupplierId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [scan, setScan] = useState("");
   const [pickProductId, setPickProductId] = useState("");
   const [newVendorName, setNewVendorName] = useState("");
@@ -561,6 +581,15 @@ export function StoreGrnPage(): JSX.Element {
     queryFn: () => fetchStoreTransactions(branch!.code),
   });
 
+  useEffect(() => {
+    if (!warehouseId && warehousesQuery.data?.length) {
+      setWarehouseId(
+        warehousesQuery.data.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ??
+          warehousesQuery.data[0].id,
+      );
+    }
+  }, [warehouseId, warehousesQuery.data]);
+
   const suppliers = suppliersQuery.data ?? [];
   const products = productsQuery.data ?? [];
 
@@ -599,11 +628,12 @@ export function StoreGrnPage(): JSX.Element {
   const createMutation = useMutation({
     mutationFn: () => {
       if (!supplierId) throw new Error("Select a vendor first");
+      if (!warehouseId) throw new Error("Select a receiving warehouse");
       if (lines.length === 0) throw new Error("Scan or search at least one item");
       return createStoreGrn({
         branchCode: branch!.code,
         supplierId,
-        warehouseId: warehousesQuery.data?.[0]?.id,
+        warehouseId,
         items: lines.map((l) => ({
           productId: l.product.id,
           qty: l.qty,
@@ -746,6 +776,15 @@ export function StoreGrnPage(): JSX.Element {
                     ? ` · Bal Rs ${s.openingBalancePkr.toLocaleString("en-PK")}`
                     : " · Bal —"}
                 </option>
+              ))}
+            </StoreSelect>
+          </StoreField>
+
+          <StoreField label="Receiving warehouse" required>
+            <StoreSelect value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+              <option value="">Select warehouse</option>
+              {(warehousesQuery.data ?? []).map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
               ))}
             </StoreSelect>
           </StoreField>
@@ -987,7 +1026,7 @@ export function StoreGrnPage(): JSX.Element {
             </p>
             <button
               type="button"
-              disabled={createMutation.isPending || !supplierId || lines.length === 0 || !canManage}
+              disabled={createMutation.isPending || !supplierId || !warehouseId || lines.length === 0 || !canManage}
               onClick={() => createMutation.mutate()}
               className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               title={!canManage ? "Needs inventory manage permission" : undefined}

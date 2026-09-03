@@ -1,4 +1,4 @@
-import { date, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
 
@@ -74,6 +74,47 @@ export const storeProducts = pgTable("store_products", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const storeCookingUnits = pgTable("store_cooking_units", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => popsBranches.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  organizationBranchCodeUid: uniqueIndex("store_cooking_units_org_branch_code_uidx")
+    .on(t.organizationId, t.branchId, t.code),
+}));
+
+export const storeCookingUnitStock = pgTable("store_cooking_unit_stock", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => popsBranches.id, { onDelete: "cascade" }),
+  cookingUnitId: uuid("cooking_unit_id")
+    .notNull()
+    .references(() => storeCookingUnits.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => storeProducts.id, { onDelete: "cascade" }),
+  quantity: integer("quantity").notNull().default(0),
+  unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  unitProductUid: uniqueIndex("store_cooking_unit_stock_unit_product_uidx")
+    .on(t.organizationId, t.branchId, t.cookingUnitId, t.productId),
+}));
+
 export const storeProductBatches = pgTable("store_product_batches", {
   id: uuid("id").defaultRandom().primaryKey(),
   productId: uuid("product_id")
@@ -139,7 +180,27 @@ export const storeCustomers = pgTable("store_customers", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const storeWarehouses = pgTable("store_warehouses", {
+export const storeWarehouses = pgTable(
+  "store_warehouses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id")
+      .notNull()
+      .references(() => popsBranches.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    address: text("address"),
+    isDefault: text("is_default").notNull().default("no"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("store_warehouses_org_branch_code_uidx").on(t.organizationId, t.branchId, t.code)],
+);
+
+/** Per-warehouse on-hand stock. store_products.available_stock remains the branch aggregate. */
+export const storeWarehouseStock = pgTable("store_warehouse_stock", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id")
     .notNull()
@@ -147,12 +208,21 @@ export const storeWarehouses = pgTable("store_warehouses", {
   branchId: uuid("branch_id")
     .notNull()
     .references(() => popsBranches.id, { onDelete: "cascade" }),
-  code: text("code").notNull(),
-  name: text("name").notNull(),
-  address: text("address"),
-  isDefault: text("is_default").notNull().default("no"),
+  warehouseId: uuid("warehouse_id")
+    .notNull()
+    .references(() => storeWarehouses.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => storeProducts.id, { onDelete: "cascade" }),
+  quantity: integer("quantity").notNull().default(0),
+  reservedQuantity: integer("reserved_quantity").notNull().default(0),
+  unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  warehouseProductUid: uniqueIndex("store_warehouse_stock_org_branch_warehouse_product_uidx")
+    .on(t.organizationId, t.branchId, t.warehouseId, t.productId),
+}));
 
 export const storeZones = pgTable("store_zones", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -226,6 +296,7 @@ export const storePurchaseOrders = pgTable("store_purchase_orders", {
   poNumber: text("po_number").notNull(),
   supplierId: uuid("supplier_id").references(() => storeSuppliers.id, { onDelete: "set null" }),
   requisitionId: uuid("requisition_id").references(() => storePurchaseRequisitions.id, { onDelete: "set null" }),
+  warehouseId: uuid("warehouse_id").references(() => storeWarehouses.id, { onDelete: "set null" }),
   status: text("status").notNull().default("Draft"),
   totalPkr: integer("total_pkr").notNull().default(0),
   expectedDelivery: date("expected_delivery"),
@@ -294,6 +365,7 @@ export const storeInventoryTransactions = pgTable("store_inventory_transactions"
   reference: text("reference"),
   notes: text("notes"),
   warehouseId: uuid("warehouse_id"),
+  cookingUnitId: uuid("cooking_unit_id").references(() => storeCookingUnits.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -309,6 +381,7 @@ export const storeStockTransfers = pgTable("store_stock_transfers", {
   fromWarehouseId: uuid("from_warehouse_id").references(() => storeWarehouses.id, { onDelete: "set null" }),
   toWarehouseId: uuid("to_warehouse_id").references(() => storeWarehouses.id, { onDelete: "set null" }),
   status: text("status").notNull().default("Pending"),
+  notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -321,6 +394,7 @@ export const storeStockTransferItems = pgTable("store_stock_transfer_items", {
     .notNull()
     .references(() => storeProducts.id, { onDelete: "restrict" }),
   qty: integer("qty").notNull(),
+  cookingUnitId: uuid("cooking_unit_id").references(() => storeCookingUnits.id, { onDelete: "set null" }),
 });
 
 export const storeStockAdjustments = pgTable("store_stock_adjustments", {

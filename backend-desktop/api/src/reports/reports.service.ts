@@ -22,12 +22,18 @@ import {
   popsPayrollRuns,
   popsPurchaseOrderLines,
   popsPurchaseOrders,
+  popsRecipeLines,
+  popsRecipes,
   popsSeatingSections,
   popsStockAdjustments,
   popsSuppliers,
   popsTables,
   popsVendorBills,
   popsVendorPayments,
+  storeCookingUnitStock,
+  storeCookingUnits,
+  storeInventoryTransactions,
+  storeProducts,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
@@ -204,6 +210,8 @@ export class ReportsService {
         return { ...base, ...(await this.ingredientsUsage(organizationId, branch.id, range)) };
       case "ingredients-stock":
         return { ...base, ...(await this.ingredientsStock(organizationId, branch.id)) };
+      case "cooking-unit-profit":
+        return { ...base, ...(await this.cookingUnitProfit(organizationId, branch.id, range)) };
       case "day-book":
         return { ...base, ...(await this.dayBook(organizationId, branch.id, range)) };
       case "in-out":
@@ -1408,6 +1416,174 @@ export class ReportsService {
         value: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
       },
       empty: rows.length === 0,
+    };
+  }
+
+  private async cookingUnitProfit(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+  ) {
+    const [units, stock, movements, bills, menuRows, recipes, recipeLines, ingredients, products] = await Promise.all([
+      this.db.select().from(storeCookingUnits).where(and(
+        eq(storeCookingUnits.organizationId, organizationId),
+        eq(storeCookingUnits.branchId, branchId),
+      )),
+      this.db.select().from(storeCookingUnitStock).where(and(
+        eq(storeCookingUnitStock.organizationId, organizationId),
+        eq(storeCookingUnitStock.branchId, branchId),
+      )),
+      this.db.select().from(storeInventoryTransactions).where(and(
+        eq(storeInventoryTransactions.organizationId, organizationId),
+        eq(storeInventoryTransactions.branchId, branchId),
+        gte(storeInventoryTransactions.createdAt, this.rangeStart(range)),
+        lte(storeInventoryTransactions.createdAt, this.rangeEnd(range)),
+      )),
+      this.completedBills(organizationId, branchId, range),
+      this.db.select({
+        itemId: popsMenuItems.id,
+        itemName: popsMenuItems.name,
+        categoryName: popsMenuCategories.name,
+        cookingUnitId: popsMenuCategories.cookingUnitId,
+      }).from(popsMenuItems).innerJoin(
+        popsMenuCategories,
+        eq(popsMenuCategories.id, popsMenuItems.categoryId),
+      ).where(and(
+        eq(popsMenuItems.organizationId, organizationId),
+        eq(popsMenuItems.branchId, branchId),
+      )),
+      this.db.select({ id: popsRecipes.id, menuItemId: popsRecipes.menuItemId })
+        .from(popsRecipes)
+        .where(and(
+          eq(popsRecipes.organizationId, organizationId),
+          eq(popsRecipes.branchId, branchId),
+          eq(popsRecipes.active, true),
+        )),
+      this.db.select().from(popsRecipeLines),
+      this.db.select().from(popsIngredients).where(and(
+        eq(popsIngredients.organizationId, organizationId),
+        eq(popsIngredients.branchId, branchId),
+      )),
+      this.db.select({
+        id: storeProducts.id,
+        purchasePricePkr: storeProducts.purchasePricePkr,
+      }).from(storeProducts).where(and(
+        eq(storeProducts.organizationId, organizationId),
+        eq(storeProducts.branchId, branchId),
+      )),
+    ]);
+    const unitMap = new Map(units.map((unit) => [unit.id, unit]));
+    const rows = new Map<string, {
+      label: string;
+      cookingUnitId?: string;
+      receivedQty: number;
+      transferOutQty: number;
+      usageQty: number;
+      salesQty: number;
+      revenue: number;
+      purchaseCost: number;
+      cogs: number;
+      stockQty: number;
+      stockValue: number;
+    }>();
+    const getRow = (cookingUnitId: string | null | undefined) => {
+      const key = cookingUnitId ?? "unassigned";
+      const unit = cookingUnitId ? unitMap.get(cookingUnitId) : undefined;
+      const existing = rows.get(key);
+      if (existing) return existing;
+      const created = {
+        label: unit?.name ?? "Kitchen / Unassigned",
+        cookingUnitId: cookingUnitId ?? undefined,
+        receivedQty: 0,
+        transferOutQty: 0,
+        usageQty: 0,
+        salesQty: 0,
+        revenue: 0,
+        purchaseCost: 0,
+        cogs: 0,
+        stockQty: 0,
+        stockValue: 0,
+      };
+      rows.set(key, created);
+      return created;
+    };
+    for (const row of stock) {
+      const target = getRow(row.cookingUnitId);
+      target.stockQty += row.quantity;
+      target.stockValue += row.quantity * row.unitCostPkr;
+    }
+    const productCostById = new Map(products.map((product) => [product.id, product.purchasePricePkr]));
+    for (const ingredient of ingredients) {
+      if (ingredient.storeProductId && !productCostById.has(ingredient.storeProductId)) {
+        productCostById.set(ingredient.storeProductId, ingredient.unitCostPkr);
+      }
+    }
+    for (const movement of movements) {
+      const target = getRow(movement.cookingUnitId);
+      if (movement.type === "transfer_in") {
+        target.receivedQty += movement.qty;
+        target.purchaseCost += movement.qty * (productCostById.get(movement.productId) ?? 0);
+      } else if (movement.type === "transfer_out") {
+        target.transferOutQty += movement.qty;
+      }
+    }
+    const menuById = new Map(menuRows.map((row) => [row.itemId, row]));
+    const recipeByMenuItem = new Map(
+      recipes.filter((recipe) => recipe.menuItemId).map((recipe) => [recipe.menuItemId!, recipe.id]),
+    );
+    const recipeLineByRecipe = new Map<string, typeof recipeLines>();
+    for (const line of recipeLines) {
+      const current = recipeLineByRecipe.get(line.recipeId) ?? [];
+      current.push(line);
+      recipeLineByRecipe.set(line.recipeId, current);
+    }
+    const ingredientById = new Map(ingredients.map((ingredient) => [ingredient.id, ingredient]));
+    for (const bill of bills) {
+      for (const line of this.parseLines(bill.linesJson)) {
+        const menu = line.menuItemId ? menuById.get(line.menuItemId) : undefined;
+        const target = getRow(menu?.cookingUnitId);
+        const qty = Number(line.qty ?? 0);
+        const revenue = qty * Number(line.unitPrice ?? 0);
+        target.salesQty += qty;
+        target.revenue += revenue;
+        const recipeId = line.menuItemId ? recipeByMenuItem.get(line.menuItemId) : undefined;
+        for (const recipeLine of recipeId ? (recipeLineByRecipe.get(recipeId) ?? []) : []) {
+          const ingredient = ingredientById.get(recipeLine.ingredientId);
+          const used = recipeLine.qty * qty;
+          target.usageQty += used;
+          target.cogs += used * (ingredient?.unitCostPkr ?? 0);
+        }
+      }
+    }
+    const reportRows = [...rows.values()].map((row) => ({
+      label: row.label,
+      cookingUnitId: row.cookingUnitId,
+      qty: row.salesQty,
+      amount: row.revenue,
+      receivedQty: row.receivedQty,
+      transferOutQty: row.transferOutQty,
+      usageQty: row.usageQty,
+      salesQty: row.salesQty,
+      revenue: row.revenue,
+      purchaseCost: row.purchaseCost,
+      cogs: row.cogs,
+      profit: row.revenue - row.cogs,
+      stockQty: row.stockQty,
+      stockValue: row.stockValue,
+    })).sort((a, b) => b.revenue - a.revenue);
+    return {
+      rows: reportRows,
+      totals: {
+        units: reportRows.length,
+        receivedQty: reportRows.reduce((sum, row) => sum + row.receivedQty, 0),
+        usageQty: reportRows.reduce((sum, row) => sum + row.usageQty, 0),
+        salesQty: reportRows.reduce((sum, row) => sum + row.salesQty, 0),
+        revenue: reportRows.reduce((sum, row) => sum + row.revenue, 0),
+        purchaseCost: reportRows.reduce((sum, row) => sum + row.purchaseCost, 0),
+        cogs: reportRows.reduce((sum, row) => sum + row.cogs, 0),
+        profit: reportRows.reduce((sum, row) => sum + row.profit, 0),
+      },
+      empty: reportRows.length === 0,
     };
   }
 

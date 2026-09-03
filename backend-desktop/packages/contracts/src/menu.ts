@@ -78,6 +78,7 @@ export const menuCategorySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   imageUrl: z.string().nullable(),
+  cookingUnitId: z.string().uuid().nullable().optional(),
   sortOrder: z.number(),
   isActive: z.boolean(),
 });
@@ -160,12 +161,14 @@ export const createMenuCategorySchema = z.object({
   branchCode: z.string().min(1),
   name: z.string().min(1).max(64),
   imageUrl: z.string().max(512).optional(),
+  cookingUnitId: z.string().uuid().nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
 
 export const updateMenuCategorySchema = z.object({
   name: z.string().min(1).max(64).optional(),
   imageUrl: z.string().max(512).nullable().optional(),
+  cookingUnitId: z.string().uuid().nullable().optional(),
   sortOrder: z.number().int().optional(),
   isActive: z.boolean().optional(),
 });

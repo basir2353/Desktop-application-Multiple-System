@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "store_warehouse_stock_org_branch_warehouse_product_uidx" ON "store_warehouse_stock" USING btree ("organization_id","branch_id","warehouse_id","product_id");

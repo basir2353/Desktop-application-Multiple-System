@@ -25,6 +25,7 @@ import {
   type CashSession,
   type CashSessionLive,
   type CloseCashSession,
+  type CreateAccountHead,
   type CreateBankAccount,
   type CreateBankTransaction,
   type CreateCustomerInvoice,
@@ -74,6 +75,16 @@ export async function fetchAccounts(branchCode: string): Promise<Account[]> {
   const res = await authFetch(`/v1/accounting/accounts?${branchParams(branchCode)}`);
   if (!res.ok) await parseError(res, "Accounts failed");
   return accountSchema.array().parse(await res.json());
+}
+
+export async function createAccountHead(input: CreateAccountHead): Promise<Account> {
+  const res = await authFetch("/v1/accounting/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await parseError(res, "Create account head failed");
+  return accountSchema.parse(await res.json());
 }
 
 export async function fetchJournal(

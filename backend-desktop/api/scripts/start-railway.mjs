@@ -94,14 +94,53 @@ function startApi() {
   mkdirSync(join(apiRoot, "data", "uploads"), { recursive: true });
 
   console.log("[railway] Starting API server…");
-  const api = spawnSync("node", ["dist/main.js"], {
+  const api = spawn("node", ["dist/main.js"], {
     cwd: apiRoot,
     stdio: "inherit",
     env: process.env,
   });
-  process.exit(api.status ?? 0);
+  api.on("error", (err) => {
+    console.error("[railway] API process failed to start:", err);
+    process.exit(1);
+  });
+  api.on("exit", (code, signal) => {
+    if (signal) {
+      console.error(`[railway] API stopped by signal ${signal}.`);
+      process.exit(1);
+    }
+    process.exit(code ?? 1);
+  });
+  return api;
 }
 
+/** Dead Railway TCP proxies that return ECONNRESET — remap to live acela DB. */
+const DEAD_DB_HOST_RE = /hayabusa\.proxy\.rlwy\.net/i;
+const LIVE_ACELA_DATABASE_URL =
+  (process.env.LIVE_DATABASE_URL ?? "").trim() ||
+  "postgresql://postgres:bqqNHmsvmdbnZQkuZCKEDGMHEFHwpQMy@acela.proxy.rlwy.net:41130/railway";
+
+function normalizeDatabaseUrl() {
+  const current = (process.env.DATABASE_URL ?? "").trim();
+  if (!current) {
+    console.warn("[railway] DATABASE_URL empty — using live acela DATABASE_URL");
+    process.env.DATABASE_URL = LIVE_ACELA_DATABASE_URL;
+    return;
+  }
+  if (DEAD_DB_HOST_RE.test(current)) {
+    let host = "hayabusa";
+    try {
+      host = new URL(current.replace(/^postgresql:/i, "postgres:")).hostname;
+    } catch {
+      /* ignore */
+    }
+    console.warn(
+      `[railway] DATABASE_URL host "${host}" is offline (ECONNRESET). Switching to acela live DB.`,
+    );
+    process.env.DATABASE_URL = LIVE_ACELA_DATABASE_URL;
+  }
+}
+
+normalizeDatabaseUrl();
 requireEnv("DATABASE_URL");
 requireEnv("JWT_ACCESS_SECRET");
 
@@ -114,16 +153,24 @@ if (skipPush) {
   console.warn("[railway] Schema push reported errors; starting API with existing schema.");
 }
 
-// Skip ensure-schema on boot by default — speeds deploy health checks (~30–90s saved).
-// Set RAILWAY_RUN_ENSURE_SCHEMA=1 once after schema/index migrations.
+// Always patch login-critical columns/tables before accepting traffic.
+const runAuthEnsure = (process.env.RAILWAY_ENSURE_AUTH_SCHEMA ?? "1") !== "0";
+if (runAuthEnsure) {
+  const { ensureAuthSchema } = await import("./ensure-schema.mjs");
+  if (!ensureAuthSchema({ quiet: true })) {
+    console.warn("[railway] Auth schema ensure failed — login may return 500 until Postgres is up.");
+  }
+}
+
+// Full ensure-schema is optional (store, printing, indexes).
 const runEnsure = (process.env.RAILWAY_RUN_ENSURE_SCHEMA ?? "0") === "1";
 if (runEnsure) {
   const { ensureCriticalSchema } = await import("./ensure-schema.mjs");
   if (!ensureCriticalSchema({ quiet: true })) {
-    console.warn("[railway] ensure-schema had errors — continuing; login may fail if columns are missing.");
+    console.warn("[railway] ensure-schema had errors — some modules may fail until schema is patched.");
   }
 } else {
-  console.warn("[railway] Skipping ensure-schema on boot (RAILWAY_RUN_ENSURE_SCHEMA=0). Set =1 to apply indexes/columns.");
+  console.warn("[railway] Skipping full ensure-schema (RAILWAY_RUN_ENSURE_SCHEMA=0). Set =1 after deploy.");
 }
 
 // Skip slow seed boot on Railway by default (was delaying/blocking healthy rollouts).

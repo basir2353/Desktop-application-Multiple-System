@@ -174,7 +174,7 @@ export function PopsShell(): JSX.Element {
         </aside>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {showHeader ? (
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/30 md:px-6">
             <div className="flex min-w-0 items-center gap-3">
@@ -236,7 +236,7 @@ export function PopsShell(): JSX.Element {
         <main
           className={
             isPosRoute
-              ? "flex-1 overflow-y-auto px-0 py-0 md:px-0 md:py-0"
+              ? "min-h-0 flex-1 overflow-y-auto px-0 py-0 md:overflow-hidden md:px-0 md:py-0"
               : "flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5"
           }
         >

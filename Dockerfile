@@ -27,6 +27,7 @@ COPY --from=build /app/packages ./packages
 COPY --from=build /app/api ./api
 RUN find /app/node_modules/.bin -type f -o -type l | xargs chmod +x 2>/dev/null || true
 RUN mkdir -p /app/api/data/uploads
-EXPOSE 3000
+EXPOSE 8080
 ENV HOST=0.0.0.0
+ENV PORT=8080
 CMD ["node", "/app/api/scripts/start-railway.mjs"]

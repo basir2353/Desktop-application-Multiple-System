@@ -15,6 +15,10 @@ target/
 !**/.env.example
 *.local
 local/live-env.json
+local/live-database.url
+local/.env
+local/.env.*
+
 
 # Logs & test artifacts
 *.log
