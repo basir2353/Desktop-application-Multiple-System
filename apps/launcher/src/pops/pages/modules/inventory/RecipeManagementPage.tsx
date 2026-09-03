@@ -1,10 +1,14 @@
 import { Button } from "@platform/ui";
+import {
+  DEFAULT_RECIPE_PORTION_FACTORS,
+  RECIPE_PORTION_PRESETS,
+} from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { createRecipe, deleteRecipe, fetchBranchInventory, updateRecipe } from "../../../api/inventory";
 import { fetchBranchMenuAdmin } from "../../../api/menu";
 import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
-import { inputClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
+import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { linkDangerClass, linkWarningClass, noticeSuccessClass } from "../../../lib/themeClasses";
 import {
   exportRecipesExcel,
@@ -32,10 +36,12 @@ export function RecipeManagementPage(): JSX.Element {
   const [transferBusy, setTransferBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const [previewPortion, setPreviewPortion] = useState("Full");
   const [form, setForm] = useState({
     name: "",
     menuItemId: "",
-    portionSize: "1 portion",
+    portionSize: "Full",
+    portionFactors: { ...DEFAULT_RECIPE_PORTION_FACTORS } as Record<string, number>,
     version: "v1.0",
     lines: [] as IngredientLineRow[],
   });
@@ -61,6 +67,15 @@ export function RecipeManagementPage(): JSX.Element {
     [ingredients],
   );
 
+  const selectedDish = menuItems.find((item) => item.id === form.menuItemId);
+  const dishPortionLabels = useMemo(() => {
+    const fromVariants = (selectedDish?.variants ?? [])
+      .map((variant) => variant.label?.trim())
+      .filter((label): label is string => Boolean(label));
+    const merged = [...RECIPE_PORTION_PRESETS, ...fromVariants];
+    return [...new Set(merged)];
+  }, [selectedDish]);
+
   const validLines = useMemo(
     () =>
       form.lines
@@ -72,6 +87,8 @@ export function RecipeManagementPage(): JSX.Element {
         })),
     [form.lines, ingredientById],
   );
+
+  const previewFactor = form.portionFactors[previewPortion] ?? 1;
 
   const canSubmit =
     form.name.trim().length > 0 &&
@@ -89,6 +106,7 @@ export function RecipeManagementPage(): JSX.Element {
         menuItemId: form.menuItemId,
         version: form.version,
         portionSize: form.portionSize,
+        portionFactors: form.portionFactors,
         lines: validLines,
       });
     },
@@ -97,10 +115,12 @@ export function RecipeManagementPage(): JSX.Element {
       setForm({
         name: "",
         menuItemId: "",
-        portionSize: "1 portion",
+        portionSize: "Full",
+        portionFactors: { ...DEFAULT_RECIPE_PORTION_FACTORS },
         version: "v1.0",
         lines: [],
       });
+      setPreviewPortion("Full");
       setError(null);
     },
     onError: (e: Error) => setError(e.message),
@@ -132,10 +152,35 @@ export function RecipeManagementPage(): JSX.Element {
 
   function onMenuItemChange(menuItemId: string): void {
     const dish = menuItems.find((m) => m.id === menuItemId);
+    const variantLabels = (dish?.variants ?? [])
+      .map((variant) => variant.label?.trim())
+      .filter((label): label is string => Boolean(label));
+    const factors = { ...DEFAULT_RECIPE_PORTION_FACTORS };
+    for (const label of variantLabels) {
+      if (factors[label] == null) factors[label] = 1;
+    }
+    const preferredBase =
+      variantLabels.find((label) => /full/i.test(label)) ??
+      variantLabels[0] ??
+      "Full";
     setForm((prev) => ({
       ...prev,
       menuItemId,
       name: prev.name.trim() || dish?.name || prev.name,
+      portionSize: preferredBase,
+      portionFactors: factors,
+    }));
+    setPreviewPortion(preferredBase);
+  }
+
+  function setPortionFactor(label: string, value: string): void {
+    const n = Number(value);
+    setForm((prev) => ({
+      ...prev,
+      portionFactors: {
+        ...prev.portionFactors,
+        [label]: Number.isFinite(n) && n > 0 ? n : prev.portionFactors[label] ?? 1,
+      },
     }));
   }
 
@@ -261,8 +306,8 @@ export function RecipeManagementPage(): JSX.Element {
       {error ? <InventoryError message={error} /> : null}
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
-        Add every ingredient used in one portion of the dish. When the linked menu item is sold on POS,
-        these amounts are deducted automatically and logged in inventory audit.
+        Enter ingredient quantities for the <span className="text-slate-200">base portion</span> (usually Full).
+        Half / Small / Medium / Large multipliers scale those quantities when POS sells that size.
       </div>
 
       {canManage ? (
@@ -299,13 +344,22 @@ export function RecipeManagementPage(): JSX.Element {
                 />
               </label>
               <label className="block text-xs text-slate-400">
-                Portion size
-                <input
-                  className={`${inputClass} mt-1`}
-                  placeholder="1 portion"
+                Base portion
+                <select
+                  className={`${selectClass} mt-1`}
                   value={form.portionSize}
-                  onChange={(e) => setForm((prev) => ({ ...prev, portionSize: e.target.value }))}
-                />
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setForm((prev) => ({ ...prev, portionSize: next }));
+                    setPreviewPortion(next);
+                  }}
+                >
+                  {dishPortionLabels.map((label) => (
+                    <option key={label} value={label}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="block text-xs text-slate-400">
                 Version
@@ -319,9 +373,59 @@ export function RecipeManagementPage(): JSX.Element {
             </div>
 
             <div>
-              <div className="text-xs font-medium text-slate-300">Ingredients per portion</div>
+              <div className="text-xs font-medium text-slate-300">Portion sizes & ingredient scale</div>
               <p className="mt-1 text-[10px] text-slate-500">
-                Select each ingredient and the quantity used for one sale of this dish.
+                Base qty is for {form.portionSize}. Other sizes multiply ingredients (Half 0.5, Large 1.25…).
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {dishPortionLabels.map((label) => (
+                  <label
+                    key={label}
+                    className={`inline-flex items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] ${
+                      form.portionSize === label
+                        ? "border-amber-500/50 bg-amber-500/10 text-amber-100"
+                        : "border-slate-700 bg-slate-950/50 text-slate-300"
+                    }`}
+                  >
+                    <span className="font-medium">{label}</span>
+                    <input
+                      className={`${inputClass} w-16 py-1 text-[11px]`}
+                      type="number"
+                      min={0.1}
+                      step={0.05}
+                      value={form.portionFactors[label] ?? 1}
+                      onChange={(e) => setPortionFactor(label, e.target.value)}
+                    />
+                    <span className="text-slate-500">×</span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                <span>Preview ingredients as</span>
+                <select
+                  className={`${selectClass} w-auto py-1`}
+                  value={previewPortion}
+                  onChange={(e) => setPreviewPortion(e.target.value)}
+                >
+                  {dishPortionLabels.map((label) => (
+                    <option key={label} value={label}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-slate-500">
+                  (×{previewFactor}
+                  {previewPortion !== form.portionSize ? ` vs base ${form.portionSize}` : ""})
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-medium text-slate-300">
+                Ingredients per {form.portionSize}
+              </div>
+              <p className="mt-1 text-[10px] text-slate-500">
+                Enter quantities for the base portion. Preview column shows scaled qty for {previewPortion}.
               </p>
               <ul className="mt-2 space-y-2">
                 {form.lines
@@ -329,12 +433,14 @@ export function RecipeManagementPage(): JSX.Element {
                   .map((row) => {
                     const ing = ingredientById.get(row.ingredientId);
                     const index = form.lines.findIndex((l) => l.ingredientId === row.ingredientId);
+                    const baseQty = Number(row.qty) || 0;
+                    const scaledQty = Math.max(0, Math.round(baseQty * previewFactor));
                     return (
                       <li
                         key={row.ingredientId}
                         className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/40 p-2 sm:grid-cols-12"
                       >
-                        <div className="sm:col-span-5">
+                        <div className="sm:col-span-4">
                           <div className="text-[10px] text-slate-500">Ingredient</div>
                           <div className="mt-1 text-xs font-medium text-white">{ing?.name ?? "—"}</div>
                           {ing ? (
@@ -345,8 +451,8 @@ export function RecipeManagementPage(): JSX.Element {
                             </div>
                           ) : null}
                         </div>
-                        <label className="block text-[10px] text-slate-500 sm:col-span-3">
-                          Quantity
+                        <label className="block text-[10px] text-slate-500 sm:col-span-2">
+                          Qty ({form.portionSize})
                           <input
                             className={`${inputClass} mt-1 text-xs`}
                             type="number"
@@ -357,7 +463,7 @@ export function RecipeManagementPage(): JSX.Element {
                             onChange={(e) => updateLine(index, { qty: e.target.value })}
                           />
                         </label>
-                        <label className="block text-[10px] text-slate-500 sm:col-span-3">
+                        <label className="block text-[10px] text-slate-500 sm:col-span-2">
                           Unit
                           <input
                             className={`${inputClass} mt-1 text-xs`}
@@ -366,6 +472,15 @@ export function RecipeManagementPage(): JSX.Element {
                             onChange={(e) => updateLine(index, { unit: e.target.value })}
                           />
                         </label>
+                        <div className="sm:col-span-3">
+                          <div className="text-[10px] text-slate-500">{previewPortion} uses</div>
+                          <div className="mt-1 text-xs font-medium text-emerald-300">
+                            {scaledQty} {row.unit || ing?.unit || ""}
+                          </div>
+                          {ing?.categoryName ? (
+                            <div className="text-[10px] text-slate-500">Category · {ing.categoryName}</div>
+                          ) : null}
+                        </div>
                         <div className="flex items-end sm:col-span-1">
                           <button
                             type="button"

@@ -96,7 +96,13 @@ export function GoodsReceivingPage(): JSX.Element {
       setHeader((prev) => ({
         ...prev,
         warehouseId:
-          warehousesQuery.data.warehouses.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ??
+          warehousesQuery.data.warehouses.find((warehouse) => warehouse.isDefault)?.id ??
+          warehousesQuery.data.warehouses.find(
+            (warehouse) => warehouse.code === "SIMPLE-STORE" || warehouse.code === "WH-01",
+          )?.id ??
+          warehousesQuery.data.warehouses.find((warehouse) =>
+            /main warehouse|simple store/i.test(warehouse.name),
+          )?.id ??
           warehousesQuery.data.warehouses[0].id,
       }));
     }

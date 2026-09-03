@@ -57,7 +57,12 @@ export function InventoryWarehousePanel(): JSX.Element {
   useEffect(() => {
     const warehouses = warehousesQuery.data?.warehouses ?? [];
     if (!fromWarehouseId) {
-      setFromWarehouseId(warehouses.find((warehouse) => warehouse.code === "SIMPLE-STORE")?.id ?? "");
+      setFromWarehouseId(
+        warehouses.find((warehouse) => warehouse.isDefault)?.id ??
+          warehouses.find((warehouse) => warehouse.code === "SIMPLE-STORE" || warehouse.code === "WH-01")?.id ??
+          warehouses.find((warehouse) => /main warehouse|simple store/i.test(warehouse.name))?.id ??
+          "",
+      );
     }
     if (!toWarehouseId) {
       setToWarehouseId(warehouses.find((warehouse) => warehouse.code === "KITCHEN")?.id ?? "");
@@ -104,7 +109,21 @@ export function InventoryWarehousePanel(): JSX.Element {
   });
 
   const warehouses = warehousesQuery.data?.warehouses ?? [];
-  const products = productsQuery.data ?? [];
+  const warehouseStock = warehousesQuery.data?.stock ?? [];
+  const stockQtyByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of warehouseStock) {
+      if (row.warehouseId !== fromWarehouseId) continue;
+      map.set(row.productId, (map.get(row.productId) ?? 0) + row.quantity);
+    }
+    return map;
+  }, [fromWarehouseId, warehouseStock]);
+  const products = useMemo(() => {
+    const all = productsQuery.data ?? [];
+    // Prefer products that actually have stock in the selected "From" warehouse.
+    const withStock = all.filter((product) => (stockQtyByProduct.get(product.id) ?? 0) > 0);
+    return withStock.length > 0 ? withStock : all;
+  }, [productsQuery.data, stockQtyByProduct]);
   const activeUnits = (unitsQuery.data?.units ?? []).filter((unit) => unit.isActive);
   const destination = warehouses.find((warehouse) => warehouse.id === toWarehouseId);
   const selectedProductIds = useMemo(
@@ -213,7 +232,14 @@ export function InventoryWarehousePanel(): JSX.Element {
                           onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, productId: event.target.value } : item))}
                         >
                           <option value="">Select item</option>
-                          {products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                          {products.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                              {(stockQtyByProduct.get(item.id) ?? 0) > 0
+                                ? ` · stock ${stockQtyByProduct.get(item.id)}`
+                                : ""}
+                            </option>
+                          ))}
                         </select>
                       </td>
                       <td className="px-3 py-2 text-slate-400">{product?.unitName ?? "—"}</td>

@@ -155,10 +155,99 @@ export const recipeSchema = z.object({
   menuItem: z.string().nullable(),
   version: z.string(),
   portionSize: z.string().nullable(),
+  /** Multipliers vs base portion (Full=1). Used to scale ingredient deduction by Half/Full/S/M/L. */
+  portionFactors: z.record(z.number()).optional(),
   ingredients: z.array(recipeLineSchema),
   totalCost: z.number(),
   active: z.boolean(),
 });
+
+export const RECIPE_PORTION_PRESETS = [
+  "Half",
+  "Full",
+  "Small",
+  "Medium",
+  "Large",
+  "Quarter",
+  "Plate",
+  "Single",
+] as const;
+
+export const DEFAULT_RECIPE_PORTION_FACTORS: Record<string, number> = {
+  Half: 0.5,
+  Full: 1,
+  Small: 0.5,
+  Medium: 0.75,
+  Large: 1.25,
+  Quarter: 0.25,
+  Plate: 1,
+  Single: 1,
+};
+
+export function parseRecipePortionConfig(raw: string | null | undefined): {
+  base: string;
+  factors: Record<string, number>;
+} {
+  const fallback = {
+    base: "Full",
+    factors: { ...DEFAULT_RECIPE_PORTION_FACTORS },
+  };
+  if (!raw?.trim()) return fallback;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { base?: unknown; factors?: unknown };
+      const base =
+        typeof parsed.base === "string" && parsed.base.trim() ? parsed.base.trim() : "Full";
+      const factors: Record<string, number> = { ...DEFAULT_RECIPE_PORTION_FACTORS };
+      if (parsed.factors && typeof parsed.factors === "object") {
+        for (const [key, value] of Object.entries(parsed.factors as Record<string, unknown>)) {
+          const n = Number(value);
+          if (key.trim() && Number.isFinite(n) && n > 0) factors[key.trim()] = n;
+        }
+      }
+      return { base, factors };
+    } catch {
+      /* fall through */
+    }
+  }
+  return {
+    base: trimmed,
+    factors: { ...DEFAULT_RECIPE_PORTION_FACTORS, [trimmed]: 1 },
+  };
+}
+
+export function encodeRecipePortionConfig(
+  base: string,
+  factors?: Record<string, number> | null,
+): string {
+  const cleanBase = base.trim() || "Full";
+  const next: Record<string, number> = { ...DEFAULT_RECIPE_PORTION_FACTORS };
+  if (factors) {
+    for (const [key, value] of Object.entries(factors)) {
+      const n = Number(value);
+      if (key.trim() && Number.isFinite(n) && n > 0) next[key.trim()] = n;
+    }
+  }
+  if (!next[cleanBase]) next[cleanBase] = 1;
+  return JSON.stringify({ base: cleanBase, factors: next });
+}
+
+export function recipePortionFactorForLabel(
+  label: string,
+  factors: Record<string, number>,
+  base = "Full",
+): number {
+  const matches = [...label.matchAll(/\(([^)]+)\)/g)].map((m) => m[1]?.trim() ?? "");
+  const entries = Object.entries(factors);
+  for (const token of matches) {
+    if (!token) continue;
+    const hit = entries.find(([key]) => key.toLowerCase() === token.toLowerCase());
+    if (hit) return hit[1];
+  }
+  const baseHit = entries.find(([key]) => key.toLowerCase() === base.toLowerCase());
+  return baseHit?.[1] ?? 1;
+}
 
 export const stockAdjustmentSchema = z.object({
   id: z.string().uuid(),
@@ -422,6 +511,7 @@ export const createRecipeSchema = branchCodeSchema.extend({
   menuItemId: z.string().uuid().optional(),
   version: z.string().max(16).optional(),
   portionSize: z.string().max(64).optional(),
+  portionFactors: z.record(z.number().positive().max(10)).optional(),
   active: z.boolean().optional(),
   lines: z.array(createRecipeLineSchema).min(1),
 });
@@ -431,6 +521,7 @@ export const updateRecipeSchema = z.object({
   menuItemId: z.string().uuid().nullable().optional(),
   version: z.string().max(16).optional(),
   portionSize: z.string().max(64).nullable().optional(),
+  portionFactors: z.record(z.number().positive().max(10)).nullable().optional(),
   active: z.boolean().optional(),
   lines: z.array(createRecipeLineSchema).min(1).optional(),
 });
@@ -494,6 +585,15 @@ export const inventoryWarehouseSchema = z.object({
 export const inventoryWarehouseListSchema = z.object({
   branchCode: z.string(),
   warehouses: z.array(inventoryWarehouseSchema),
+  stock: z
+    .array(
+      z.object({
+        warehouseId: z.string().uuid(),
+        productId: z.string().uuid(),
+        quantity: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 
 export const inventoryCookingUnitSchema = z.object({

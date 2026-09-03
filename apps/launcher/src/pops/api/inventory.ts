@@ -78,10 +78,12 @@ export async function fetchInventoryDashboard(branchCode: string): Promise<Inven
 export async function fetchInventoryWarehouses(branchCode: string): Promise<{
   branchCode: string;
   warehouses: InventoryWarehouse[];
+  stock: { warehouseId: string; productId: string; quantity: number }[];
 }> {
   const res = await authFetch(`/v1/inventory/warehouses?${new URLSearchParams({ branchCode })}`);
   if (!res.ok) await parseError(res, "Warehouses failed");
-  return inventoryWarehouseListSchema.parse(await res.json());
+  const parsed = inventoryWarehouseListSchema.parse(await res.json());
+  return { ...parsed, stock: parsed.stock ?? [] };
 }
 
 export async function fetchInventoryCookingUnits(branchCode: string): Promise<{

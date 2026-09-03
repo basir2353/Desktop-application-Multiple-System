@@ -31,6 +31,8 @@ import type {
   CreateInventoryTransfer,
   CreateIngredientLink,
   UpdateInventoryCookingUnit,
+  encodeRecipePortionConfig,
+  parseRecipePortionConfig,
 } from "@platform/contracts";
 import {
   popsBranches,
@@ -880,8 +882,8 @@ export class InventoryService implements OnModuleInit {
     await this.getSupplier(organizationId, input.supplierId);
     const { kitchen } = await this.ensureRestaurantWarehouses(organizationId, branch.id);
     let warehouseId = input.warehouseId;
-    const [receiptWarehouse] = await this.db
-      .select({ id: storeWarehouses.id })
+    let [receiptWarehouse] = await this.db
+      .select({ id: storeWarehouses.id, name: storeWarehouses.name })
       .from(storeWarehouses)
       .where(and(
         eq(storeWarehouses.id, warehouseId),
@@ -900,11 +902,25 @@ export class InventoryService implements OnModuleInit {
           eq(popsPurchaseOrders.branchId, branch.id),
         ))
         .limit(1);
-      if (purchaseOrder?.warehouseId) warehouseId = purchaseOrder.warehouseId;
+      if (purchaseOrder?.warehouseId) {
+        warehouseId = purchaseOrder.warehouseId;
+        const [poWarehouse] = await this.db
+          .select({ id: storeWarehouses.id, name: storeWarehouses.name })
+          .from(storeWarehouses)
+          .where(and(
+            eq(storeWarehouses.id, warehouseId),
+            eq(storeWarehouses.organizationId, organizationId),
+            eq(storeWarehouses.branchId, branch.id),
+          ))
+          .limit(1);
+        if (!poWarehouse) throw new NotFoundException("Purchase-order warehouse not found for this branch");
+        receiptWarehouse = poWarehouse;
+      }
     }
 
     const totalCost = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
     const grnNumber = `GRN-${Date.now().toString().slice(-6)}`;
+    const locationName = receiptWarehouse.name?.trim() || "Main Warehouse";
 
     const [grn] = await this.db
       .insert(popsGoodsReceipts)
@@ -924,7 +940,7 @@ export class InventoryService implements OnModuleInit {
     if (!grn) throw new BadRequestException("Failed to create GRN");
 
     for (const line of input.lines) {
-      const ing = await this.getIngredient(organizationId, line.ingredientId);
+      let ing = await this.getIngredient(organizationId, line.ingredientId);
       await this.db.insert(popsGoodsReceiptLines).values({
         goodsReceiptId: grn.id,
         ingredientId: line.ingredientId,
@@ -935,12 +951,23 @@ export class InventoryService implements OnModuleInit {
         expiryDate: line.expiryDate ?? null,
       });
 
+      // Always keep a linked store product so transfers can move purchased stock.
+      const product = await this.ensureIngredientStoreProduct(organizationId, branch.id, ing, line.unitCost);
+      if (!ing.storeProductId || ing.storeProductId !== product.id) {
+        const [linked] = await this.db
+          .update(popsIngredients)
+          .set({ storeProductId: product.id })
+          .where(eq(popsIngredients.id, ing.id))
+          .returning();
+        if (linked) ing = linked;
+      }
+
       await this.db
         .update(popsIngredients)
         .set({
-          // A mapped ingredient is Kitchen stock. Receiving its shared
-          // product into Simple Store must wait for an explicit transfer.
-          currentStock: ing.storeProductId && warehouseId !== kitchen.id
+          // Kitchen is the sellable / recipe stock. Receiving into any other
+          // warehouse waits for an explicit transfer into Kitchen.
+          currentStock: warehouseId !== kitchen.id
             ? ing.currentStock
             : ing.currentStock + line.qty,
           unitCostPkr: line.unitCost,
@@ -954,17 +981,11 @@ export class InventoryService implements OnModuleInit {
         qty: line.qty,
         batchNumber: line.batchNumber?.trim() || null,
         expiryDate: line.expiryDate ?? null,
-        location: warehouseId,
+        location: locationName,
         unitCostPkr: line.unitCost,
       });
 
-      if (ing.storeProductId) {
-        const [product] = await this.db
-          .select()
-          .from(storeProducts)
-          .where(eq(storeProducts.id, ing.storeProductId))
-          .limit(1);
-        if (product) {
+      {
           const [stock] = await this.db
             .select()
             .from(storeWarehouseStock)
@@ -993,7 +1014,6 @@ export class InventoryService implements OnModuleInit {
               purchasePricePkr: line.unitCost,
             })
             .where(eq(storeProducts.id, product.id));
-        }
       }
 
       if (input.purchaseOrderId) {
@@ -1044,6 +1064,10 @@ export class InventoryService implements OnModuleInit {
   async createRecipe(organizationId: string, userEmail: string, input: CreateRecipe) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     const totalCost = await this.computeRecipeCost(input.lines);
+    const portionSize = encodeRecipePortionConfig(
+      input.portionSize?.trim() || "Full",
+      input.portionFactors ?? null,
+    );
 
     const [recipe] = await this.db
       .insert(popsRecipes)
@@ -1053,7 +1077,7 @@ export class InventoryService implements OnModuleInit {
         name: input.name.trim(),
         menuItemId: input.menuItemId ?? null,
         version: input.version ?? "v1.0",
-        portionSize: input.portionSize?.trim() || null,
+        portionSize,
         totalCostPkr: totalCost,
         active: input.active ?? true,
       })
@@ -1077,6 +1101,18 @@ export class InventoryService implements OnModuleInit {
   async updateRecipe(organizationId: string, userEmail: string, recipeId: string, input: UpdateRecipe) {
     const existing = await this.getRecipe(organizationId, recipeId);
     const totalCost = input.lines ? await this.computeRecipeCost(input.lines) : undefined;
+    const nextPortion =
+      input.portionSize !== undefined || input.portionFactors !== undefined
+        ? encodeRecipePortionConfig(
+            input.portionSize === null
+              ? "Full"
+              : (input.portionSize?.trim() ||
+                  parseRecipePortionConfig(existing.portionSize).base),
+            input.portionFactors === null
+              ? null
+              : (input.portionFactors ?? parseRecipePortionConfig(existing.portionSize).factors),
+          )
+        : undefined;
 
     await this.db
       .update(popsRecipes)
@@ -1084,7 +1120,7 @@ export class InventoryService implements OnModuleInit {
         ...(input.name !== undefined ? { name: input.name.trim() } : {}),
         ...(input.menuItemId !== undefined ? { menuItemId: input.menuItemId } : {}),
         ...(input.version !== undefined ? { version: input.version } : {}),
-        ...(input.portionSize !== undefined ? { portionSize: input.portionSize } : {}),
+        ...(nextPortion !== undefined ? { portionSize: nextPortion } : {}),
         ...(input.active !== undefined ? { active: input.active } : {}),
         ...(totalCost !== undefined ? { totalCostPkr: totalCost } : {}),
       })
@@ -1643,8 +1679,19 @@ export class InventoryService implements OnModuleInit {
       .where(eq(popsIngredients.branchId, branchId));
     const ingMap = new Map(ingredients.map((i) => [i.id, i]));
 
+    const warehouses = await this.db
+      .select({ id: storeWarehouses.id, name: storeWarehouses.name })
+      .from(storeWarehouses)
+      .where(eq(storeWarehouses.branchId, branchId));
+    const warehouseNameById = new Map(warehouses.map((w) => [w.id, w.name]));
+    const uuidRe =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
     return batches.map((b) => {
       const ing = ingMap.get(b.ingredientId);
+      const rawLocation = b.location?.trim() || "Main store";
+      const location =
+        uuidRe.test(rawLocation) ? (warehouseNameById.get(rawLocation) ?? rawLocation) : rawLocation;
       return {
         id: b.id,
         sku: ing?.sku ?? "—",
@@ -1654,7 +1701,7 @@ export class InventoryService implements OnModuleInit {
         batch: b.batchNumber,
         expiry: b.expiryDate ? this.formatDateOnly(b.expiryDate, b.createdAt) : null,
         receivedDate: this.formatDateOnly(null, b.createdAt),
-        location: b.location,
+        location,
         unitCost: b.unitCostPkr,
       };
     });
@@ -1683,7 +1730,8 @@ export class InventoryService implements OnModuleInit {
           menuItemId: r.menuItemId,
           menuItem: r.menuItemId ? (menuMap.get(r.menuItemId) ?? null) : null,
           version: r.version,
-          portionSize: r.portionSize,
+          portionSize: parseRecipePortionConfig(r.portionSize).base,
+          portionFactors: parseRecipePortionConfig(r.portionSize).factors,
           ingredients: lines.map((l) => ({
             id: l.id,
             ingredientId: l.ingredientId,
@@ -1917,10 +1965,64 @@ export class InventoryService implements OnModuleInit {
       if (!raced) throw new BadRequestException(`Could not create warehouse ${name}`);
       return raced;
     };
+
+    // Prefer an existing Main Warehouse / WH-01 so GRN + transfers share one default store.
+    const simpleStore =
+      rows.find((w) => w.code === "SIMPLE-STORE") ??
+      rows.find((w) => w.code === "WH-01") ??
+      rows.find((w) => /^(main warehouse|simple store)$/i.test(w.name.trim())) ??
+      (await ensure("SIMPLE-STORE", "Main Warehouse", true));
+
     return {
-      simpleStore: await ensure("SIMPLE-STORE", "Simple Store", true),
+      simpleStore,
       kitchen: await ensure("KITCHEN", "Kitchen", false),
     };
+  }
+
+  private async ensureIngredientStoreProduct(
+    organizationId: string,
+    branchId: string,
+    ingredient: typeof popsIngredients.$inferSelect,
+    unitCostPkr: number,
+  ) {
+    if (ingredient.storeProductId) {
+      const [existing] = await this.db
+        .select()
+        .from(storeProducts)
+        .where(and(
+          eq(storeProducts.id, ingredient.storeProductId),
+          eq(storeProducts.organizationId, organizationId),
+          eq(storeProducts.branchId, branchId),
+        ))
+        .limit(1);
+      if (existing) return existing;
+    }
+
+    const [bySku] = await this.db
+      .select()
+      .from(storeProducts)
+      .where(and(
+        eq(storeProducts.organizationId, organizationId),
+        eq(storeProducts.branchId, branchId),
+        eq(storeProducts.sku, ingredient.sku),
+      ))
+      .limit(1);
+    if (bySku) return bySku;
+
+    const [created] = await this.db
+      .insert(storeProducts)
+      .values({
+        organizationId,
+        branchId,
+        sku: ingredient.sku || `ING-${ingredient.id.slice(0, 8).toUpperCase()}`,
+        name: ingredient.name,
+        purchasePricePkr: unitCostPkr || ingredient.unitCostPkr || 0,
+        sellingPricePkr: unitCostPkr || ingredient.unitCostPkr || 0,
+        availableStock: 0,
+      })
+      .returning();
+    if (!created) throw new BadRequestException("Could not create store product for ingredient");
+    return created;
   }
 
   private async ensureCookingUnits(organizationId: string, branchId: string) {
@@ -2109,6 +2211,7 @@ export class InventoryService implements OnModuleInit {
   async listWarehouses(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     const warehouses = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    await this.syncPurchasedIngredientsForTransfer(organizationId, branch.id, warehouses.simpleStore.id);
     const rows = await this.db
       .select()
       .from(storeWarehouseStock)
@@ -2128,7 +2231,120 @@ export class InventoryService implements OnModuleInit {
         zoneCount: 0,
         totalStock: rows.filter((row) => row.warehouseId === warehouse.id).reduce((sum, row) => sum + row.quantity, 0),
       })),
+      stock: rows
+        .filter((row) => row.quantity > 0)
+        .map((row) => ({
+          warehouseId: row.warehouseId,
+          productId: row.productId,
+          quantity: row.quantity,
+        })),
     };
+  }
+
+  /** Link purchased ingredients to store products and fill warehouse stock for transfers. */
+  private async syncPurchasedIngredientsForTransfer(
+    organizationId: string,
+    branchId: string,
+    defaultWarehouseId: string,
+  ) {
+    const ingredients = await this.db
+      .select()
+      .from(popsIngredients)
+      .where(and(eq(popsIngredients.organizationId, organizationId), eq(popsIngredients.branchId, branchId)));
+    const batches = await this.db
+      .select()
+      .from(popsStockBatches)
+      .where(and(eq(popsStockBatches.organizationId, organizationId), eq(popsStockBatches.branchId, branchId)));
+    const warehouses = await this.db
+      .select({ id: storeWarehouses.id, name: storeWarehouses.name })
+      .from(storeWarehouses)
+      .where(and(eq(storeWarehouses.organizationId, organizationId), eq(storeWarehouses.branchId, branchId)));
+    const warehouseById = new Map(warehouses.map((w) => [w.id, w]));
+    const uuidRe =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    for (const ing of ingredients) {
+      const product = await this.ensureIngredientStoreProduct(
+        organizationId,
+        branchId,
+        ing,
+        ing.unitCostPkr,
+      );
+      if (ing.storeProductId !== product.id) {
+        await this.db
+          .update(popsIngredients)
+          .set({ storeProductId: product.id })
+          .where(eq(popsIngredients.id, ing.id));
+      }
+
+      const ingBatches = batches.filter((b) => b.ingredientId === ing.id && b.qty > 0);
+      if (ingBatches.length === 0 && ing.currentStock <= 0) continue;
+
+      const qtyByWarehouse = new Map<string, number>();
+      for (const batch of ingBatches) {
+        const loc = batch.location?.trim() || "";
+        let warehouseId = defaultWarehouseId;
+        if (uuidRe.test(loc) && warehouseById.has(loc)) warehouseId = loc;
+        else {
+          const byName = warehouses.find((w) => w.name.toLowerCase() === loc.toLowerCase());
+          if (byName) warehouseId = byName.id;
+        }
+        qtyByWarehouse.set(warehouseId, (qtyByWarehouse.get(warehouseId) ?? 0) + batch.qty);
+      }
+      if (qtyByWarehouse.size === 0 && ing.currentStock > 0) {
+        qtyByWarehouse.set(defaultWarehouseId, ing.currentStock);
+      }
+
+      for (const [warehouseId, qty] of qtyByWarehouse) {
+        const [existing] = await this.db
+          .select()
+          .from(storeWarehouseStock)
+          .where(and(
+            eq(storeWarehouseStock.warehouseId, warehouseId),
+            eq(storeWarehouseStock.productId, product.id),
+          ))
+          .limit(1);
+        if (existing) {
+          if (existing.quantity < qty) {
+            await this.db
+              .update(storeWarehouseStock)
+              .set({ quantity: qty, updatedAt: new Date() })
+              .where(eq(storeWarehouseStock.id, existing.id));
+          }
+        } else {
+          await this.db.insert(storeWarehouseStock).values({
+            organizationId,
+            branchId,
+            warehouseId,
+            productId: product.id,
+            quantity: qty,
+            unitCostPkr: ing.unitCostPkr,
+          });
+        }
+      }
+
+      // Rewrite UUID batch locations to warehouse names for Stock Management UI.
+      for (const batch of ingBatches) {
+        const loc = batch.location?.trim() || "";
+        if (uuidRe.test(loc) && warehouseById.has(loc)) {
+          await this.db
+            .update(popsStockBatches)
+            .set({ location: warehouseById.get(loc)!.name })
+            .where(eq(popsStockBatches.id, batch.id));
+        }
+      }
+
+      const stockRows = await this.db
+        .select({ quantity: storeWarehouseStock.quantity })
+        .from(storeWarehouseStock)
+        .where(eq(storeWarehouseStock.productId, product.id));
+      await this.db
+        .update(storeProducts)
+        .set({
+          availableStock: stockRows.reduce((sum, row) => sum + row.quantity, 0),
+        })
+        .where(eq(storeProducts.id, product.id));
+    }
   }
 
   async linkIngredientToStoreProduct(organizationId: string, input: CreateIngredientLink) {

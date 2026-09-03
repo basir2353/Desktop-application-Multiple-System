@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { BillLine } from "@platform/contracts";
+import { parseRecipePortionConfig, recipePortionFactorForLabel } from "@platform/contracts";
 import {
   popsBills,
   popsIngredients,
@@ -77,6 +78,7 @@ export class InventoryDeductionService {
       .select({
         id: popsRecipes.id,
         menuItemId: popsRecipes.menuItemId,
+        portionSize: popsRecipes.portionSize,
       })
       .from(popsRecipes)
       .where(
@@ -87,10 +89,13 @@ export class InventoryDeductionService {
         ),
       );
 
-    const recipeByMenuItem = new Map<string, string>();
+    const recipeByMenuItem = new Map<string, { id: string; portionSize: string | null }>();
     for (const recipe of recipes) {
       if (recipe.menuItemId && !recipeByMenuItem.has(recipe.menuItemId)) {
-        recipeByMenuItem.set(recipe.menuItemId, recipe.id);
+        recipeByMenuItem.set(recipe.menuItemId, {
+          id: recipe.id,
+          portionSize: recipe.portionSize,
+        });
       }
     }
 
@@ -105,25 +110,28 @@ export class InventoryDeductionService {
         throw new BadRequestException(`Menu item for "${line.label}" could not be matched`);
       }
 
-      const recipeId = recipeByMenuItem.get(menuItemId);
-      if (!recipeId) {
+      const recipe = recipeByMenuItem.get(menuItemId);
+      if (!recipe) {
         throw new BadRequestException(`No active recipe is configured for "${line.label}"`);
       }
 
-      let recipeLines = recipeLineCache.get(recipeId);
+      let recipeLines = recipeLineCache.get(recipe.id);
       if (!recipeLines) {
         recipeLines = await this.db
           .select()
           .from(popsRecipeLines)
-          .where(eq(popsRecipeLines.recipeId, recipeId));
-        recipeLineCache.set(recipeId, recipeLines);
+          .where(eq(popsRecipeLines.recipeId, recipe.id));
+        recipeLineCache.set(recipe.id, recipeLines);
       }
+
+      const portion = parseRecipePortionConfig(recipe.portionSize);
+      const portionFactor = recipePortionFactorForLabel(line.label, portion.factors, portion.base);
 
       const cookingUnitId = cookingUnitByCategory.get(
         menuItems.find((item) => item.id === menuItemId)?.categoryId ?? "",
       ) ?? null;
       for (const recipeLine of recipeLines) {
-        const deductQty = recipeLine.qty * line.qty;
+        const deductQty = Math.max(1, Math.round(recipeLine.qty * line.qty * portionFactor));
         const key = `${recipeLine.ingredientId}:${cookingUnitId ?? "unassigned"}`;
         const previous = deductions.get(key);
         deductions.set(key, {
@@ -345,18 +353,25 @@ export class InventoryDeductionService {
     const recipes = await this.db.select({
       id: popsRecipes.id,
       menuItemId: popsRecipes.menuItemId,
+      portionSize: popsRecipes.portionSize,
     }).from(popsRecipes).where(and(
       eq(popsRecipes.organizationId, organizationId),
       eq(popsRecipes.branchId, bill.branchId),
       eq(popsRecipes.active, true),
     ));
-    const recipeByMenuItem = new Map(recipes.filter((recipe) => recipe.menuItemId).map((recipe) => [recipe.menuItemId!, recipe.id]));
+    const recipeByMenuItem = new Map(
+      recipes
+        .filter((recipe) => recipe.menuItemId)
+        .map((recipe) => [recipe.menuItemId!, recipe]),
+    );
     const deductions = new Map<string, { ingredientId: string; cookingUnitId: string | null; qty: number }>();
     for (const line of lines) {
       const menuItemId = this.resolveMenuItemId(line, menuItems);
-      const recipeId = menuItemId ? recipeByMenuItem.get(menuItemId) : undefined;
-      if (!recipeId) continue;
-      const recipeLines = await this.db.select().from(popsRecipeLines).where(eq(popsRecipeLines.recipeId, recipeId));
+      const recipe = menuItemId ? recipeByMenuItem.get(menuItemId) : undefined;
+      if (!recipe) continue;
+      const recipeLines = await this.db.select().from(popsRecipeLines).where(eq(popsRecipeLines.recipeId, recipe.id));
+      const portion = parseRecipePortionConfig(recipe.portionSize);
+      const portionFactor = recipePortionFactorForLabel(line.label, portion.factors, portion.base);
       const cookingUnitId = cookingUnitByCategory.get(
         menuItems.find((item) => item.id === menuItemId)?.categoryId ?? "",
       ) ?? null;
@@ -366,7 +381,7 @@ export class InventoryDeductionService {
         deductions.set(key, {
           ingredientId: recipeLine.ingredientId,
           cookingUnitId,
-          qty: (previous?.qty ?? 0) + recipeLine.qty * line.qty,
+          qty: (previous?.qty ?? 0) + Math.max(1, Math.round(recipeLine.qty * line.qty * portionFactor)),
         });
       }
     }
