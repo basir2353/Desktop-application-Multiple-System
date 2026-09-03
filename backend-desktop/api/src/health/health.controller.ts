@@ -8,8 +8,13 @@ export class HealthController {
   constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
 
   @Get()
-  getHealth(): { status: string; ts: string } {
-    return { status: "ok", ts: new Date().toISOString() };
+  getHealth(): { status: string; ts: string; build: string } {
+    return {
+      status: "ok",
+      ts: new Date().toISOString(),
+      // Bump this string whenever we need to confirm Railway picked up a deploy.
+      build: "pay-soft-inventory-2026-09-03",
+    };
   }
 
   /** DB readiness — helps diagnose Railway login 500s after deploy. */

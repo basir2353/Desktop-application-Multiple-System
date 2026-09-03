@@ -31,9 +31,8 @@ import type {
   CreateInventoryTransfer,
   CreateIngredientLink,
   UpdateInventoryCookingUnit,
-  encodeRecipePortionConfig,
-  parseRecipePortionConfig,
 } from "@platform/contracts";
+import { encodeRecipePortionConfig, parseRecipePortionConfig } from "@platform/contracts";
 import {
   popsBranches,
   popsGoodsReceiptLines,
