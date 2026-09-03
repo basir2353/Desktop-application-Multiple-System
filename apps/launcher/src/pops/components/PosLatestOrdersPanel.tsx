@@ -436,17 +436,12 @@ export function PosLatestOrdersPanel({
     };
   }
 
-  /** Print P / shortcut P — instant auto-print (no preview modal, no orders API wait). */
+  /** Print P / shortcut P — simple customer slip only (no PRA/PRF, no kitchen KOT). */
   async function quickPrintOrder(order: PosRecentOrder): Promise<void> {
-    const isPaidBill =
-      order.bill?.status === "completed" ||
-      Boolean(order.bill?.praInvoiceNumber) ||
-      modeFilter === "Paid";
-
     onNotice?.(`Printing ${order.ref}…`, "success");
 
     const built = await buildPaidReceiptInput(order, {
-      embedPra: isPaidBill,
+      embedPra: false,
       issueIfMissing: false,
       skipBillRefresh: true,
     });
@@ -524,8 +519,8 @@ export function PosLatestOrdersPanel({
   }
 
   /**
-   * Print: paid/Closed → PRA logo bill; unpaid → simple customer slip.
-   * Kitchen KOT still goes out from POS Order / Pay.
+   * Print P / Print button: simple customer slip only (never PRA/PRF, never kitchen KOT).
+   * PRA fiscal print stays on Close.
    */
   function printOrder(order: PosRecentOrder, event?: MouseEvent): void {
     event?.stopPropagation();
@@ -772,8 +767,9 @@ export function PosLatestOrdersPanel({
                 <button
                   type="button"
                   onClick={() => setOrdersLayout("grid")}
-                  title="Grid view"
+                  title="Grid mode"
                   aria-pressed={layoutMode === "grid"}
+                  aria-label="Grid mode"
                   className={`rounded px-1.5 py-1 transition ${
                     layoutMode === "grid"
                       ? "bg-amber-500 text-slate-950"
@@ -900,7 +896,9 @@ export function PosLatestOrdersPanel({
           ) : (
             <ul
               className={
-                layoutMode === "list" ? "flex flex-col gap-0.5" : "grid grid-cols-1 gap-1"
+                layoutMode === "list"
+                  ? "flex flex-col gap-0.5"
+                  : "grid grid-cols-2 gap-1 sm:grid-cols-2 lg:grid-cols-2"
               }
             >
               {displayedOrders.map((order) => {
@@ -950,13 +948,7 @@ export function PosLatestOrdersPanel({
                       type="button"
                       className="rounded border border-amber-300 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 transition hover:border-amber-400 hover:bg-amber-50 dark:border-slate-700 dark:text-amber-400 dark:hover:border-amber-500/40 dark:hover:bg-amber-500/10"
                       onClick={(e) => printOrder(order, e)}
-                      title={
-                        order.kind === "pending" && order.kitchenTicket?.status !== "done"
-                          ? "Print kitchen order ticket (order stays editable)"
-                          : order.bill?.status === "completed" || modeFilter === "Paid"
-                            ? "Re-print PRA invoice (logo + QR) — or press P"
-                            : "Print simple invoice — or press P"
-                      }
+                      title="Print simple customer slip (no PRA / no kitchen KOT) — or press P"
                     >
                       Print
                       <span className="ml-0.5 opacity-60">P</span>

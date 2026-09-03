@@ -146,6 +146,7 @@ import { formatSelectBalance } from "../../lib/selectMeta";
 import { SearchableSelect } from "../../ui/SearchableSelect";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
+import { buildPosInventorySaleWarnings } from "../../lib/posInventorySaleCheck";
 import { fieldInputClass } from "../../lib/themeClasses";
 import {
   DELIVERY_SETTINGS_CHANGED_EVENT,
@@ -326,7 +327,10 @@ export function PosPage(): JSX.Element {
     () => DEFAULT_HAPPY_HOUR_SETTINGS,
   );
   const [orderRef, setOrderRef] = useState(() => peekNextOrderRef(undefined));
-  const [printNotice, setPrintNotice] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const [printNotice, setPrintNotice] = useState<{
+    message: string;
+    tone: "success" | "error" | "warning";
+  } | null>(null);
   const [praFiscal, setPraFiscal] = useState<PraFiscalInvoice | null>(null);
   const [praModalOpen, setPraModalOpen] = useState(false);
   const [praPrinting, setPraPrinting] = useState(false);
@@ -397,6 +401,8 @@ export function PosPage(): JSX.Element {
   /** After Close → Pay succeeds, open Closed + PRA for this bill id. */
   const [closeAfterPayBillId, setCloseAfterPayBillId] = useState<string | null>(null);
   const pendingCloseAfterPayRef = useRef(false);
+  /** Set before completed checkout; shown after pay (never blocks sale). */
+  const pendingInventoryWarningsRef = useRef<string[]>([]);
   const autoPrintedOrderKeysRef = useRef<Set<string>>(new Set());
   const latestOrdersQuickPrintRef = useRef<(() => boolean) | null>(null);
   const cashierPromptShown = useRef(false);
@@ -1981,7 +1987,8 @@ export function PosPage(): JSX.Element {
           }
         }
 
-        if (kotSent) {
+        // Close → Pay must emit only the final/PRA slip — never a second kitchen KOT print.
+        if (kotSent && !pendingCloseAfterPayRef.current) {
           const printed = await printKitchenKotsOnPay(sharedOrderRef);
           kotPrintErrors.push(...printed.errors);
         }
@@ -2066,6 +2073,15 @@ export function PosPage(): JSX.Element {
       setCheckoutModal(null);
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
+      const invWarnings = pendingInventoryWarningsRef.current;
+      pendingInventoryWarningsRef.current = [];
+      const invHint =
+        invWarnings.length > 0
+          ? ` Inventory: ${invWarnings.slice(0, 2).join(" · ")}${
+              invWarnings.length > 2 ? ` (+${invWarnings.length - 2} more)` : ""
+            }`
+          : "";
+      const noticeTone = invWarnings.length > 0 ? ("warning" as const) : ("success" as const);
       if (intent === "hold") {
         // Direct hold still records who took staff food.
         if (!skipStaffFoodLog) {
@@ -2091,8 +2107,8 @@ export function PosPage(): JSX.Element {
         pendingCloseAfterPayRef.current = false;
         setCloseAfterPayBillId(bill.id);
         setPrintNotice({
-          tone: "success",
-          message: `${modeLabel} paid — ${bill.billRef}.${kotHint} Closing with PRA invoice…`,
+          tone: noticeTone,
+          message: `${modeLabel} paid — ${bill.billRef}.${kotHint}${invHint} Closing with PRA invoice…`,
         });
         const phone = phoneFromBillNotes(bill.notes);
         if (phone || mode === "delivery") {
@@ -2109,8 +2125,8 @@ export function PosPage(): JSX.Element {
 
       // Simple Card/Cash invoice = Latest-orders Print only (not auto on Pay/Invoice).
       setPrintNotice({
-        tone: "success",
-        message: `${modeLabel} ${intent === "invoice" ? "saved" : "paid"} — ${bill.billRef}.${kotHint} Simple invoice: Print button on the order.`,
+        tone: noticeTone,
+        message: `${modeLabel} ${intent === "invoice" ? "saved" : "paid"} — ${bill.billRef}.${kotHint}${invHint} Simple invoice: Print button on the order.`,
       });
       const phone = phoneFromBillNotes(bill.notes);
       if (phone || mode === "delivery") {
@@ -3641,7 +3657,9 @@ export function PosPage(): JSX.Element {
               className={`shrink-0 border-b px-3 py-2 text-[11px] font-medium ${
                 printNotice.tone === "error"
                   ? "border-red-300 bg-red-50 text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
-                  : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+                  : printNotice.tone === "warning"
+                    ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200"
               }`}
             >
               {printNotice.message}
@@ -4145,13 +4163,27 @@ export function PosPage(): JSX.Element {
             setCheckoutModal(null);
           }}
           onValidationError={(message) => setPrintNotice({ message, tone: "error" })}
-          onConfirm={({
+          onConfirm={async ({
             servicePct: checkoutServicePct,
             taxPct: checkoutTaxPct,
             payments,
             status,
             cashReceived,
-          }) =>
+          }) => {
+            pendingInventoryWarningsRef.current = [];
+            if (status === "completed" && branch?.code) {
+              const warnings = await buildPosInventorySaleWarnings(branch.code, cart);
+              if (warnings.length > 0) {
+                const preview = warnings.slice(0, 8).join("\n• ");
+                const ok = window.confirm(
+                  `Inventory / recipe alerts (sale will still complete):\n\n• ${preview}${
+                    warnings.length > 8 ? `\n• …+${warnings.length - 8} more` : ""
+                  }\n\nContinue with payment?`,
+                );
+                if (!ok) return;
+              }
+              pendingInventoryWarningsRef.current = warnings;
+            }
             checkoutMutation.mutate({
               intent: checkoutModal,
               servicePct: checkoutServicePct,
@@ -4159,8 +4191,8 @@ export function PosPage(): JSX.Element {
               payments,
               status,
               cashReceived,
-            })
-          }
+            });
+          }}
         />
       ) : null}
 

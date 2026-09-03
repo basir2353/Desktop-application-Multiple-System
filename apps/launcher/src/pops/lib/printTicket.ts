@@ -1625,6 +1625,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-size: ${receiptFonts.grandValue}px;
       font-weight: 400;
     }
+    /* Net Total must stay same size as other totals rows (do not enlarge). */
+    body.ticket-receipt .row.grand.pay-net .label {
+      font-size: ${receiptFonts.rowLabel}px;
+      font-weight: 400;
+    }
+    body.ticket-receipt .row.grand.pay-net .value {
+      font-size: ${receiptFonts.rowValue}px;
+      font-weight: 400;
+    }
     body.ticket-receipt .footer {
       margin-top: ${compact ? "6px" : "8px"};
       padding: 6px 0 4px;
@@ -2079,7 +2088,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     }
     .pay-compare-col .row.pay-net .value {
       font-weight: ${isReceipt ? 400 : 700};
-      font-size: ${Math.max(13, (isReceipt ? receiptFonts.rowValue : kotBase) + 2)}px;
+      font-size: ${isReceipt ? receiptFonts.rowValue : kotBase}px;
       margin-left: auto;
       max-width: none;
     }
@@ -2149,6 +2158,16 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       font-weight: 700;
       color: #000;
       letter-spacing: -0.02em;
+    }
+    .row.grand.pay-net .label {
+      font-size: ${receiptFonts.rowLabel}px;
+      font-weight: ${isReceipt ? 400 : 700};
+      letter-spacing: normal;
+    }
+    .row.grand.pay-net .value {
+      font-size: ${receiptFonts.rowValue}px;
+      font-weight: ${isReceipt ? 400 : 700};
+      letter-spacing: normal;
     }
     .footer {
       margin-top: 16px;

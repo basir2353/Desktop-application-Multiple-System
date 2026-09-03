@@ -1,6 +1,6 @@
 {
   "name": "@platform/launcher",
-  "version": "0.3.50",
+  "version": "0.3.53",
   "private": true,
   "type": "module",
   "scripts": {
