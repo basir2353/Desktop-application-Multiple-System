@@ -5,7 +5,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type {
   CompleteStockCount,
   CreateGoodsReceipt,
@@ -65,6 +65,7 @@ import {
   storeWarehouseStock,
   storeWarehouses,
   storeZones,
+  users,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
@@ -778,6 +779,7 @@ export class InventoryService implements OnModuleInit {
 
     const totalAmount = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
     const poNumber = `PO-${Date.now().toString().slice(-6)}`;
+    const requestedByLabel = await this.resolveActorLabel(input.requestedBy?.trim() || userEmail);
 
     const [po] = await this.db
       .insert(popsPurchaseOrders)
@@ -790,7 +792,7 @@ export class InventoryService implements OnModuleInit {
         status: "Draft",
         totalAmountPkr: totalAmount,
         expectedDate: input.expectedDate ?? null,
-        requestedBy: input.requestedBy?.trim() || userEmail,
+        requestedBy: requestedByLabel,
         chef: input.chef?.trim() || null,
       })
       .returning();
@@ -847,7 +849,7 @@ export class InventoryService implements OnModuleInit {
     if (input.supplierId !== undefined) patch.supplierId = input.supplierId;
     if (input.expectedDate !== undefined) patch.expectedDate = input.expectedDate;
     if (input.requestedBy !== undefined) {
-      patch.requestedBy = input.requestedBy?.trim() || userEmail;
+      patch.requestedBy = await this.resolveActorLabel(input.requestedBy?.trim() || userEmail);
     }
     if (input.chef !== undefined) patch.chef = input.chef?.trim() || null;
 
@@ -921,6 +923,7 @@ export class InventoryService implements OnModuleInit {
     const totalCost = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
     const grnNumber = `GRN-${Date.now().toString().slice(-6)}`;
     const locationName = receiptWarehouse.name?.trim() || "Main Warehouse";
+    const receivedByLabel = await this.resolveActorLabel(input.receivedBy?.trim() || userEmail);
 
     const [grn] = await this.db
       .insert(popsGoodsReceipts)
@@ -934,7 +937,7 @@ export class InventoryService implements OnModuleInit {
         invoiceNumber: input.invoiceNumber?.trim() || null,
         deliveryDate: input.deliveryDate,
         totalCostPkr: totalCost,
-        receivedBy: input.receivedBy?.trim() || userEmail,
+        receivedBy: receivedByLabel,
       })
       .returning();
     if (!grn) throw new BadRequestException("Failed to create GRN");
@@ -1166,7 +1169,7 @@ export class InventoryService implements OnModuleInit {
         unit: ing.unit,
         reason: input.reason.trim(),
         status: "Pending",
-        requestedBy: input.requestedBy?.trim() || userEmail,
+        requestedBy: await this.resolveActorLabel(input.requestedBy?.trim() || userEmail),
       })
       .returning();
     if (!row) throw new BadRequestException("Failed to create adjustment");
@@ -1814,14 +1817,34 @@ export class InventoryService implements OnModuleInit {
       .where(eq(popsInventoryAuditLogs.branchId, branchId))
       .orderBy(desc(popsInventoryAuditLogs.createdAt))
       .limit(100);
-    return rows.map((l) => ({
-      id: l.id,
-      timestamp: l.createdAt.toISOString().replace("T", " ").slice(0, 16),
-      user: l.userEmail,
-      action: l.action,
-      module: l.module,
-      detail: l.detail,
-    }));
+    const actorIds = [
+      ...new Set(
+        rows
+          .map((l) => l.userEmail?.trim())
+          .filter((v): v is string => Boolean(v) && this.looksLikeUserId(v)),
+      ),
+    ];
+    const actorLabelById = new Map<string, string>();
+    if (actorIds.length > 0) {
+      const actorRows = await this.db
+        .select({ id: users.id, name: users.name, email: users.email })
+        .from(users)
+        .where(inArray(users.id, actorIds));
+      for (const row of actorRows) {
+        actorLabelById.set(row.id, this.formatUserLabel(row.name, row.email));
+      }
+    }
+    return rows.map((l) => {
+      const raw = l.userEmail?.trim() || "system";
+      return {
+        id: l.id,
+        timestamp: l.createdAt.toISOString().replace("T", " ").slice(0, 16),
+        user: actorLabelById.get(raw) ?? raw,
+        action: l.action,
+        module: l.module,
+        detail: l.detail,
+      };
+    });
   }
 
   private mapCategory(row: typeof popsInventoryCategories.$inferSelect, itemCount: number) {
@@ -1922,6 +1945,30 @@ export class InventoryService implements OnModuleInit {
     return total;
   }
 
+  private looksLikeUserId(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  private formatUserLabel(name: string | null | undefined, email: string | null | undefined): string {
+    const cleanName = name?.trim() || "";
+    const cleanEmail = email?.trim() || "";
+    if (cleanName && cleanEmail) return `${cleanName} (${cleanEmail})`;
+    return cleanName || cleanEmail || "Unknown user";
+  }
+
+  private async resolveActorLabel(actor: string | null | undefined): Promise<string> {
+    const raw = actor?.trim() || "";
+    if (!raw || raw.toLowerCase() === "system") return raw || "system";
+    if (!this.looksLikeUserId(raw)) return raw;
+    const [row] = await this.db
+      .select({ name: users.name, email: users.email })
+      .from(users)
+      .where(eq(users.id, raw))
+      .limit(1);
+    if (!row) return raw;
+    return this.formatUserLabel(row.name, row.email);
+  }
+
   private async audit(
     organizationId: string,
     branchId: string,
@@ -1930,10 +1977,11 @@ export class InventoryService implements OnModuleInit {
     module: string,
     detail: string,
   ) {
+    const actor = await this.resolveActorLabel(userEmail);
     await this.db.insert(popsInventoryAuditLogs).values({
       organizationId,
       branchId,
-      userEmail,
+      userEmail: actor,
       action,
       module,
       detail,
