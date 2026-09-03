@@ -70,10 +70,17 @@ export function RecipeManagementPage(): JSX.Element {
   const selectedDish = menuItems.find((item) => item.id === form.menuItemId);
   const dishPortionLabels = useMemo(() => {
     const fromVariants = (selectedDish?.variants ?? [])
+      .filter((variant) => variant.isActive !== false)
       .map((variant) => variant.label?.trim())
       .filter((label): label is string => Boolean(label));
-    const merged = [...RECIPE_PORTION_PRESETS, ...fromVariants];
-    return [...new Set(merged)];
+    if (fromVariants.length > 0) return [...new Set(fromVariants)];
+    if (selectedDish?.portion) {
+      const fromPortion = RECIPE_PORTION_PRESETS.find(
+        (label) => label.toLowerCase() === selectedDish.portion?.toLowerCase(),
+      );
+      return fromPortion ? [fromPortion] : ["Full", "Half"];
+    }
+    return selectedDish ? ["Full", "Half"] : [];
   }, [selectedDish]);
 
   const validLines = useMemo(
@@ -150,27 +157,53 @@ export function RecipeManagementPage(): JSX.Element {
     }));
   }
 
+  function portionFactorsForBase(base: string, labels: string[]): Record<string, number> {
+    const defaults = { ...DEFAULT_RECIPE_PORTION_FACTORS };
+    for (const label of labels) {
+      if (defaults[label] == null) defaults[label] = 1;
+    }
+    const baseFactor = defaults[base] ?? 1;
+    const next: Record<string, number> = {};
+    for (const [label, value] of Object.entries(defaults)) {
+      next[label] = value / (baseFactor || 1);
+    }
+    next[base] = 1;
+    return next;
+  }
+
+  function autoRecipeName(dishName: string, portion: string): string {
+    const base = dishName.trim();
+    if (!base) return portion;
+    return `${base} (${portion})`;
+  }
+
   function onMenuItemChange(menuItemId: string): void {
     const dish = menuItems.find((m) => m.id === menuItemId);
     const variantLabels = (dish?.variants ?? [])
+      .filter((variant) => variant.isActive !== false)
       .map((variant) => variant.label?.trim())
       .filter((label): label is string => Boolean(label));
-    const factors = { ...DEFAULT_RECIPE_PORTION_FACTORS };
-    for (const label of variantLabels) {
-      if (factors[label] == null) factors[label] = 1;
-    }
+    const labels = variantLabels.length > 0 ? [...new Set(variantLabels)] : ["Full", "Half"];
     const preferredBase =
-      variantLabels.find((label) => /full/i.test(label)) ??
-      variantLabels[0] ??
-      "Full";
+      labels.find((label) => /full/i.test(label)) ?? labels[0] ?? "Full";
     setForm((prev) => ({
       ...prev,
       menuItemId,
-      name: prev.name.trim() || dish?.name || prev.name,
+      name: autoRecipeName(dish?.name ?? prev.name, preferredBase),
       portionSize: preferredBase,
-      portionFactors: factors,
+      portionFactors: portionFactorsForBase(preferredBase, labels),
     }));
     setPreviewPortion(preferredBase);
+  }
+
+  function onRecipePortionChange(next: string): void {
+    setForm((prev) => ({
+      ...prev,
+      portionSize: next,
+      portionFactors: portionFactorsForBase(next, dishPortionLabels),
+      name: selectedDish ? autoRecipeName(selectedDish.name, next) : prev.name,
+    }));
+    setPreviewPortion(next);
   }
 
   function setPortionFactor(label: string, value: string): void {
@@ -306,8 +339,9 @@ export function RecipeManagementPage(): JSX.Element {
       {error ? <InventoryError message={error} /> : null}
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
-        Enter ingredient quantities for the <span className="text-slate-200">base portion</span> (usually Full).
-        Half / Small / Medium / Large multipliers scale those quantities when POS sells that size.
+        Select a menu dish, then pick <span className="text-slate-200">Full</span> or{" "}
+        <span className="text-slate-200">Half</span> (same sizes as POS). Ingredient quantities you enter
+        are for that size; POS scales the other size automatically.
       </div>
 
       {canManage ? (
@@ -318,7 +352,7 @@ export function RecipeManagementPage(): JSX.Element {
           disabled={!canSubmit || createMutation.isPending}
         >
           <div className="space-y-4">
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <label className="block text-xs text-slate-400">
                 Menu dish
                 <SearchableSelect
@@ -344,24 +378,6 @@ export function RecipeManagementPage(): JSX.Element {
                 />
               </label>
               <label className="block text-xs text-slate-400">
-                Base portion
-                <select
-                  className={`${selectClass} mt-1`}
-                  value={form.portionSize}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setForm((prev) => ({ ...prev, portionSize: next }));
-                    setPreviewPortion(next);
-                  }}
-                >
-                  {dishPortionLabels.map((label) => (
-                    <option key={label} value={label}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs text-slate-400">
                 Version
                 <input
                   className={`${inputClass} mt-1`}
@@ -372,10 +388,41 @@ export function RecipeManagementPage(): JSX.Element {
               </label>
             </div>
 
+            {form.menuItemId ? (
+              <div>
+                <div className="text-xs font-medium text-slate-200">This recipe is for which size?</div>
+                <p className="mt-1 text-[10px] text-slate-500">
+                  Same as POS — pick Full or Half for {selectedDish?.name ?? "this dish"}, then add
+                  ingredients for that size.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {dishPortionLabels.map((label) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => onRecipePortionChange(label)}
+                      className={`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        form.portionSize === label
+                          ? "border-amber-400 bg-amber-500 text-slate-950"
+                          : "border-slate-600 bg-slate-950 text-slate-200 hover:border-amber-500/50"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-amber-200/80">
+                First select a menu dish — then Full / Half options appear, like POS.
+              </p>
+            )}
+
+            {form.menuItemId && dishPortionLabels.length > 1 ? (
             <div>
-              <div className="text-xs font-medium text-slate-300">Portion sizes & ingredient scale</div>
+              <div className="text-xs font-medium text-slate-300">Other sizes (auto scale)</div>
               <p className="mt-1 text-[10px] text-slate-500">
-                Base qty is for {form.portionSize}. Other sizes multiply ingredients (Half 0.5, Large 1.25…).
+                Qty below is for {form.portionSize}. Other POS sizes multiply from that.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {dishPortionLabels.map((label) => (
@@ -419,13 +466,14 @@ export function RecipeManagementPage(): JSX.Element {
                 </span>
               </div>
             </div>
+            ) : null}
 
             <div>
               <div className="text-xs font-medium text-slate-300">
                 Ingredients per {form.portionSize}
               </div>
               <p className="mt-1 text-[10px] text-slate-500">
-                Enter quantities for the base portion. Preview column shows scaled qty for {previewPortion}.
+                Enter quantities for {form.portionSize}. Preview column shows scaled qty for {previewPortion}.
               </p>
               <ul className="mt-2 space-y-2">
                 {form.lines
