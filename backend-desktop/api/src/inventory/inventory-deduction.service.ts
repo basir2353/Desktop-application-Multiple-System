@@ -107,12 +107,15 @@ export class InventoryDeductionService {
     for (const line of lines) {
       const menuItemId = this.resolveMenuItemId(line, menuItems);
       if (!menuItemId) {
-        throw new BadRequestException(`Menu item for "${line.label}" could not be matched`);
+        this.logger.warn(`Skip inventory for "${line.label}" on ${bill.billRef}: menu item not matched`);
+        continue;
       }
 
       const recipe = recipeByMenuItem.get(menuItemId);
       if (!recipe) {
-        throw new BadRequestException(`No active recipe is configured for "${line.label}"`);
+        // Closing POS must not fail when recipes are not configured yet.
+        this.logger.warn(`Skip inventory for "${line.label}" on ${bill.billRef}: no active recipe`);
+        continue;
       }
 
       let recipeLines = recipeLineCache.get(recipe.id);
@@ -122,6 +125,11 @@ export class InventoryDeductionService {
           .from(popsRecipeLines)
           .where(eq(popsRecipeLines.recipeId, recipe.id));
         recipeLineCache.set(recipe.id, recipeLines);
+      }
+
+      if (recipeLines.length === 0) {
+        this.logger.warn(`Skip inventory for "${line.label}" on ${bill.billRef}: recipe has no ingredients`);
+        continue;
       }
 
       const portion = parseRecipePortionConfig(recipe.portionSize);
@@ -184,7 +192,10 @@ export class InventoryDeductionService {
         )
         .limit(1);
       const ing = ingRows[0];
-      if (!ing) throw new BadRequestException("Recipe ingredient no longer exists");
+      if (!ing) {
+        this.logger.warn(`Skip inventory on ${bill.billRef}: ingredient ${ingredientId} missing`);
+        continue;
+      }
       ingredientRows.set(ingredientId, ing);
 
       const remaining = ingredientRemaining.get(ingredientId) ?? ing.currentStock;
@@ -194,7 +205,10 @@ export class InventoryDeductionService {
       let cookingUnitStockId: string | undefined;
       let newCookingUnitStock: number | undefined;
       if (ing.storeProductId) {
-        if (!kitchenWarehouseId) throw new BadRequestException("Kitchen warehouse is not configured");
+        if (!kitchenWarehouseId) {
+          this.logger.warn(`Skip inventory for ${ing.name} on ${bill.billRef}: Kitchen warehouse missing`);
+          continue;
+        }
         const [warehouseStock] = await this.db
           .select()
           .from(storeWarehouseStock)
@@ -206,7 +220,11 @@ export class InventoryDeductionService {
         const remainingWarehouseQty =
           warehouseRemaining.get(ing.storeProductId) ?? warehouseStock?.quantity ?? 0;
         if (!warehouseStock || remainingWarehouseQty < qty) {
-          throw new BadRequestException(`Insufficient Kitchen stock for ${ing.name}: need ${qty} ${ing.unit}`);
+          // Stock often sits in Main Warehouse until transferred — do not block Close/Pay.
+          this.logger.warn(
+            `Skip inventory for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit} in Kitchen (have ${remainingWarehouseQty})`,
+          );
+          continue;
         }
         newStock = remainingWarehouseQty - qty;
         warehouseRemaining.set(ing.storeProductId, newStock);
@@ -222,14 +240,21 @@ export class InventoryDeductionService {
             ))
             .limit(1);
           if (!unitStock || unitStock.quantity < qty) {
-            throw new BadRequestException(`Insufficient Cooking Unit stock for ${ing.name}: need ${qty} ${ing.unit}`);
+            this.logger.warn(
+              `Skip Cooking Unit stock for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit}`,
+            );
+            // Still deduct Kitchen warehouse qty without cooking-unit line.
+          } else {
+            cookingUnitStockId = unitStock.id;
+            newCookingUnitStock = unitStock.quantity - qty;
+            unitCost = unitStock.unitCostPkr || unitCost;
           }
-          cookingUnitStockId = unitStock.id;
-          newCookingUnitStock = unitStock.quantity - qty;
-          unitCost = unitStock.unitCostPkr || unitCost;
         }
       } else if (newStock < 0) {
-        throw new BadRequestException(`Insufficient Kitchen stock for ${ing.name}: need ${qty} ${ing.unit}`);
+        this.logger.warn(
+          `Skip inventory for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit} (have ${remaining})`,
+        );
+        continue;
       }
       ingredientRemaining.set(ingredientId, newStock);
       stockUpdates.push({
@@ -243,6 +268,14 @@ export class InventoryDeductionService {
         newCookingUnitStock,
       });
       cogsTotal += Math.round(qty * unitCost);
+    }
+
+    if (stockUpdates.length === 0) {
+      await this.db
+        .update(popsBills)
+        .set({ inventoryDeductedAt: new Date() })
+        .where(eq(popsBills.id, bill.id));
+      return;
     }
 
     await this.db.transaction(async (tx) => {

@@ -556,17 +556,19 @@ export class BillingService implements OnApplicationBootstrap {
     organizationId: string,
     row: typeof popsBills.$inferSelect,
   ): Promise<void> {
-    // Inventory is part of bill completion: an incomplete recipe/short Kitchen
-    // stock must reject the completion instead of producing an untracked sale.
+    // Inventory deduction is best-effort: missing recipes / Kitchen stock must not
+    // block Close/Pay. Deduction service skips shortfalls and still marks the bill.
     try {
       await this.inventoryDeduction.deductForCompletedBill(organizationId, row);
     } catch (err) {
-      await this.db.update(popsBills).set({ status: "held" }).where(eq(popsBills.id, row.id));
-      throw err;
+      this.logger.warn(
+        `Inventory deduction failed for ${row.billRef} (bill stays completed): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
 
-    // Waiter / kitchen "Active" lists are ticket-status based. Only close the
-    // related KOT after inventory has committed successfully.
+    // Waiter / kitchen "Active" lists are ticket-status based.
     await this.closeRelatedKitchenTickets(row);
 
     try {
