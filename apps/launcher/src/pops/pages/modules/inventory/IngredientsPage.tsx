@@ -16,9 +16,10 @@ import { SimpleTable } from "../../../ui/SimpleTable";
 import { InventoryError, InventoryFormPanel, InventoryLoading } from "./InventoryUi";
 
 function stockStatus(i: Ingredient): { label: string; tone: "success" | "warning" | "danger" } {
-  if (i.currentStock === 0) return { label: "Out of stock", tone: "danger" };
-  if (i.currentStock <= i.reorderLevel) return { label: "Low stock", tone: "warning" };
-  if (i.currentStock >= i.maxStock && i.maxStock > 0) return { label: "Overstock", tone: "warning" };
+  const onHand = i.onHandStock ?? i.currentStock;
+  if (onHand === 0) return { label: "Out of stock", tone: "danger" };
+  if (onHand <= i.reorderLevel) return { label: "Low stock", tone: "warning" };
+  if (onHand >= i.maxStock && i.maxStock > 0) return { label: "Overstock", tone: "warning" };
   return { label: "OK", tone: "success" };
 }
 
@@ -359,7 +360,30 @@ export function IngredientsPage(): JSX.Element {
           { key: "name", header: "Ingredient" },
           { key: "categoryName", header: "Category", render: (r) => r.categoryName ?? "—" },
           { key: "unit", header: "Unit" },
-          { key: "currentStock", header: "Current stock", render: (r) => <span className={r.currentStock <= r.reorderLevel ? accentValueClass : ""}>{r.currentStock} {r.unit}</span> },
+          {
+            key: "onHandStock",
+            header: "On hand",
+            render: (r) => {
+              const onHand = r.onHandStock ?? r.currentStock;
+              return (
+                <span className={onHand <= r.reorderLevel ? accentValueClass : ""}>
+                  {onHand} {r.unit}
+                </span>
+              );
+            },
+          },
+          {
+            key: "currentStock",
+            header: "Kitchen",
+            render: (r) => (
+              <span className="text-slate-300">
+                {r.currentStock} {r.unit}
+                {(r.storeStock ?? 0) > 0 ? (
+                  <span className="ml-1 text-[10px] text-slate-500">(+{r.storeStock} store)</span>
+                ) : null}
+              </span>
+            ),
+          },
           { key: "reorderLevel", header: "Reorder at" },
           { key: "unitCost", header: "Unit cost", render: (r) => `Rs ${r.unitCost.toLocaleString()}` },
           { id: "status", key: "id", header: "Status", render: (r) => { const s = stockStatus(r); return <Badge tone={s.tone}>{s.label}</Badge>; } },

@@ -201,13 +201,28 @@ export function InventoryReportView({
         <SimpleTable
           rowKey={(r) => cell(r.id)}
           columns={[
+            { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
             { key: "date", header: "Date", render: (r) => cell(r.date) },
             { key: "reference", header: "Voucher", render: (r) => cell(r.reference) },
             { key: "fromWarehouse", header: "From", render: (r) => cell(r.fromWarehouse) },
             { key: "toWarehouse", header: "To", render: (r) => cell(r.toWarehouse) },
             { key: "productName", header: "Product", render: (r) => cell(r.productName) },
             { key: "qty", header: "Qty", render: (r) => `${cell(r.qty)} ${cell(r.unit)}` },
+          ]}
+          rows={rows.filter(isRecord)}
+        />
+      );
+
+    case "stock-transfers-by-section":
+      return (
+        <SimpleTable
+          rowKey={(r) => cell(r.id)}
+          columns={[
             { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
+            { key: "transferCount", header: "Vouchers", render: (r) => cell(r.transferCount) },
+            { key: "lineCount", header: "Lines", render: (r) => cell(r.lineCount) },
+            { key: "totalQty", header: "Total qty", render: (r) => cell(r.totalQty) },
+            { key: "products", header: "Products", render: (r) => cell(r.products) },
           ]}
           rows={rows.filter(isRecord)}
         />

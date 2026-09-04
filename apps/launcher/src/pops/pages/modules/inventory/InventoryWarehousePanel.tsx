@@ -74,7 +74,8 @@ export function InventoryWarehousePanel(): JSX.Element {
       if (!branch?.code || !fromWarehouseId || !toWarehouseId) {
         throw new Error("Select source and destination warehouses");
       }
-      const kitchen = warehousesQuery.data?.warehouses.find((warehouse) => warehouse.id === toWarehouseId);
+      const toKitchen = warehousesQuery.data?.warehouses.find((warehouse) => warehouse.id === toWarehouseId);
+      const fromKitchen = warehousesQuery.data?.warehouses.find((warehouse) => warehouse.id === fromWarehouseId);
       const items = rows.map((row) => ({
         productId: row.productId,
         qty: Number(row.qty),
@@ -86,8 +87,11 @@ export function InventoryWarehousePanel(): JSX.Element {
       if (items.some((item) => !item.productId || !Number.isInteger(item.qty) || item.qty < 1)) {
         throw new Error("Select an item and enter a whole quantity for every row");
       }
-      if (kitchen?.code === "KITCHEN" && items.some((item) => !item.cookingUnitId)) {
-        throw new Error("Select the Cooking Unit for every Kitchen transfer row");
+      if (
+        (toKitchen?.code === "KITCHEN" || fromKitchen?.code === "KITCHEN") &&
+        items.some((item) => !item.cookingUnitId)
+      ) {
+        throw new Error("Select the Cooking Unit / kitchen section for every row");
       }
       return createInventoryTransfer({
         branchCode: branch.code,
@@ -126,6 +130,8 @@ export function InventoryWarehousePanel(): JSX.Element {
   }, [productsQuery.data, stockQtyByProduct]);
   const activeUnits = (unitsQuery.data?.units ?? []).filter((unit) => unit.isActive);
   const destination = warehouses.find((warehouse) => warehouse.id === toWarehouseId);
+  const source = warehouses.find((warehouse) => warehouse.id === fromWarehouseId);
+  const kitchenInvolved = destination?.code === "KITCHEN" || source?.code === "KITCHEN";
   const selectedProductIds = useMemo(
     () => new Set(rows.map((row) => row.productId).filter(Boolean)),
     [rows],
@@ -133,7 +139,7 @@ export function InventoryWarehousePanel(): JSX.Element {
 
   function addProducts(productIds: string[]): void {
     if (productIds.length === 0) return;
-    const sectionId = destination?.code === "KITCHEN" ? defaultCookingUnitId : "";
+    const sectionId = kitchenInvolved ? defaultCookingUnitId : "";
     setRows((current) => {
       const existing = new Set(current.map((row) => row.productId));
       const additions = productIds
@@ -181,7 +187,7 @@ export function InventoryWarehousePanel(): JSX.Element {
               <option value="">To warehouse</option>
               {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
             </select>
-            {destination?.code === "KITCHEN" ? (
+            {kitchenInvolved ? (
               <select
                 className={selectClass}
                 value={defaultCookingUnitId}
@@ -208,7 +214,7 @@ export function InventoryWarehousePanel(): JSX.Element {
                   <th className="px-3 py-2 font-medium">Item / product</th>
                   <th className="px-3 py-2 font-medium">Unit</th>
                   <th className="px-3 py-2 font-medium">Quantity</th>
-                  <th className="px-3 py-2 font-medium">Destination Cooking Unit</th>
+                  <th className="px-3 py-2 font-medium">Kitchen section</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -258,9 +264,9 @@ export function InventoryWarehousePanel(): JSX.Element {
                           className={`${selectClass} min-w-[190px]`}
                           value={row.cookingUnitId}
                           onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, cookingUnitId: event.target.value } : item))}
-                          disabled={destination?.code !== "KITCHEN"}
+                          disabled={!kitchenInvolved}
                         >
-                          <option value="">{destination?.code === "KITCHEN" ? "Select section" : "Optional"}</option>
+                          <option value="">{kitchenInvolved ? "Select section" : "N/A"}</option>
                           {activeUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
                         </select>
                       </td>

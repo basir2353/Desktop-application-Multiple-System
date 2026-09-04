@@ -189,7 +189,9 @@ export function GoodsReceivingPage(): JSX.Element {
     onSuccess: () => {
       invalidate();
       setError(null);
-      setNotice("Goods received — inventory updated.");
+      setNotice(
+        "Goods received into the selected warehouse. Transfer Main → Kitchen (with section) before POS sale.",
+      );
       setLines([]);
       setLineDefaults(DEFAULT_LINE_VALUES());
       setHeader((prev) => ({

@@ -44,7 +44,12 @@ export const ingredientSchema = z.object({
   sku: z.string(),
   name: z.string(),
   unit: ingredientUnitSchema,
+  /** Kitchen / sellable qty used by recipes & POS. */
   currentStock: z.number(),
+  /** Total on-hand across Main Warehouse + Kitchen (warehouse ledger). */
+  onHandStock: z.number().optional(),
+  /** Qty sitting in Main / store warehouse (not yet transferred to Kitchen). */
+  storeStock: z.number().optional(),
   minStock: z.number(),
   reorderLevel: z.number(),
   maxStock: z.number(),
