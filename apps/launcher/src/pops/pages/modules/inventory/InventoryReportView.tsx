@@ -39,6 +39,8 @@ export function InventoryReportView({
             { key: "sku", header: "SKU", render: (r) => cell(r.sku) },
             { key: "name", header: "Ingredient", render: (r) => cell(r.name) },
             { key: "stock", header: "On hand", render: (r) => cell(r.stock) },
+            { key: "kitchen", header: "Kitchen", render: (r) => cell(r.kitchen) },
+            { key: "store", header: "Store", render: (r) => cell(r.store) },
             { key: "value", header: "Value (Rs)", render: (r) => formatPkrCell(r.value) },
           ]}
           rows={rows.filter(isRecord)}

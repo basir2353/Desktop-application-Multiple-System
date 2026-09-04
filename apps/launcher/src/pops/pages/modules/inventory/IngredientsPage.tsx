@@ -373,16 +373,20 @@ export function IngredientsPage(): JSX.Element {
             },
           },
           {
-            key: "currentStock",
-            header: "Kitchen",
-            render: (r) => (
-              <span className="text-slate-300">
-                {r.currentStock} {r.unit}
-                {(r.storeStock ?? 0) > 0 ? (
-                  <span className="ml-1 text-[10px] text-slate-500">(+{r.storeStock} store)</span>
-                ) : null}
-              </span>
-            ),
+            key: "kitchenStock",
+            header: "Kitchen / Store",
+            render: (r) => {
+              const kitchen = r.kitchenStock ?? 0;
+              const store = r.storeStock ?? Math.max(0, (r.onHandStock ?? r.currentStock) - kitchen);
+              return (
+                <span className="text-slate-300">
+                  K:{kitchen}
+                  {store > 0 ? (
+                    <span className="ml-1 text-[10px] text-slate-500">· Store:{store}</span>
+                  ) : null}
+                </span>
+              );
+            },
           },
           { key: "reorderLevel", header: "Reorder at" },
           { key: "unitCost", header: "Unit cost", render: (r) => `Rs ${r.unitCost.toLocaleString()}` },

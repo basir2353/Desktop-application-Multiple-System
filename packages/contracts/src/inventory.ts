@@ -50,6 +50,8 @@ export const ingredientSchema = z.object({
   onHandStock: z.number().optional(),
   /** Qty sitting in Main / store warehouse (not yet transferred to Kitchen). */
   storeStock: z.number().optional(),
+  /** Qty in Kitchen (sellable). When omitted, treat currentStock as Kitchen. */
+  kitchenStock: z.number().optional(),
   minStock: z.number(),
   reorderLevel: z.number(),
   maxStock: z.number(),
