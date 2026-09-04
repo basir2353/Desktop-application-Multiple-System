@@ -153,12 +153,15 @@ export async function buildClientRestaurantReport(
       return { ...meta, rows, empty: rows.length === 0 };
     } catch {
       const branchInv = await fetchBranchInventory(branchCode);
-      const rows = branchInv.ingredients.map((i) => ({
-        label: i.name,
-        qty: i.currentStock,
-        amount: i.currentStock * i.unitCost,
-        meta: `${i.sku} · ${i.unit}`,
-      }));
+      const rows = branchInv.ingredients.map((i) => {
+        const qty = i.onHandStock ?? i.currentStock;
+        return {
+          label: i.name,
+          qty,
+          amount: qty * i.unitCost,
+          meta: `${i.sku} · ${i.unit}`,
+        };
+      });
       return { ...meta, rows, empty: rows.length === 0 };
     }
   }
