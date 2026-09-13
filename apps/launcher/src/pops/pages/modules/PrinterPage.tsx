@@ -48,18 +48,23 @@ import {
   setCategorySections,
   setItemSections,
   setReceiptPrinter,
+  setReportOutput,
   setSectionPrimaryPrinter,
   setUserPrinters,
   togglePrinterForSection,
   toggleUserPrinter,
   updatePrinterProfile,
   ensureReceiptPrinterLinked,
+  inventoryReportKey,
+  REPORT_OUTPUT_DIALOG,
+  REPORT_OUTPUT_PDF,
   type PrinterPaperSize,
   type PrinterProfile,
   type PrinterRoutingState,
   type PrinterTextScale,
   type PrinterType,
 } from "../../lib/printerRouting";
+import { INVENTORY_REPORTS } from "../../api/inventory";
 import { listSystemPrintersDetailed, isDesktopAppRuntime, type SystemPrinterInfo } from "../../lib/systemPrinters";
 import {
   classifyPrintSource,
@@ -123,11 +128,12 @@ const TABS = [
   { id: "activity", label: "Print Queue", Icon: IconActivity },
 ] as const;
 
-type RoutingSub = "staff" | "sections" | "categories" | "items" | "preview";
+type RoutingSub = "staff" | "sections" | "reports" | "categories" | "items" | "preview";
 
 const ROUTING_SUBS: { id: RoutingSub; label: string; Icon: typeof IconUsers }[] = [
   { id: "staff", label: "Staff", Icon: IconUsers },
   { id: "sections", label: "By section", Icon: IconLayers },
+  { id: "reports", label: "By report", Icon: IconPrinter },
   { id: "categories", label: "Categories", Icon: IconLayers },
   { id: "items", label: "Items", Icon: IconLayers },
   { id: "preview", label: "Preview", Icon: IconRoute },
@@ -1213,6 +1219,90 @@ function PrinterSectionsTab({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PrinterByReportTab({
+  branchCode,
+  routing,
+}: {
+  branchCode: string;
+  routing: PrinterRoutingState;
+}): JSX.Element {
+  const [search, setSearch] = useState("");
+  const filtered = INVENTORY_REPORTS.filter((r) =>
+    `${r.category} ${r.name}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+      <div className="text-sm font-semibold text-slate-900 dark:text-white">Report printer routing</div>
+      <p className="mt-1 text-xs text-slate-500">
+        Inventory reports (Current Stock, Cooking unit, Waste, …) yahan assign karein. Har report ke liye{" "}
+        <span className="font-medium text-slate-700 dark:text-slate-300">Print</span> (physical printer),{" "}
+        <span className="font-medium text-slate-700 dark:text-slate-300">PDF</span> (Save as PDF), ya{" "}
+        <span className="font-medium text-slate-700 dark:text-slate-300">Ask each time</span> (Windows print dialog)
+        choose kar sakte ho.
+      </p>
+      <input
+        className="mt-3 w-full max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
+        placeholder="Search reports…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-2.5 py-2">Report</th>
+              <th className="px-2.5 py-2">Category</th>
+              <th className="px-2.5 py-2">Print / PDF target</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/80">
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="px-2.5 py-4 text-center text-slate-500">
+                  No reports found.
+                </td>
+              </tr>
+            ) : (
+              filtered.map((report) => {
+                const key = inventoryReportKey(report.id);
+                const assigned = routing.byReport[key] ?? REPORT_OUTPUT_DIALOG;
+                return (
+                  <tr key={report.id}>
+                    <td className="px-2.5 py-2 text-slate-200">{report.name}</td>
+                    <td className="px-2.5 py-2 text-slate-400">{report.category}</td>
+                    <td className="px-2.5 py-2">
+                      <select
+                        className="w-full max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500/50"
+                        value={assigned}
+                        onChange={(e) => setReportOutput(branchCode, key, e.target.value)}
+                      >
+                        <option value={REPORT_OUTPUT_DIALOG}>Ask each time (Print or PDF)</option>
+                        <option value={REPORT_OUTPUT_PDF}>Save as PDF</option>
+                        {routing.printers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            Print → {p.name}
+                            {p.systemPrinterName ? ` (${p.systemPrinterName})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+      {routing.printers.length === 0 ? (
+        <p className="mt-3 text-xs text-amber-400">
+          Pehle Printers tab pe printer profile banao (physical ya Microsoft Print to PDF), phir yahan assign karo.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -3093,6 +3183,21 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
     if (tab === "activity" || tab === "queue" || tab === "print-queue") {
       setActiveTab("activity");
     }
+    if (tab === "routing" || tab === "printer") {
+      if (tab === "routing") setActiveTab("routing");
+    }
+    const sub = searchParams.get("sub");
+    if (
+      sub === "staff" ||
+      sub === "sections" ||
+      sub === "reports" ||
+      sub === "categories" ||
+      sub === "items" ||
+      sub === "preview"
+    ) {
+      setActiveTab("routing");
+      setRoutingSub(sub);
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -3454,6 +3559,9 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
               }
               notify={notify}
             />
+          ) : null}
+          {routingSub === "reports" ? (
+            <PrinterByReportTab branchCode={branchCode} routing={routing} />
           ) : null}
           {routingSub === "categories" ? (
             <PrinterCategoriesTab

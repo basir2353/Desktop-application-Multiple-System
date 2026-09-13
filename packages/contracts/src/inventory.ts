@@ -328,12 +328,20 @@ export const inventoryReportSchema = z.object({
   filterDate: z.string().nullable().optional(),
   dateMode: z.enum(["activity", "expiry", "order"]).nullable().optional(),
   data: z.unknown().optional(),
+  summary: z
+    .object({
+      totalValue: z.number().optional(),
+      lineCount: z.number().optional(),
+      sectionCount: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const INVENTORY_REPORT_DATE_MODES = ["activity", "expiry", "order"] as const;
 export const inventoryReportQuerySchema = z.object({
   filterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   dateMode: z.enum(INVENTORY_REPORT_DATE_MODES).optional(),
+  cookingUnitId: z.string().uuid().optional(),
 });
 
 export const PRODUCTION_BATCH_STATUSES = ["Draft", "Posted"] as const;
@@ -635,6 +643,8 @@ export const inventoryTransferLineSchema = z.object({
   sku: z.string(),
   unit: z.string(),
   qty: z.number(),
+  unitCostPkr: z.number().optional(),
+  lineValue: z.number().optional(),
   cookingUnitId: z.string().uuid().nullable(),
   cookingUnitName: z.string().nullable(),
 });
@@ -666,6 +676,18 @@ export const updateInventoryCookingUnitSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+});
+
+export const createInventoryWarehouseSchema = branchCodeSchema.extend({
+  code: z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  name: z.string().trim().min(1).max(120),
+  address: z.string().trim().max(256).optional(),
+});
+
+export const updateInventoryWarehouseSchema = z.object({
+  code: z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  address: z.string().trim().max(256).nullable().optional(),
 });
 
 export const createInventoryTransferSchema = branchCodeSchema.extend({
@@ -730,5 +752,7 @@ export type InventoryCookingUnitStock = z.infer<typeof inventoryCookingUnitStock
 export type InventoryTransfer = z.infer<typeof inventoryTransferSchema>;
 export type CreateInventoryCookingUnit = z.infer<typeof createInventoryCookingUnitSchema>;
 export type UpdateInventoryCookingUnit = z.infer<typeof updateInventoryCookingUnitSchema>;
+export type CreateInventoryWarehouse = z.infer<typeof createInventoryWarehouseSchema>;
+export type UpdateInventoryWarehouse = z.infer<typeof updateInventoryWarehouseSchema>;
 export type CreateInventoryTransfer = z.infer<typeof createInventoryTransferSchema>;
 export type CreateIngredientLink = z.infer<typeof createIngredientLinkSchema>;

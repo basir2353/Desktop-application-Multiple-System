@@ -17,6 +17,7 @@ import type {
   CreateJournalEntry,
   CreatePayrollRun,
   CreatePopsCashMovement,
+  PayVendorSupplier,
   RecordPayment,
   UpdateTaxSettings,
 } from "@platform/contracts";
@@ -677,6 +678,101 @@ export class AccountingService implements OnApplicationBootstrap {
     );
   }
 
+  /** One row per supplier with combined open balance (for Accounts Payable UI). */
+  async listVendorPayableSummaries(organizationId: string, branchCode: string) {
+    const bills = await this.listVendorBills(organizationId, branchCode);
+    const bySupplier = new Map<
+      string,
+      {
+        supplierId: string;
+        supplierName: string;
+        billCount: number;
+        amount: number;
+        paid: number;
+        balance: number;
+      }
+    >();
+    for (const bill of bills) {
+      if (bill.balance <= 0) continue;
+      const prev = bySupplier.get(bill.supplierId) ?? {
+        supplierId: bill.supplierId,
+        supplierName: bill.supplierName,
+        billCount: 0,
+        amount: 0,
+        paid: 0,
+        balance: 0,
+      };
+      prev.billCount += 1;
+      prev.amount += bill.amount;
+      prev.paid += bill.paid;
+      prev.balance += bill.balance;
+      bySupplier.set(bill.supplierId, prev);
+    }
+    return [...bySupplier.values()]
+      .map((row) => ({
+        ...row,
+        status: (row.paid <= 0 ? "open" : row.balance > 0 ? "partial" : "paid") as
+          | "open"
+          | "partial"
+          | "paid",
+      }))
+      .sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+  }
+
+  async payVendorSupplier(
+    organizationId: string,
+    userEmail: string,
+    supplierId: string,
+    input: PayVendorSupplier,
+  ) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const [supplier] = await this.db
+      .select()
+      .from(popsSuppliers)
+      .where(and(eq(popsSuppliers.id, supplierId), eq(popsSuppliers.organizationId, organizationId)))
+      .limit(1);
+    if (!supplier) throw new NotFoundException("Supplier not found");
+
+    const openBills = await this.db
+      .select()
+      .from(popsVendorBills)
+      .where(
+        and(
+          eq(popsVendorBills.organizationId, organizationId),
+          eq(popsVendorBills.branchId, branch.id),
+          eq(popsVendorBills.supplierId, supplierId),
+          inArray(popsVendorBills.status, ["open", "partial"]),
+        ),
+      )
+      .orderBy(popsVendorBills.createdAt);
+
+    const totalBalance = openBills.reduce((sum, bill) => sum + (bill.amountPkr - bill.paidPkr), 0);
+    if (totalBalance <= 0) throw new BadRequestException("No open balance for this vendor");
+    if (input.amount > totalBalance) {
+      throw new BadRequestException(`Payment exceeds vendor balance (${totalBalance})`);
+    }
+
+    const result = await this.allocateSupplierPayment({
+      organizationId,
+      branchId: branch.id,
+      supplierId,
+      amountPkr: input.amount,
+      userEmail,
+      paymentDate: input.paymentDate,
+      method: input.method,
+      descriptionPrefix: `Vendor payment ${supplier.name}`,
+    });
+
+    return {
+      supplierId,
+      supplierName: supplier.name,
+      paymentRef: result.paymentRefs[0] ?? null,
+      paid: result.paid,
+      balance: totalBalance - result.paid,
+      billsTouched: result.billsTouched,
+    };
+  }
+
   async payVendorBill(
     organizationId: string,
     userEmail: string,
@@ -691,7 +787,7 @@ export class AccountingService implements OnApplicationBootstrap {
     if (input.amount > balance) throw new BadRequestException("Payment exceeds balance");
 
     const paymentRef = `VP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-    const cashCode = input.method === "bank" ? "1102" : "1101";
+    const cashCode = input.method === "cash" ? "1101" : "1102";
 
     const entry = await this.hooks.postEntry(organizationId, bill.branchId, {
       entryRef: `JV-${paymentRef}`,
@@ -1133,15 +1229,17 @@ export class AccountingService implements OnApplicationBootstrap {
     };
   }
 
-  /** FIFO allocate cash drawer pay-out against open vendor bills (updates supplier ledger). */
-  private async allocateSupplierCashPayOut(opts: {
+  /** FIFO allocate payment against open vendor bills (updates supplier ledger). */
+  private async allocateSupplierPayment(opts: {
     organizationId: string;
     branchId: string;
     supplierId: string;
     amountPkr: number;
     userEmail: string;
     paymentDate: string;
-  }): Promise<void> {
+    method: "cash" | "bank" | "card";
+    descriptionPrefix?: string;
+  }): Promise<{ paid: number; billsTouched: number; paymentRefs: string[] }> {
     const openBills = await this.db
       .select()
       .from(popsVendorBills)
@@ -1155,23 +1253,27 @@ export class AccountingService implements OnApplicationBootstrap {
       )
       .orderBy(popsVendorBills.createdAt);
 
+    const cashCode = opts.method === "cash" ? "1101" : "1102";
     let remaining = opts.amountPkr;
+    let billsTouched = 0;
+    const paymentRefs: string[] = [];
+
     for (const bill of openBills) {
       if (remaining <= 0) break;
       const balance = bill.amountPkr - bill.paidPkr;
       if (balance <= 0) continue;
       const pay = Math.min(remaining, balance);
-      const paymentRef = `VP-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const paymentRef = `VP-${Date.now().toString(36).toUpperCase().slice(-6)}${billsTouched}`;
       const entry = await this.hooks.postEntry(opts.organizationId, opts.branchId, {
         entryRef: `JV-${paymentRef}`,
         entryDate: opts.paymentDate,
         source: "payable",
         sourceRef: bill.billRef,
-        description: `Vendor pay-out ${bill.billRef}`,
+        description: `${opts.descriptionPrefix ?? "Vendor payment"} · ${bill.billRef}`,
         createdBy: opts.userEmail,
         lines: [
           { accountCode: "2101", debit: pay, credit: 0 },
-          { accountCode: "1101", debit: 0, credit: pay },
+          { accountCode: cashCode, debit: 0, credit: pay },
         ],
       });
       await this.db.insert(popsVendorPayments).values({
@@ -1179,7 +1281,7 @@ export class AccountingService implements OnApplicationBootstrap {
         paymentRef,
         amountPkr: pay,
         paymentDate: opts.paymentDate,
-        method: "cash",
+        method: opts.method,
         journalEntryId: entry?.id ?? null,
         createdBy: opts.userEmail,
       });
@@ -1190,7 +1292,27 @@ export class AccountingService implements OnApplicationBootstrap {
         .set({ paidPkr: newPaid, status })
         .where(eq(popsVendorBills.id, bill.id));
       remaining -= pay;
+      billsTouched += 1;
+      paymentRefs.push(paymentRef);
     }
+
+    return { paid: opts.amountPkr - remaining, billsTouched, paymentRefs };
+  }
+
+  /** FIFO allocate cash drawer pay-out against open vendor bills (updates supplier ledger). */
+  private async allocateSupplierCashPayOut(opts: {
+    organizationId: string;
+    branchId: string;
+    supplierId: string;
+    amountPkr: number;
+    userEmail: string;
+    paymentDate: string;
+  }): Promise<void> {
+    await this.allocateSupplierPayment({
+      ...opts,
+      method: "cash",
+      descriptionPrefix: "Vendor pay-out",
+    });
   }
 
   /** Create Approved expense + journal from cash drawer expense pay-out. */

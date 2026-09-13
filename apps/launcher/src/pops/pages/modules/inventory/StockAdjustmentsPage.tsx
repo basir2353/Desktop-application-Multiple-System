@@ -24,14 +24,17 @@ export function StockAdjustmentsPage(): JSX.Element {
   });
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      createStockAdjustment({
+    mutationFn: async () => {
+      const created = await createStockAdjustment({
         branchCode: branch!.code,
         ingredientId: form.ingredientId,
         type: form.type,
         qty: Number(form.qty),
         reason: form.reason.trim(),
-      }),
+      });
+      // Auto-approve so Remove immediately cuts overall stock (same as waste deduct).
+      return updateAdjustmentStatus(created.id, { status: "Approved" });
+    },
     onSuccess: () => { invalidate(); setForm({ ingredientId: "", type: "Add", qty: "1", reason: "" }); setError(null); },
     onError: (e: Error) => setError(e.message),
   });
@@ -52,11 +55,11 @@ export function StockAdjustmentsPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Stock adjustments" subtitle="Correct physical stock — damage, spoilage, manual correction." />
+      <PageHeader title="Stock adjustments" subtitle="Add or remove physical stock — Remove (expiry/spoilage) deducts overall inventory and logs waste." />
       {error ? <InventoryError message={error} /> : null}
 
       {canManage ? (
-        <InventoryFormPanel title="New adjustment" submitLabel="Submit for approval" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || !form.reason.trim() || createMutation.isPending}>
+        <InventoryFormPanel title="New adjustment" submitLabel="Save & apply" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || !form.reason.trim() || createMutation.isPending}>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <button
               type="button"
@@ -64,7 +67,9 @@ export function StockAdjustmentsPage(): JSX.Element {
               className={`${inputClass} flex items-center justify-between text-left`}
             >
               <span className={selectedIng ? "truncate text-slate-900 dark:text-white" : "text-slate-500"}>
-                {selectedIng ? selectedIng.name : "Select ingredient…"}
+                {selectedIng
+                  ? `${selectedIng.name} (${selectedIng.onHandStock ?? selectedIng.currentStock} ${selectedIng.unit})`
+                  : "Select ingredient…"}
               </span>
               <span className="text-slate-500" aria-hidden>▾</span>
             </button>
@@ -72,8 +77,11 @@ export function StockAdjustmentsPage(): JSX.Element {
               {ADJUSTMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
             <input className={inputClass} type="number" placeholder="Qty" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
-            <input className={inputClass} placeholder="Reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
+            <input className={inputClass} placeholder="Reason (e.g. expired)" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
           </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Remove save pe stock turant minus hoga aur Waste Management mein record banega.
+          </p>
         </InventoryFormPanel>
       ) : null}
 

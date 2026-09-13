@@ -115,6 +115,11 @@ export type PrinterRoutingState = {
   byCategory: Record<string, string[]>;
   /** itemId -> section ids override. Absent = inherit from category. Present (even []) = explicit override. */
   byItem: Record<string, string[]>;
+  /**
+   * reportKey (e.g. inventory:current-stock) → output target.
+   * Values: printer profile id, `__dialog__` (OS print dialog), or `__pdf__` (Save as PDF).
+   */
+  byReport: Record<string, string>;
   /** Default receipt / bill printer profile id for POS pay & invoice. */
   receiptPrinterId?: string | null;
   /**
@@ -129,12 +134,26 @@ export type PrinterRoutingState = {
   sectionUsers: Record<string, string[]>;
 };
 
+/** OS print dialog — user picks printer or Save as PDF. */
+export const REPORT_OUTPUT_DIALOG = "__dialog__";
+/** Prefer Microsoft Print to PDF / Save as PDF flow. */
+export const REPORT_OUTPUT_PDF = "__pdf__";
+
+export function inventoryReportKey(reportId: string): string {
+  return `inventory:${reportId}`;
+}
+
+export function restaurantReportKey(reportId: string): string {
+  return `restaurant:${reportId}`;
+}
+
 function emptyState(): PrinterRoutingState {
   return {
     printers: [],
     sectionPrinters: {},
     byCategory: {},
     byItem: {},
+    byReport: {},
     receiptPrinterId: null,
     userPrinters: {},
     sectionUsers: {},
@@ -194,6 +213,7 @@ function normalizeState(raw: Partial<PrinterRoutingState> | undefined): PrinterR
     sectionPrinters: raw.sectionPrinters ?? {},
     byCategory: raw.byCategory ?? {},
     byItem: raw.byItem ?? {},
+    byReport: raw.byReport ?? {},
     receiptPrinterId: raw.receiptPrinterId ?? null,
     userPrinters: migrateUserPrinters(printers, raw.userPrinters),
     sectionUsers: raw.sectionUsers ?? {},
@@ -609,11 +629,16 @@ export function deletePrinterProfile(branchCode: string, printerId: string): voi
     const next = ids.filter((id) => id !== printerId);
     if (next.length > 0) userPrinters[userId] = next;
   }
+  const byReport: Record<string, string> = {};
+  for (const [reportKey, target] of Object.entries(state.byReport)) {
+    byReport[reportKey] = target === printerId ? REPORT_OUTPUT_DIALOG : target;
+  }
   saveState(branchCode, {
     ...state,
     printers: state.printers.filter((p) => p.id !== printerId),
     sectionPrinters,
     userPrinters,
+    byReport,
     receiptPrinterId: state.receiptPrinterId === printerId ? null : state.receiptPrinterId,
   });
 }
@@ -811,6 +836,55 @@ export function getPrintersForSection(
   return (state.sectionPrinters[sectionId] ?? [])
     .map((id) => state.printers.find((p) => p.id === id))
     .filter((p): p is PrinterProfile => Boolean(p));
+}
+
+/** Assign how a report prints: dialog, PDF, or a named printer profile. */
+export function setReportOutput(branchCode: string, reportKey: string, target: string): void {
+  const state = loadPrinterRouting(branchCode);
+  const key = reportKey.trim();
+  if (!key) return;
+  const next = { ...state.byReport };
+  const value = target.trim() || REPORT_OUTPUT_DIALOG;
+  if (value === REPORT_OUTPUT_DIALOG) {
+    delete next[key];
+  } else {
+    next[key] = value;
+  }
+  saveState(branchCode, { ...state, byReport: next });
+}
+
+export type ReportPrintTarget = {
+  mode: "dialog" | "pdf" | "printer";
+  profile: PrinterProfile | null;
+  /** OS printer name when mode is printer or pdf. */
+  systemPrinterName?: string;
+};
+
+/** Resolve Routing → By report assignment for inventory/restaurant report print. */
+export function resolveReportPrintTarget(
+  branchCode: string | undefined,
+  reportKey: string,
+): ReportPrintTarget {
+  if (!branchCode) return { mode: "dialog", profile: null };
+  const state = loadPrinterRouting(branchCode);
+  const raw = (state.byReport[reportKey] ?? REPORT_OUTPUT_DIALOG).trim();
+  if (!raw || raw === REPORT_OUTPUT_DIALOG) {
+    return { mode: "dialog", profile: null };
+  }
+  if (raw === REPORT_OUTPUT_PDF) {
+    return {
+      mode: "pdf",
+      profile: null,
+      systemPrinterName: "Microsoft Print to PDF",
+    };
+  }
+  const profile = state.printers.find((p) => p.id === raw) ?? null;
+  if (!profile) return { mode: "dialog", profile: null };
+  return {
+    mode: "printer",
+    profile,
+    systemPrinterName: profile.systemPrinterName?.trim() || undefined,
+  };
 }
 
 // --- Category / item -> sections ---------------------------------------

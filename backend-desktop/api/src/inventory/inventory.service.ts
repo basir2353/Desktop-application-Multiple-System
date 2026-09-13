@@ -30,7 +30,9 @@ import type {
   UpdateWasteStatus,
   CreateInventoryTransfer,
   CreateIngredientLink,
+  CreateInventoryWarehouse,
   UpdateInventoryCookingUnit,
+  UpdateInventoryWarehouse,
 } from "@platform/contracts";
 import { encodeRecipePortionConfig, parseRecipePortionConfig } from "@platform/contracts";
 import {
@@ -234,10 +236,7 @@ export class InventoryService implements OnModuleInit {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(branch);
 
-    const ingredients = await this.db
-      .select()
-      .from(popsIngredients)
-      .where(eq(popsIngredients.branchId, branch.id));
+    const ingredients = await this.loadIngredients(branch.id);
 
     const batches = await this.db
       .select()
@@ -266,9 +265,13 @@ export class InventoryService implements OnModuleInit {
         ),
       );
 
-    const inventoryValue = ingredients.reduce((s, i) => s + i.currentStock * i.unitCostPkr, 0);
-    const lowStock = ingredients.filter((i) => i.currentStock > 0 && i.currentStock <= i.reorderLevel);
-    const outOfStock = ingredients.filter((i) => i.currentStock === 0);
+    const qtyOf = (i: { onHandStock?: number; currentStock: number }) => i.onHandStock ?? i.currentStock;
+    const inventoryValue = ingredients.reduce((s, i) => s + qtyOf(i) * i.unitCost, 0);
+    const lowStock = ingredients.filter((i) => {
+      const qty = qtyOf(i);
+      return qty > 0 && qty <= i.reorderLevel;
+    });
+    const outOfStock = ingredients.filter((i) => qtyOf(i) === 0);
     const now = Date.now();
     const expiring = batches.filter((b) => {
       if (!b.expiryDate) return false;
@@ -280,7 +283,7 @@ export class InventoryService implements OnModuleInit {
     for (const i of lowStock) {
       alerts.push({
         type: "Low Stock",
-        message: `${i.name} — ${i.currentStock} ${i.unit} (reorder at ${i.reorderLevel})`,
+        message: `${i.name} — ${qtyOf(i)} ${i.unit} (reorder at ${i.reorderLevel})`,
         severity: "warning",
       });
     }
@@ -360,41 +363,146 @@ export class InventoryService implements OnModuleInit {
     organizationId: string,
     branchCode: string,
     reportId: string,
-    query: { filterDate?: string; dateMode?: "activity" | "expiry" | "order" } = {},
+    query: {
+      filterDate?: string;
+      dateMode?: "activity" | "expiry" | "order";
+      cookingUnitId?: string;
+    } = {},
   ) {
     const today = new Date().toISOString().slice(0, 10);
     const filterDate = query.filterDate;
     const dateMode = query.dateMode ?? "activity";
+    const cookingUnitId = query.cookingUnitId;
 
     if (reportId === "stock-transfers") {
       const { transfers } = await this.listTransfers(organizationId, branchCode);
       let rows = transfers.flatMap((transfer) =>
-        transfer.items.map((item) => ({
-          id: item.id,
-          reference: transfer.reference,
-          date: transfer.createdAt.slice(0, 10),
-          fromWarehouse: transfer.fromWarehouseName ?? "—",
-          toWarehouse: transfer.toWarehouseName ?? "—",
-          productName: item.productName,
-          sku: item.sku,
-          qty: item.qty,
-          unit: item.unit,
-          kitchenSection: item.cookingUnitName ?? "Kitchen / Unassigned",
-          notes: transfer.notes ?? "",
-        })),
+        transfer.items
+          .filter((item) => !cookingUnitId || item.cookingUnitId === cookingUnitId)
+          .map((item) => {
+            const unitCost = item.unitCostPkr ?? 0;
+            const lineValue = item.lineValue ?? item.qty * unitCost;
+            return {
+              id: item.id,
+              reference: transfer.reference,
+              date: transfer.createdAt.slice(0, 10),
+              fromWarehouse: transfer.fromWarehouseName ?? "—",
+              toWarehouse: transfer.toWarehouseName ?? "—",
+              productName: item.productName,
+              sku: item.sku,
+              qty: item.qty,
+              unit: item.unit,
+              unitCost,
+              value: lineValue,
+              kitchenSection: item.cookingUnitName ?? "Kitchen / Unassigned",
+              notes: transfer.notes ?? "",
+            };
+          }),
       );
       if (filterDate) {
         rows = rows.filter((row) => row.date === filterDate);
       }
+      rows.sort((a, b) =>
+        a.kitchenSection.localeCompare(b.kitchenSection) || b.date.localeCompare(a.date),
+      );
+      const totalValue = rows.reduce((sum, row) => sum + row.value, 0);
       return {
         id: reportId,
-        name: "Stock transfer history",
+        name: "Cooking unit transfer history",
         category: "Inventory",
-        description: "All warehouse transfers with kitchen section per line",
+        description: cookingUnitId
+          ? "Stock transfer lines for the selected cooking unit (with value)"
+          : "Each stock transfer line by cooking unit / kitchen section (with value)",
         lastGenerated: today,
         filterDate: filterDate ?? null,
         dateMode: filterDate ? dateMode : null,
         data: rows,
+        summary: { totalValue, lineCount: rows.length },
+      };
+    }
+
+    if (reportId === "stock-transfers-by-section") {
+      const { transfers } = await this.listTransfers(organizationId, branchCode);
+      const totals = new Map<string, {
+        id: string;
+        kitchenSection: string;
+        cookingUnitId: string | null;
+        transferCount: number;
+        lineCount: number;
+        qtyIn: number;
+        qtyOut: number;
+        totalQty: number;
+        valueIn: number;
+        valueOut: number;
+        totalValue: number;
+        products: string;
+      }>();
+      for (const transfer of transfers) {
+        if (filterDate && transfer.createdAt.slice(0, 10) !== filterDate) continue;
+        const toKitchen = /kitchen/i.test(transfer.toWarehouseName ?? "");
+        const fromKitchen = /kitchen/i.test(transfer.fromWarehouseName ?? "");
+        for (const item of transfer.items) {
+          if (cookingUnitId && item.cookingUnitId !== cookingUnitId) continue;
+          const section = item.cookingUnitName ?? "Kitchen / Unassigned";
+          const key = (item.cookingUnitId ?? section).toLowerCase();
+          const unitCost = item.unitCostPkr ?? 0;
+          const lineValue = item.lineValue ?? item.qty * unitCost;
+          const prev = totals.get(key) ?? {
+            id: key,
+            kitchenSection: section,
+            cookingUnitId: item.cookingUnitId,
+            transferCount: 0,
+            lineCount: 0,
+            qtyIn: 0,
+            qtyOut: 0,
+            totalQty: 0,
+            valueIn: 0,
+            valueOut: 0,
+            totalValue: 0,
+            products: "",
+          };
+          prev.lineCount += 1;
+          if (toKitchen) {
+            prev.qtyIn += item.qty;
+            prev.valueIn += lineValue;
+          }
+          if (fromKitchen) {
+            prev.qtyOut += item.qty;
+            prev.valueOut += lineValue;
+          }
+          prev.totalQty = prev.qtyIn - prev.qtyOut;
+          prev.totalValue = prev.valueIn - prev.valueOut;
+          const names = new Set(
+            prev.products ? prev.products.split(", ").filter(Boolean) : [],
+          );
+          names.add(item.productName);
+          prev.products = [...names].slice(0, 8).join(", ");
+          totals.set(key, prev);
+        }
+        const sectionsInTransfer = new Set(
+          transfer.items
+            .filter((item) => !cookingUnitId || item.cookingUnitId === cookingUnitId)
+            .map((item) => (item.cookingUnitId ?? item.cookingUnitName ?? "Kitchen / Unassigned").toLowerCase()),
+        );
+        for (const key of sectionsInTransfer) {
+          const row = totals.get(key);
+          if (row) row.transferCount += 1;
+        }
+      }
+      const data = [...totals.values()].sort((a, b) => a.kitchenSection.localeCompare(b.kitchenSection));
+      const totalValue = data.reduce((sum, row) => sum + row.valueIn, 0);
+      return {
+        id: reportId,
+        name: "Cooking unit transfer report",
+        category: "Inventory",
+        description: cookingUnitId
+          ? "Transfer qty + value for the selected cooking unit"
+          : "How much stock (qty + Rs value) was transferred into each cooking unit",
+        lastGenerated: today,
+        filterDate: filterDate ?? null,
+        dateMode: filterDate ? dateMode : null,
+        data,
+        summary: { totalValue, sectionCount: data.length },
       };
     }
 
@@ -422,6 +530,7 @@ export class InventoryService implements OnModuleInit {
         .where(and(
           eq(storeCookingUnitStock.organizationId, organizationId),
           eq(storeCookingUnitStock.branchId, branch.id),
+          cookingUnitId ? eq(storeCookingUnitStock.cookingUnitId, cookingUnitId) : undefined,
         ));
       const rows = stockRows.map((row) => ({
         id: row.id,
@@ -433,11 +542,16 @@ export class InventoryService implements OnModuleInit {
         unit: row.unit ?? "Piece",
         stockValue: row.quantity * row.unitCostPkr,
       }));
+      const unitLabel = cookingUnitId
+        ? (stockRows[0]?.cookingUnitName ?? "selected unit")
+        : null;
       return {
         id: reportId,
         name: "Kitchen section stock",
         category: "Restaurant",
-        description: "Ingredient stock by kitchen section and product category",
+        description: unitLabel
+          ? `Ingredient stock for ${unitLabel} (qty + Rs value)`
+          : "Ingredient stock by kitchen section and product category",
         lastGenerated: today,
         filterDate: null,
         dateMode: null,
@@ -451,19 +565,24 @@ export class InventoryService implements OnModuleInit {
       "current-stock": {
         name: "Current Stock",
         category: "Inventory",
-        description: "On-hand quantities by ingredient",
-        rows: data.ingredients.map((i) => ({
-          sku: i.sku,
-          name: i.name,
-          stock: `${i.currentStock} ${i.unit}`,
-          value: i.currentStock * i.unitCost,
-        })),
+        description: "On-hand quantities by ingredient (Main + Kitchen)",
+        rows: data.ingredients.map((i) => {
+          const qty = i.onHandStock ?? i.currentStock;
+          return {
+            sku: i.sku,
+            name: i.name,
+            stock: `${qty} ${i.unit}`,
+            kitchen: `${(i as { kitchenStock?: number }).kitchenStock ?? i.currentStock} ${i.unit}`,
+            store: `${i.storeStock ?? 0} ${i.unit}`,
+            value: qty * i.unitCost,
+          };
+        }),
       },
       "low-stock": {
         name: "Low Stock",
         category: "Inventory",
         description: "Items below reorder level",
-        rows: data.ingredients.filter((i) => i.currentStock <= i.reorderLevel),
+        rows: data.ingredients.filter((i) => (i.onHandStock ?? i.currentStock) <= i.reorderLevel),
       },
       expiry: {
         name: "Expiry Report",
@@ -474,13 +593,13 @@ export class InventoryService implements OnModuleInit {
       valuation: {
         name: "Inventory Valuation",
         category: "Inventory",
-        description: "Total stock value by category",
+        description: "Total stock value by category (on-hand × unit cost)",
         rows: data.categories.map((c) => ({
           category: c.name,
           items: c.itemCount,
           value: data.ingredients
             .filter((i) => i.categoryName === c.name)
-            .reduce((s, i) => s + i.currentStock * i.unitCost, 0),
+            .reduce((s, i) => s + (i.onHandStock ?? i.currentStock) * i.unitCost, 0),
         })),
       },
       consumption: {
@@ -633,6 +752,8 @@ export class InventoryService implements OnModuleInit {
 
   async createIngredient(organizationId: string, userEmail: string, input: CreateIngredient) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const { simpleStore: mainWh } = await this.ensureRestaurantWarehouses(organizationId, branch.id);
+
     const [row] = await this.db
       .insert(popsIngredients)
       .values({
@@ -651,18 +772,75 @@ export class InventoryService implements OnModuleInit {
       })
       .returning();
     if (!row) throw new BadRequestException("Failed to create ingredient");
-    if (row.currentStock > 0) {
+
+    // Always link a store product + seed warehouse so Current Stock / waste deduct share one ledger.
+    const product = await this.ensureIngredientStoreProduct(
+      organizationId,
+      branch.id,
+      row,
+      row.unitCostPkr,
+    );
+    const qty = Math.max(0, row.currentStock);
+    await this.db
+      .update(popsIngredients)
+      .set({
+        storeProductId: product.id,
+        currentStock: qty,
+      })
+      .where(eq(popsIngredients.id, row.id));
+
+    if (mainWh && qty > 0) {
+      const [existing] = await this.db
+        .select()
+        .from(storeWarehouseStock)
+        .where(and(
+          eq(storeWarehouseStock.warehouseId, mainWh.id),
+          eq(storeWarehouseStock.productId, product.id),
+        ))
+        .limit(1);
+      if (existing) {
+        await this.db
+          .update(storeWarehouseStock)
+          .set({
+            quantity: existing.quantity + qty,
+            unitCostPkr: row.unitCostPkr,
+            updatedAt: new Date(),
+          })
+          .where(eq(storeWarehouseStock.id, existing.id));
+      } else {
+        await this.db.insert(storeWarehouseStock).values({
+          organizationId,
+          branchId: branch.id,
+          warehouseId: mainWh.id,
+          productId: product.id,
+          quantity: qty,
+          unitCostPkr: row.unitCostPkr,
+        });
+      }
+      const balances = await this.db
+        .select({ quantity: storeWarehouseStock.quantity })
+        .from(storeWarehouseStock)
+        .where(eq(storeWarehouseStock.productId, product.id));
+      const onHand = balances.reduce((sum, r) => sum + r.quantity, 0);
+      await this.db
+        .update(storeProducts)
+        .set({ availableStock: onHand, purchasePricePkr: row.unitCostPkr })
+        .where(eq(storeProducts.id, product.id));
+    }
+
+    if (qty > 0) {
       await this.db.insert(popsStockBatches).values({
         organizationId,
         branchId: branch.id,
         ingredientId: row.id,
-        qty: row.currentStock,
-        location: "Main store",
+        qty,
+        location: mainWh?.name ?? "Main store",
         unitCostPkr: row.unitCostPkr,
       });
     }
     await this.audit(organizationId, branch.id, userEmail, "Ingredient created", "Ingredients", `${row.sku} ${row.name}`);
-    return this.mapIngredient(row);
+    const refreshed = await this.getIngredient(organizationId, row.id);
+    return this.mapIngredient(refreshed);
   }
 
   async updateIngredient(
@@ -903,20 +1081,8 @@ export class InventoryService implements OnModuleInit {
           eq(popsPurchaseOrders.branchId, branch.id),
         ))
         .limit(1);
-      if (purchaseOrder?.warehouseId) {
-        warehouseId = purchaseOrder.warehouseId;
-        const [poWarehouse] = await this.db
-          .select({ id: storeWarehouses.id, name: storeWarehouses.name })
-          .from(storeWarehouses)
-          .where(and(
-            eq(storeWarehouses.id, warehouseId),
-            eq(storeWarehouses.organizationId, organizationId),
-            eq(storeWarehouses.branchId, branch.id),
-          ))
-          .limit(1);
-        if (!poWarehouse) throw new NotFoundException("Purchase-order warehouse not found for this branch");
-        receiptWarehouse = poWarehouse;
-      }
+      // Keep PO link for audit, but never override the GRN warehouse the user selected.
+      void purchaseOrder;
     }
 
     const totalCost = input.lines.reduce((s: number, l) => s + l.qty * l.unitCost, 0);
@@ -964,18 +1130,6 @@ export class InventoryService implements OnModuleInit {
         if (linked) ing = linked;
       }
 
-      await this.db
-        .update(popsIngredients)
-        .set({
-          // Kitchen is the sellable / recipe stock. Receiving into any other
-          // warehouse waits for an explicit transfer into Kitchen.
-          currentStock: warehouseId !== kitchen.id
-            ? ing.currentStock
-            : ing.currentStock + line.qty,
-          unitCostPkr: line.unitCost,
-        })
-        .where(eq(popsIngredients.id, line.ingredientId));
-
       await this.db.insert(popsStockBatches).values({
         organizationId,
         branchId: branch.id,
@@ -1010,12 +1164,23 @@ export class InventoryService implements OnModuleInit {
           const stockRows = await this.db.select({ quantity: storeWarehouseStock.quantity })
             .from(storeWarehouseStock)
             .where(eq(storeWarehouseStock.productId, product.id));
+          const onHand = stockRows.reduce((sum, row) => sum + row.quantity, 0);
           await this.db.update(storeProducts)
             .set({
-              availableStock: stockRows.reduce((sum, row) => sum + row.quantity, 0),
+              availableStock: onHand,
               purchasePricePkr: line.unitCost,
             })
             .where(eq(storeProducts.id, product.id));
+          // Persist sellable/on-hand ledger so Ingredients + valuation show the saved qty
+          // (previously Main Warehouse GRN only wrote warehouse rows → looked like "not saved").
+          await this.db
+            .update(popsIngredients)
+            .set({
+              currentStock: onHand,
+              unitCostPkr: line.unitCost,
+              storeProductId: product.id,
+            })
+            .where(eq(popsIngredients.id, line.ingredientId));
       }
 
       if (input.purchaseOrderId) {
@@ -1194,25 +1359,60 @@ export class InventoryService implements OnModuleInit {
 
     if (input.status === "Approved") {
       const ing = await this.getIngredient(organizationId, adj.ingredientId);
-      const delta = adj.type === "Add" ? adj.qty : -adj.qty;
-      const newStock = Math.max(0, ing.currentStock + delta);
-      await this.db
-        .update(popsIngredients)
-        .set({ currentStock: newStock })
-        .where(eq(popsIngredients.id, adj.ingredientId));
-
-      const costImpact = Math.round(adj.qty * ing.unitCostPkr);
-      try {
-        await this.accountingHooks.recordStockAdjustment(
+      if (adj.type === "Add") {
+        await this.db
+          .update(popsIngredients)
+          .set({ currentStock: ing.currentStock + adj.qty })
+          .where(eq(popsIngredients.id, adj.ingredientId));
+        const costImpact = Math.round(adj.qty * ing.unitCostPkr);
+        try {
+          await this.accountingHooks.recordStockAdjustment(
+            organizationId,
+            adj.branchId,
+            `ADJ-${adjustmentId.slice(0, 8)}`,
+            "Add",
+            costImpact,
+            adj.reason,
+          );
+        } catch {
+          // best-effort
+        }
+      } else {
+        await this.deductIngredientOnHand(
           organizationId,
           adj.branchId,
-          `ADJ-${adjustmentId.slice(0, 8)}`,
-          adj.type as "Add" | "Remove",
-          costImpact,
-          adj.reason,
+          adj.ingredientId,
+          adj.qty,
         );
-      } catch {
-        // best-effort
+        // Mirror removals into Waste Management (expiry / spoilage write-offs).
+        const reason = (adj.reason ?? "").toLowerCase();
+        const wasteType: WasteType =
+          /expir|spoil|damage|rot|waste|discard|dispose/.test(reason)
+            ? "Expired Items"
+            : "Kitchen Waste";
+        const costImpact = Math.round(adj.qty * ing.unitCostPkr);
+        await this.db.insert(popsWasteRecords).values({
+          organizationId,
+          branchId: adj.branchId,
+          ingredientId: adj.ingredientId,
+          qty: adj.qty,
+          unit: ing.unit,
+          wasteType,
+          reason: adj.reason?.trim() || `Stock adjustment remove (${adj.type})`,
+          costImpactPkr: costImpact,
+          status: "Approved",
+        });
+        try {
+          await this.accountingHooks.recordWaste(
+            organizationId,
+            adj.branchId,
+            `ADJ-WASTE-${adjustmentId.slice(0, 8)}`,
+            costImpact,
+            wasteType,
+          );
+        } catch {
+          // best-effort
+        }
       }
     }
 
@@ -1225,7 +1425,27 @@ export class InventoryService implements OnModuleInit {
   async createWaste(organizationId: string, userEmail: string, input: CreateWasteRecord) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     const ing = await this.getIngredient(organizationId, input.ingredientId);
-    const costImpact = Math.round((input.qty / Math.max(ing.currentStock, 1)) * ing.currentStock * ing.unitCostPkr) || ing.unitCostPkr * input.qty;
+    if (input.qty <= 0) throw new BadRequestException("Waste qty must be greater than 0");
+
+    // Use warehouse on-hand when linked — same number Current Stock report shows.
+    let available = ing.currentStock;
+    if (ing.storeProductId) {
+      const balances = await this.db
+        .select({ quantity: storeWarehouseStock.quantity })
+        .from(storeWarehouseStock)
+        .where(eq(storeWarehouseStock.productId, ing.storeProductId));
+      const onHand = balances.reduce((sum, row) => sum + row.quantity, 0);
+      if (balances.length > 0) available = onHand;
+    }
+    if (input.qty > available) {
+      throw new BadRequestException(
+        `Waste qty ${input.qty} exceeds available stock ${available} ${ing.unit}`,
+      );
+    }
+
+    const costImpact =
+      Math.round(input.qty * ing.unitCostPkr) ||
+      Math.round((input.qty / Math.max(available, 1)) * available * ing.unitCostPkr);
 
     const [row] = await this.db
       .insert(popsWasteRecords)
@@ -1238,11 +1458,33 @@ export class InventoryService implements OnModuleInit {
         wasteType: input.wasteType,
         reason: input.reason?.trim() || null,
         costImpactPkr: costImpact,
-        status: "Pending",
+        status: "Approved",
       })
       .returning();
     if (!row) throw new BadRequestException("Failed to record waste");
-    await this.audit(organizationId, branch.id, userEmail, "Waste recorded", "Waste Management", `${ing.name} ${input.qty} ${ing.unit}`);
+
+    await this.deductIngredientOnHand(organizationId, branch.id, input.ingredientId, input.qty);
+
+    try {
+      await this.accountingHooks.recordWaste(
+        organizationId,
+        branch.id,
+        `WASTE-${row.id.slice(0, 8)}`,
+        costImpact,
+        input.wasteType,
+      );
+    } catch {
+      // best-effort
+    }
+
+    await this.audit(
+      organizationId,
+      branch.id,
+      userEmail,
+      "Waste recorded & stock deducted",
+      "Waste Management",
+      `${ing.name} −${input.qty} ${ing.unit}`,
+    );
     return (await this.loadWasteRecords(branch.id)).find((w) => w.id === row.id)!;
   }
 
@@ -1261,11 +1503,12 @@ export class InventoryService implements OnModuleInit {
       .where(eq(popsWasteRecords.id, wasteId));
 
     if (input.status === "Approved") {
-      const ing = await this.getIngredient(organizationId, waste.ingredientId);
-      await this.db
-        .update(popsIngredients)
-        .set({ currentStock: Math.max(0, ing.currentStock - waste.qty) })
-        .where(eq(popsIngredients.id, waste.ingredientId));
+      await this.deductIngredientOnHand(
+        organizationId,
+        waste.branchId,
+        waste.ingredientId,
+        waste.qty,
+      );
 
       try {
         await this.accountingHooks.recordWaste(
@@ -1556,7 +1799,60 @@ export class InventoryService implements OnModuleInit {
       .from(popsIngredients)
       .where(eq(popsIngredients.branchId, branchId))
       .orderBy(asc(popsIngredients.name));
-    return Promise.all(rows.map((r) => this.mapIngredient(r)));
+    const warehouses = await this.db
+      .select({ id: storeWarehouses.id, code: storeWarehouses.code, name: storeWarehouses.name })
+      .from(storeWarehouses)
+      .where(eq(storeWarehouses.branchId, branchId));
+    const kitchen = warehouses.find((w) => w.code === "KITCHEN")
+      ?? warehouses.find((w) => /kitchen/i.test(w.name));
+
+    const productIds = rows.map((r) => r.storeProductId).filter((id): id is string => Boolean(id));
+    const stockRows =
+      productIds.length > 0
+        ? await this.db
+            .select({
+              productId: storeWarehouseStock.productId,
+              warehouseId: storeWarehouseStock.warehouseId,
+              quantity: storeWarehouseStock.quantity,
+            })
+            .from(storeWarehouseStock)
+            .where(inArray(storeWarehouseStock.productId, productIds))
+        : [];
+    const onHandByProduct = new Map<string, number>();
+    const kitchenByProduct = new Map<string, number>();
+    for (const row of stockRows) {
+      onHandByProduct.set(row.productId, (onHandByProduct.get(row.productId) ?? 0) + row.quantity);
+      if (kitchen && row.warehouseId === kitchen.id) {
+        kitchenByProduct.set(row.productId, (kitchenByProduct.get(row.productId) ?? 0) + row.quantity);
+      }
+    }
+
+    return Promise.all(
+      rows.map(async (r) => {
+        const mapped = await this.mapIngredient(r);
+        if (!r.storeProductId) {
+          return {
+            ...mapped,
+            onHandStock: mapped.currentStock,
+            storeStock: 0,
+            kitchenStock: mapped.currentStock,
+          };
+        }
+        const onHand = onHandByProduct.get(r.storeProductId) ?? 0;
+        const kitchenQty = kitchen
+          ? (kitchenByProduct.get(r.storeProductId) ?? 0)
+          : mapped.currentStock;
+        // currentStock = on-hand so Ingredients / reports / valuation SHOW the calculated qty.
+        // kitchenStock = sellable Kitchen qty (after Main→Kitchen transfer).
+        return {
+          ...mapped,
+          currentStock: onHand > 0 ? onHand : mapped.currentStock,
+          onHandStock: onHand > 0 ? onHand : mapped.currentStock,
+          kitchenStock: kitchenQty,
+          storeStock: Math.max(0, onHand - kitchenQty),
+        };
+      }),
+    );
   }
 
   private async loadSuppliers(branchId: string) {
@@ -1850,6 +2146,240 @@ export class InventoryService implements OnModuleInit {
     return { id: row.id, name: row.name, description: row.description, itemCount };
   }
 
+  /**
+   * Deduct sellable/on-hand stock for waste & write-offs.
+   * Updates warehouse + cooking-unit stock (when linked), ingredient.currentStock, batches (expiry FIFO), and store product available qty.
+   */
+  private async deductIngredientOnHand(
+    organizationId: string,
+    branchId: string,
+    ingredientId: string,
+    qty: number,
+  ): Promise<void> {
+    if (qty <= 0) return;
+    const ing = await this.getIngredient(organizationId, ingredientId);
+    let remaining = qty;
+
+    if (ing.storeProductId) {
+      const warehouses = await this.db
+        .select({
+          id: storeWarehouses.id,
+          code: storeWarehouses.code,
+          name: storeWarehouses.name,
+        })
+        .from(storeWarehouses)
+        .where(eq(storeWarehouses.branchId, branchId));
+      const kitchen = warehouses.find((w) => w.code === "KITCHEN")
+        ?? warehouses.find((w) => /kitchen/i.test(w.name));
+
+      // Prefer branch-scoped rows; fall back to product-only if older rows lack branchId match.
+      let stockRows = await this.db
+        .select({
+          id: storeWarehouseStock.id,
+          warehouseId: storeWarehouseStock.warehouseId,
+          quantity: storeWarehouseStock.quantity,
+        })
+        .from(storeWarehouseStock)
+        .where(and(
+          eq(storeWarehouseStock.productId, ing.storeProductId),
+          eq(storeWarehouseStock.branchId, branchId),
+        ));
+      if (stockRows.length === 0) {
+        stockRows = await this.db
+          .select({
+            id: storeWarehouseStock.id,
+            warehouseId: storeWarehouseStock.warehouseId,
+            quantity: storeWarehouseStock.quantity,
+          })
+          .from(storeWarehouseStock)
+          .where(eq(storeWarehouseStock.productId, ing.storeProductId));
+      }
+
+      const ordered = [...stockRows].sort((a, b) => {
+        const aKitchen = kitchen && a.warehouseId === kitchen.id ? 0 : 1;
+        const bKitchen = kitchen && b.warehouseId === kitchen.id ? 0 : 1;
+        if (aKitchen !== bKitchen) return aKitchen - bKitchen;
+        return b.quantity - a.quantity;
+      });
+
+      for (const row of ordered) {
+        if (remaining <= 0) break;
+        if (row.quantity <= 0) continue;
+        const take = Math.min(row.quantity, remaining);
+        await this.db
+          .update(storeWarehouseStock)
+          .set({ quantity: row.quantity - take, updatedAt: new Date() })
+          .where(eq(storeWarehouseStock.id, row.id));
+
+        if (kitchen && row.warehouseId === kitchen.id) {
+          let unitRemaining = take;
+          const unitStocks = await this.db
+            .select()
+            .from(storeCookingUnitStock)
+            .where(and(
+              eq(storeCookingUnitStock.branchId, branchId),
+              eq(storeCookingUnitStock.productId, ing.storeProductId),
+            ))
+            .orderBy(desc(storeCookingUnitStock.quantity));
+          for (const unitStock of unitStocks) {
+            if (unitRemaining <= 0) break;
+            if (unitStock.quantity <= 0) continue;
+            const unitTake = Math.min(unitStock.quantity, unitRemaining);
+            await this.db
+              .update(storeCookingUnitStock)
+              .set({
+                quantity: unitStock.quantity - unitTake,
+                updatedAt: new Date(),
+              })
+              .where(eq(storeCookingUnitStock.id, unitStock.id));
+            unitRemaining -= unitTake;
+          }
+        }
+        remaining -= take;
+      }
+
+      const balances = await this.db
+        .select({ quantity: storeWarehouseStock.quantity })
+        .from(storeWarehouseStock)
+        .where(eq(storeWarehouseStock.productId, ing.storeProductId));
+      let onHand = balances.reduce((sum, row) => sum + row.quantity, 0);
+
+      // If warehouse ledger had no qty (or short), still cut ingredient.currentStock so overall UI moves.
+      if (remaining > 0) {
+        onHand = Math.max(0, (stockRows.length > 0 ? onHand : ing.currentStock) - remaining);
+        remaining = 0;
+      }
+
+      await this.db
+        .update(popsIngredients)
+        .set({ currentStock: onHand })
+        .where(eq(popsIngredients.id, ingredientId));
+      await this.db
+        .update(storeProducts)
+        .set({ availableStock: onHand })
+        .where(eq(storeProducts.id, ing.storeProductId));
+
+      // If product had no warehouse row yet but ingredient showed stock, seed main warehouse at reduced qty.
+      if (stockRows.length === 0 && onHand > 0) {
+        const mainWh = warehouses.find((w) => w.code === "WH-01" || w.code === "SIMPLE-STORE") ?? warehouses[0];
+        if (mainWh) {
+          await this.db.insert(storeWarehouseStock).values({
+            organizationId,
+            branchId,
+            warehouseId: mainWh.id,
+            productId: ing.storeProductId,
+            quantity: onHand,
+            unitCostPkr: ing.unitCostPkr,
+          });
+        }
+      }
+    } else {
+      await this.db
+        .update(popsIngredients)
+        .set({ currentStock: Math.max(0, ing.currentStock - qty) })
+        .where(eq(popsIngredients.id, ingredientId));
+    }
+
+    // Burn stock batches expiry-first so Expiry report matches overall stock.
+    let batchRemaining = qty;
+    const batches = await this.db
+      .select()
+      .from(popsStockBatches)
+      .where(and(
+        eq(popsStockBatches.organizationId, organizationId),
+        eq(popsStockBatches.branchId, branchId),
+        eq(popsStockBatches.ingredientId, ingredientId),
+      ))
+      .orderBy(sql`${popsStockBatches.expiryDate} asc nulls last`, asc(popsStockBatches.createdAt));
+    for (const batch of batches) {
+      if (batchRemaining <= 0) break;
+      if (batch.qty <= 0) continue;
+      const take = Math.min(batch.qty, batchRemaining);
+      const left = batch.qty - take;
+      if (left > 0) {
+        await this.db.update(popsStockBatches).set({ qty: left }).where(eq(popsStockBatches.id, batch.id));
+      } else {
+        await this.db.delete(popsStockBatches).where(eq(popsStockBatches.id, batch.id));
+      }
+      batchRemaining -= take;
+    }
+  }
+
+  private async moveIngredientBatches(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tx: any,
+    organizationId: string,
+    branchId: string,
+    ingredientId: string,
+    fromLocationName: string,
+    toLocationName: string,
+    qty: number,
+  ): Promise<void> {
+    if (qty <= 0) return;
+    const fromName = fromLocationName.trim().toLowerCase();
+    const batches = await tx
+      .select()
+      .from(popsStockBatches)
+      .where(and(
+        eq(popsStockBatches.organizationId, organizationId),
+        eq(popsStockBatches.branchId, branchId),
+        eq(popsStockBatches.ingredientId, ingredientId),
+      ))
+      .orderBy(asc(popsStockBatches.createdAt));
+    let remaining = qty;
+    for (const batch of batches) {
+      if (remaining <= 0) break;
+      if (batch.qty <= 0) continue;
+      const loc = (batch.location ?? "").trim().toLowerCase();
+      const matchesFrom =
+        !loc ||
+        loc === fromName ||
+        (loc === "main store" && /main warehouse|simple store/i.test(fromLocationName)) ||
+        (/main warehouse|simple store/i.test(loc) && /main warehouse|simple store/i.test(fromLocationName));
+      if (!matchesFrom) continue;
+
+      const take = Math.min(batch.qty, remaining);
+      const left = batch.qty - take;
+      if (left > 0) {
+        await tx.update(popsStockBatches)
+          .set({ qty: left })
+          .where(eq(popsStockBatches.id, batch.id));
+      } else {
+        await tx.delete(popsStockBatches).where(eq(popsStockBatches.id, batch.id));
+      }
+
+      const destRows = await tx
+        .select()
+        .from(popsStockBatches)
+        .where(and(
+          eq(popsStockBatches.ingredientId, ingredientId),
+          eq(popsStockBatches.branchId, branchId),
+          eq(popsStockBatches.location, toLocationName),
+        ))
+        .limit(5);
+      const dest = destRows.find((row: { batchNumber: string | null }) =>
+        (row.batchNumber ?? null) === (batch.batchNumber ?? null),
+      );
+      if (dest) {
+        await tx.update(popsStockBatches)
+          .set({ qty: dest.qty + take })
+          .where(eq(popsStockBatches.id, dest.id));
+      } else {
+        await tx.insert(popsStockBatches).values({
+          organizationId,
+          branchId,
+          ingredientId,
+          qty: take,
+          batchNumber: batch.batchNumber,
+          expiryDate: batch.expiryDate,
+          location: toLocationName,
+          unitCostPkr: batch.unitCostPkr,
+        });
+      }
+      remaining -= take;
+    }
+  }
+
   private async mapIngredient(row: typeof popsIngredients.$inferSelect) {
     let categoryName: string | null = null;
     if (row.categoryId) {
@@ -2020,9 +2550,23 @@ export class InventoryService implements OnModuleInit {
       rows.find((w) => /^(main warehouse|simple store)$/i.test(w.name.trim())) ??
       (await ensure("SIMPLE-STORE", "Main Warehouse", true));
 
+    let kitchen =
+      rows.find((w) => w.code === "KITCHEN") ??
+      rows.find((w) => /^kitchen$/i.test(w.name.trim()));
+    if (!kitchen) {
+      kitchen = await ensure("KITCHEN", "Kitchen", false);
+    } else if (kitchen.code !== "KITCHEN") {
+      const [normalized] = await this.db
+        .update(storeWarehouses)
+        .set({ code: "KITCHEN" })
+        .where(eq(storeWarehouses.id, kitchen.id))
+        .returning();
+      if (normalized) kitchen = normalized;
+    }
+
     return {
       simpleStore,
-      kitchen: await ensure("KITCHEN", "Kitchen", false),
+      kitchen,
     };
   }
 
@@ -2288,7 +2832,168 @@ export class InventoryService implements OnModuleInit {
     };
   }
 
-  /** Link purchased ingredients to store products and fill warehouse stock for transfers. */
+  async createWarehouse(
+    organizationId: string,
+    userEmail: string,
+    input: CreateInventoryWarehouse,
+  ) {
+    const branch = await this.resolveBranch(organizationId, input.branchCode);
+    await this.ensureRestaurantWarehouses(organizationId, branch.id);
+    const code = (input.code?.trim() || input.name.trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 32) || `STORE-${Date.now()}`).toUpperCase();
+    if (code === "KITCHEN" || code === "SIMPLE-STORE") {
+      throw new BadRequestException("This store code is reserved. Choose another code.");
+    }
+    const [existing] = await this.db
+      .select({ id: storeWarehouses.id })
+      .from(storeWarehouses)
+      .where(and(
+        eq(storeWarehouses.organizationId, organizationId),
+        eq(storeWarehouses.branchId, branch.id),
+        eq(storeWarehouses.code, code),
+      ))
+      .limit(1);
+    if (existing) throw new BadRequestException(`Store code already exists: ${code}`);
+    const [created] = await this.db
+      .insert(storeWarehouses)
+      .values({
+        organizationId,
+        branchId: branch.id,
+        code,
+        name: input.name.trim(),
+        address: input.address?.trim() || null,
+        isDefault: "no",
+      })
+      .returning();
+    if (!created) throw new BadRequestException("Could not create store");
+    await this.db.insert(storeZones).values({ warehouseId: created.id, name: "Zone A" }).onConflictDoNothing();
+    await this.audit(
+      organizationId,
+      branch.id,
+      userEmail,
+      "Store created",
+      "Inventory",
+      `${created.name} (${created.code})`,
+    );
+    return {
+      id: created.id,
+      code: created.code,
+      name: created.name,
+      address: created.address,
+      isDefault: false,
+      zoneCount: 1,
+      totalStock: 0,
+    };
+  }
+
+  async updateWarehouse(
+    organizationId: string,
+    userEmail: string,
+    warehouseId: string,
+    input: UpdateInventoryWarehouse,
+  ) {
+    const [warehouse] = await this.db
+      .select()
+      .from(storeWarehouses)
+      .where(and(
+        eq(storeWarehouses.id, warehouseId),
+        eq(storeWarehouses.organizationId, organizationId),
+      ))
+      .limit(1);
+    if (!warehouse) throw new NotFoundException("Store not found");
+    const systemCodes = new Set(["KITCHEN", "SIMPLE-STORE"]);
+    if (systemCodes.has(warehouse.code) && input.code !== undefined && input.code.trim().toUpperCase() !== warehouse.code) {
+      throw new BadRequestException("Cannot change code of Main Warehouse or Kitchen");
+    }
+    if (input.code !== undefined) {
+      const normalizedCode = input.code.trim().toUpperCase();
+      if (systemCodes.has(normalizedCode) && normalizedCode !== warehouse.code) {
+        throw new BadRequestException("This store code is reserved");
+      }
+      const [duplicate] = await this.db
+        .select({ id: storeWarehouses.id })
+        .from(storeWarehouses)
+        .where(and(
+          eq(storeWarehouses.organizationId, organizationId),
+          eq(storeWarehouses.branchId, warehouse.branchId),
+          eq(storeWarehouses.code, normalizedCode),
+        ))
+        .limit(1);
+      if (duplicate && duplicate.id !== warehouse.id) {
+        throw new BadRequestException(`Store code already exists: ${normalizedCode}`);
+      }
+    }
+    const [updated] = await this.db
+      .update(storeWarehouses)
+      .set({
+        ...(input.code !== undefined && !systemCodes.has(warehouse.code)
+          ? { code: input.code.trim().toUpperCase() }
+          : {}),
+        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+        ...(input.address !== undefined ? { address: input.address?.trim() || null } : {}),
+      })
+      .where(eq(storeWarehouses.id, warehouse.id))
+      .returning();
+    if (!updated) throw new BadRequestException("Could not update store");
+    const [stockRow] = await this.db
+      .select({ total: sql<number>`coalesce(sum(${storeWarehouseStock.quantity}), 0)` })
+      .from(storeWarehouseStock)
+      .where(eq(storeWarehouseStock.warehouseId, updated.id));
+    await this.audit(
+      organizationId,
+      warehouse.branchId,
+      userEmail,
+      "Store updated",
+      "Inventory",
+      `${updated.name} (${updated.code})`,
+    );
+    return {
+      id: updated.id,
+      code: updated.code,
+      name: updated.name,
+      address: updated.address,
+      isDefault: updated.isDefault === "yes",
+      zoneCount: 0,
+      totalStock: Number(stockRow?.total ?? 0),
+    };
+  }
+
+  async deleteWarehouse(organizationId: string, userEmail: string, warehouseId: string) {
+    const [warehouse] = await this.db
+      .select()
+      .from(storeWarehouses)
+      .where(and(
+        eq(storeWarehouses.id, warehouseId),
+        eq(storeWarehouses.organizationId, organizationId),
+      ))
+      .limit(1);
+    if (!warehouse) throw new NotFoundException("Store not found");
+    if (warehouse.code === "KITCHEN" || warehouse.code === "SIMPLE-STORE" || warehouse.code === "WH-01" || warehouse.isDefault === "yes") {
+      throw new BadRequestException("Main Warehouse and Kitchen cannot be deleted");
+    }
+    const [stock] = await this.db
+      .select({ total: sql<number>`coalesce(sum(${storeWarehouseStock.quantity}), 0)` })
+      .from(storeWarehouseStock)
+      .where(eq(storeWarehouseStock.warehouseId, warehouse.id));
+    if (Number(stock?.total ?? 0) > 0) {
+      throw new BadRequestException("Transfer or clear stock before deleting this store");
+    }
+    await this.db.delete(storeWarehouses).where(eq(storeWarehouses.id, warehouse.id));
+    await this.audit(
+      organizationId,
+      warehouse.branchId,
+      userEmail,
+      "Store deleted",
+      "Inventory",
+      `${warehouse.name} (${warehouse.code})`,
+    );
+    return { ok: true as const, id: warehouseId };
+  }
+
+  /** Link purchased ingredients to store products. Never inflate warehouse qty from stale batches. */
   private async syncPurchasedIngredientsForTransfer(
     organizationId: string,
     branchId: string,
@@ -2324,41 +3029,30 @@ export class InventoryService implements OnModuleInit {
           .where(eq(popsIngredients.id, ing.id));
       }
 
-      const ingBatches = batches.filter((b) => b.ingredientId === ing.id && b.qty > 0);
-      if (ingBatches.length === 0 && ing.currentStock <= 0) continue;
-
-      const qtyByWarehouse = new Map<string, number>();
-      for (const batch of ingBatches) {
-        const loc = batch.location?.trim() || "";
-        let warehouseId = defaultWarehouseId;
-        if (uuidRe.test(loc) && warehouseById.has(loc)) warehouseId = loc;
-        else {
-          const byName = warehouses.find((w) => w.name.toLowerCase() === loc.toLowerCase());
-          if (byName) warehouseId = byName.id;
-        }
-        qtyByWarehouse.set(warehouseId, (qtyByWarehouse.get(warehouseId) ?? 0) + batch.qty);
-      }
-      if (qtyByWarehouse.size === 0 && ing.currentStock > 0) {
-        qtyByWarehouse.set(defaultWarehouseId, ing.currentStock);
-      }
-
-      for (const [warehouseId, qty] of qtyByWarehouse) {
-        const [existing] = await this.db
-          .select()
-          .from(storeWarehouseStock)
-          .where(and(
-            eq(storeWarehouseStock.warehouseId, warehouseId),
-            eq(storeWarehouseStock.productId, product.id),
-          ))
-          .limit(1);
-        if (existing) {
-          if (existing.quantity < qty) {
-            await this.db
-              .update(storeWarehouseStock)
-              .set({ quantity: qty, updatedAt: new Date() })
-              .where(eq(storeWarehouseStock.id, existing.id));
+      // Existing warehouse ledger is source of truth after GRN/transfers.
+      // Only seed missing rows from batches — never raise qty (that re-filled Main after transfer).
+      const existingStock = await this.db
+        .select()
+        .from(storeWarehouseStock)
+        .where(eq(storeWarehouseStock.productId, product.id));
+      if (existingStock.length === 0) {
+        const ingBatches = batches.filter((b) => b.ingredientId === ing.id && b.qty > 0);
+        const qtyByWarehouse = new Map<string, number>();
+        for (const batch of ingBatches) {
+          const loc = batch.location?.trim() || "";
+          let warehouseId = defaultWarehouseId;
+          if (uuidRe.test(loc) && warehouseById.has(loc)) warehouseId = loc;
+          else {
+            const byName = warehouses.find((w) => w.name.toLowerCase() === loc.toLowerCase());
+            if (byName) warehouseId = byName.id;
           }
-        } else {
+          qtyByWarehouse.set(warehouseId, (qtyByWarehouse.get(warehouseId) ?? 0) + batch.qty);
+        }
+        if (qtyByWarehouse.size === 0 && ing.currentStock > 0) {
+          qtyByWarehouse.set(defaultWarehouseId, ing.currentStock);
+        }
+        for (const [warehouseId, qty] of qtyByWarehouse) {
+          if (qty <= 0) continue;
           await this.db.insert(storeWarehouseStock).values({
             organizationId,
             branchId,
@@ -2371,6 +3065,7 @@ export class InventoryService implements OnModuleInit {
       }
 
       // Rewrite UUID batch locations to warehouse names for Stock Management UI.
+      const ingBatches = batches.filter((b) => b.ingredientId === ing.id && b.qty > 0);
       for (const batch of ingBatches) {
         const loc = batch.location?.trim() || "";
         if (uuidRe.test(loc) && warehouseById.has(loc)) {
@@ -2385,12 +3080,18 @@ export class InventoryService implements OnModuleInit {
         .select({ quantity: storeWarehouseStock.quantity })
         .from(storeWarehouseStock)
         .where(eq(storeWarehouseStock.productId, product.id));
+      const onHand = stockRows.reduce((sum, row) => sum + row.quantity, 0);
       await this.db
         .update(storeProducts)
-        .set({
-          availableStock: stockRows.reduce((sum, row) => sum + row.quantity, 0),
-        })
+        .set({ availableStock: onHand })
         .where(eq(storeProducts.id, product.id));
+      // Align ingredient ledger with warehouse on-hand so UI "save" matches reality.
+      if (ing.currentStock !== onHand) {
+        await this.db
+          .update(popsIngredients)
+          .set({ currentStock: onHand })
+          .where(eq(popsIngredients.id, ing.id));
+      }
     }
   }
 
@@ -2442,10 +3143,25 @@ export class InventoryService implements OnModuleInit {
     const cookingUnitById = new Map(cookingUnits.map((unit) => [unit.id, unit]));
     if (toWarehouse[0].id === kitchen.id) {
       for (const item of items) {
-        if (!item.cookingUnitId) continue;
+        if (!item.cookingUnitId) {
+          throw new BadRequestException(
+            "Select a Kitchen section (Cooking Unit) for every line when transferring into Kitchen",
+          );
+        }
         const unit = cookingUnitById.get(item.cookingUnitId);
         if (!unit) throw new NotFoundException("Cooking Unit not found");
         if (!unit.isActive) throw new BadRequestException(`Cooking Unit is inactive: ${unit.name}`);
+      }
+    }
+    if (fromWarehouse[0].id === kitchen.id) {
+      for (const item of items) {
+        if (!item.cookingUnitId) {
+          throw new BadRequestException(
+            "Select the Kitchen section stock is leaving when transferring out of Kitchen",
+          );
+        }
+        const unit = cookingUnitById.get(item.cookingUnitId);
+        if (!unit) throw new NotFoundException("Cooking Unit not found");
       }
     }
 
@@ -2556,22 +3272,31 @@ export class InventoryService implements OnModuleInit {
             eq(popsIngredients.branchId, branch.id),
             eq(popsIngredients.storeProductId, item.productId),
           ));
-        const kitchenDelta =
-          (toWarehouse[0].code === "KITCHEN" ? item.qty : 0) -
-          (fromWarehouse[0].code === "KITCHEN" ? item.qty : 0);
-        if (kitchenDelta !== 0) {
-          for (const ingredient of mappedIngredients) {
-            await tx.update(popsIngredients)
-              .set({ currentStock: Math.max(0, ingredient.currentStock + kitchenDelta) })
-              .where(eq(popsIngredients.id, ingredient.id));
-          }
-        }
+        // Keep ingredient.currentStock = warehouse on-hand (location moves do not change total).
         const warehouseBalances = await tx
           .select({ quantity: storeWarehouseStock.quantity })
           .from(storeWarehouseStock)
           .where(eq(storeWarehouseStock.productId, item.productId));
+        const onHand = warehouseBalances.reduce((sum, row) => sum + row.quantity, 0);
+        for (const ingredient of mappedIngredients) {
+          await tx.update(popsIngredients)
+            .set({ currentStock: onHand })
+            .where(eq(popsIngredients.id, ingredient.id));
+        }
+        // Keep batch locations in sync with warehouse moves (stops Stock Mgmt / sync lying).
+        for (const ingredient of mappedIngredients) {
+          await this.moveIngredientBatches(
+            tx,
+            organizationId,
+            branch.id,
+            ingredient.id,
+            fromWarehouse[0].name,
+            toWarehouse[0].name,
+            item.qty,
+          );
+        }
         await tx.update(storeProducts)
-          .set({ availableStock: warehouseBalances.reduce((sum, row) => sum + row.quantity, 0) })
+          .set({ availableStock: onHand })
           .where(eq(storeProducts.id, item.productId));
         await tx.insert(storeInventoryTransactions).values([
           {
@@ -2630,7 +3355,7 @@ export class InventoryService implements OnModuleInit {
         eq(storeStockTransfers.branchId, branch.id),
       ))
       .orderBy(desc(storeStockTransfers.createdAt))
-      .limit(50);
+      .limit(500);
     const transfers = await Promise.all(headers.map(async (header) => {
       const [fromWarehouse, toWarehouse] = await Promise.all([
         header.fromWarehouseId
@@ -2648,6 +3373,7 @@ export class InventoryService implements OnModuleInit {
           sku: storeProducts.sku,
           unit: storeUnits.name,
           qty: storeStockTransferItems.qty,
+          unitCostPkr: storeProducts.purchasePricePkr,
           cookingUnitId: storeStockTransferItems.cookingUnitId,
           cookingUnitName: storeCookingUnits.name,
         })
@@ -2664,7 +3390,16 @@ export class InventoryService implements OnModuleInit {
         status: header.status,
         notes: header.notes ?? null,
         createdAt: header.createdAt.toISOString(),
-        items: items.map((item) => ({ ...item, unit: item.unit ?? "Piece", cookingUnitName: item.cookingUnitName ?? null })),
+        items: items.map((item) => {
+          const unitCostPkr = item.unitCostPkr ?? 0;
+          return {
+            ...item,
+            unit: item.unit ?? "Piece",
+            cookingUnitName: item.cookingUnitName ?? null,
+            unitCostPkr,
+            lineValue: item.qty * unitCostPkr,
+          };
+        }),
       };
     }));
     return { branchCode: branch.code, transfers };

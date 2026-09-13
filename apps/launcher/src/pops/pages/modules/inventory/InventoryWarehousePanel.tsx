@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { fetchStoreProducts } from "../../../../store/api/store";
 import {
   createInventoryTransfer,
@@ -326,6 +327,57 @@ export function InventoryWarehousePanel(): JSX.Element {
       {notice ? <p className="mt-2 text-xs text-amber-300">{notice}</p> : null}
       {(transfersQuery.data?.transfers.length ?? 0) > 0 ? (
         <div className="mt-4 border-t border-slate-800 pt-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Cooking unit transfer totals
+            </div>
+            <Link
+              to="/pops/inventory/reports"
+              className="text-[11px] text-sky-400 hover:text-sky-300"
+            >
+              Full report →
+            </Link>
+          </div>
+          <div className="mb-3 overflow-x-auto rounded-lg border border-slate-800">
+            <table className="w-full min-w-[420px] text-left text-xs">
+              <thead className="bg-slate-950 text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Cooking unit</th>
+                  <th className="px-3 py-2 font-medium text-right">Qty in</th>
+                  <th className="px-3 py-2 font-medium text-right">Lines</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {Object.values(
+                  (transfersQuery.data?.transfers ?? []).reduce<
+                    Record<string, { name: string; qtyIn: number; lines: number }>
+                  >((acc, transfer) => {
+                    const toKitchen = /kitchen/i.test(transfer.toWarehouseName ?? "");
+                    for (const item of transfer.items) {
+                      if (!toKitchen) continue;
+                      const name = item.cookingUnitName ?? "Kitchen / Unassigned";
+                      const key = name.toLowerCase();
+                      const prev = acc[key] ?? { name, qtyIn: 0, lines: 0 };
+                      prev.qtyIn += item.qty;
+                      prev.lines += 1;
+                      acc[key] = prev;
+                    }
+                    return acc;
+                  }, {}),
+                )
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((row) => (
+                    <tr key={row.name}>
+                      <td className="px-3 py-2 text-white">{row.name}</td>
+                      <td className="px-3 py-2 text-right font-medium text-amber-200">
+                        {row.qtyIn.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-400">{row.lines}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
           <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Recent transfer vouchers</div>
           <div className="space-y-2">
             {transfersQuery.data?.transfers.slice(0, 5).map((transfer) => (
@@ -358,7 +410,7 @@ export function StockTransfersPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Stock transfers"
-        subtitle="Move multiple products from Simple Store to Kitchen sections in one voucher."
+        subtitle="Move products between stores and into kitchen cooking units. Manage stores under Inventory → Stores."
       />
       <InventoryWarehousePanel />
     </div>

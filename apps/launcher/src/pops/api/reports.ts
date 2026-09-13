@@ -72,7 +72,10 @@ export async function fetchRestaurantReport(
       const inOutNeedsUpgrade =
         reportId === "in-out" &&
         !report.rows.some((r) => r.section === "cashIn" || r.section === "net");
-      if (cashNeedsUpgrade || inOutNeedsUpgrade) {
+      const vendorsBalanceNeedsUpgrade =
+        reportId === "vendors-balance" &&
+        !report.rows.some((r) => typeof (r as { supplierId?: string }).supplierId === "string");
+      if (cashNeedsUpgrade || inOutNeedsUpgrade || vendorsBalanceNeedsUpgrade) {
         try {
           return await buildClientRestaurantReport(branchCode, reportId, options);
         } catch {

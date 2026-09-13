@@ -55,9 +55,12 @@ import {
   type UpdateWasteStatus,
   type WasteRecord,
   inventoryWarehouseListSchema,
+  inventoryWarehouseSchema,
   type CreateInventoryTransfer,
   type CreateInventoryCookingUnit,
+  type CreateInventoryWarehouse,
   type UpdateInventoryCookingUnit,
+  type UpdateInventoryWarehouse,
   type CreateIngredientLink,
   type InventoryWarehouse,
 } from "@platform/contracts";
@@ -84,6 +87,34 @@ export async function fetchInventoryWarehouses(branchCode: string): Promise<{
   if (!res.ok) await parseError(res, "Warehouses failed");
   const parsed = inventoryWarehouseListSchema.parse(await res.json());
   return { ...parsed, stock: parsed.stock ?? [] };
+}
+
+export async function createInventoryWarehouse(input: CreateInventoryWarehouse): Promise<InventoryWarehouse> {
+  const res = await authFetch("/v1/inventory/warehouses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await parseError(res, "Create store failed");
+  return inventoryWarehouseSchema.parse(await res.json());
+}
+
+export async function updateInventoryWarehouse(
+  warehouseId: string,
+  input: UpdateInventoryWarehouse,
+): Promise<InventoryWarehouse> {
+  const res = await authFetch(`/v1/inventory/warehouses/${warehouseId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await parseError(res, "Update store failed");
+  return inventoryWarehouseSchema.parse(await res.json());
+}
+
+export async function deleteInventoryWarehouse(warehouseId: string): Promise<void> {
+  const res = await authFetch(`/v1/inventory/warehouses/${warehouseId}`, { method: "DELETE" });
+  if (!res.ok) await parseError(res, "Delete store failed");
 }
 
 export async function fetchInventoryCookingUnits(branchCode: string): Promise<{
@@ -175,11 +206,16 @@ export async function fetchBranchInventory(branchCode: string): Promise<BranchIn
 export async function fetchInventoryReport(
   branchCode: string,
   reportId: string,
-  options?: { filterDate?: string; dateMode?: "activity" | "expiry" | "order" },
+  options?: {
+    filterDate?: string;
+    dateMode?: "activity" | "expiry" | "order";
+    cookingUnitId?: string;
+  },
 ): Promise<InventoryReport> {
   const params = new URLSearchParams({ branchCode });
   if (options?.filterDate) params.set("filterDate", options.filterDate);
   if (options?.dateMode) params.set("dateMode", options.dateMode);
+  if (options?.cookingUnitId) params.set("cookingUnitId", options.cookingUnitId);
   const res = await authFetch(`/v1/inventory/reports/${reportId}?${params}`);
   if (!res.ok) await parseError(res, "Report failed");
   return inventoryReportSchema.parse(await res.json());
@@ -429,8 +465,8 @@ export const INVENTORY_REPORTS = [
   { id: "low-stock", name: "Low Stock", category: "Inventory" as const },
   { id: "expiry", name: "Expiry Report", category: "Inventory" as const },
   { id: "valuation", name: "Inventory Valuation", category: "Inventory" as const },
-  { id: "stock-transfers", name: "Stock transfer history (section-wise)", category: "Inventory" as const },
-  { id: "stock-transfers-by-section", name: "Stock transfers by kitchen section", category: "Inventory" as const },
+  { id: "stock-transfers", name: "Cooking unit transfer history", category: "Inventory" as const },
+  { id: "stock-transfers-by-section", name: "Cooking unit transfer report", category: "Inventory" as const },
   { id: "consumption", name: "Ingredient Consumption", category: "Restaurant" as const },
   { id: "recipe-cost", name: "Recipe Cost", category: "Restaurant" as const },
   { id: "waste", name: "Waste Analysis", category: "Restaurant" as const },

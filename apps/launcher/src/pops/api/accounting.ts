@@ -16,6 +16,7 @@ import {
   salesAccountingSchema,
   taxSettingsSchema,
   vendorBillSchema,
+  vendorPayableSummarySchema,
   type AccountingAuditLog,
   type AccountingDashboard,
   type AccountingReport,
@@ -38,6 +39,7 @@ import {
   type InventoryAccounting,
   type JournalEntry,
   type OpenCashSession,
+  type PayVendorSupplier,
   type PayrollRun,
   type PopsCashMovement,
   type RecordPayment,
@@ -45,6 +47,7 @@ import {
   type TaxSettings,
   type UpdateTaxSettings,
   type VendorBill,
+  type VendorPayableSummary,
 } from "@platform/contracts";
 import { authFetch } from "../../lib/authFetch";
 
@@ -144,8 +147,27 @@ export async function fetchVendorBills(branchCode: string): Promise<VendorBill[]
   return vendorBillSchema.array().parse(await res.json());
 }
 
+export async function fetchVendorPayableSummaries(branchCode: string): Promise<VendorPayableSummary[]> {
+  const res = await authFetch(`/v1/accounting/payable/summary?${branchParams(branchCode)}`);
+  if (!res.ok) await parseError(res, "Accounts payable failed");
+  return vendorPayableSummarySchema.array().parse(await res.json());
+}
+
 export async function payVendorBill(billId: string, input: RecordPayment): Promise<unknown> {
   const res = await authFetch(`/v1/accounting/payable/${billId}/payment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await parseError(res, "Vendor payment failed");
+  return res.json();
+}
+
+export async function payVendorSupplier(
+  supplierId: string,
+  input: PayVendorSupplier,
+): Promise<unknown> {
+  const res = await authFetch(`/v1/accounting/payable/supplier/${supplierId}/payment`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

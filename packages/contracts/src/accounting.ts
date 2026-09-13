@@ -389,6 +389,24 @@ export const recordPaymentSchema = z.object({
   method: z.enum(["cash", "bank", "card"]),
 });
 
+/** Pay against a supplier's total open balance (FIFO across their bills). */
+export const payVendorSupplierSchema = z.object({
+  branchCode: z.string().min(1),
+  amount: z.number().positive(),
+  paymentDate: z.string(),
+  method: z.enum(["cash", "bank", "card"]),
+});
+
+export const vendorPayableSummarySchema = z.object({
+  supplierId: z.string().uuid(),
+  supplierName: z.string(),
+  billCount: z.number().int().nonnegative(),
+  amount: z.number(),
+  paid: z.number(),
+  balance: z.number(),
+  status: z.enum(["open", "partial", "paid"]),
+});
+
 export const createPayrollRunSchema = z.object({
   branchCode: z.string().min(1),
   periodStart: z.string(),
@@ -465,5 +483,7 @@ export type OpenCashSession = z.infer<typeof openCashSessionSchema>;
 export type CloseCashSession = z.infer<typeof closeCashSessionSchema>;
 export type CreateCustomerInvoice = z.infer<typeof createCustomerInvoiceSchema>;
 export type RecordPayment = z.infer<typeof recordPaymentSchema>;
+export type PayVendorSupplier = z.infer<typeof payVendorSupplierSchema>;
+export type VendorPayableSummary = z.infer<typeof vendorPayableSummarySchema>;
 export type CreatePayrollRun = z.infer<typeof createPayrollRunSchema>;
 export type UpdateTaxSettings = z.infer<typeof updateTaxSettingsSchema>;

@@ -1147,19 +1147,35 @@ export class ReportsService {
       billSums.map((r) => [r.supplierId, { total: Number(r.total), paid: Number(r.paid) }]),
     );
 
+    const billCountRows = await this.db
+      .select({
+        supplierId: popsVendorBills.supplierId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(popsVendorBills)
+      .where(and(eq(popsVendorBills.organizationId, organizationId), eq(popsVendorBills.branchId, branchId)))
+      .groupBy(popsVendorBills.supplierId);
+    const billCountMap = new Map(billCountRows.map((r) => [r.supplierId, Number(r.count)]));
+
     const rows = suppliers
       .map((s) => {
         const sums = billMap.get(s.id) ?? { total: 0, paid: 0 };
         const balance = sums.total - sums.paid;
+        const billCount = billCountMap.get(s.id) ?? 0;
         return {
           label: s.name,
+          supplierId: s.id,
           amount: balance,
           debit: sums.total,
           credit: sums.paid,
           balance,
-          meta: s.phone ?? s.email ?? undefined,
+          qty: billCount,
+          meta: [s.phone ?? s.email ?? null, billCount ? `${billCount} bill(s)` : null, "Click for bill detail"]
+            .filter(Boolean)
+            .join(" · "),
         };
       })
+      .filter((r) => (r.qty ?? 0) > 0 || Math.abs(r.balance ?? 0) > 0)
       .sort((a, b) => Math.abs(b.balance ?? 0) - Math.abs(a.balance ?? 0));
 
     return {

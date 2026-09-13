@@ -1,13 +1,19 @@
 import { Button } from "@platform/ui";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { instructionsRows, isoDateStamp, writeWorkbookDownload } from "../../../lib/excelTransfer";
 import { usePopsStore } from "../../../stores/popsStore";
+import { fetchVendorBills } from "../../api/accounting";
 import { fetchRestaurantReport, RESTAURANT_REPORTS } from "../../api/reports";
 import { TimeAmPmInput } from "../../components/TimeAmPmInput";
 import { formatPkr } from "../../hooks/useInventory";
 import { fieldInputClass } from "../../lib/themeClasses";
+import { printHtmlDocumentDetailed } from "../../lib/printTicket";
+import {
+  resolveReportPrintTarget,
+  restaurantReportKey,
+} from "../../lib/printerRouting";
 import { PageHeader } from "../../ui/PageHeader";
 import { SimpleTable } from "../../ui/SimpleTable";
 import { ModuleFilterBar } from "../../ui/ModuleToolbar";
@@ -33,6 +39,11 @@ export function ReportsPage(): JSX.Element {
   const [fromTime, setFromTime] = useState("00:00");
   const [toTime, setToTime] = useState("23:59");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
+  const [vendorDrill, setVendorDrill] = useState<{ supplierId: string; name: string } | null>(null);
+
+  useEffect(() => {
+    setVendorDrill(null);
+  }, [activeId, from, to, fromTime, toTime, branch?.code]);
 
   const categories = useMemo(
     () => ["All", ...new Set(RESTAURANT_REPORTS.map((r) => r.category))],
@@ -116,6 +127,24 @@ export function ReportsPage(): JSX.Element {
   const isInOutReport = activeId === "in-out";
   const isUniversalLedger = activeId === "universal-ledger";
   const isCookingUnitReport = activeId === "cooking-unit-profit";
+  const isVendorsBalance = activeId === "vendors-balance";
+
+  const vendorBillsQuery = useQuery({
+    queryKey: ["accounting", "vendors", "ledger-drill", branch?.code, vendorDrill?.supplierId],
+    enabled: Boolean(isVendorsBalance && vendorDrill?.supplierId && branch?.code),
+    queryFn: () => fetchVendorBills(branch!.code),
+  });
+
+  const vendorDetailBills = useMemo(() => {
+    if (!vendorDrill?.supplierId) return [];
+    return (vendorBillsQuery.data ?? [])
+      .filter((b) => b.supplierId === vendorDrill.supplierId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [vendorBillsQuery.data, vendorDrill?.supplierId]);
+
+  const vendorDetailBalance = vendorDetailBills.reduce((sum, b) => sum + b.balance, 0);
+  const vendorDetailBilled = vendorDetailBills.reduce((sum, b) => sum + b.amount, 0);
+  const vendorDetailPaid = vendorDetailBills.reduce((sum, b) => sum + b.paid, 0);
 
   const moneyTotalKeys = new Set([
     "amount",
@@ -153,7 +182,7 @@ export function ReportsPage(): JSX.Element {
     "payable",
   ]);
 
-  function exportActivePdf(): void {
+  async function exportActivePdf(preferPdf = false): Promise<void> {
     const data = reportQuery.data;
     if (!data || rows.length === 0) return;
     const escape = (v: unknown) =>
@@ -169,9 +198,10 @@ export function ReportsPage(): JSX.Element {
           `<tr><td>${escape(r.label)}</td><td>${escape(r.qty ?? "")}</td><td>${escape(r.amount ?? "")}</td><td>${escape(r.debit ?? "")}</td><td>${escape(r.credit ?? "")}</td><td>${escape(r.balance ?? "")}</td><td>${escape(r.meta ?? "")}</td></tr>`,
       )
       .join("");
-    const html = `<!doctype html><html><head><title>${escape(data.title)}</title>
+    const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escape(data.title)}</title>
       <style>
-        body{font-family:Segoe UI,Arial,sans-serif;padding:16px;color:#111}
+        @page { size: A4; margin: 12mm; }
+        body{font-family:Segoe UI,Arial,sans-serif;padding:16px;color:#111;background:#fff}
         h1{font-size:18px;margin:0 0 8px}
         p{font-size:12px;color:#555;margin:0 0 12px}
         table{border-collapse:collapse;width:100%;font-size:11px}
@@ -181,13 +211,21 @@ export function ReportsPage(): JSX.Element {
       <h1>${escape(data.title)}</h1>
       <p>${escape(branch?.name ?? "")} · ${escape(from)} ${escape(fromTime)} → ${escape(to)} ${escape(toTime)}</p>
       <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
-      <script>window.onload=function(){window.print()}<\/script>
       </body></html>`;
-    const w = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
-    if (!w) return;
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
+    const target = preferPdf
+      ? { mode: "pdf" as const, systemPrinterName: "Microsoft Print to PDF" }
+      : resolveReportPrintTarget(branch?.code, restaurantReportKey(activeId));
+    const systemPrinterName =
+      preferPdf || target.mode === "pdf"
+        ? "Microsoft Print to PDF"
+        : target.mode === "printer"
+          ? target.systemPrinterName
+          : undefined;
+    await printHtmlDocumentDetailed(html, {
+      jobTitle: data.title,
+      systemPrinterName,
+      copies: target.mode === "printer" ? (target.profile?.copies ?? 1) : 1,
+    });
   }
 
   return (
@@ -204,9 +242,17 @@ export function ReportsPage(): JSX.Element {
               variant="ghost"
               className="text-xs"
               disabled={!reportQuery.data || rows.length === 0}
-              onClick={exportActivePdf}
+              onClick={() => void exportActivePdf(false)}
             >
-              Export PDF
+              Print
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              disabled={!reportQuery.data || rows.length === 0}
+              onClick={() => void exportActivePdf(true)}
+            >
+              PDF
             </Button>
             <Button
               className="text-xs"
@@ -392,15 +438,122 @@ export function ReportsPage(): JSX.Element {
                 rows={rows as unknown as Record<string, unknown>[]}
               />
             </div>
+          ) : isVendorsBalance && vendorDrill ? (
+            <div className="mt-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400"
+                    onClick={() => setVendorDrill(null)}
+                  >
+                    ← All vendors
+                  </button>
+                  <h3 className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
+                    {vendorDrill.name} — purchase bills
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Har purchase / GRN bill alag · neeche total payable balance
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <div className="rounded-md border border-slate-200 px-2 py-1 text-[10px] dark:border-slate-700">
+                    <span className="uppercase text-slate-500">Billed</span>{" "}
+                    <span className="font-semibold">{formatPkr(vendorDetailBilled)}</span>
+                  </div>
+                  <div className="rounded-md border border-slate-200 px-2 py-1 text-[10px] dark:border-slate-700">
+                    <span className="uppercase text-slate-500">Paid</span>{" "}
+                    <span className="font-semibold">{formatPkr(vendorDetailPaid)}</span>
+                  </div>
+                  <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px]">
+                    <span className="uppercase text-amber-700/80 dark:text-amber-200/80">Payable</span>{" "}
+                    <span className="font-semibold text-amber-800 dark:text-amber-200">
+                      {formatPkr(vendorDetailBalance)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {vendorBillsQuery.isLoading ? (
+                <p className="text-sm text-slate-500">Loading bills…</p>
+              ) : vendorDetailBills.length === 0 ? (
+                <p className="text-sm text-slate-500">No purchase bills for this vendor.</p>
+              ) : (
+                <>
+                  <SimpleTable
+                    rowKey={(r) => r.id}
+                    columns={[
+                      { key: "billRef", header: "Bill #" },
+                      {
+                        key: "createdAt",
+                        header: "Date",
+                        render: (r) => String(r.createdAt).slice(0, 10),
+                      },
+                      {
+                        key: "invoiceNumber",
+                        header: "Invoice",
+                        render: (r) => r.invoiceNumber ?? "—",
+                      },
+                      { key: "amount", header: "Amount", render: (r) => formatPkr(r.amount) },
+                      { key: "paid", header: "Paid", render: (r) => formatPkr(r.paid) },
+                      { key: "balance", header: "Balance", render: (r) => formatPkr(r.balance) },
+                      { key: "status", header: "Status" },
+                    ]}
+                    rows={vendorDetailBills}
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-200/80">
+                        {vendorDrill.name} — total payable
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        {vendorDetailBills.length} purchase bill
+                        {vendorDetailBills.length === 1 ? "" : "s"} · is vendor ka remaining balance
+                      </p>
+                    </div>
+                    <div className="text-lg font-bold tabular-nums text-amber-800 dark:text-amber-200">
+                      {formatPkr(vendorDetailBalance)}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           ) : (
             <div className="mt-4">
+              {isVendorsBalance ? (
+                <p className="mb-2 text-[11px] text-slate-500">
+                  Vendor pe click karein — us vendor ki saari purchase bills aur total payable balance dikhega.
+                </p>
+              ) : null}
               <SimpleTable
-                rowKey={(r) => `${String(r.label)}-${String(r.meta ?? "")}-${String(r.amount ?? "")}-${String(r.qty ?? "")}`}
+                rowKey={(r) =>
+                  `${String(r.supplierId ?? r.label)}-${String(r.meta ?? "")}-${String(r.amount ?? "")}-${String(r.qty ?? "")}`
+                }
+                onRowClick={
+                  isVendorsBalance
+                    ? (r) => {
+                        const supplierId = typeof r.supplierId === "string" ? r.supplierId : "";
+                        const name = String(r.label ?? "Vendor");
+                        if (!supplierId) return;
+                        setVendorDrill({ supplierId, name });
+                      }
+                    : undefined
+                }
                 columns={[
-                  { key: "label", header: "Item" },
+                  {
+                    key: "label",
+                    header: "Item",
+                    render: (r) =>
+                      isVendorsBalance ? (
+                        <span className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-300">
+                          {String(r.label)}
+                        </span>
+                      ) : (
+                        String(r.label)
+                      ),
+                  },
                   {
                     key: "qty",
-                    header: "Qty",
+                    header: isVendorsBalance ? "Bills" : "Qty",
                     render: (r) => (r.qty != null ? Number(r.qty).toLocaleString() : "—"),
                   },
                   {

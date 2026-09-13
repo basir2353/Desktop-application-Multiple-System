@@ -73,7 +73,7 @@ export function WasteManagementPage(): JSX.Element {
       </div>
 
       {canManage ? (
-        <InventoryFormPanel title="Record waste" submitLabel="Save waste record" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || createMutation.isPending}>
+        <InventoryFormPanel title="Record waste & deduct stock" submitLabel="Save & deduct" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || createMutation.isPending}>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <button
               type="button"
@@ -81,16 +81,21 @@ export function WasteManagementPage(): JSX.Element {
               className={`${inputClass} flex items-center justify-between text-left`}
             >
               <span className={selectedIng ? "truncate text-white" : "text-slate-500"}>
-                {selectedIng ? selectedIng.name : "Select ingredient…"}
+                {selectedIng
+                  ? `${selectedIng.name} (${selectedIng.onHandStock ?? selectedIng.currentStock} ${selectedIng.unit})`
+                  : "Select ingredient…"}
               </span>
               <span className="text-slate-500" aria-hidden>▾</span>
             </button>
-            <input className={inputClass} type="number" placeholder="Qty" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+            <input className={inputClass} type="number" min={0.01} step="any" placeholder="Qty to remove" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
             <select className={selectClass} value={form.wasteType} onChange={(e) => setForm({ ...form, wasteType: e.target.value as typeof form.wasteType })}>
               {WASTE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-            <input className={inputClass} placeholder="Reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
+            <input className={inputClass} placeholder="Reason (e.g. expired)" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
           </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Save pe stock turant overall inventory se minus hoga (expiry / kitchen waste / burnt). Approve alag se zaroori nahi.
+          </p>
         </InventoryFormPanel>
       ) : null}
 

@@ -52,7 +52,7 @@ export class InventoryDeductionService {
         categoryId: popsMenuItems.categoryId,
       })
       .from(popsMenuItems)
-      .where(and(eq(popsMenuItems.branchId, bill.branchId), eq(popsMenuItems.isActive, true)));
+      .where(eq(popsMenuItems.branchId, bill.branchId));
     const menuCategories = await this.db
       .select({
         id: popsMenuCategories.id,
@@ -163,19 +163,20 @@ export class InventoryDeductionService {
     const stockUpdates: {
       ingredient: typeof popsIngredients.$inferSelect;
       qty: number;
+      warehouseQty: number;
       newStock: number;
       unitCost: number;
       warehouseStockId?: string;
+      warehouseNewQty?: number;
       cookingUnitId: string | null;
       cookingUnitStockId?: string;
       newCookingUnitStock?: number;
     }[] = [];
-    const kitchenRows = await this.db
-      .select({ id: storeWarehouses.id })
+    const warehouseRows = await this.db
+      .select({ id: storeWarehouses.id, code: storeWarehouses.code })
       .from(storeWarehouses)
-      .where(and(eq(storeWarehouses.branchId, bill.branchId), eq(storeWarehouses.code, "KITCHEN")))
-      .limit(1);
-    const kitchenWarehouseId = kitchenRows[0]?.id;
+      .where(eq(storeWarehouses.branchId, bill.branchId));
+    const kitchenWarehouseId = warehouseRows.find((row) => row.code === "KITCHEN")?.id;
 
     const ingredientRemaining = new Map<string, number>();
     const warehouseRemaining = new Map<string, number>();
@@ -199,70 +200,85 @@ export class InventoryDeductionService {
       ingredientRows.set(ingredientId, ing);
 
       const remaining = ingredientRemaining.get(ingredientId) ?? ing.currentStock;
-      let newStock = remaining - qty;
+      const newStock = remaining - qty;
       let unitCost = ing.unitCostPkr;
       let warehouseStockId: string | undefined;
+      let warehouseQty = 0;
+      let warehouseNewQty: number | undefined;
       let cookingUnitStockId: string | undefined;
       let newCookingUnitStock: number | undefined;
+
       if (ing.storeProductId) {
-        if (!kitchenWarehouseId) {
-          this.logger.warn(`Skip inventory for ${ing.name} on ${bill.billRef}: Kitchen warehouse missing`);
-          continue;
-        }
-        const [warehouseStock] = await this.db
-          .select()
+        const stocks = await this.db
+          .select({
+            id: storeWarehouseStock.id,
+            warehouseId: storeWarehouseStock.warehouseId,
+            quantity: storeWarehouseStock.quantity,
+            unitCostPkr: storeWarehouseStock.unitCostPkr,
+            code: storeWarehouses.code,
+          })
           .from(storeWarehouseStock)
-          .where(and(
-            eq(storeWarehouseStock.warehouseId, kitchenWarehouseId),
-            eq(storeWarehouseStock.productId, ing.storeProductId),
-          ))
-          .limit(1);
-        const remainingWarehouseQty =
-          warehouseRemaining.get(ing.storeProductId) ?? warehouseStock?.quantity ?? 0;
-        if (!warehouseStock || remainingWarehouseQty < qty) {
-          // Stock often sits in Main Warehouse until transferred — do not block Close/Pay.
-          this.logger.warn(
-            `Skip inventory for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit} in Kitchen (have ${remainingWarehouseQty})`,
+          .innerJoin(storeWarehouses, eq(storeWarehouseStock.warehouseId, storeWarehouses.id))
+          .where(
+            and(
+              eq(storeWarehouseStock.productId, ing.storeProductId),
+              eq(storeWarehouses.branchId, bill.branchId),
+            ),
           );
-          continue;
+        const ranked = stocks
+          .map((row) => ({
+            ...row,
+            remainingQty: warehouseRemaining.get(row.id) ?? row.quantity,
+          }))
+          .sort((a, b) => {
+            const aKitchen = a.warehouseId === kitchenWarehouseId ? 0 : 1;
+            const bKitchen = b.warehouseId === kitchenWarehouseId ? 0 : 1;
+            if (aKitchen !== bKitchen) return aKitchen - bKitchen;
+            return b.remainingQty - a.remainingQty;
+          });
+        const chosen =
+          ranked.find((row) => row.remainingQty >= qty) ??
+          ranked.find((row) => row.remainingQty > 0);
+        if (chosen) {
+          warehouseQty = Math.min(qty, chosen.remainingQty);
+          warehouseNewQty = chosen.remainingQty - warehouseQty;
+          warehouseRemaining.set(chosen.id, warehouseNewQty);
+          warehouseStockId = chosen.id;
+          unitCost = chosen.unitCostPkr || ing.unitCostPkr;
+        } else {
+          this.logger.warn(
+            `No warehouse stock row for ${ing.name} on ${bill.billRef}; still deducting ingredient ${qty} ${ing.unit}`,
+          );
         }
-        newStock = remainingWarehouseQty - qty;
-        warehouseRemaining.set(ing.storeProductId, newStock);
-        unitCost = warehouseStock.unitCostPkr || ing.unitCostPkr;
-        warehouseStockId = warehouseStock.id;
-        if (cookingUnitId) {
+
+        if (cookingUnitId && warehouseQty > 0) {
           const [unitStock] = await this.db
             .select()
             .from(storeCookingUnitStock)
-            .where(and(
-              eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
-              eq(storeCookingUnitStock.productId, ing.storeProductId),
-            ))
+            .where(
+              and(
+                eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
+                eq(storeCookingUnitStock.productId, ing.storeProductId),
+              ),
+            )
             .limit(1);
-          if (!unitStock || unitStock.quantity < qty) {
-            this.logger.warn(
-              `Skip Cooking Unit stock for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit}`,
-            );
-            // Still deduct Kitchen warehouse qty without cooking-unit line.
-          } else {
+          if (unitStock && unitStock.quantity >= warehouseQty) {
             cookingUnitStockId = unitStock.id;
-            newCookingUnitStock = unitStock.quantity - qty;
+            newCookingUnitStock = unitStock.quantity - warehouseQty;
             unitCost = unitStock.unitCostPkr || unitCost;
           }
         }
-      } else if (newStock < 0) {
-        this.logger.warn(
-          `Skip inventory for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit} (have ${remaining})`,
-        );
-        continue;
       }
+
       ingredientRemaining.set(ingredientId, newStock);
       stockUpdates.push({
         ingredient: ing,
         qty,
+        warehouseQty,
         newStock,
         unitCost,
         warehouseStockId,
+        warehouseNewQty,
         cookingUnitId,
         cookingUnitStockId,
         newCookingUnitStock,
@@ -289,17 +305,17 @@ export class InventoryDeductionService {
             })
             .where(and(
               eq(storeCookingUnitStock.id, update.cookingUnitStockId),
-              gte(storeCookingUnitStock.quantity, update.qty),
+              gte(storeCookingUnitStock.quantity, update.warehouseQty),
             ))
             .returning({ id: storeCookingUnitStock.id });
           if (!unitStock) {
             throw new BadRequestException(`Cooking Unit stock changed for ${update.ingredient.name}`);
           }
         }
-        if (update.warehouseStockId) {
+        if (update.warehouseStockId && update.warehouseNewQty !== undefined) {
           await tx
             .update(storeWarehouseStock)
-            .set({ quantity: update.newStock, updatedAt: new Date() })
+            .set({ quantity: update.warehouseNewQty, updatedAt: new Date() })
             .where(eq(storeWarehouseStock.id, update.warehouseStockId));
           const product = ingredientRows.get(update.ingredient.id)?.storeProductId;
           if (product) {
@@ -324,7 +340,7 @@ export class InventoryDeductionService {
           action: "POS sale deduction",
           module: "Inventory",
           detail: `${bill.billRef}: ${update.ingredient.name} −${update.qty} ${update.ingredient.unit} (${
-            update.cookingUnitId ? "Cooking Unit stock" : "Kitchen warehouse"
+            update.warehouseStockId ? "warehouse + ingredient stock" : "ingredient stock"
           }; ${lineSummary(detailParts)})`,
         });
       }
@@ -418,8 +434,9 @@ export class InventoryDeductionService {
         });
       }
     }
-    const [kitchen] = await this.db.select({ id: storeWarehouses.id }).from(storeWarehouses)
-      .where(and(eq(storeWarehouses.branchId, bill.branchId), eq(storeWarehouses.code, "KITCHEN"))).limit(1);
+    const warehouses = await this.db.select({ id: storeWarehouses.id, code: storeWarehouses.code })
+      .from(storeWarehouses).where(eq(storeWarehouses.branchId, bill.branchId));
+    const kitchen = warehouses.find((row) => row.code === "KITCHEN") ?? warehouses[0];
     const ingredientRemaining = new Map<string, number>();
     for (const deduction of deductions.values()) {
       const { ingredientId, cookingUnitId, qty } = deduction;
@@ -432,10 +449,13 @@ export class InventoryDeductionService {
           eq(storeWarehouseStock.warehouseId, kitchen.id),
           eq(storeWarehouseStock.productId, ingredient.storeProductId),
         )).limit(1);
-        if (stock) {
+        const target = stock ?? (await this.db.select().from(storeWarehouseStock).where(
+          eq(storeWarehouseStock.productId, ingredient.storeProductId),
+        ).limit(1))[0];
+        if (target) {
           await this.db.update(storeWarehouseStock)
-            .set({ quantity: stock.quantity + qty, updatedAt: new Date() })
-            .where(eq(storeWarehouseStock.id, stock.id));
+            .set({ quantity: target.quantity + qty, updatedAt: new Date() })
+            .where(eq(storeWarehouseStock.id, target.id));
           if (cookingUnitId) {
             const [unitStock] = await this.db.select().from(storeCookingUnitStock).where(and(
               eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
@@ -452,7 +472,7 @@ export class InventoryDeductionService {
                 cookingUnitId,
                 productId: ingredient.storeProductId,
                 quantity: qty,
-                unitCostPkr: stock.unitCostPkr || ingredient.unitCostPkr,
+                unitCostPkr: target.unitCostPkr || ingredient.unitCostPkr,
               });
             }
           }

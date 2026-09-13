@@ -21,8 +21,10 @@ function formatPkrCell(value: unknown): string {
 
 export function InventoryReportView({
   report,
+  cookingUnitLabel = null,
 }: {
   report: InventoryReport;
+  cookingUnitLabel?: string | null;
 }): JSX.Element {
   const rows = Array.isArray(report.data) ? report.data : [];
 
@@ -31,21 +33,40 @@ export function InventoryReportView({
   }
 
   switch (report.id) {
-    case "current-stock":
-      return (
-        <SimpleTable
-          rowKey={(r) => `${cell(r.sku)}-${cell(r.name)}`}
-          columns={[
-            { key: "sku", header: "SKU", render: (r) => cell(r.sku) },
-            { key: "name", header: "Ingredient", render: (r) => cell(r.name) },
-            { key: "stock", header: "On hand", render: (r) => cell(r.stock) },
-            { key: "kitchen", header: "Kitchen", render: (r) => cell(r.kitchen) },
-            { key: "store", header: "Store", render: (r) => cell(r.store) },
-            { key: "value", header: "Value (Rs)", render: (r) => formatPkrCell(r.value) },
-          ]}
-          rows={rows.filter(isRecord)}
-        />
+    case "current-stock": {
+      const stockRows = rows.filter(isRecord);
+      const totalValue = stockRows.reduce(
+        (sum, r) => sum + (typeof r.value === "number" ? r.value : Number(r.value) || 0),
+        0,
       );
+      return (
+        <div className="space-y-2">
+          <SimpleTable
+            rowKey={(r) => `${cell(r.sku)}-${cell(r.name)}`}
+            columns={[
+              { key: "sku", header: "SKU", render: (r) => cell(r.sku) },
+              { key: "name", header: "Ingredient", render: (r) => cell(r.name) },
+              { key: "stock", header: "On hand", render: (r) => cell(r.stock) },
+              { key: "kitchen", header: "Kitchen", render: (r) => cell(r.kitchen) },
+              { key: "store", header: "Store", render: (r) => cell(r.store) },
+              { key: "value", header: "Value (Rs)", render: (r) => formatPkrCell(r.value) },
+            ]}
+            rows={stockRows}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-200/80">
+                Total stock value
+              </div>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Aap ke paas is amount ka stock maujood hai (on-hand × unit cost).
+              </p>
+            </div>
+            <div className="text-lg font-bold tabular-nums text-amber-200">{formatPkr(totalValue)}</div>
+          </div>
+        </div>
+      );
+    }
 
     case "low-stock":
       return (
@@ -88,18 +109,37 @@ export function InventoryReportView({
         />
       );
 
-    case "valuation":
-      return (
-        <SimpleTable
-          rowKey={(r) => cell(r.category)}
-          columns={[
-            { key: "category", header: "Category", render: (r) => cell(r.category) },
-            { key: "items", header: "Items", render: (r) => cell(r.items) },
-            { key: "value", header: "Value (Rs)", render: (r) => formatPkrCell(r.value) },
-          ]}
-          rows={rows.filter(isRecord)}
-        />
+    case "valuation": {
+      const valuationRows = rows.filter(isRecord);
+      const totalValue = valuationRows.reduce(
+        (sum, r) => sum + (typeof r.value === "number" ? r.value : Number(r.value) || 0),
+        0,
       );
+      return (
+        <div className="space-y-2">
+          <SimpleTable
+            rowKey={(r) => cell(r.category)}
+            columns={[
+              { key: "category", header: "Category", render: (r) => cell(r.category) },
+              { key: "items", header: "Items", render: (r) => cell(r.items) },
+              { key: "value", header: "Value (Rs)", render: (r) => formatPkrCell(r.value) },
+            ]}
+            rows={valuationRows}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-200/80">
+                Total stock value
+              </div>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Saari categories milakar total inventory value.
+              </p>
+            </div>
+            <div className="text-lg font-bold tabular-nums text-amber-200">{formatPkr(totalValue)}</div>
+          </div>
+        </div>
+      );
+    }
 
     case "consumption":
       return (
@@ -198,37 +238,95 @@ export function InventoryReportView({
         />
       );
 
-    case "stock-transfers":
-      return (
-        <SimpleTable
-          rowKey={(r) => cell(r.id)}
-          columns={[
-            { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
-            { key: "date", header: "Date", render: (r) => cell(r.date) },
-            { key: "reference", header: "Voucher", render: (r) => cell(r.reference) },
-            { key: "fromWarehouse", header: "From", render: (r) => cell(r.fromWarehouse) },
-            { key: "toWarehouse", header: "To", render: (r) => cell(r.toWarehouse) },
-            { key: "productName", header: "Product", render: (r) => cell(r.productName) },
-            { key: "qty", header: "Qty", render: (r) => `${cell(r.qty)} ${cell(r.unit)}` },
-          ]}
-          rows={rows.filter(isRecord)}
-        />
+    case "stock-transfers": {
+      const transferRows = rows.filter(isRecord);
+      const totalValue = transferRows.reduce(
+        (sum, r) => sum + (typeof r.value === "number" ? r.value : Number(r.value) || 0),
+        0,
       );
+      return (
+        <div className="space-y-2">
+          <SimpleTable
+            rowKey={(r) => cell(r.id)}
+            columns={[
+              { key: "kitchenSection", header: "Cooking unit", render: (r) => cell(r.kitchenSection) },
+              { key: "date", header: "Date", render: (r) => cell(r.date) },
+              { key: "reference", header: "Voucher", render: (r) => cell(r.reference) },
+              { key: "fromWarehouse", header: "From", render: (r) => cell(r.fromWarehouse) },
+              { key: "toWarehouse", header: "To", render: (r) => cell(r.toWarehouse) },
+              { key: "productName", header: "Product", render: (r) => cell(r.productName) },
+              { key: "qty", header: "Qty", render: (r) => `${cell(r.qty)} ${cell(r.unit)}` },
+              { key: "value", header: "Value (Rs)", render: (r) => formatPkrCell(r.value) },
+            ]}
+            rows={transferRows}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-200/80">
+                {cookingUnitLabel
+                  ? `${cookingUnitLabel} — transfer value`
+                  : "Total transfer value"}
+              </div>
+              <p className="mt-0.5 text-xs text-slate-400">
+                {cookingUnitLabel
+                  ? `${cookingUnitLabel} section mein is amount ka stock transfer hua hai.`
+                  : "Saari lines ka total (qty × unit cost)."}
+              </p>
+            </div>
+            <div className="text-lg font-bold tabular-nums text-amber-200">{formatPkr(totalValue)}</div>
+          </div>
+        </div>
+      );
+    }
 
-    case "stock-transfers-by-section":
-      return (
-        <SimpleTable
-          rowKey={(r) => cell(r.id)}
-          columns={[
-            { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
-            { key: "transferCount", header: "Vouchers", render: (r) => cell(r.transferCount) },
-            { key: "lineCount", header: "Lines", render: (r) => cell(r.lineCount) },
-            { key: "totalQty", header: "Total qty", render: (r) => cell(r.totalQty) },
-            { key: "products", header: "Products", render: (r) => cell(r.products) },
-          ]}
-          rows={rows.filter(isRecord)}
-        />
+    case "stock-transfers-by-section": {
+      const sectionRows = rows.filter(isRecord);
+      const totalValue = sectionRows.reduce(
+        (sum, r) =>
+          sum +
+          (typeof r.valueIn === "number"
+            ? r.valueIn
+            : typeof r.totalValue === "number"
+              ? r.totalValue
+              : Number(r.valueIn ?? r.totalValue) || 0),
+        0,
       );
+      return (
+        <div className="space-y-2">
+          <SimpleTable
+            rowKey={(r) => cell(r.id)}
+            columns={[
+              { key: "kitchenSection", header: "Cooking unit", render: (r) => cell(r.kitchenSection) },
+              { key: "transferCount", header: "Vouchers", render: (r) => cell(r.transferCount) },
+              { key: "lineCount", header: "Lines", render: (r) => cell(r.lineCount) },
+              { key: "qtyIn", header: "Qty in", render: (r) => cell(r.qtyIn ?? r.totalQty) },
+              { key: "qtyOut", header: "Qty out", render: (r) => cell(r.qtyOut ?? 0) },
+              { key: "totalQty", header: "Net qty", render: (r) => cell(r.totalQty) },
+              { key: "valueIn", header: "Value in (Rs)", render: (r) => formatPkrCell(r.valueIn) },
+              { key: "valueOut", header: "Value out (Rs)", render: (r) => formatPkrCell(r.valueOut) },
+              { key: "totalValue", header: "Net value (Rs)", render: (r) => formatPkrCell(r.totalValue) },
+              { key: "products", header: "Products", render: (r) => cell(r.products) },
+            ]}
+            rows={sectionRows}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-200/80">
+                {cookingUnitLabel
+                  ? `${cookingUnitLabel} section — total transfer value`
+                  : "Total transfer value (all units)"}
+              </div>
+              <p className="mt-0.5 text-xs text-slate-400">
+                {cookingUnitLabel
+                  ? `${cookingUnitLabel} mein is amount ka stock transfer hua hai (value in).`
+                  : "Har cooking unit ko kitni Rs value ka stock gaya — neeche grand total."}
+              </p>
+            </div>
+            <div className="text-lg font-bold tabular-nums text-amber-200">{formatPkr(totalValue)}</div>
+          </div>
+        </div>
+      );
+    }
 
     case "cooking-unit-stock":
       return (

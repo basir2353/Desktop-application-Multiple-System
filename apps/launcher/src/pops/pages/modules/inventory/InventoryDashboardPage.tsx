@@ -79,6 +79,9 @@ export function InventoryDashboardPage(): JSX.Element {
             <Link to="/pops/inventory/stock-transfers" className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-indigo-500">
               Stock transfer
             </Link>
+            <Link to="/pops/inventory/stores" className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
+              Stores
+            </Link>
             <Link to="/pops/inventory/cooking-units" className="inline-flex items-center rounded-md px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-800">
               Cooking Units
             </Link>
@@ -176,6 +179,7 @@ export function InventoryDashboardPage(): JSX.Element {
               { to: "/pops/inventory/recipes", label: "Recipes" },
               { to: "/pops/inventory/purchase-orders", label: "Kitchen demand / PO" },
               { to: "/pops/inventory/stock-transfers", label: "Simple Store → Kitchen transfer" },
+              { to: "/pops/inventory/stores", label: "Stores" },
               { to: "/pops/inventory/cooking-units", label: "Cooking Units" },
               { to: "/pops/inventory/waste", label: "Waste" },
               { to: "/pops/inventory/stock", label: "Stock management" },

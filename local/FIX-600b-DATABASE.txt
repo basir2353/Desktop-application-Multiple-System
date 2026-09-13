@@ -1,0 +1,20 @@
+# Permanent Live (600b) DB fix — do this ONCE on the paid Railway account
+
+Service: backend that serves
+  https://backend-desktop-production-600b.up.railway.app
+
+Set variable:
+  DATABASE_URL = (contents of local/live-database.url)
+
+Also recommended:
+  RAILWAY_ENSURE_AUTH_SCHEMA=1
+  RAILWAY_RUN_ENSURE_SCHEMA=1   (one redeploy, then can set back to 0)
+
+Then Redeploy the service.
+
+Verify:
+  https://backend-desktop-production-600b.up.railway.app/health/db
+  → connected: true
+
+Login:
+  superadmin@pops.platform / SuperAdmin@123

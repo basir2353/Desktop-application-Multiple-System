@@ -576,33 +576,86 @@ export async function buildClientRestaurantReport(
   if (reportId === "vendor-ledger" || reportId === "vendors-balance") {
     const vendorBills = await fetchVendorBills(branchCode);
     if (reportId === "vendors-balance") {
-      const map = new Map<string, { debit: number; credit: number }>();
+      const map = new Map<
+        string,
+        {
+          supplierId: string;
+          supplierName: string;
+          debit: number;
+          credit: number;
+          balance: number;
+          billCount: number;
+          phone: string | null;
+        }
+      >();
       for (const b of vendorBills) {
-        const name = b.supplierName || "Vendor";
-        const cur = map.get(name) ?? { debit: 0, credit: 0 };
+        const cur = map.get(b.supplierId) ?? {
+          supplierId: b.supplierId,
+          supplierName: b.supplierName || "Vendor",
+          debit: 0,
+          credit: 0,
+          balance: 0,
+          billCount: 0,
+          phone: null,
+        };
         cur.debit += b.amount;
         cur.credit += b.paid ?? 0;
-        map.set(name, cur);
+        cur.balance += b.balance;
+        cur.billCount += 1;
+        map.set(b.supplierId, cur);
       }
-      const rows = [...map.entries()].map(([label, v]) => ({
-        label,
-        debit: v.debit,
-        credit: v.credit,
-        balance: v.debit - v.credit,
-        amount: v.debit - v.credit,
-      }));
-      return { ...meta, rows, empty: rows.length === 0 };
+      // Attach supplier phone when available from inventory suppliers list.
+      try {
+        const inventory = await fetchBranchInventory(branchCode);
+        for (const s of inventory.suppliers ?? []) {
+          const row = map.get(s.id);
+          if (row && s.phone) row.phone = s.phone;
+        }
+      } catch {
+        /* optional enrichment */
+      }
+      const rows = [...map.values()]
+        .map((v) => ({
+          label: v.supplierName,
+          supplierId: v.supplierId,
+          qty: v.billCount,
+          debit: v.debit,
+          credit: v.credit,
+          balance: v.balance,
+          amount: v.balance,
+          meta: [v.phone, `${v.billCount} bill(s)`, "Click for bill detail"].filter(Boolean).join(" · "),
+        }))
+        .sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+      return {
+        ...meta,
+        rows,
+        totals: {
+          outstanding: rows.reduce((s, r) => s + (r.balance ?? 0), 0),
+          vendors: rows.length,
+        },
+        empty: rows.length === 0,
+      };
     }
     const rows = vendorBills
       .filter((b) => inRange(b.createdAt, from, to, fromTime, toTime))
       .map((b) => ({
         label: b.supplierName || "Vendor",
+        supplierId: b.supplierId,
         debit: b.amount,
         credit: b.paid ?? 0,
+        balance: b.balance,
         amount: b.amount,
-        meta: `Bill ${b.billRef}`,
+        meta: `Bill ${b.billRef} · ${b.status}`,
       }));
-    return { ...meta, rows, empty: rows.length === 0 };
+    return {
+      ...meta,
+      rows,
+      totals: {
+        outstanding: rows.reduce((s, r) => s + (r.balance ?? 0), 0),
+        bills: rows.length,
+      },
+      empty: rows.length === 0,
+    };
   }
 
   if (reportId === "customer-ledger") {

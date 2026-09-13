@@ -24,6 +24,7 @@ import {
   createIngredientLinkSchema,
   createInventoryTransferSchema,
   createInventoryCookingUnitSchema,
+  createInventoryWarehouseSchema,
   updateAdjustmentStatusSchema,
   updateIngredientSchema,
   updateInventoryCategorySchema,
@@ -34,6 +35,7 @@ import {
   updateSupplierSchema,
   updateWasteStatusSchema,
   updateInventoryCookingUnitSchema,
+  updateInventoryWarehouseSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -57,6 +59,37 @@ export class InventoryController {
   @RequirePermissions("pops.read")
   listWarehouses(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.inventory.listWarehouses(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Post("warehouses")
+  @RequirePermissions("pops.inventory.manage")
+  createWarehouse(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.inventory.createWarehouse(
+      user.organizationId,
+      user.sub,
+      createInventoryWarehouseSchema.parse(body),
+    );
+  }
+
+  @Patch("warehouses/:warehouseId")
+  @RequirePermissions("pops.inventory.manage")
+  updateWarehouse(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("warehouseId") warehouseId: string,
+    @Body() body: unknown,
+  ) {
+    return this.inventory.updateWarehouse(
+      user.organizationId,
+      user.sub,
+      warehouseId,
+      updateInventoryWarehouseSchema.parse(body),
+    );
+  }
+
+  @Delete("warehouses/:warehouseId")
+  @RequirePermissions("pops.inventory.manage")
+  deleteWarehouse(@CurrentUser() user: AccessJwtPayload, @Param("warehouseId") warehouseId: string) {
+    return this.inventory.deleteWarehouse(user.organizationId, user.sub, warehouseId);
   }
 
   @Get("cooking-units")
@@ -143,10 +176,12 @@ export class InventoryController {
     @Param("reportId") reportId: string,
     @Query("filterDate") filterDate?: string,
     @Query("dateMode") dateMode?: string,
+    @Query("cookingUnitId") cookingUnitId?: string,
   ) {
     return this.inventory.getReport(user.organizationId, branchCode?.trim() ?? "", reportId, {
       filterDate: filterDate?.trim() || undefined,
       dateMode: dateMode?.trim() as "activity" | "expiry" | "order" | undefined,
+      cookingUnitId: cookingUnitId?.trim() || undefined,
     });
   }
 

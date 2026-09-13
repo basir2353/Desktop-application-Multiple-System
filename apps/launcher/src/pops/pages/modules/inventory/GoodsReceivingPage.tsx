@@ -229,21 +229,38 @@ export function GoodsReceivingPage(): JSX.Element {
     const defaults = parseLineDefaults();
     if (!defaults) return;
 
+    const linkedPoLines =
+      (header.purchaseOrderId
+        ? (openPos.find((p) => p.id === header.purchaseOrderId) ??
+            query.data?.purchaseOrders.find((p) => p.id === header.purchaseOrderId))?.lines
+        : undefined) ?? [];
+    const poLineByIngredient = new Map(linkedPoLines.map((line) => [line.ingredientId, line]));
+
     const newLines: GrnLine[] = [];
     for (const ingredientId of ingredientIds) {
       if (stagedIngredientIds.has(ingredientId)) continue;
       const ing = ingredientById.get(ingredientId);
       if (!ing) continue;
-      const unitCost = defaults.unitCost > 0 ? defaults.unitCost : Math.round(ing.unitCost);
+      const poLine = poLineByIngredient.get(ing.id);
+      const unitCost =
+        defaults.unitCost > 0
+          ? defaults.unitCost
+          : poLine
+            ? Math.round(poLine.unitCost)
+            : Math.round(ing.unitCost);
+      const remaining = poLine ? Math.max(0, poLine.qty - poLine.receivedQty) : null;
       newLines.push({
         id: crypto.randomUUID(),
         ingredientId: ing.id,
         ingredientName: ing.name,
         unit: ing.unit,
-        qty: defaults.qty,
+        qty: remaining != null && remaining > 0 ? remaining : defaults.qty,
         unitCost,
         batchNumber: defaults.batchNumber,
         expiryDate: defaults.expiryDate,
+        ...(poLine
+          ? { orderedQty: poLine.qty, alreadyReceivedQty: poLine.receivedQty }
+          : {}),
       });
     }
 
@@ -353,14 +370,19 @@ export function GoodsReceivingPage(): JSX.Element {
               Receiving against <span className="font-medium text-amber-200">{linkedPo.poNumber}</span>
               {" · "}
               {linkedPo.supplierName}
-              {" · "}
+              {" · Ordered / Already received filled from this PO · "}
               <Link to="/pops/inventory/purchase-orders" className="text-sky-400 hover:text-sky-300">
                 Back to Kitchen Demand
               </Link>
             </p>
           ) : (
-            <p className="text-[11px] text-slate-500">
-              Tip: pick a PO to auto-fill supplier and remaining quantities, or add ingredients manually.
+            <p className="text-[11px] text-amber-200/90">
+              Ordered / Already received only appear after you select a{" "}
+              <span className="font-medium">Purchase order</span> above. No open PO? Create one in{" "}
+              <Link to="/pops/inventory/purchase-orders" className="text-sky-400 hover:text-sky-300">
+                Kitchen Demand / Purchase Orders
+              </Link>
+              , then receive here — or continue as ad-hoc (manual) receive.
             </p>
           )}
 
@@ -443,25 +465,43 @@ export function GoodsReceivingPage(): JSX.Element {
                           <div>{row.ingredientName}</div>
                           {stock ? (
                             <div className="text-[10px] text-slate-500">
-                              Qty {stock.currentStock} {stock.unit}
+                              On hand {stock.currentStock} {stock.unit}
                             </div>
                           ) : null}
                         </div>
                       );
                     },
                   },
-                  {
-                    key: "ordered",
-                    header: "Ordered",
-                    render: (row) =>
-                      row.orderedQty != null ? `${row.orderedQty} ${row.unit}` : "—",
-                  },
-                  {
-                    key: "prev",
-                    header: "Already recv.",
-                    render: (row) =>
-                      row.alreadyReceivedQty != null ? `${row.alreadyReceivedQty} ${row.unit}` : "—",
-                  },
+                  ...(linkedPo
+                    ? [
+                        {
+                          key: "ordered",
+                          header: "Ordered",
+                          render: (row: GrnLine) =>
+                            row.orderedQty != null ? `${row.orderedQty} ${row.unit}` : "—",
+                        },
+                        {
+                          key: "prev",
+                          header: "Already recv.",
+                          render: (row: GrnLine) =>
+                            row.alreadyReceivedQty != null
+                              ? `${row.alreadyReceivedQty} ${row.unit}`
+                              : "—",
+                        },
+                        {
+                          key: "remaining",
+                          header: "Remaining",
+                          render: (row: GrnLine) => {
+                            if (row.orderedQty == null) return "—";
+                            const left = Math.max(
+                              0,
+                              row.orderedQty - (row.alreadyReceivedQty ?? 0),
+                            );
+                            return `${left} ${row.unit}`;
+                          },
+                        },
+                      ]
+                    : []),
                   {
                     key: "qty",
                     header: "Receive qty",

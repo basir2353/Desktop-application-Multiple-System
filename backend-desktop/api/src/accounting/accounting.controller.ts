@@ -22,6 +22,7 @@ import {
   openCashSessionSchema,
   payPayrollSchema,
   recordPaymentSchema,
+  payVendorSupplierSchema,
   updateTaxSettingsSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -122,10 +123,31 @@ export class AccountingController {
     return this.accounting.listVendorBills(user.organizationId, branchCode?.trim() ?? "");
   }
 
+  @Get("payable/summary")
+  @RequirePermissions("pops.read")
+  listPayableSummary(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.accounting.listVendorPayableSummaries(user.organizationId, branchCode?.trim() ?? "");
+  }
+
   @Get("payable")
   @RequirePermissions("pops.read")
   listPayable(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
     return this.accounting.listVendorBills(user.organizationId, branchCode?.trim() ?? "");
+  }
+
+  @Post("payable/supplier/:supplierId/payment")
+  @RequirePermissions("pops.accounting.manage")
+  payVendorSupplier(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("supplierId") supplierId: string,
+    @Body() body: unknown,
+  ) {
+    return this.accounting.payVendorSupplier(
+      user.organizationId,
+      user.sub,
+      supplierId,
+      payVendorSupplierSchema.parse(body),
+    );
   }
 
   @Post("payable/:billId/payment")

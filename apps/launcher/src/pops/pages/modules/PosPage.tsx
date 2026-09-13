@@ -228,26 +228,8 @@ const POS_MODE_BTN = (active: boolean) =>
       : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
   }`;
 
-/** Ticket cart: 3 cols × 2 rows (6 items) visible; scroll when more. */
-const POS_CART_COLS = 3;
-const POS_CART_VISIBLE_ROWS = 2;
+/** Ticket cart card row height (grid layout). */
 const POS_CART_CARD_ROW_PX = 92;
-const POS_CART_LIST_ROW_PX = 44;
-const POS_CART_GRID_GAP_PX = 8;
-const POS_CART_VISIBLE_COUNT = POS_CART_COLS * POS_CART_VISIBLE_ROWS;
-const POS_CART_LIST_VISIBLE_COUNT = 6;
-const POS_CART_LIST_MAX_PX =
-  POS_CART_CARD_ROW_PX * POS_CART_VISIBLE_ROWS + POS_CART_GRID_GAP_PX * (POS_CART_VISIBLE_ROWS - 1);
-
-function posCartListHeightPx(itemCount: number, layout: "grid" | "list"): number {
-  if (itemCount <= 0) return 0;
-  if (layout === "list") {
-    const rows = Math.min(POS_CART_LIST_VISIBLE_COUNT, itemCount);
-    return POS_CART_LIST_ROW_PX * rows + POS_CART_GRID_GAP_PX * Math.max(0, rows - 1);
-  }
-  const rows = Math.min(POS_CART_VISIBLE_ROWS, Math.ceil(itemCount / POS_CART_COLS));
-  return POS_CART_CARD_ROW_PX * rows + POS_CART_GRID_GAP_PX * Math.max(0, rows - 1);
-}
 
 type PosEditingOrder =
   | { kind: "ticket"; ticketId: string }
@@ -2967,7 +2949,7 @@ export function PosPage(): JSX.Element {
               </div>
 
               {categoryLayout === "list" ? (
-                <div className="flex max-h-36 flex-col gap-1 overflow-y-auto pr-0.5">
+                <div className="flex max-h-28 flex-col gap-1 overflow-y-auto pr-0.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -3027,7 +3009,7 @@ export function PosPage(): JSX.Element {
                   })}
                 </div>
               ) : (
-                <div className="grid max-h-44 grid-cols-3 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-4">
+                <div className="grid max-h-32 grid-cols-3 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-4">
                   <button
                     type="button"
                     onClick={() => {
@@ -3222,8 +3204,8 @@ export function PosPage(): JSX.Element {
           </div>
         </div>
 
-        {/* Current ticket — cart shows 6 items (3×2); scroll for the rest */}
-        <div className="flex min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:min-h-0 lg:h-full dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
+        {/* Current ticket — cart scrolls; Order/Pay stay pinned at bottom */}
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:h-full dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
           <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
@@ -3666,12 +3648,9 @@ export function PosPage(): JSX.Element {
             </p>
           ) : null}
 
-          <div className="shrink-0 p-3">
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {displayCart.length === 0 ? (
-              <div className="flex min-h-[12rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
-                <div className="mb-2 text-2xl opacity-40" aria-hidden>
-                  🛒
-                </div>
+              <div className="flex min-h-[5rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
                 <p className="text-xs font-medium text-slate-600 dark:text-slate-400">No items yet</p>
                 <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-600">
                   Tap menu items to add to this ticket
@@ -3680,21 +3659,7 @@ export function PosPage(): JSX.Element {
             ) : (
               <div
                 ref={cartListRef}
-                className={
-                  displayCart.length >
-                  (cartLayout === "list" ? POS_CART_LIST_VISIBLE_COUNT : POS_CART_VISIBLE_COUNT)
-                    ? "overflow-y-auto overscroll-contain pr-1"
-                    : "overflow-hidden"
-                }
-                style={{
-                  height: `${posCartListHeightPx(displayCart.length, cartLayout)}px`,
-                  maxHeight: `${
-                    cartLayout === "list"
-                      ? POS_CART_LIST_ROW_PX * POS_CART_LIST_VISIBLE_COUNT +
-                        POS_CART_GRID_GAP_PX * (POS_CART_LIST_VISIBLE_COUNT - 1)
-                      : POS_CART_LIST_MAX_PX
-                  }px`,
-                }}
+                className="pr-1"
               >
               <ul
                 className={
@@ -3934,8 +3899,8 @@ export function PosPage(): JSX.Element {
             )}
           </div>
 
-          <div className="sticky bottom-0 z-20 mt-auto shrink-0 border-t border-slate-200 bg-slate-50 p-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
-            <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
+          <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-2 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
+            <div className="rounded-lg bg-white p-2.5 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
               {autoDiscountEnabled && autoDiscountAmount > 0 ? (
                 <div className="mb-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2">
                   <div className="flex items-center justify-between gap-2">
