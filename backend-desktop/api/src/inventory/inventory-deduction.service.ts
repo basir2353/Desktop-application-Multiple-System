@@ -20,6 +20,13 @@ import {
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { AccountingHooksService } from "../accounting/accounting-hooks.service";
 
+/** Recipe consume qty with up to 3 decimal places (supports 0.5 Kg Half portions). */
+function recipeConsumeQty(recipeQty: number, lineQty: number, portionFactor: number): number {
+  const raw = Number(recipeQty) * Number(lineQty) * Number(portionFactor);
+  if (!(raw > 0) || !Number.isFinite(raw)) return 0;
+  return Math.round(raw * 1000) / 1000;
+}
+
 @Injectable()
 export class InventoryDeductionService {
   private readonly logger = new Logger(InventoryDeductionService.name);
@@ -139,7 +146,8 @@ export class InventoryDeductionService {
         menuItems.find((item) => item.id === menuItemId)?.categoryId ?? "",
       ) ?? null;
       for (const recipeLine of recipeLines) {
-        const deductQty = Math.max(1, Math.round(recipeLine.qty * line.qty * portionFactor));
+        const deductQty = recipeConsumeQty(recipeLine.qty, line.qty, portionFactor);
+        if (deductQty <= 0) continue;
         const key = `${recipeLine.ingredientId}:${cookingUnitId ?? "unassigned"}`;
         const previous = deductions.get(key);
         deductions.set(key, {
@@ -173,10 +181,12 @@ export class InventoryDeductionService {
       newCookingUnitStock?: number;
     }[] = [];
     const warehouseRows = await this.db
-      .select({ id: storeWarehouses.id, code: storeWarehouses.code })
+      .select({ id: storeWarehouses.id, code: storeWarehouses.code, name: storeWarehouses.name })
       .from(storeWarehouses)
       .where(eq(storeWarehouses.branchId, bill.branchId));
-    const kitchenWarehouseId = warehouseRows.find((row) => row.code === "KITCHEN")?.id;
+    const kitchenWarehouseId =
+      warehouseRows.find((row) => row.code === "KITCHEN")?.id ??
+      warehouseRows.find((row) => /kitchen/i.test(row.name))?.id;
 
     const ingredientRemaining = new Map<string, number>();
     const warehouseRemaining = new Map<string, number>();
@@ -200,7 +210,6 @@ export class InventoryDeductionService {
       ingredientRows.set(ingredientId, ing);
 
       const remaining = ingredientRemaining.get(ingredientId) ?? ing.currentStock;
-      const newStock = remaining - qty;
       let unitCost = ing.unitCostPkr;
       let warehouseStockId: string | undefined;
       let warehouseQty = 0;
@@ -209,46 +218,51 @@ export class InventoryDeductionService {
       let newCookingUnitStock: number | undefined;
 
       if (ing.storeProductId) {
-        const stocks = await this.db
-          .select({
-            id: storeWarehouseStock.id,
-            warehouseId: storeWarehouseStock.warehouseId,
-            quantity: storeWarehouseStock.quantity,
-            unitCostPkr: storeWarehouseStock.unitCostPkr,
-            code: storeWarehouses.code,
-          })
-          .from(storeWarehouseStock)
-          .innerJoin(storeWarehouses, eq(storeWarehouseStock.warehouseId, storeWarehouses.id))
-          .where(
-            and(
-              eq(storeWarehouseStock.productId, ing.storeProductId),
-              eq(storeWarehouses.branchId, bill.branchId),
-            ),
-          );
-        const ranked = stocks
-          .map((row) => ({
-            ...row,
-            remainingQty: warehouseRemaining.get(row.id) ?? row.quantity,
-          }))
-          .sort((a, b) => {
-            const aKitchen = a.warehouseId === kitchenWarehouseId ? 0 : 1;
-            const bKitchen = b.warehouseId === kitchenWarehouseId ? 0 : 1;
-            if (aKitchen !== bKitchen) return aKitchen - bKitchen;
-            return b.remainingQty - a.remainingQty;
-          });
-        const chosen =
-          ranked.find((row) => row.remainingQty >= qty) ??
-          ranked.find((row) => row.remainingQty > 0);
-        if (chosen) {
-          warehouseQty = Math.min(qty, chosen.remainingQty);
-          warehouseNewQty = chosen.remainingQty - warehouseQty;
-          warehouseRemaining.set(chosen.id, warehouseNewQty);
-          warehouseStockId = chosen.id;
-          unitCost = chosen.unitCostPkr || ing.unitCostPkr;
-        } else {
+        if (!kitchenWarehouseId) {
           this.logger.warn(
-            `No warehouse stock row for ${ing.name} on ${bill.billRef}; still deducting ingredient ${qty} ${ing.unit}`,
+            `No Kitchen warehouse on ${bill.billRef}; skip stock deduct for ${ing.name} (will not pull from Store)`,
           );
+        } else {
+          const stocks = await this.db
+            .select({
+              id: storeWarehouseStock.id,
+              warehouseId: storeWarehouseStock.warehouseId,
+              quantity: storeWarehouseStock.quantity,
+              unitCostPkr: storeWarehouseStock.unitCostPkr,
+              code: storeWarehouses.code,
+            })
+            .from(storeWarehouseStock)
+            .innerJoin(storeWarehouses, eq(storeWarehouseStock.warehouseId, storeWarehouses.id))
+            .where(
+              and(
+                eq(storeWarehouseStock.productId, ing.storeProductId),
+                eq(storeWarehouses.branchId, bill.branchId),
+                eq(storeWarehouseStock.warehouseId, kitchenWarehouseId),
+              ),
+            );
+          const kitchenStock = stocks
+            .map((row) => ({
+              ...row,
+              remainingQty: warehouseRemaining.get(row.id) ?? row.quantity,
+            }))
+            .filter((row) => row.remainingQty > 0)
+            .sort((a, b) => b.remainingQty - a.remainingQty)[0];
+          if (kitchenStock) {
+            warehouseQty = Math.min(qty, kitchenStock.remainingQty);
+            warehouseNewQty = kitchenStock.remainingQty - warehouseQty;
+            warehouseRemaining.set(kitchenStock.id, warehouseNewQty);
+            warehouseStockId = kitchenStock.id;
+            unitCost = kitchenStock.unitCostPkr || ing.unitCostPkr;
+            if (warehouseQty < qty) {
+              this.logger.warn(
+                `Kitchen short for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit}, took ${warehouseQty} (Store not used)`,
+              );
+            }
+          } else {
+            this.logger.warn(
+              `No Kitchen stock for ${ing.name} on ${bill.billRef}; need ${qty} ${ing.unit}. Transfer from Store→Kitchen first.`,
+            );
+          }
         }
 
         if (cookingUnitId && warehouseQty > 0) {
@@ -270,10 +284,16 @@ export class InventoryDeductionService {
         }
       }
 
+      // Linked products: only deduct what Kitchen actually had. Unlinked: full recipe qty.
+      const takeQty = ing.storeProductId ? warehouseQty : qty;
+      if (takeQty <= 0) {
+        continue;
+      }
+      const newStock = remaining - takeQty;
       ingredientRemaining.set(ingredientId, newStock);
       stockUpdates.push({
         ingredient: ing,
-        qty,
+        qty: takeQty,
         warehouseQty,
         newStock,
         unitCost,
@@ -283,7 +303,7 @@ export class InventoryDeductionService {
         cookingUnitStockId,
         newCookingUnitStock,
       });
-      cogsTotal += Math.round(qty * unitCost);
+      cogsTotal += Math.round(takeQty * unitCost);
     }
 
     if (stockUpdates.length === 0) {
@@ -425,18 +445,23 @@ export class InventoryDeductionService {
         menuItems.find((item) => item.id === menuItemId)?.categoryId ?? "",
       ) ?? null;
       for (const recipeLine of recipeLines) {
+        const deductQty = recipeConsumeQty(recipeLine.qty, line.qty, portionFactor);
+        if (deductQty <= 0) continue;
         const key = `${recipeLine.ingredientId}:${cookingUnitId ?? "unassigned"}`;
         const previous = deductions.get(key);
         deductions.set(key, {
           ingredientId: recipeLine.ingredientId,
           cookingUnitId,
-          qty: (previous?.qty ?? 0) + Math.max(1, Math.round(recipeLine.qty * line.qty * portionFactor)),
+          qty: (previous?.qty ?? 0) + deductQty,
         });
       }
     }
-    const warehouses = await this.db.select({ id: storeWarehouses.id, code: storeWarehouses.code })
+    const warehouses = await this.db.select({ id: storeWarehouses.id, code: storeWarehouses.code, name: storeWarehouses.name })
       .from(storeWarehouses).where(eq(storeWarehouses.branchId, bill.branchId));
-    const kitchen = warehouses.find((row) => row.code === "KITCHEN") ?? warehouses[0];
+    const kitchen =
+      warehouses.find((row) => row.code === "KITCHEN") ??
+      warehouses.find((row) => /kitchen/i.test(row.name)) ??
+      warehouses[0];
     const ingredientRemaining = new Map<string, number>();
     for (const deduction of deductions.values()) {
       const { ingredientId, cookingUnitId, qty } = deduction;

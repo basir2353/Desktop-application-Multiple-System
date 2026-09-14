@@ -517,7 +517,8 @@ export const createGoodsReceiptSchema = branchCodeSchema.extend({
 
 export const createRecipeLineSchema = z.object({
   ingredientId: z.string().uuid(),
-  qty: z.number().int().positive(),
+  /** Supports fractional units (e.g. 0.5 Kg for Half). */
+  qty: z.number().positive().max(1_000_000),
   unit: z.string().min(1),
 });
 

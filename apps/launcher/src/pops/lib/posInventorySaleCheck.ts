@@ -56,7 +56,8 @@ export async function buildPosInventorySaleWarnings(
     const factor = recipePortionFactorForLabel(label, factors, portion.base);
 
     for (const recipeLine of recipe.ingredients) {
-      const need = Math.max(1, Math.round(Number(recipeLine.qty) * line.qty * factor));
+      const need = Math.round(Number(recipeLine.qty) * line.qty * factor * 1000) / 1000;
+      if (!(need > 0)) continue;
       needByIngredient.set(
         recipeLine.ingredientId,
         (needByIngredient.get(recipeLine.ingredientId) ?? 0) + need,

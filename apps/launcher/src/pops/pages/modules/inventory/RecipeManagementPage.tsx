@@ -482,7 +482,7 @@ export function RecipeManagementPage(): JSX.Element {
                     const ing = ingredientById.get(row.ingredientId);
                     const index = form.lines.findIndex((l) => l.ingredientId === row.ingredientId);
                     const baseQty = Number(row.qty) || 0;
-                    const scaledQty = Math.max(0, Math.round(baseQty * previewFactor));
+                    const scaledQty = Math.max(0, Math.round(baseQty * previewFactor * 1000) / 1000);
                     return (
                       <li
                         key={row.ingredientId}
@@ -504,9 +504,9 @@ export function RecipeManagementPage(): JSX.Element {
                           <input
                             className={`${inputClass} mt-1 text-xs`}
                             type="number"
-                            min={1}
-                            step={1}
-                            placeholder="e.g. 500"
+                            min={0.001}
+                            step="any"
+                            placeholder="e.g. 0.5 or 500"
                             value={row.qty}
                             onChange={(e) => updateLine(index, { qty: e.target.value })}
                           />

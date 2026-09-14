@@ -1,4 +1,4 @@
-import { boolean, date, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, doublePrecision, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
 
@@ -63,7 +63,7 @@ export const storeProducts = pgTable("store_products", {
   sellingPricePkr: integer("selling_price_pkr").notNull().default(0),
   taxPct: integer("tax_pct").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
-  availableStock: integer("available_stock").notNull().default(0),
+  availableStock: doublePrecision("available_stock").notNull().default(0),
   reservedStock: integer("reserved_stock").notNull().default(0),
   damagedStock: integer("damaged_stock").notNull().default(0),
   expiredStock: integer("expired_stock").notNull().default(0),
@@ -106,7 +106,7 @@ export const storeCookingUnitStock = pgTable("store_cooking_unit_stock", {
   productId: uuid("product_id")
     .notNull()
     .references(() => storeProducts.id, { onDelete: "cascade" }),
-  quantity: integer("quantity").notNull().default(0),
+  quantity: doublePrecision("quantity").notNull().default(0),
   unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -214,7 +214,7 @@ export const storeWarehouseStock = pgTable("store_warehouse_stock", {
   productId: uuid("product_id")
     .notNull()
     .references(() => storeProducts.id, { onDelete: "cascade" }),
-  quantity: integer("quantity").notNull().default(0),
+  quantity: doublePrecision("quantity").notNull().default(0),
   reservedQuantity: integer("reserved_quantity").notNull().default(0),
   unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

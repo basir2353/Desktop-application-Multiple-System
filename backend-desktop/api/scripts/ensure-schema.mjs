@@ -48,6 +48,12 @@ const STATEMENTS = [
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fbr_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE pops_menu_items ADD COLUMN IF NOT EXISTS simple_price boolean NOT NULL DEFAULT false`,
+  // Recipe / kitchen stock: allow fractional qty (e.g. 0.5 Kg Half portions).
+  `ALTER TABLE pops_recipe_lines ALTER COLUMN qty TYPE double precision USING qty::double precision`,
+  `ALTER TABLE pops_ingredients ALTER COLUMN current_stock TYPE double precision USING current_stock::double precision`,
+  `ALTER TABLE store_warehouse_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
+  `ALTER TABLE store_cooking_unit_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
+  `ALTER TABLE store_products ALTER COLUMN available_stock TYPE double precision USING available_stock::double precision`,
   // General Store core tables (create if drizzle push skipped them on Railway).
   `CREATE TABLE IF NOT EXISTS store_categories (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,4 +1,4 @@
-import { boolean, date, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, doublePrecision, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { popsBranches } from "./operations";
 import { popsMenuItems } from "./menu";
@@ -31,7 +31,7 @@ export const popsIngredients = pgTable("pops_ingredients", {
   sku: text("sku").notNull(),
   name: text("name").notNull(),
   unit: text("unit").notNull(),
-  currentStock: integer("current_stock").notNull().default(0),
+  currentStock: doublePrecision("current_stock").notNull().default(0),
   minStock: integer("min_stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(0),
   maxStock: integer("max_stock").notNull().default(0),
@@ -175,7 +175,7 @@ export const popsRecipeLines = pgTable("pops_recipe_lines", {
   ingredientId: uuid("ingredient_id")
     .notNull()
     .references(() => popsIngredients.id, { onDelete: "restrict" }),
-  qty: integer("qty").notNull(),
+  qty: doublePrecision("qty").notNull(),
   unit: text("unit").notNull(),
 });
 
