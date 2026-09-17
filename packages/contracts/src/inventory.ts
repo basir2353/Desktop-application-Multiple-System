@@ -43,19 +43,36 @@ export const ingredientSchema = z.object({
   storeProductId: z.string().uuid().nullable().optional(),
   sku: z.string(),
   name: z.string(),
-  unit: ingredientUnitSchema,
+  /** Accept any unit string from live DB (legacy / custom units still parse). */
+  unit: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() ? val.trim() : "Piece"),
+    z.string().min(1),
+  ),
   /** Kitchen / sellable qty used by recipes & POS. */
-  currentStock: z.number(),
+  currentStock: z.coerce.number(),
   /** Total on-hand across Main Warehouse + Kitchen (warehouse ledger). */
   onHandStock: z.number().optional(),
   /** Qty sitting in Main / store warehouse (not yet transferred to Kitchen). */
   storeStock: z.number().optional(),
   /** Qty in Kitchen (sellable). When omitted, treat currentStock as Kitchen. */
   kitchenStock: z.number().optional(),
-  minStock: z.number(),
-  reorderLevel: z.number(),
-  maxStock: z.number(),
-  unitCost: z.number(),
+  /**
+   * Kitchen qty broken down by cooking unit / kitchen section
+   * (Grill, Tandoor, …). Empty when stock is not section-tracked yet.
+   */
+  kitchenSections: z
+    .array(
+      z.object({
+        cookingUnitId: z.string().nullable(),
+        name: z.string(),
+        quantity: z.number(),
+      }),
+    )
+    .optional(),
+  minStock: z.coerce.number(),
+  reorderLevel: z.coerce.number(),
+  maxStock: z.coerce.number(),
+  unitCost: z.coerce.number(),
 });
 
 export const supplierSchema = z.object({
@@ -65,7 +82,7 @@ export const supplierSchema = z.object({
   email: z.string().nullable(),
   address: z.string().nullable(),
   paymentTerms: z.string().nullable(),
-  openingBalancePkr: z.number().int(),
+  openingBalancePkr: z.coerce.number(),
   onboardedDate: z.preprocess(
     (val) => (val === undefined || val === null ? null : String(val).slice(0, 10)),
     z.string().nullable(),
@@ -151,7 +168,7 @@ export const recipeLineSchema = z.object({
   id: z.string().uuid(),
   ingredientId: z.string().uuid(),
   ingredient: z.string(),
-  qty: z.number(),
+  qty: z.coerce.number(),
   unit: z.string(),
 });
 
@@ -163,9 +180,9 @@ export const recipeSchema = z.object({
   version: z.string(),
   portionSize: z.string().nullable(),
   /** Multipliers vs base portion (Full=1). Used to scale ingredient deduction by Half/Full/S/M/L. */
-  portionFactors: z.record(z.number()).optional(),
+  portionFactors: z.record(z.coerce.number()).optional(),
   ingredients: z.array(recipeLineSchema),
-  totalCost: z.number(),
+  totalCost: z.coerce.number(),
   active: z.boolean(),
 });
 
@@ -254,6 +271,122 @@ export function recipePortionFactorForLabel(
   }
   const baseHit = entries.find(([key]) => key.toLowerCase() === base.toLowerCase());
   return baseHit?.[1] ?? 1;
+}
+
+const RECIPE_MATCH_PORTION_TOKENS = new Set(
+  [...RECIPE_PORTION_PRESETS, "Standard", "Regular", "Default", "Normal", "Family"].map((token) =>
+    token.toLowerCase(),
+  ),
+);
+
+function normalizeRecipeDishName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[()[\]{},._/-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function recipeDishKey(value: string): string {
+  return normalizeRecipeDishName(value)
+    .split(" ")
+    .filter((token) => token && !RECIPE_MATCH_PORTION_TOKENS.has(token))
+    .join(" ");
+}
+
+function recipePortionTokenFromLabel(label: string): string | null {
+  const matches = [...label.matchAll(/\(([^)]+)\)/g)].map((match) => match[1]?.trim().toLowerCase() ?? "");
+  for (const token of matches) {
+    if (RECIPE_MATCH_PORTION_TOKENS.has(token)) return token;
+  }
+  const words = normalizeRecipeDishName(label).split(" ");
+  for (let i = words.length - 1; i >= 0; i--) {
+    const token = words[i];
+    if (token && RECIPE_MATCH_PORTION_TOKENS.has(token)) return token;
+  }
+  return null;
+}
+
+export type RecipeSaleMatchInput = {
+  menuItemId?: string | null;
+  itemName?: string | null;
+  lineLabel?: string | null;
+};
+
+type RecipeSaleMatchable = {
+  menuItemId?: string | null;
+  name?: string | null;
+  menuItem?: string | null;
+  portionSize?: string | null;
+  ingredients?: unknown[];
+};
+
+/**
+ * POS / stock deduction picker.
+ * Prefer menuItemId, then dish name ("Mutton Handi (Half)" ↔ linked "Mutton Handi").
+ * Prefer recipes that actually have ingredient lines.
+ */
+export function pickRecipeForSale<T extends RecipeSaleMatchable>(
+  recipes: T[],
+  input: RecipeSaleMatchInput,
+  hasIngredients?: (recipe: T) => boolean,
+): T | undefined {
+  if (recipes.length === 0) return undefined;
+  const ingredientOk = hasIngredients ?? ((recipe: T) => (recipe.ingredients?.length ?? 0) > 0);
+  const labels = [input.lineLabel, input.itemName]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean);
+  const normalizedLabels = labels.map(normalizeRecipeDishName);
+  const dishKeys = labels.map(recipeDishKey).filter(Boolean);
+  const portionToken = labels.map(recipePortionTokenFromLabel).find(Boolean) ?? null;
+
+  const byId = input.menuItemId
+    ? recipes.filter((recipe) => recipe.menuItemId === input.menuItemId)
+    : [];
+  const byName = recipes.filter((recipe) => {
+    const names = [recipe.name, recipe.menuItem].map((value) => value?.trim() ?? "").filter(Boolean);
+    return names.some((name) => {
+      const normalized = normalizeRecipeDishName(name);
+      if (normalizedLabels.includes(normalized)) return true;
+      const key = recipeDishKey(name);
+      return Boolean(key) && dishKeys.includes(key);
+    });
+  });
+  const pool = byId.length > 0 ? byId : byName;
+  if (pool.length === 0) return undefined;
+
+  const score = (recipe: T): number => {
+    let value = 0;
+    if (ingredientOk(recipe)) value += 100;
+    if (input.menuItemId && recipe.menuItemId === input.menuItemId) value += 40;
+    const names = [recipe.name, recipe.menuItem].map((item) => item?.trim() ?? "").filter(Boolean);
+    if (names.some((name) => normalizedLabels.includes(normalizeRecipeDishName(name)))) value += 20;
+    if (portionToken) {
+      const haystack = `${recipe.name ?? ""} ${recipe.menuItem ?? ""} ${recipe.portionSize ?? ""}`.toLowerCase();
+      if (haystack.includes(portionToken)) value += 10;
+    }
+    return value;
+  };
+
+  let best = pool[0]!;
+  let bestScore = score(best);
+  for (let i = 1; i < pool.length; i++) {
+    const candidate = pool[i]!;
+    const candidateScore = score(candidate);
+    if (candidateScore >= bestScore) {
+      best = candidate;
+      bestScore = candidateScore;
+    }
+  }
+  return best;
+}
+
+/** Prefer a recipe that actually has ingredient lines (POS / stock deduction). */
+export function pickRecipeForMenuItem<T extends {
+  menuItemId?: string | null;
+  ingredients?: unknown[];
+}>(recipes: T[], menuItemId: string | null | undefined): T | undefined {
+  return pickRecipeForSale(recipes, { menuItemId });
 }
 
 export const stockAdjustmentSchema = z.object({
@@ -518,7 +651,7 @@ export const createGoodsReceiptSchema = branchCodeSchema.extend({
 export const createRecipeLineSchema = z.object({
   ingredientId: z.string().uuid(),
   /** Supports fractional units (e.g. 0.5 Kg for Half). */
-  qty: z.number().positive().max(1_000_000),
+  qty: z.coerce.number().positive().max(1_000_000),
   unit: z.string().min(1),
 });
 
@@ -545,7 +678,7 @@ export const updateRecipeSchema = z.object({
 export const createStockAdjustmentSchema = branchCodeSchema.extend({
   ingredientId: z.string().uuid(),
   type: adjustmentTypeSchema,
-  qty: z.number().int().positive(),
+  qty: z.coerce.number().positive().max(1_000_000),
   reason: z.string().min(1).max(256),
   requestedBy: z.string().max(120).optional(),
 });
@@ -556,9 +689,11 @@ export const updateAdjustmentStatusSchema = z.object({
 
 export const createWasteRecordSchema = branchCodeSchema.extend({
   ingredientId: z.string().uuid(),
-  qty: z.number().int().positive(),
+  qty: z.coerce.number().positive().max(1_000_000),
   wasteType: wasteTypeSchema,
   reason: z.string().max(256).optional(),
+  /** When set, deduct from this kitchen section only (not other sections). */
+  cookingUnitId: z.string().uuid().nullable().optional(),
 });
 
 export const updateWasteStatusSchema = z.object({

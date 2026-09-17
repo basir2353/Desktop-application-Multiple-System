@@ -13,7 +13,7 @@ export class HealthController {
       status: "ok",
       ts: new Date().toISOString(),
       // Bump this string whenever we need to confirm Railway picked up a deploy.
-      build: "waste-instant-deduct-2026-09-06",
+      build: "waste-decimal-qty-2026-09-17",
     };
   }
 

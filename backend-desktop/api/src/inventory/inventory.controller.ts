@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -43,6 +44,20 @@ import type { AccessJwtPayload } from "../auth/jwt.types";
 import { PermissionsGuard } from "../users/permissions.guard";
 import { RequirePermissions } from "../users/require-permission.decorator";
 import { InventoryService } from "./inventory.service";
+
+function parseBody<T>(schema: { parse: (input: unknown) => T }, body: unknown): T {
+  try {
+    return schema.parse(body);
+  } catch (err) {
+    const issues = (err as { issues?: { path: (string | number)[]; message: string }[] }).issues;
+    if (Array.isArray(issues) && issues.length > 0) {
+      throw new BadRequestException(
+        issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
+      );
+    }
+    throw err;
+  }
+}
 
 @Controller("v1/inventory")
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -160,6 +175,12 @@ export class InventoryController {
       user.sub,
       createInventoryTransferSchema.parse(body),
     );
+  }
+
+  @Get("sale-check")
+  @RequirePermissions("pops.read")
+  getPosSaleCheck(@CurrentUser() user: AccessJwtPayload, @Query("branchCode") branchCode: string) {
+    return this.inventory.getPosSaleCheck(user.organizationId, branchCode?.trim() ?? "");
   }
 
   @Get()
@@ -331,7 +352,7 @@ export class InventoryController {
   @Post("recipes")
   @RequirePermissions("pops.inventory.manage")
   createRecipe(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.inventory.createRecipe(user.organizationId, user.sub, createRecipeSchema.parse(body));
+    return this.inventory.createRecipe(user.organizationId, user.sub, parseBody(createRecipeSchema, body));
   }
 
   @Patch("recipes/:recipeId")
@@ -345,7 +366,7 @@ export class InventoryController {
       user.organizationId,
       user.sub,
       recipeId,
-      updateRecipeSchema.parse(body),
+      parseBody(updateRecipeSchema, body),
     );
   }
 
@@ -383,7 +404,11 @@ export class InventoryController {
   @Post("waste")
   @RequirePermissions("pops.inventory.manage")
   createWaste(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
-    return this.inventory.createWaste(user.organizationId, user.sub, createWasteRecordSchema.parse(body));
+    return this.inventory.createWaste(
+      user.organizationId,
+      user.sub,
+      parseBody(createWasteRecordSchema, body),
+    );
   }
 
   @Patch("waste/:wasteId/status")

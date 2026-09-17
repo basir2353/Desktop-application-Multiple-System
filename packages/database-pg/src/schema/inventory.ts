@@ -86,7 +86,7 @@ export const popsPurchaseOrderLines = pgTable("pops_purchase_order_lines", {
     .references(() => popsPurchaseOrders.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   qty: integer("qty").notNull(),
   unit: text("unit").notNull(),
   unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
@@ -123,7 +123,7 @@ export const popsGoodsReceiptLines = pgTable("pops_goods_receipt_lines", {
     .references(() => popsGoodsReceipts.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   qty: integer("qty").notNull(),
   unit: text("unit").notNull(),
   unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
@@ -142,7 +142,7 @@ export const popsStockBatches = pgTable("pops_stock_batches", {
   ingredientId: uuid("ingredient_id")
     .notNull()
     .references(() => popsIngredients.id, { onDelete: "cascade" }),
-  qty: integer("qty").notNull(),
+  qty: doublePrecision("qty").notNull(),
   batchNumber: text("batch_number"),
   expiryDate: date("expiry_date"),
   location: text("location").notNull().default("Main store"),
@@ -174,7 +174,7 @@ export const popsRecipeLines = pgTable("pops_recipe_lines", {
     .references(() => popsRecipes.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   qty: doublePrecision("qty").notNull(),
   unit: text("unit").notNull(),
 });
@@ -189,9 +189,9 @@ export const popsStockAdjustments = pgTable("pops_stock_adjustments", {
     .references(() => popsBranches.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
-  qty: integer("qty").notNull(),
+  qty: doublePrecision("qty").notNull(),
   unit: text("unit").notNull(),
   reason: text("reason").notNull(),
   status: text("status").notNull().default("Pending"),
@@ -209,8 +209,8 @@ export const popsWasteRecords = pgTable("pops_waste_records", {
     .references(() => popsBranches.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
-  qty: integer("qty").notNull(),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
+  qty: doublePrecision("qty").notNull(),
   unit: text("unit").notNull(),
   wasteType: text("waste_type").notNull(),
   reason: text("reason"),
@@ -244,7 +244,7 @@ export const popsStockCountLines = pgTable("pops_stock_count_lines", {
     .references(() => popsStockCounts.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   systemQty: integer("system_qty").notNull(),
   physicalQty: integer("physical_qty").notNull(),
 });
@@ -281,7 +281,7 @@ export const popsProductionBatchLines = pgTable("pops_production_batch_lines", {
     .references(() => popsProductionBatches.id, { onDelete: "cascade" }),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   qty: integer("qty").notNull(),
   unit: text("unit").notNull(),
   unitCostPkr: integer("unit_cost_pkr").notNull().default(0),

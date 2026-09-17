@@ -55,6 +55,7 @@ import {
   popsStockCounts,
   popsSuppliers,
   popsWasteRecords,
+  popsBranchTransfers,
   storeProducts,
   storeCategories,
   storeCookingUnits,
@@ -356,6 +357,20 @@ export class InventoryService implements OnModuleInit {
       wasteRecords,
       stockCounts,
       auditLogs,
+    };
+  }
+
+  /** Lightweight payload for POS pay-time recipe / stock warnings (avoids full inventory). */
+  async getPosSaleCheck(organizationId: string, branchCode: string) {
+    const branch = await this.resolveBranch(organizationId, branchCode);
+    const [ingredients, recipes] = await Promise.all([
+      this.loadIngredients(branch.id),
+      this.loadRecipes(branch.id),
+    ]);
+    return {
+      branchCode: branch.code,
+      ingredients,
+      recipes: recipes.filter((recipe) => recipe.active !== false),
     };
   }
 
@@ -873,7 +888,34 @@ export class InventoryService implements OnModuleInit {
 
   async deleteIngredient(organizationId: string, userEmail: string, ingredientId: string) {
     const ing = await this.getIngredient(organizationId, ingredientId);
-    await this.db.delete(popsIngredients).where(eq(popsIngredients.id, ingredientId));
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx.delete(popsRecipeLines).where(eq(popsRecipeLines.ingredientId, ingredientId));
+        await tx.delete(popsStockAdjustments).where(eq(popsStockAdjustments.ingredientId, ingredientId));
+        await tx.delete(popsWasteRecords).where(eq(popsWasteRecords.ingredientId, ingredientId));
+        await tx.delete(popsStockCountLines).where(eq(popsStockCountLines.ingredientId, ingredientId));
+        await tx.delete(popsProductionBatchLines).where(eq(popsProductionBatchLines.ingredientId, ingredientId));
+        await tx
+          .update(popsProductionBatches)
+          .set({ outputIngredientId: null })
+          .where(eq(popsProductionBatches.outputIngredientId, ingredientId));
+        await tx.delete(popsStockBatches).where(eq(popsStockBatches.ingredientId, ingredientId));
+        await tx.delete(popsPurchaseOrderLines).where(eq(popsPurchaseOrderLines.ingredientId, ingredientId));
+        await tx.delete(popsGoodsReceiptLines).where(eq(popsGoodsReceiptLines.ingredientId, ingredientId));
+        await tx.delete(popsBranchTransfers).where(eq(popsBranchTransfers.ingredientId, ingredientId));
+        await tx.delete(popsIngredients).where(eq(popsIngredients.id, ingredientId));
+      });
+    } catch (err) {
+      const code =
+        (err as { code?: string }).code ??
+        (err as { cause?: { code?: string } }).cause?.code;
+      if (code === "23503") {
+        throw new BadRequestException(
+          `Cannot delete ${ing.name} because it is still used in inventory records.`,
+        );
+      }
+      throw err;
+    }
     await this.audit(organizationId, ing.branchId, userEmail, "Ingredient deleted", "Ingredients", ing.name);
     return { ok: true };
   }
@@ -1235,31 +1277,79 @@ export class InventoryService implements OnModuleInit {
       input.portionSize?.trim() || "Full",
       input.portionFactors ?? null,
     );
+    const portionBase = parseRecipePortionConfig(portionSize).base.toLowerCase();
 
-    const [recipe] = await this.db
-      .insert(popsRecipes)
-      .values({
-        organizationId,
-        branchId: branch.id,
-        name: input.name.trim(),
-        menuItemId: input.menuItemId ?? null,
-        version: input.version ?? "v1.0",
-        portionSize,
-        totalCostPkr: totalCost,
-        active: input.active ?? true,
-      })
-      .returning();
-    if (!recipe) throw new BadRequestException("Failed to create recipe");
-
-    for (const line of input.lines) {
-      await this.getIngredient(organizationId, line.ingredientId);
-      await this.db.insert(popsRecipeLines).values({
-        recipeId: recipe.id,
-        ingredientId: line.ingredientId,
-        qty: line.qty,
-        unit: line.unit,
-      });
+    if (input.menuItemId) {
+      const existing = await this.db
+        .select()
+        .from(popsRecipes)
+        .where(
+          and(
+            eq(popsRecipes.organizationId, organizationId),
+            eq(popsRecipes.branchId, branch.id),
+            eq(popsRecipes.menuItemId, input.menuItemId),
+          ),
+        );
+      const samePortion = existing.filter(
+        (row) => parseRecipePortionConfig(row.portionSize).base.toLowerCase() === portionBase,
+      );
+      if (samePortion.length > 0) {
+        const lineCounts = await Promise.all(
+          samePortion.map(async (row) => {
+            const lines = await this.db
+              .select({ id: popsRecipeLines.id })
+              .from(popsRecipeLines)
+              .where(eq(popsRecipeLines.recipeId, row.id));
+            return { row, count: lines.length };
+          }),
+        );
+        lineCounts.sort((a, b) => {
+          if ((b.count > 0) !== (a.count > 0)) return b.count > 0 ? 1 : -1;
+          return b.row.createdAt.getTime() - a.row.createdAt.getTime();
+        });
+        const chosen = lineCounts[0]!.row;
+        for (const extra of samePortion.filter((row) => row.id !== chosen.id)) {
+          await this.db.update(popsRecipes).set({ active: false }).where(eq(popsRecipes.id, extra.id));
+        }
+        return this.updateRecipe(organizationId, userEmail, chosen.id, {
+          name: input.name.trim(),
+          menuItemId: input.menuItemId,
+          version: input.version,
+          portionSize: input.portionSize,
+          portionFactors: input.portionFactors,
+          active: input.active ?? true,
+          lines: input.lines,
+        });
+      }
     }
+
+    const recipe = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(popsRecipes)
+        .values({
+          organizationId,
+          branchId: branch.id,
+          name: input.name.trim(),
+          menuItemId: input.menuItemId ?? null,
+          version: input.version ?? "v1.0",
+          portionSize,
+          totalCostPkr: totalCost,
+          active: input.active ?? true,
+        })
+        .returning();
+      if (!created) throw new BadRequestException("Failed to create recipe");
+
+      for (const line of input.lines) {
+        await this.getIngredient(organizationId, line.ingredientId);
+        await tx.insert(popsRecipeLines).values({
+          recipeId: created.id,
+          ingredientId: line.ingredientId,
+          qty: line.qty,
+          unit: line.unit,
+        });
+      }
+      return created;
+    });
 
     await this.audit(organizationId, branch.id, userEmail, "Recipe created", "Recipe Management", recipe.name);
     return (await this.loadRecipes(branch.id)).find((r) => r.id === recipe.id)!;
@@ -1425,27 +1515,45 @@ export class InventoryService implements OnModuleInit {
   async createWaste(organizationId: string, userEmail: string, input: CreateWasteRecord) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
     const ing = await this.getIngredient(organizationId, input.ingredientId);
-    if (input.qty <= 0) throw new BadRequestException("Waste qty must be greater than 0");
+    const qty = Math.round(Number(input.qty) * 1000) / 1000;
+    if (!(qty > 0)) throw new BadRequestException("Waste qty must be greater than 0");
+
+    const cookingUnitId = input.cookingUnitId?.trim() || null;
 
     // Use warehouse on-hand when linked — same number Current Stock report shows.
     let available = ing.currentStock;
     if (ing.storeProductId) {
-      const balances = await this.db
-        .select({ quantity: storeWarehouseStock.quantity })
-        .from(storeWarehouseStock)
-        .where(eq(storeWarehouseStock.productId, ing.storeProductId));
-      const onHand = balances.reduce((sum, row) => sum + row.quantity, 0);
-      if (balances.length > 0) available = onHand;
+      if (cookingUnitId) {
+        const [unitStock] = await this.db
+          .select({ quantity: storeCookingUnitStock.quantity })
+          .from(storeCookingUnitStock)
+          .where(and(
+            eq(storeCookingUnitStock.branchId, branch.id),
+            eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
+            eq(storeCookingUnitStock.productId, ing.storeProductId),
+          ))
+          .limit(1);
+        available = unitStock?.quantity ?? 0;
+      } else {
+        const balances = await this.db
+          .select({ quantity: storeWarehouseStock.quantity })
+          .from(storeWarehouseStock)
+          .where(eq(storeWarehouseStock.productId, ing.storeProductId));
+        const onHand = balances.reduce((sum, row) => sum + row.quantity, 0);
+        if (balances.length > 0) available = onHand;
+      }
     }
-    if (input.qty > available) {
+    if (qty > available) {
       throw new BadRequestException(
-        `Waste qty ${input.qty} exceeds available stock ${available} ${ing.unit}`,
+        cookingUnitId
+          ? `Waste qty ${qty} exceeds section stock ${available} ${ing.unit}`
+          : `Waste qty ${qty} exceeds available stock ${available} ${ing.unit}`,
       );
     }
 
     const costImpact =
-      Math.round(input.qty * ing.unitCostPkr) ||
-      Math.round((input.qty / Math.max(available, 1)) * available * ing.unitCostPkr);
+      Math.round(qty * ing.unitCostPkr) ||
+      Math.round((qty / Math.max(available, 1)) * available * ing.unitCostPkr);
 
     const [row] = await this.db
       .insert(popsWasteRecords)
@@ -1453,7 +1561,7 @@ export class InventoryService implements OnModuleInit {
         organizationId,
         branchId: branch.id,
         ingredientId: input.ingredientId,
-        qty: input.qty,
+        qty,
         unit: ing.unit,
         wasteType: input.wasteType,
         reason: input.reason?.trim() || null,
@@ -1463,7 +1571,13 @@ export class InventoryService implements OnModuleInit {
       .returning();
     if (!row) throw new BadRequestException("Failed to record waste");
 
-    await this.deductIngredientOnHand(organizationId, branch.id, input.ingredientId, input.qty);
+    await this.deductIngredientOnHand(
+      organizationId,
+      branch.id,
+      input.ingredientId,
+      qty,
+      cookingUnitId,
+    );
 
     try {
       await this.accountingHooks.recordWaste(
@@ -1483,7 +1597,9 @@ export class InventoryService implements OnModuleInit {
       userEmail,
       "Waste recorded & stock deducted",
       "Waste Management",
-      `${ing.name} −${input.qty} ${ing.unit}`,
+      cookingUnitId
+        ? `${ing.name} −${qty} ${ing.unit} (section ${cookingUnitId.slice(0, 8)}…)`
+        : `${ing.name} −${qty} ${ing.unit}`,
     );
     return (await this.loadWasteRecords(branch.id)).find((w) => w.id === row.id)!;
   }
@@ -1827,6 +1943,45 @@ export class InventoryService implements OnModuleInit {
       }
     }
 
+    // Per cooking-unit (kitchen section) qty for ingredients that have been transferred with a section.
+    const sectionRows =
+      productIds.length > 0
+        ? await this.db
+            .select({
+              productId: storeCookingUnitStock.productId,
+              cookingUnitId: storeCookingUnitStock.cookingUnitId,
+              cookingUnitName: storeCookingUnits.name,
+              quantity: storeCookingUnitStock.quantity,
+              sortOrder: storeCookingUnits.sortOrder,
+            })
+            .from(storeCookingUnitStock)
+            .innerJoin(
+              storeCookingUnits,
+              eq(storeCookingUnits.id, storeCookingUnitStock.cookingUnitId),
+            )
+            .where(
+              and(
+                eq(storeCookingUnitStock.branchId, branchId),
+                inArray(storeCookingUnitStock.productId, productIds),
+              ),
+            )
+            .orderBy(asc(storeCookingUnits.sortOrder), asc(storeCookingUnits.name))
+        : [];
+    const sectionsByProduct = new Map<
+      string,
+      { cookingUnitId: string | null; name: string; quantity: number }[]
+    >();
+    for (const row of sectionRows) {
+      if (row.quantity <= 0) continue;
+      const list = sectionsByProduct.get(row.productId) ?? [];
+      list.push({
+        cookingUnitId: row.cookingUnitId,
+        name: row.cookingUnitName,
+        quantity: row.quantity,
+      });
+      sectionsByProduct.set(row.productId, list);
+    }
+
     return Promise.all(
       rows.map(async (r) => {
         const mapped = await this.mapIngredient(r);
@@ -1836,12 +1991,23 @@ export class InventoryService implements OnModuleInit {
             onHandStock: mapped.currentStock,
             storeStock: 0,
             kitchenStock: mapped.currentStock,
+            kitchenSections: [],
           };
         }
         const onHand = onHandByProduct.get(r.storeProductId) ?? 0;
         const kitchenQty = kitchen
           ? (kitchenByProduct.get(r.storeProductId) ?? 0)
           : mapped.currentStock;
+        const sections = [...(sectionsByProduct.get(r.storeProductId) ?? [])];
+        const sectionTotal = sections.reduce((sum, s) => sum + s.quantity, 0);
+        // Kitchen warehouse qty not yet tagged to a cooking unit.
+        if (kitchenQty > sectionTotal + 0.0001) {
+          sections.push({
+            cookingUnitId: null,
+            name: "Unassigned",
+            quantity: Math.round((kitchenQty - sectionTotal) * 1000) / 1000,
+          });
+        }
         // currentStock = on-hand so Ingredients / reports / valuation SHOW the calculated qty.
         // kitchenStock = sellable Kitchen qty (after Main→Kitchen transfer).
         return {
@@ -1850,6 +2016,7 @@ export class InventoryService implements OnModuleInit {
           onHandStock: onHand > 0 ? onHand : mapped.currentStock,
           kitchenStock: kitchenQty,
           storeStock: Math.max(0, onHand - kitchenQty),
+          kitchenSections: sections,
         };
       }),
     );
@@ -2149,12 +2316,14 @@ export class InventoryService implements OnModuleInit {
   /**
    * Deduct sellable/on-hand stock for waste & write-offs.
    * Updates warehouse + cooking-unit stock (when linked), ingredient.currentStock, batches (expiry FIFO), and store product available qty.
+   * When `cookingUnitId` is set, only that kitchen section is reduced (never other sections).
    */
   private async deductIngredientOnHand(
     organizationId: string,
     branchId: string,
     ingredientId: string,
     qty: number,
+    cookingUnitId?: string | null,
   ): Promise<void> {
     if (qty <= 0) return;
     const ing = await this.getIngredient(organizationId, ingredientId);
@@ -2195,47 +2364,56 @@ export class InventoryService implements OnModuleInit {
           .where(eq(storeWarehouseStock.productId, ing.storeProductId));
       }
 
-      const ordered = [...stockRows].sort((a, b) => {
-        const aKitchen = kitchen && a.warehouseId === kitchen.id ? 0 : 1;
-        const bKitchen = kitchen && b.warehouseId === kitchen.id ? 0 : 1;
-        if (aKitchen !== bKitchen) return aKitchen - bKitchen;
-        return b.quantity - a.quantity;
-      });
-
-      for (const row of ordered) {
-        if (remaining <= 0) break;
-        if (row.quantity <= 0) continue;
-        const take = Math.min(row.quantity, remaining);
+      if (cookingUnitId && kitchen) {
+        const [unitStock] = await this.db
+          .select()
+          .from(storeCookingUnitStock)
+          .where(and(
+            eq(storeCookingUnitStock.branchId, branchId),
+            eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
+            eq(storeCookingUnitStock.productId, ing.storeProductId),
+          ))
+          .limit(1);
+        const sectionQty = unitStock?.quantity ?? 0;
+        if (sectionQty < qty) {
+          throw new BadRequestException(
+            `Section has only ${sectionQty} ${ing.unit}; cannot waste ${qty}`,
+          );
+        }
+        const kitchenRow = stockRows.find((r) => r.warehouseId === kitchen.id);
+        if (!kitchenRow || kitchenRow.quantity < qty) {
+          throw new BadRequestException(
+            `Kitchen warehouse has insufficient stock for this section waste`,
+          );
+        }
+        await this.db
+          .update(storeCookingUnitStock)
+          .set({ quantity: sectionQty - qty, updatedAt: new Date() })
+          .where(eq(storeCookingUnitStock.id, unitStock!.id));
         await this.db
           .update(storeWarehouseStock)
-          .set({ quantity: row.quantity - take, updatedAt: new Date() })
-          .where(eq(storeWarehouseStock.id, row.id));
+          .set({ quantity: kitchenRow.quantity - qty, updatedAt: new Date() })
+          .where(eq(storeWarehouseStock.id, kitchenRow.id));
+        remaining = 0;
+      } else {
+        const ordered = [...stockRows].sort((a, b) => {
+          const aKitchen = kitchen && a.warehouseId === kitchen.id ? 0 : 1;
+          const bKitchen = kitchen && b.warehouseId === kitchen.id ? 0 : 1;
+          if (aKitchen !== bKitchen) return aKitchen - bKitchen;
+          return b.quantity - a.quantity;
+        });
 
-        if (kitchen && row.warehouseId === kitchen.id) {
-          let unitRemaining = take;
-          const unitStocks = await this.db
-            .select()
-            .from(storeCookingUnitStock)
-            .where(and(
-              eq(storeCookingUnitStock.branchId, branchId),
-              eq(storeCookingUnitStock.productId, ing.storeProductId),
-            ))
-            .orderBy(desc(storeCookingUnitStock.quantity));
-          for (const unitStock of unitStocks) {
-            if (unitRemaining <= 0) break;
-            if (unitStock.quantity <= 0) continue;
-            const unitTake = Math.min(unitStock.quantity, unitRemaining);
-            await this.db
-              .update(storeCookingUnitStock)
-              .set({
-                quantity: unitStock.quantity - unitTake,
-                updatedAt: new Date(),
-              })
-              .where(eq(storeCookingUnitStock.id, unitStock.id));
-            unitRemaining -= unitTake;
-          }
+        for (const row of ordered) {
+          if (remaining <= 0) break;
+          if (row.quantity <= 0) continue;
+          const take = Math.min(row.quantity, remaining);
+          await this.db
+            .update(storeWarehouseStock)
+            .set({ quantity: row.quantity - take, updatedAt: new Date() })
+            .where(eq(storeWarehouseStock.id, row.id));
+          // No cookingUnitId: cut kitchen/store warehouse only — do not drain section ledgers.
+          remaining -= take;
         }
-        remaining -= take;
       }
 
       const balances = await this.db

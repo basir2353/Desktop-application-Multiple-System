@@ -29,7 +29,7 @@ export function StockAdjustmentsPage(): JSX.Element {
         branchCode: branch!.code,
         ingredientId: form.ingredientId,
         type: form.type,
-        qty: Number(form.qty),
+        qty: Math.round(Number(form.qty) * 1000) / 1000,
         reason: form.reason.trim(),
       });
       // Auto-approve so Remove immediately cuts overall stock (same as waste deduct).

@@ -1,7 +1,12 @@
 import { WASTE_TYPES, type WasteRecord } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { createWasteRecord, fetchBranchInventory, updateWasteStatus } from "../../../api/inventory";
+import { useMemo, useState } from "react";
+import {
+  createWasteRecord,
+  fetchBranchInventory,
+  fetchInventoryCookingUnits,
+  updateWasteStatus,
+} from "../../../api/inventory";
 import { IngredientPickerModal } from "../../../components/IngredientPickerModal";
 import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { accentValueClass, linkDangerClass, linkSuccessClass } from "../../../lib/themeClasses";
@@ -15,7 +20,13 @@ export function WasteManagementPage(): JSX.Element {
   const invalidate = useInvalidateInventory();
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [form, setForm] = useState({ ingredientId: "", qty: "1", wasteType: "Kitchen Waste" as (typeof WASTE_TYPES)[number], reason: "" });
+  const [form, setForm] = useState({
+    ingredientId: "",
+    cookingUnitId: "",
+    qty: "1",
+    wasteType: "Kitchen Waste" as (typeof WASTE_TYPES)[number],
+    reason: "",
+  });
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
@@ -23,16 +34,33 @@ export function WasteManagementPage(): JSX.Element {
     queryFn: () => fetchBranchInventory(branch!.code),
   });
 
+  const cookingUnitsQuery = useQuery({
+    queryKey: ["inventory-cooking-units", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchInventoryCookingUnits(branch!.code),
+  });
+
   const createMutation = useMutation({
     mutationFn: () =>
       createWasteRecord({
         branchCode: branch!.code,
         ingredientId: form.ingredientId,
-        qty: Number(form.qty),
+        qty: Math.round(Number(form.qty) * 1000) / 1000,
         wasteType: form.wasteType,
         reason: form.reason || undefined,
+        cookingUnitId: form.cookingUnitId || null,
       }),
-    onSuccess: () => { invalidate(); setForm({ ingredientId: "", qty: "1", wasteType: "Kitchen Waste", reason: "" }); setError(null); },
+    onSuccess: () => {
+      invalidate();
+      setForm({
+        ingredientId: "",
+        cookingUnitId: "",
+        qty: "1",
+        wasteType: "Kitchen Waste",
+        reason: "",
+      });
+      setError(null);
+    },
     onError: (e: Error) => setError(e.message),
   });
 
@@ -42,12 +70,28 @@ export function WasteManagementPage(): JSX.Element {
     onError: (e: Error) => setError(e.message),
   });
 
-  if (query.isLoading) return <InventoryLoading />;
-  if (query.isError) return <InventoryError message={(query.error as Error).message} />;
-
   const ingredients = query.data?.ingredients ?? [];
   const wasteRecords = query.data?.wasteRecords ?? [];
   const selectedIng = ingredients.find((i) => i.id === form.ingredientId);
+  const sectionOptions = useMemo(() => {
+    const fromIngredient = (selectedIng?.kitchenSections ?? []).filter(
+      (s) => s.cookingUnitId && s.quantity > 0,
+    );
+    if (fromIngredient.length > 0) {
+      return fromIngredient.map((s) => ({
+        id: s.cookingUnitId!,
+        name: s.name,
+        quantity: s.quantity,
+      }));
+    }
+    return (cookingUnitsQuery.data?.units ?? [])
+      .filter((u) => u.isActive)
+      .map((u) => ({ id: u.id, name: u.name, quantity: null as number | null }));
+  }, [selectedIng, cookingUnitsQuery.data?.units]);
+
+  if (query.isLoading) return <InventoryLoading />;
+  if (query.isError) return <InventoryError message={(query.error as Error).message} />;
+
   const today = new Date().toISOString().slice(0, 10);
   const todayWaste = wasteRecords.filter((w) => w.date === today && w.status === "Approved").reduce((s, w) => s + w.costImpact, 0);
   const totalWaste = wasteRecords.filter((w) => w.status === "Approved").reduce((s, w) => s + w.costImpact, 0);
@@ -73,8 +117,13 @@ export function WasteManagementPage(): JSX.Element {
       </div>
 
       {canManage ? (
-        <InventoryFormPanel title="Record waste & deduct stock" submitLabel="Save & deduct" onSubmit={() => createMutation.mutate()} disabled={!form.ingredientId || createMutation.isPending}>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <InventoryFormPanel
+          title="Record waste & deduct stock"
+          submitLabel="Save & deduct"
+          onSubmit={() => createMutation.mutate()}
+          disabled={!form.ingredientId || createMutation.isPending}
+        >
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <button
               type="button"
               onClick={() => setPickerOpen(true)}
@@ -87,6 +136,19 @@ export function WasteManagementPage(): JSX.Element {
               </span>
               <span className="text-slate-500" aria-hidden>▾</span>
             </button>
+            <select
+              className={selectClass}
+              value={form.cookingUnitId}
+              onChange={(e) => setForm({ ...form, cookingUnitId: e.target.value })}
+            >
+              <option value="">Kitchen (no section)</option>
+              {sectionOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.quantity != null ? ` (${s.quantity})` : ""}
+                </option>
+              ))}
+            </select>
             <input className={inputClass} type="number" min={0.01} step="any" placeholder="Qty to remove" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
             <select className={selectClass} value={form.wasteType} onChange={(e) => setForm({ ...form, wasteType: e.target.value as typeof form.wasteType })}>
               {WASTE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -94,7 +156,7 @@ export function WasteManagementPage(): JSX.Element {
             <input className={inputClass} placeholder="Reason (e.g. expired)" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
           </div>
           <p className="mt-2 text-[11px] text-slate-500">
-            Save pe stock turant overall inventory se minus hoga (expiry / kitchen waste / burnt). Approve alag se zaroori nahi.
+            Section choose karo to stock usi kitchen section se minus hoga (POS sale jaisa). Blank = overall kitchen/store.
           </p>
         </InventoryFormPanel>
       ) : null}
@@ -107,7 +169,7 @@ export function WasteManagementPage(): JSX.Element {
           subtitle="Search and pick one ingredient for this waste record."
           onClose={() => setPickerOpen(false)}
           onConfirm={(ids) => {
-            setForm((f) => ({ ...f, ingredientId: ids[0] ?? "" }));
+            setForm((f) => ({ ...f, ingredientId: ids[0] ?? "", cookingUnitId: "" }));
             setPickerOpen(false);
           }}
         />

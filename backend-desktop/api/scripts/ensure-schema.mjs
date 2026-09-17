@@ -9,6 +9,34 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
 
+/** Always applied on Railway boot so 0.5 recipe qty is not rejected as integer. */
+const FRACTIONAL_QTY_STATEMENTS = [
+  `ALTER TABLE pops_recipe_lines ALTER COLUMN qty TYPE double precision USING qty::double precision`,
+  `ALTER TABLE pops_ingredients ALTER COLUMN current_stock TYPE double precision USING current_stock::double precision`,
+  `ALTER TABLE store_warehouse_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
+  `ALTER TABLE store_cooking_unit_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
+  `ALTER TABLE store_products ALTER COLUMN available_stock TYPE double precision USING available_stock::double precision`,
+  `ALTER TABLE pops_stock_batches ALTER COLUMN qty TYPE double precision USING qty::double precision`,
+  `ALTER TABLE pops_waste_records ALTER COLUMN qty TYPE double precision USING qty::double precision`,
+  `ALTER TABLE pops_stock_adjustments ALTER COLUMN qty TYPE double precision USING qty::double precision`,
+  `ALTER TABLE pops_recipe_lines DROP CONSTRAINT IF EXISTS pops_recipe_lines_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_recipe_lines ADD CONSTRAINT pops_recipe_lines_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_stock_adjustments DROP CONSTRAINT IF EXISTS pops_stock_adjustments_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_stock_adjustments ADD CONSTRAINT pops_stock_adjustments_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_waste_records DROP CONSTRAINT IF EXISTS pops_waste_records_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_waste_records ADD CONSTRAINT pops_waste_records_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_stock_count_lines DROP CONSTRAINT IF EXISTS pops_stock_count_lines_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_stock_count_lines ADD CONSTRAINT pops_stock_count_lines_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_production_batch_lines DROP CONSTRAINT IF EXISTS pops_production_batch_lines_ingredient_id_pops_ingredients_id_f`,
+  `ALTER TABLE pops_production_batch_lines ADD CONSTRAINT pops_production_batch_lines_ingredient_id_pops_ingredients_id_f FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_purchase_order_lines DROP CONSTRAINT IF EXISTS pops_purchase_order_lines_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_purchase_order_lines ADD CONSTRAINT pops_purchase_order_lines_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_goods_receipt_lines DROP CONSTRAINT IF EXISTS pops_goods_receipt_lines_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_goods_receipt_lines ADD CONSTRAINT pops_goods_receipt_lines_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+  `ALTER TABLE pops_branch_transfers DROP CONSTRAINT IF EXISTS pops_branch_transfers_ingredient_id_pops_ingredients_id_fk`,
+  `ALTER TABLE pops_branch_transfers ADD CONSTRAINT pops_branch_transfers_ingredient_id_pops_ingredients_id_fk FOREIGN KEY (ingredient_id) REFERENCES pops_ingredients(id) ON DELETE CASCADE`,
+];
+
 const AUTH_SCHEMA_STATEMENTS = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_role text`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`,
@@ -49,11 +77,7 @@ const STATEMENTS = [
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS pra_enabled boolean NOT NULL DEFAULT false`,
   `ALTER TABLE pops_menu_items ADD COLUMN IF NOT EXISTS simple_price boolean NOT NULL DEFAULT false`,
   // Recipe / kitchen stock: allow fractional qty (e.g. 0.5 Kg Half portions).
-  `ALTER TABLE pops_recipe_lines ALTER COLUMN qty TYPE double precision USING qty::double precision`,
-  `ALTER TABLE pops_ingredients ALTER COLUMN current_stock TYPE double precision USING current_stock::double precision`,
-  `ALTER TABLE store_warehouse_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
-  `ALTER TABLE store_cooking_unit_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
-  `ALTER TABLE store_products ALTER COLUMN available_stock TYPE double precision USING available_stock::double precision`,
+  ...FRACTIONAL_QTY_STATEMENTS,
   // General Store core tables (create if drizzle push skipped them on Railway).
   `CREATE TABLE IF NOT EXISTS store_categories (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -437,6 +461,10 @@ const STATEMENTS = [
 ];
 export function ensureAuthSchema(options) {
   return runStatements(AUTH_SCHEMA_STATEMENTS, options);
+}
+
+export function ensureFractionalQtySchema(options) {
+  return runStatements(FRACTIONAL_QTY_STATEMENTS, options);
 }
 
 export function ensureCriticalSchema(options) {
