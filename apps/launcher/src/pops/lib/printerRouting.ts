@@ -427,44 +427,29 @@ export function resolvePrimaryPrinterForSection(
   if (ids.length === 0) return null;
 
   const byId = (id: string) => state.printers.find((p) => p.id === id);
-  const sectionUserSet = new Set(state.sectionUsers[sectionId] ?? []);
-  const userInSection = Boolean(userId && sectionUserSet.has(userId));
-  const userSet = userId ? new Set(state.userPrinters[userId] ?? []) : null;
+  const userPrinterIds = userId ? (state.userPrinters[userId] ?? []) : [];
+  const userSet = userId && userPrinterIds.length > 0 ? new Set(userPrinterIds) : null;
 
-  const ordered: PrinterProfile[] = [];
-  // Users assigned to this section use the section printer list directly (primary first).
-  if (userInSection) {
-    for (const id of ids) {
-      const p = byId(id);
-      if (p) ordered.push(p);
-    }
-    return pickOnlineThenAny(ordered.filter(isDirectPrintableProfile));
-  }
-
-  // 1) Section printers also assigned to this user (online first later).
+  // 1) Prefer printers this user was assigned (Assign Users order) that are also on
+  //    this section — never ignore a personal pick just because they are in sectionUsers.
   if (userSet) {
-    for (const id of ids) {
-      if (!userSet.has(id)) continue;
+    const userOrdered: PrinterProfile[] = [];
+    for (const id of userPrinterIds) {
+      if (!ids.includes(id)) continue;
       const p = byId(id);
-      if (p) ordered.push(p);
+      if (p) userOrdered.push(p);
     }
+    const fromUser = pickOnlineThenAny(userOrdered.filter(isDirectPrintableProfile));
+    if (fromUser) return fromUser;
   }
-  // 2) Remaining section printers.
+
+  // 2) Section primary → backup order.
+  const sectionOrdered: PrinterProfile[] = [];
   for (const id of ids) {
     const p = byId(id);
-    if (p && !ordered.some((x) => x.id === p.id)) ordered.push(p);
+    if (p) sectionOrdered.push(p);
   }
-
-  const candidates = ordered.filter(isDirectPrintableProfile);
-  if (userSet && candidates.length > 0) {
-    const userMatched = candidates.filter((p) => userSet.has(p.id));
-    const onlineUser = userMatched.find((p) => p.status === "online");
-    if (onlineUser) return onlineUser;
-    if (userMatched[0]) return userMatched[0];
-  }
-  const onlineAny = candidates.find((p) => p.status === "online");
-  if (onlineAny) return onlineAny;
-  return candidates[0] ?? null;
+  return pickOnlineThenAny(sectionOrdered.filter(isDirectPrintableProfile));
 }
 
 /** Branch-wide default printer for a type (Kitchen/Bar/Receipt), preferring OS-linked online profiles. */
@@ -693,6 +678,22 @@ export function setSectionPrimaryPrinter(
   if (profile && profile.printerType !== printerType) {
     updatePrinterProfile(branchCode, printerId, { printerType });
   }
+
+  // Keep waiters/users on this section pointed at the new primary (same role only).
+  const allowedTypes = new Set(printerTypesForSectionName(section.id, section.name));
+  const refreshed = loadPrinterRouting(branchCode);
+  const primary = refreshed.printers.find((p) => p.id === printerId);
+  if (!primary || !allowedTypes.has(primary.printerType)) return;
+  const rolePrinterIds = (refreshed.sectionPrinters[sectionId] ?? []).filter((id) => {
+    const p = refreshed.printers.find((x) => x.id === id);
+    return p != null && allowedTypes.has(p.printerType);
+  });
+  for (const userId of refreshed.sectionUsers[sectionId] ?? []) {
+    for (const id of rolePrinterIds) {
+      toggleUserPrinter(branchCode, userId, id, false);
+    }
+    toggleUserPrinter(branchCode, userId, printerId, true);
+  }
 }
 
 /** Sections that currently list this printer (primary first when applicable). */
@@ -789,9 +790,8 @@ export function toggleUserForSection(
     : current.filter((id) => id !== userId);
   setSectionUsers(branchCode, sectionId, next);
 
-  // Only sync printers that belong to this section's role (kitchen vs receipt).
-  // Previously every printer in the section was attached — bill print then could
-  // resolve against kitchen devices and multi-printer section lists.
+  // Sync only the section PRIMARY of matching role (kitchen vs receipt).
+  // Attaching every section printer made 2-device setups ignore the user's pick.
   const state = loadPrinterRouting(branchCode);
   const section = loadPrinterSections(branchCode).find((s) => s.id === sectionId);
   const allowedTypes = new Set(printerTypesForSectionName(section?.id ?? sectionId, section?.name ?? ""));
@@ -799,8 +799,12 @@ export function toggleUserForSection(
     const profile = state.printers.find((p) => p.id === id);
     return profile != null && allowedTypes.has(profile.printerType);
   });
+  // Clear all section printers of this role from the user first.
   for (const printerId of printerIds) {
-    toggleUserPrinter(branchCode, userId, printerId, assign);
+    toggleUserPrinter(branchCode, userId, printerId, false);
+  }
+  if (assign && printerIds[0]) {
+    toggleUserPrinter(branchCode, userId, printerIds[0], true);
   }
 }
 

@@ -1,44 +1,99 @@
 import {
+  formatMenuItemLabel,
   parseRecipePortionConfig,
+  pickRecipeForSale,
   recipePortionFactorForLabel,
+  type MenuItem,
+  type MenuItemVariant,
   type Recipe,
 } from "@platform/contracts";
-import { fetchBranchInventory } from "../api/inventory";
+import { fetchBranchInventoryForPos } from "../api/inventory";
 import { cartLinePrintLabel, type PosCartLine } from "./posCart";
+
+export type PosInventorySnapshot = {
+  recipes?: Recipe[];
+  ingredients?: { id: string; name: string; unit: string; currentStock: number }[];
+};
+
+function activeRecipes(recipes: Recipe[] | undefined): Recipe[] {
+  return (recipes ?? []).filter((recipe) => recipe.active !== false);
+}
+
+/** Sync check used when tapping a dish on POS (before pay). */
+export function recipeWarningForMenuAdd(
+  recipes: Recipe[] | undefined,
+  item: Pick<MenuItem, "id" | "name" | "portion" | "simplePrice">,
+  variant: MenuItemVariant | null,
+  opts?: { inventoryReady?: boolean; inventoryFailed?: boolean },
+): string | null {
+  const label = formatMenuItemLabel({
+    name: item.name,
+    portion: item.portion,
+    variantLabel: variant?.label ?? null,
+    simplePrice: item.simplePrice,
+  });
+  if (opts?.inventoryFailed) {
+    return `Inventory could not load — cannot verify recipe for "${label}". Check internet / open Inventory, then try again.`;
+  }
+  // Still loading: don't block the tap.
+  if (!opts?.inventoryReady) return null;
+
+  const pool = activeRecipes(recipes);
+  const recipe = pickRecipeForSale(pool, {
+    menuItemId: item.id,
+    itemName: item.name,
+    lineLabel: label,
+  });
+  if (!recipe) {
+    return `No recipe for "${label}". Create it in Recipe Management before selling if you want stock to deduct.`;
+  }
+  if (!recipe.ingredients?.length) {
+    return `Recipe for "${label}" has no ingredients. Add ingredients in Recipe Management.`;
+  }
+  return null;
+}
 
 /**
  * Pre-pay checks: missing recipes / low ingredient stock.
- * Sale is never blocked by callers — only warnings for confirm UI.
+ * Sale is never blocked — only warnings for confirm UI.
+ * Load failures return [] so a paid sale is not followed by a confusing banner.
  */
 export async function buildPosInventorySaleWarnings(
   branchCode: string,
   cart: PosCartLine[],
+  preloaded?: PosInventorySnapshot | null,
 ): Promise<string[]> {
   if (!branchCode || cart.length === 0) return [];
 
   let recipes: Recipe[] = [];
   let ingredients: { id: string; name: string; unit: string; currentStock: number }[] = [];
   try {
-    const inventory = await fetchBranchInventory(branchCode);
-    recipes = (inventory.recipes ?? []).filter((recipe) => recipe.active !== false);
-    ingredients = inventory.ingredients ?? [];
+    if (preloaded && ((preloaded.recipes?.length ?? 0) > 0 || (preloaded.ingredients?.length ?? 0) > 0)) {
+      recipes = activeRecipes(preloaded.recipes);
+      ingredients = preloaded.ingredients ?? [];
+    } else {
+      const inventory = await fetchBranchInventoryForPos(branchCode);
+      recipes = activeRecipes(inventory.recipes);
+      ingredients = inventory.ingredients ?? [];
+    }
   } catch {
-    return ["Could not load inventory for recipe/stock check. Sale can still continue."];
+    // Don't scare cashiers after a successful pay — add-time check covers recipe gaps.
+    return [];
   }
 
-  const recipeByMenuItem = new Map<string, Recipe>();
-  for (const recipe of recipes) {
-    if (recipe.menuItemId && !recipeByMenuItem.has(recipe.menuItemId)) {
-      recipeByMenuItem.set(recipe.menuItemId, recipe);
-    }
-  }
+  if (recipes.length === 0) return [];
+
   const ingredientById = new Map(ingredients.map((ing) => [ing.id, ing]));
   const needByIngredient = new Map<string, number>();
   const warnings: string[] = [];
 
   for (const line of cart) {
     const label = cartLinePrintLabel(line);
-    const recipe = recipeByMenuItem.get(line.item.id);
+    const recipe = pickRecipeForSale(recipes, {
+      menuItemId: line.item.id,
+      itemName: line.item.name,
+      lineLabel: label,
+    });
     if (!recipe) {
       warnings.push(`No recipe linked for "${label}". Create a recipe so inventory can deduct.`);
       continue;

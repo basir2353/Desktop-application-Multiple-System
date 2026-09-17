@@ -89,7 +89,7 @@ export function RecipeManagementPage(): JSX.Element {
         .filter((row) => row.ingredientId && Number(row.qty) > 0)
         .map((row) => ({
           ingredientId: row.ingredientId,
-          qty: Number(row.qty),
+          qty: Math.round(Number(row.qty) * 1000) / 1000,
           unit: row.unit.trim() || ingredientById.get(row.ingredientId)?.unit || "g",
         })),
     [form.lines, ingredientById],
@@ -504,11 +504,13 @@ export function RecipeManagementPage(): JSX.Element {
                           <input
                             className={`${inputClass} mt-1 text-xs`}
                             type="number"
-                            min={0.001}
+                            inputMode="decimal"
+                            min={0}
                             step="any"
                             placeholder="e.g. 0.5 or 500"
                             value={row.qty}
                             onChange={(e) => updateLine(index, { qty: e.target.value })}
+                            onInvalid={(e) => e.preventDefault()}
                           />
                         </label>
                         <label className="block text-[10px] text-slate-500 sm:col-span-2">

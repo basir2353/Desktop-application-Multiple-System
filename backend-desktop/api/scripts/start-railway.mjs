@@ -162,6 +162,12 @@ if (runAuthEnsure) {
   }
 }
 
+// Recipe 0.5 qty must not depend on the optional full ensure-schema pass.
+const { ensureFractionalQtySchema } = await import("./ensure-schema.mjs");
+if (!ensureFractionalQtySchema({ quiet: true })) {
+  console.warn("[railway] Fractional qty schema ensure failed — recipe decimals may 500 until Postgres is patched.");
+}
+
 // Full ensure-schema is optional (store, printing, indexes).
 const runEnsure = (process.env.RAILWAY_RUN_ENSURE_SCHEMA ?? "0") === "1";
 if (runEnsure) {

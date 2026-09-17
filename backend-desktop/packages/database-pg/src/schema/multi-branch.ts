@@ -18,7 +18,7 @@ export const popsBranchTransfers = pgTable("pops_branch_transfers", {
   transferRef: text("transfer_ref").notNull(),
   ingredientId: uuid("ingredient_id")
     .notNull()
-    .references(() => popsIngredients.id, { onDelete: "restrict" }),
+    .references(() => popsIngredients.id, { onDelete: "cascade" }),
   ingredientSku: text("ingredient_sku").notNull(),
   ingredientName: text("ingredient_name").notNull(),
   qty: integer("qty").notNull(),

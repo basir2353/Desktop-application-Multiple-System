@@ -442,12 +442,14 @@ function PrinterSectionsTab({
         systemPrinterName: profile.systemPrinterName?.trim() || systemPrinterName,
       });
     }
-    togglePrinterForSection(branchCode, selectedSection.id, profile.id, true);
+    // "Use for …" must become PRIMARY for this section. togglePrinterForSection only
+    // appends as backup, so with 2+ printers jobs kept going to the old primary.
+    setSectionPrimaryPrinter(branchCode, selectedSection.id, profile.id);
     maybeSetDefaultPosPrinter(branchCode, profile.id, printerType, selectedSection.id);
     notify(
       printer.isVirtual
-        ? `✓ ${printer.name} → ${selectedSection.name} only (PDF/XPS). Other sections unchanged.`
-        : `✓ ${printer.name} → ${selectedSection.name} only. Other sections unchanged.`,
+        ? `✓ ${printer.name} → ${selectedSection.name} primary (PDF/XPS). Other sections unchanged.`
+        : `✓ ${printer.name} → ${selectedSection.name} primary. Print goes here.`,
     );
     setPrinterPickerOpen(false);
     setPrinterSearch("");

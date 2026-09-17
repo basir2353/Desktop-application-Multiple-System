@@ -4,6 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import compression from "compression";
 import { AppModule } from "./app.module";
+import { ZodExceptionFilter } from "./http/zod-exception.filter";
 import { createRequestConcurrencyMiddleware } from "./load/requestConcurrency";
 
 const compressionMiddleware =
@@ -46,6 +47,7 @@ async function bootstrap(): Promise<void> {
   }
   app.use(compressionMiddleware());
   app.use(createRequestConcurrencyMiddleware());
+  app.useGlobalFilters(new ZodExceptionFilter());
   app.enableCors({
     origin: parseCorsOrigins(),
     credentials: true,

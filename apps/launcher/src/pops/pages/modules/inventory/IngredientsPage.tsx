@@ -378,9 +378,19 @@ export function IngredientsPage(): JSX.Element {
             render: (r) => {
               const kitchen = r.kitchenStock ?? 0;
               const store = r.storeStock ?? Math.max(0, (r.onHandStock ?? r.currentStock) - kitchen);
+              const sections = (r.kitchenSections ?? []).filter((s) => s.quantity > 0);
               return (
                 <span className="text-slate-300">
-                  K:{kitchen}
+                  <span>K:{kitchen}</span>
+                  {sections.length > 0 ? (
+                    <span className="ml-1 text-[10px] text-amber-200/80">
+                      (
+                      {sections
+                        .map((s) => `${s.name}:${s.quantity}`)
+                        .join(" · ")}
+                      )
+                    </span>
+                  ) : null}
                   {store > 0 ? (
                     <span className="ml-1 text-[10px] text-slate-500">· Store:{store}</span>
                   ) : null}

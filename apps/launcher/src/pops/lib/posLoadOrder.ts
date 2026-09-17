@@ -1,5 +1,8 @@
 import {
   formatMenuItemLabel,
+  isSilentMenuVariantLabel,
+  MENU_PORTION_VALUES,
+  RECIPE_PORTION_PRESETS,
   type Bill,
   type BillLine,
   type KitchenTicket,
@@ -381,14 +384,23 @@ export function cartFromStoredLines(
   return cart;
 }
 
-/** Split `Burger (بدون مرچ)` → base + note for cart restore. */
-function splitLineLabelNote(label: string): { baseLabel: string; lineNote?: string } {
+function isPortionLikeToken(token: string): boolean {
+  const value = token.trim().toLowerCase();
+  if (!value) return false;
+  if (isSilentMenuVariantLabel(value)) return true;
+  if ((MENU_PORTION_VALUES as readonly string[]).includes(value)) return true;
+  return RECIPE_PORTION_PRESETS.some((preset) => preset.toLowerCase() === value);
+}
+
+/** Split `Burger (بدون مرچ)` → base + note. Keep Half/Full as portion, not a kitchen note. */
+export function splitLineLabelNote(label: string): { baseLabel: string; lineNote?: string } {
   const trimmed = label.trim();
   const match = trimmed.match(/^(.*)\s*\(([^)]+)\)\s*$/);
   if (!match) return { baseLabel: trimmed };
   const base = match[1]!.trim();
   const note = match[2]!.trim();
   if (!base || !note) return { baseLabel: trimmed };
+  if (isPortionLikeToken(note)) return { baseLabel: trimmed };
   return { baseLabel: base, lineNote: note };
 }
 

@@ -196,11 +196,151 @@ export async function createInventoryTransfer(input: CreateInventoryTransfer) {
   }>;
 }
 
+/** Soft-parse recipe/ingredient rows so one bad record cannot blank the POS check. */
+function softParseRecipes(raw: unknown): Recipe[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Recipe[] = [];
+  for (const row of raw) {
+    const parsed = recipeSchema.safeParse(row);
+    if (parsed.success) {
+      out.push(parsed.data);
+      continue;
+    }
+    if (!row || typeof row !== "object") continue;
+    const obj = row as Record<string, unknown>;
+    if (typeof obj.id !== "string" || typeof obj.name !== "string") continue;
+    const ingredients = Array.isArray(obj.ingredients)
+      ? obj.ingredients
+          .map((line) => {
+            if (!line || typeof line !== "object") return null;
+            const item = line as Record<string, unknown>;
+            if (typeof item.ingredientId !== "string") return null;
+            return {
+              id: typeof item.id === "string" ? item.id : item.ingredientId,
+              ingredientId: item.ingredientId,
+              ingredient: typeof item.ingredient === "string" ? item.ingredient : "—",
+              qty: Number(item.qty) || 0,
+              unit: typeof item.unit === "string" ? item.unit : "Piece",
+            };
+          })
+          .filter((line): line is NonNullable<typeof line> => Boolean(line))
+      : [];
+    out.push({
+      id: obj.id,
+      name: obj.name,
+      menuItemId: typeof obj.menuItemId === "string" ? obj.menuItemId : null,
+      menuItem: typeof obj.menuItem === "string" ? obj.menuItem : null,
+      version: typeof obj.version === "string" ? obj.version : "1",
+      portionSize: typeof obj.portionSize === "string" ? obj.portionSize : null,
+      portionFactors:
+        obj.portionFactors && typeof obj.portionFactors === "object"
+          ? (obj.portionFactors as Record<string, number>)
+          : undefined,
+      ingredients,
+      totalCost: Number(obj.totalCost) || 0,
+      active: obj.active !== false,
+    });
+  }
+  return out;
+}
+
+function softParseIngredients(raw: unknown): Ingredient[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Ingredient[] = [];
+  for (const row of raw) {
+    const parsed = ingredientSchema.safeParse(row);
+    if (parsed.success) {
+      out.push(parsed.data);
+      continue;
+    }
+    if (!row || typeof row !== "object") continue;
+    const obj = row as Record<string, unknown>;
+    if (typeof obj.id !== "string" || typeof obj.name !== "string") continue;
+    out.push({
+      id: obj.id,
+      categoryId: typeof obj.categoryId === "string" ? obj.categoryId : null,
+      categoryName: typeof obj.categoryName === "string" ? obj.categoryName : null,
+      storeProductId: typeof obj.storeProductId === "string" ? obj.storeProductId : null,
+      sku: typeof obj.sku === "string" ? obj.sku : "",
+      name: obj.name,
+      unit: (typeof obj.unit === "string" && obj.unit.trim() ? obj.unit.trim() : "Piece") as Ingredient["unit"],
+      currentStock: Number(obj.currentStock) || 0,
+      onHandStock: obj.onHandStock != null ? Number(obj.onHandStock) : undefined,
+      storeStock: obj.storeStock != null ? Number(obj.storeStock) : undefined,
+      kitchenStock: obj.kitchenStock != null ? Number(obj.kitchenStock) : undefined,
+      kitchenSections: Array.isArray(obj.kitchenSections)
+        ? (obj.kitchenSections as Ingredient["kitchenSections"])
+        : undefined,
+      minStock: Number(obj.minStock) || 0,
+      reorderLevel: Number(obj.reorderLevel) || 0,
+      maxStock: Number(obj.maxStock) || 0,
+      unitCost: Number(obj.unitCost) || 0,
+    });
+  }
+  return out;
+}
+
 export async function fetchBranchInventory(branchCode: string): Promise<BranchInventory> {
   const params = new URLSearchParams({ branchCode });
   const res = await authFetch(`/v1/inventory?${params}`);
   if (!res.ok) await parseError(res, "Inventory failed");
-  return branchInventorySchema.parse(await res.json());
+  const raw: unknown = await res.json();
+  const parsed = branchInventorySchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  // Keep inventory screens usable when one nested field is unexpected.
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const fallback = branchInventorySchema.safeParse({
+    branchCode: typeof obj.branchCode === "string" ? obj.branchCode : branchCode,
+    categories: Array.isArray(obj.categories) ? obj.categories : [],
+    ingredients: softParseIngredients(obj.ingredients),
+    suppliers: Array.isArray(obj.suppliers) ? obj.suppliers : [],
+    purchaseOrders: Array.isArray(obj.purchaseOrders) ? obj.purchaseOrders : [],
+    goodsReceipts: Array.isArray(obj.goodsReceipts) ? obj.goodsReceipts : [],
+    stockBatches: Array.isArray(obj.stockBatches) ? obj.stockBatches : [],
+    recipes: softParseRecipes(obj.recipes),
+    adjustments: Array.isArray(obj.adjustments) ? obj.adjustments : [],
+    wasteRecords: Array.isArray(obj.wasteRecords) ? obj.wasteRecords : [],
+    stockCounts: Array.isArray(obj.stockCounts) ? obj.stockCounts : [],
+    auditLogs: Array.isArray(obj.auditLogs) ? obj.auditLogs : [],
+  });
+  if (fallback.success) return fallback.data;
+  throw new Error("Inventory response could not be read. Reopen Inventory or sign in again.");
+}
+
+/** POS sale check: prefer lightweight sale-check API, then soft full inventory. */
+export async function fetchBranchInventoryForPos(
+  branchCode: string,
+): Promise<{ recipes: Recipe[]; ingredients: Ingredient[] }> {
+  const params = new URLSearchParams({ branchCode });
+
+  try {
+    const light = await authFetch(`/v1/inventory/sale-check?${params}`);
+    // 404 = older API without sale-check — fall through. Other errors also fall through.
+    if (light.ok) {
+      const raw: unknown = await light.json();
+      const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+      return {
+        recipes: softParseRecipes(obj.recipes),
+        ingredients: softParseIngredients(obj.ingredients),
+      };
+    }
+  } catch {
+    /* fall through to full inventory */
+  }
+
+  try {
+    const res = await authFetch(`/v1/inventory?${params}`);
+    if (!res.ok) await parseError(res, "Inventory failed");
+    const raw: unknown = await res.json();
+    const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    return {
+      recipes: softParseRecipes(obj.recipes),
+      ingredients: softParseIngredients(obj.ingredients),
+    };
+  } catch (err) {
+    // Last resort: empty snapshot (POS add-time / pay-time handle missing data).
+    throw err instanceof Error ? err : new Error("Inventory failed");
+  }
 }
 
 export async function fetchInventoryReport(

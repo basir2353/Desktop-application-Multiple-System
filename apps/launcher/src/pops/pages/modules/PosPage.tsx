@@ -140,13 +140,13 @@ import {
   POS_SHIFT_TEAM_CHANGED_EVENT,
 } from "../../lib/posShiftTeam";
 import { createStaffFoodRecord, fetchEmployeeAdvances, fetchEmployees } from "../../api/hr";
-import { fetchBranchInventory } from "../../api/inventory";
+import { fetchBranchInventory, fetchBranchInventoryForPos } from "../../api/inventory";
 import { openAdvanceTotalsByEmployee } from "../../lib/employeeAdvancesLocal";
 import { formatSelectBalance } from "../../lib/selectMeta";
 import { SearchableSelect } from "../../ui/SearchableSelect";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
 import { cartToBillLines } from "../../lib/posCheckout";
-import { buildPosInventorySaleWarnings } from "../../lib/posInventorySaleCheck";
+import { buildPosInventorySaleWarnings, recipeWarningForMenuAdd } from "../../lib/posInventorySaleCheck";
 import { fieldInputClass } from "../../lib/themeClasses";
 import {
   DELIVERY_SETTINGS_CHANGED_EVENT,
@@ -538,6 +538,14 @@ export function PosPage(): JSX.Element {
     queryKey: ["inventory", "branch", branch?.code, "staff-food-suppliers"],
     enabled: Boolean(branch?.code) && mode === "staff-food",
     queryFn: () => fetchBranchInventory(branch!.code),
+  });
+
+  const posInventorySaleQuery = useQuery({
+    queryKey: ["inventory", "pos-sale-check", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchBranchInventoryForPos(branch!.code),
+    staleTime: 60_000,
+    retry: 1,
   });
 
   const activeStaffFoodSuppliers = useMemo(
@@ -1027,6 +1035,15 @@ export function PosPage(): JSX.Element {
     variant: MenuItemVariant | null,
     opts?: { qty?: number; unitPrice?: number; lineNote?: string },
   ): void {
+    const recipeWarn = recipeWarningForMenuAdd(posInventorySaleQuery.data?.recipes, item, variant, {
+      inventoryReady: posInventorySaleQuery.isSuccess,
+      inventoryFailed: posInventorySaleQuery.isError,
+    });
+    if (recipeWarn) {
+      const ok = window.confirm(`${recipeWarn}\n\nAdd to ticket anyway?`);
+      if (!ok) return;
+      setPrintNotice({ message: recipeWarn, tone: "warning" });
+    }
     const qty = opts?.qty ?? 1;
     const unitPrice = opts?.unitPrice;
     const lineNote = opts?.lineNote?.trim();
@@ -4137,7 +4154,11 @@ export function PosPage(): JSX.Element {
           }) => {
             pendingInventoryWarningsRef.current = [];
             if (status === "completed" && branch?.code) {
-              const warnings = await buildPosInventorySaleWarnings(branch.code, cart);
+              const warnings = await buildPosInventorySaleWarnings(
+                branch.code,
+                cart,
+                posInventorySaleQuery.data ?? null,
+              );
               if (warnings.length > 0) {
                 const preview = warnings.slice(0, 8).join("\n• ");
                 const ok = window.confirm(

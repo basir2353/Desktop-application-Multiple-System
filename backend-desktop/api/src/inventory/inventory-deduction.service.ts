@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { BillLine } from "@platform/contracts";
-import { parseRecipePortionConfig, recipePortionFactorForLabel } from "@platform/contracts";
+import { parseRecipePortionConfig, pickRecipeForSale, recipePortionFactorForLabel } from "@platform/contracts";
 import {
   popsBills,
   popsIngredients,
@@ -25,6 +25,26 @@ function recipeConsumeQty(recipeQty: number, lineQty: number, portionFactor: num
   const raw = Number(recipeQty) * Number(lineQty) * Number(portionFactor);
   if (!(raw > 0) || !Number.isFinite(raw)) return 0;
   return Math.round(raw * 1000) / 1000;
+}
+
+function pickRecipeForBillLine<T extends {
+  id: string;
+  name?: string | null;
+  menuItemId: string | null;
+  portionSize: string | null;
+  createdAt: Date;
+}>(
+  recipes: T[],
+  menuItemId: string | null,
+  lineLabel: string,
+  linesByRecipeId: Map<string, unknown[]>,
+): T | undefined {
+  const newestLast = [...recipes].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  return pickRecipeForSale(
+    newestLast,
+    { menuItemId, itemName: lineLabel, lineLabel },
+    (recipe) => (linesByRecipeId.get(recipe.id)?.length ?? 0) > 0,
+  );
 }
 
 @Injectable()
@@ -84,8 +104,10 @@ export class InventoryDeductionService {
     const recipes = await this.db
       .select({
         id: popsRecipes.id,
+        name: popsRecipes.name,
         menuItemId: popsRecipes.menuItemId,
         portionSize: popsRecipes.portionSize,
+        createdAt: popsRecipes.createdAt,
       })
       .from(popsRecipes)
       .where(
@@ -96,43 +118,31 @@ export class InventoryDeductionService {
         ),
       );
 
-    const recipeByMenuItem = new Map<string, { id: string; portionSize: string | null }>();
-    for (const recipe of recipes) {
-      if (recipe.menuItemId && !recipeByMenuItem.has(recipe.menuItemId)) {
-        recipeByMenuItem.set(recipe.menuItemId, {
-          id: recipe.id,
-          portionSize: recipe.portionSize,
-        });
-      }
+    const recipeIds = recipes.map((recipe) => recipe.id);
+    const allRecipeLines = recipeIds.length
+      ? await this.db.select().from(popsRecipeLines).where(inArray(popsRecipeLines.recipeId, recipeIds))
+      : [];
+    const recipeLineCache = new Map<string, (typeof popsRecipeLines.$inferSelect)[]>();
+    for (const line of allRecipeLines) {
+      const list = recipeLineCache.get(line.recipeId) ?? [];
+      list.push(line);
+      recipeLineCache.set(line.recipeId, list);
     }
 
-    const recipeLineCache = new Map<string, (typeof popsRecipeLines.$inferSelect)[]>();
     const deductions = new Map<string, { ingredientId: string; cookingUnitId: string | null; qty: number }>();
     const detailParts: string[] = [];
     let cogsTotal = 0;
 
     for (const line of lines) {
       const menuItemId = this.resolveMenuItemId(line, menuItems);
-      if (!menuItemId) {
-        this.logger.warn(`Skip inventory for "${line.label}" on ${bill.billRef}: menu item not matched`);
-        continue;
-      }
-
-      const recipe = recipeByMenuItem.get(menuItemId);
+      const recipe = pickRecipeForBillLine(recipes, menuItemId, line.label, recipeLineCache);
       if (!recipe) {
         // Closing POS must not fail when recipes are not configured yet.
         this.logger.warn(`Skip inventory for "${line.label}" on ${bill.billRef}: no active recipe`);
         continue;
       }
 
-      let recipeLines = recipeLineCache.get(recipe.id);
-      if (!recipeLines) {
-        recipeLines = await this.db
-          .select()
-          .from(popsRecipeLines)
-          .where(eq(popsRecipeLines.recipeId, recipe.id));
-        recipeLineCache.set(recipe.id, recipeLines);
-      }
+      const recipeLines = recipeLineCache.get(recipe.id) ?? [];
 
       if (recipeLines.length === 0) {
         this.logger.warn(`Skip inventory for "${line.label}" on ${bill.billRef}: recipe has no ingredients`);
@@ -190,6 +200,7 @@ export class InventoryDeductionService {
 
     const ingredientRemaining = new Map<string, number>();
     const warehouseRemaining = new Map<string, number>();
+    const cookingUnitRemaining = new Map<string, number>();
     for (const deduction of deductions.values()) {
       const { ingredientId, cookingUnitId, qty } = deduction;
       const ingRows = await this.db
@@ -247,46 +258,102 @@ export class InventoryDeductionService {
             }))
             .filter((row) => row.remainingQty > 0)
             .sort((a, b) => b.remainingQty - a.remainingQty)[0];
-          if (kitchenStock) {
-            warehouseQty = Math.min(qty, kitchenStock.remainingQty);
-            warehouseNewQty = kitchenStock.remainingQty - warehouseQty;
-            warehouseRemaining.set(kitchenStock.id, warehouseNewQty);
-            warehouseStockId = kitchenStock.id;
-            unitCost = kitchenStock.unitCostPkr || ing.unitCostPkr;
-            if (warehouseQty < qty) {
-              this.logger.warn(
-                `Kitchen short for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit}, took ${warehouseQty} (Store not used)`,
-              );
-            }
-          } else {
+
+          if (!kitchenStock) {
             this.logger.warn(
               `No Kitchen stock for ${ing.name} on ${bill.billRef}; need ${qty} ${ing.unit}. Transfer from Store→Kitchen first.`,
             );
-          }
-        }
-
-        if (cookingUnitId && warehouseQty > 0) {
-          const [unitStock] = await this.db
-            .select()
-            .from(storeCookingUnitStock)
-            .where(
-              and(
-                eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
-                eq(storeCookingUnitStock.productId, ing.storeProductId),
-              ),
-            )
-            .limit(1);
-          if (unitStock && unitStock.quantity >= warehouseQty) {
-            cookingUnitStockId = unitStock.id;
-            newCookingUnitStock = unitStock.quantity - warehouseQty;
-            unitCost = unitStock.unitCostPkr || unitCost;
+          } else if (cookingUnitId) {
+            // Menu category → kitchen section: deduct ONLY from that section (never steal other sections).
+            const [unitStock] = await this.db
+              .select()
+              .from(storeCookingUnitStock)
+              .where(
+                and(
+                  eq(storeCookingUnitStock.cookingUnitId, cookingUnitId),
+                  eq(storeCookingUnitStock.productId, ing.storeProductId),
+                  eq(storeCookingUnitStock.branchId, bill.branchId),
+                ),
+              )
+              .limit(1);
+            const unitKey = unitStock?.id ?? `${cookingUnitId}:${ing.storeProductId}`;
+            const unitAvail = cookingUnitRemaining.get(unitKey) ?? (unitStock?.quantity ?? 0);
+            const takeQty = Math.min(qty, unitAvail, kitchenStock.remainingQty);
+            if (takeQty <= 0) {
+              this.logger.warn(
+                `Section stock empty for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit} from cooking unit ${cookingUnitId}`,
+              );
+            } else {
+              warehouseQty = takeQty;
+              warehouseNewQty = kitchenStock.remainingQty - takeQty;
+              warehouseRemaining.set(kitchenStock.id, warehouseNewQty);
+              warehouseStockId = kitchenStock.id;
+              unitCost = (unitStock?.unitCostPkr || kitchenStock.unitCostPkr || ing.unitCostPkr);
+              if (unitStock) {
+                cookingUnitStockId = unitStock.id;
+                newCookingUnitStock = unitAvail - takeQty;
+                cookingUnitRemaining.set(unitKey, newCookingUnitStock);
+              }
+              if (takeQty < qty) {
+                this.logger.warn(
+                  `Section short for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit}, took ${takeQty} from assigned section`,
+                );
+              }
+            }
+          } else {
+            // No section on category: only spend Kitchen qty that is not allocated to any section.
+            const sectionRows = await this.db
+              .select({
+                id: storeCookingUnitStock.id,
+                quantity: storeCookingUnitStock.quantity,
+              })
+              .from(storeCookingUnitStock)
+              .where(
+                and(
+                  eq(storeCookingUnitStock.branchId, bill.branchId),
+                  eq(storeCookingUnitStock.productId, ing.storeProductId),
+                ),
+              );
+            let sectionHeld = 0;
+            for (const row of sectionRows) {
+              sectionHeld += cookingUnitRemaining.get(row.id) ?? row.quantity;
+            }
+            const unassigned = Math.max(0, kitchenStock.remainingQty - sectionHeld);
+            const takeQty = Math.min(qty, unassigned);
+            if (takeQty <= 0) {
+              this.logger.warn(
+                `No unassigned Kitchen stock for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit} (all qty is in sections)`,
+              );
+            } else {
+              warehouseQty = takeQty;
+              warehouseNewQty = kitchenStock.remainingQty - takeQty;
+              warehouseRemaining.set(kitchenStock.id, warehouseNewQty);
+              warehouseStockId = kitchenStock.id;
+              unitCost = kitchenStock.unitCostPkr || ing.unitCostPkr;
+              if (takeQty < qty) {
+                this.logger.warn(
+                  `Unassigned Kitchen short for ${ing.name} on ${bill.billRef}: need ${qty} ${ing.unit}, took ${takeQty}`,
+                );
+              }
+            }
           }
         }
       }
 
-      // Linked products: only deduct what Kitchen actually had. Unlinked: full recipe qty.
+      // Linked products: only deduct what the section/Kitchen actually had. Unlinked: full recipe qty.
       const takeQty = ing.storeProductId ? warehouseQty : qty;
       if (takeQty <= 0) {
+        continue;
+      }
+      // Section-tagged sales must update cooking-unit ledger (or skip if row missing mid-flight).
+      if (ing.storeProductId && cookingUnitId && !cookingUnitStockId) {
+        this.logger.warn(
+          `Skip ${ing.name} on ${bill.billRef}: cooking unit ${cookingUnitId} has no stock row`,
+        );
+        // Roll back staged kitchen take so we do not orphan warehouse vs section.
+        if (warehouseStockId && warehouseNewQty !== undefined) {
+          warehouseRemaining.set(warehouseStockId, warehouseNewQty + warehouseQty);
+        }
         continue;
       }
       const newStock = remaining - takeQty;
@@ -360,7 +427,11 @@ export class InventoryDeductionService {
           action: "POS sale deduction",
           module: "Inventory",
           detail: `${bill.billRef}: ${update.ingredient.name} −${update.qty} ${update.ingredient.unit} (${
-            update.warehouseStockId ? "warehouse + ingredient stock" : "ingredient stock"
+            update.cookingUnitId
+              ? `section ${update.cookingUnitId.slice(0, 8)}…`
+              : update.warehouseStockId
+                ? "unassigned kitchen"
+                : "ingredient stock"
           }; ${lineSummary(detailParts)})`,
         });
       }
@@ -421,24 +492,31 @@ export class InventoryDeductionService {
     ]));
     const recipes = await this.db.select({
       id: popsRecipes.id,
+      name: popsRecipes.name,
       menuItemId: popsRecipes.menuItemId,
       portionSize: popsRecipes.portionSize,
+      createdAt: popsRecipes.createdAt,
     }).from(popsRecipes).where(and(
       eq(popsRecipes.organizationId, organizationId),
       eq(popsRecipes.branchId, bill.branchId),
       eq(popsRecipes.active, true),
     ));
-    const recipeByMenuItem = new Map(
-      recipes
-        .filter((recipe) => recipe.menuItemId)
-        .map((recipe) => [recipe.menuItemId!, recipe]),
-    );
+    const recipeIds = recipes.map((recipe) => recipe.id);
+    const allRecipeLines = recipeIds.length
+      ? await this.db.select().from(popsRecipeLines).where(inArray(popsRecipeLines.recipeId, recipeIds))
+      : [];
+    const recipeLineCache = new Map<string, (typeof popsRecipeLines.$inferSelect)[]>();
+    for (const recipeLine of allRecipeLines) {
+      const list = recipeLineCache.get(recipeLine.recipeId) ?? [];
+      list.push(recipeLine);
+      recipeLineCache.set(recipeLine.recipeId, list);
+    }
     const deductions = new Map<string, { ingredientId: string; cookingUnitId: string | null; qty: number }>();
     for (const line of lines) {
       const menuItemId = this.resolveMenuItemId(line, menuItems);
-      const recipe = menuItemId ? recipeByMenuItem.get(menuItemId) : undefined;
+      const recipe = pickRecipeForBillLine(recipes, menuItemId, line.label, recipeLineCache);
       if (!recipe) continue;
-      const recipeLines = await this.db.select().from(popsRecipeLines).where(eq(popsRecipeLines.recipeId, recipe.id));
+      const recipeLines = recipeLineCache.get(recipe.id) ?? [];
       const portion = parseRecipePortionConfig(recipe.portionSize);
       const portionFactor = recipePortionFactorForLabel(line.label, portion.factors, portion.base);
       const cookingUnitId = cookingUnitByCategory.get(
