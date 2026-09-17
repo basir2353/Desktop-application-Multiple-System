@@ -924,6 +924,13 @@ export class PlatformService {
       .leftJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
       .where(eq(organizationMemberships.userId, userId));
 
+    const isDefaultSystemAdmin = memberships.some((m) => m.role === "owner");
+    if (isDefaultSystemAdmin) {
+      throw new BadRequestException(
+        "Cannot delete the default system admin (owner). Create another admin instead, or delete the whole business.",
+      );
+    }
+
     await this.db.insert(entityDeletionBackups).values({
       entityType: "user",
       entityId: userId,
@@ -1095,6 +1102,24 @@ export class PlatformService {
     if (!target) throw new NotFoundException("User not found");
     if (target.platformRole === "super_admin" && input.status && input.status !== "active") {
       throw new BadRequestException("Cannot deactivate the Super Admin account");
+    }
+
+    if (input.status === "inactive" || input.status === "suspended") {
+      const ownerRows = await this.db
+        .select({ role: organizationMemberships.role })
+        .from(organizationMemberships)
+        .where(
+          and(
+            eq(organizationMemberships.userId, userId),
+            eq(organizationMemberships.role, "owner"),
+          ),
+        )
+        .limit(1);
+      if (ownerRows.length > 0) {
+        throw new BadRequestException(
+          "Cannot deactivate or suspend the default system admin (owner). Create another admin if needed.",
+        );
+      }
     }
 
     const [updated] = await this.db

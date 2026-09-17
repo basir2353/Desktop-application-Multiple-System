@@ -46,6 +46,7 @@ export function SuperAdminUsersPage(): JSX.Element {
   const [roleFilter, setRoleFilter] = useState("all");
   const [viewUser, setViewUser] = useState<PlatformUser | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [addMode, setAddMode] = useState<"user" | "admin">("user");
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
 
   const filtered = useMemo(() => {
@@ -111,7 +112,11 @@ export function SuperAdminUsersPage(): JSX.Element {
     mutationFn: createPlatformUser,
     onSuccess: async (created) => {
       setAddOpen(false);
-      setMessage(`User ${created.email} added. Password saved — use Show password to view.`);
+      setMessage(
+        addMode === "admin"
+          ? `Admin ${created.email} created. Default owner admin is unchanged.`
+          : `User ${created.email} added. Password saved — use Show password to view.`,
+      );
       await qc.invalidateQueries({ queryKey: ["platform", "users"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Create failed"),
@@ -132,21 +137,36 @@ export function SuperAdminUsersPage(): JSX.Element {
         <div>
           <h2 className={`text-lg font-semibold ${headingClass}`}>All users</h2>
           <p className={`mt-1 text-sm ${saPageSubClass}`}>
-            Manage live accounts across every business — add users, view saved passwords, activate,
-            suspend, or delete (archived backup; removed from this list).
+            Manage live accounts across every business. Default system admin (owner) cannot be deleted
+            or suspended — create another admin if needed.
           </p>
         </div>
-        <button
-          type="button"
-          className={saBtnPrimaryClass}
-          disabled={businesses.isLoading || (businesses.data?.length ?? 0) === 0}
-          onClick={() => {
-            setMessage(null);
-            setAddOpen(true);
-          }}
-        >
-          Add user
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={saBtnPrimaryClass}
+            disabled={businesses.isLoading || (businesses.data?.length ?? 0) === 0}
+            onClick={() => {
+              setMessage(null);
+              setAddMode("admin");
+              setAddOpen(true);
+            }}
+          >
+            Create admin
+          </button>
+          <button
+            type="button"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
+            disabled={businesses.isLoading || (businesses.data?.length ?? 0) === 0}
+            onClick={() => {
+              setMessage(null);
+              setAddMode("user");
+              setAddOpen(true);
+            }}
+          >
+            Add user
+          </button>
+        </div>
       </div>
 
       {message ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{message}</p> : null}
@@ -213,7 +233,18 @@ export function SuperAdminUsersPage(): JSX.Element {
                       <p className="font-medium">{u.name ?? u.email}</p>
                       <p className={`text-xs ${mutedClass}`}>{u.email}</p>
                     </td>
-                    <td className="px-4 py-3 capitalize">{u.role.replaceAll("_", " ")}</td>
+                    <td className="px-4 py-3 capitalize">
+                      {u.role === "owner" ? (
+                        <span className="inline-flex flex-col gap-0.5">
+                          <span>Admin</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">
+                            Default · protected
+                          </span>
+                        </span>
+                      ) : (
+                        u.role.replaceAll("_", " ")
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {u.platformRole === "super_admin" ? (
                         <span>Platform</span>
@@ -269,7 +300,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                             {revealed[userKey(u)] ? "Hide password" : "See password"}
                           </button>
                         ) : null}
-                        {u.platformRole !== "super_admin" ? (
+                        {u.platformRole !== "super_admin" && u.role !== "owner" ? (
                           u.status !== "active" ? (
                             <button
                               type="button"
@@ -299,6 +330,8 @@ export function SuperAdminUsersPage(): JSX.Element {
                               </button>
                             </>
                           )
+                        ) : u.role === "owner" ? (
+                          <span className={`px-1 text-[11px] ${mutedClass}`}>Protected</span>
                         ) : null}
 
                         {resetFor === u.id ? (
@@ -344,7 +377,7 @@ export function SuperAdminUsersPage(): JSX.Element {
                           </button>
                         )}
 
-                        {u.platformRole !== "super_admin" ? (
+                        {u.platformRole !== "super_admin" && u.role !== "owner" ? (
                           <button
                             type="button"
                             className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-500/40 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-500/10"
@@ -384,8 +417,18 @@ export function SuperAdminUsersPage(): JSX.Element {
 
       {addOpen && businesses.data && businesses.data.length > 0 ? (
         <SuperAdminAddUserModal
+          key={addMode}
           businesses={businesses.data}
           pending={createMut.isPending}
+          defaultRole="admin"
+          lockRole={addMode === "admin"}
+          title={addMode === "admin" ? "Create system admin" : "Add user"}
+          subtitle={
+            addMode === "admin"
+              ? "Add an admin login for any business. The original default admin (owner) stays protected and is never overwritten."
+              : "New login for a business. Password is saved so Super Admin can view it later."
+          }
+          submitLabel={addMode === "admin" ? "Create admin" : "Add user"}
           onClose={() => setAddOpen(false)}
           onCreate={(input) => createMut.mutate(input)}
         />

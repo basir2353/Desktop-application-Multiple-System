@@ -446,11 +446,13 @@ export class UsersService implements OnApplicationBootstrap {
   async updateUser(organizationId: string, userId: string, input: UpdateOrgUser) {
     const membership = await this.getMembership(organizationId, userId);
 
-    if (membership.role === "owner" && input.role && input.role !== "admin") {
-      throw new BadRequestException("Cannot change the organization owner role");
+    if (membership.role === "owner" && input.role) {
+      throw new BadRequestException(
+        "Cannot change the default system admin (owner) role. Create a new admin instead.",
+      );
     }
     if (membership.role === "owner" && input.active === false) {
-      throw new BadRequestException("Cannot deactivate the organization owner");
+      throw new BadRequestException("Cannot deactivate the default system admin (owner)");
     }
 
     if (input.password) {
@@ -521,7 +523,9 @@ export class UsersService implements OnApplicationBootstrap {
     }
     const membership = await this.getMembership(organizationId, userId);
     if (membership.role === "owner") {
-      throw new BadRequestException("Cannot delete the organization owner");
+      throw new BadRequestException(
+        "Cannot delete the default system admin (owner). Create another admin instead.",
+      );
     }
 
     const [target] = await this.db

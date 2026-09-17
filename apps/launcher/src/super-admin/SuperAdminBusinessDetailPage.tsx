@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  createPlatformUser,
   deletePlatformBusiness,
   fetchPlatformBusiness,
   fetchPlatformSettings,
@@ -20,8 +21,10 @@ import {
 } from "../lib/platformApi";
 import { fieldInputClass, headingClass, mutedClass } from "../pops/lib/themeClasses";
 import { businessNotesKey, resolvePraFlags } from "./superAdminHelpers";
+import { SuperAdminAddUserModal } from "./SuperAdminAddUserModal";
 import { SuperAdminUserViewModal } from "./SuperAdminUserViewModal";
 import type { PlatformUser } from "@platform/contracts";
+import { saBtnPrimaryClass } from "./superAdminTheme";
 
 const STATUS_ACTIONS: { status: BusinessStatus; label: string }[] = [
   { status: "active", label: "Activate" },
@@ -55,6 +58,7 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
   const [resetConfirmName, setResetConfirmName] = useState("");
   const [showCompanyReset, setShowCompanyReset] = useState(false);
   const [viewUser, setViewUser] = useState<PlatformUser | null>(null);
+  const [createAdminOpen, setCreateAdminOpen] = useState(false);
 
   const settings = useQuery({
     queryKey: ["platform", "settings"],
@@ -201,6 +205,17 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
       }
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Reset failed"),
+  });
+
+  const createAdminMut = useMutation({
+    mutationFn: createPlatformUser,
+    onSuccess: async (created) => {
+      setCreateAdminOpen(false);
+      setMessage(`Admin ${created.email} created for this system. Default owner admin is unchanged.`);
+      await qc.invalidateQueries({ queryKey: ["platform", "users"] });
+      await qc.invalidateQueries({ queryKey: ["platform", "businesses", businessId] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Create admin failed"),
   });
 
   const notesMut = useMutation({
@@ -473,7 +488,24 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
       </section>
 
       <section className="space-y-3">
-        <h3 className={`text-base font-semibold ${headingClass}`}>Users in this business</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className={`text-base font-semibold ${headingClass}`}>Users in this business</h3>
+            <p className={`mt-1 text-xs ${mutedClass}`}>
+              Default admin (owner) is protected — system updates never overwrite it.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={saBtnPrimaryClass}
+            onClick={() => {
+              setMessage(null);
+              setCreateAdminOpen(true);
+            }}
+          >
+            Create admin
+          </button>
+        </div>
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white border-slate-200 bg-white">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-slate-100 bg-slate-50/80 text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400">
@@ -498,7 +530,18 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                       <p className="font-medium">{u.name ?? u.email}</p>
                       <p className={`text-xs ${mutedClass}`}>{u.email}</p>
                     </td>
-                    <td className="px-4 py-3 capitalize">{u.role.replaceAll("_", " ")}</td>
+                    <td className="px-4 py-3 capitalize">
+                      {u.role === "owner" ? (
+                        <span className="inline-flex flex-col gap-0.5">
+                          <span>Admin</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">
+                            Default · protected
+                          </span>
+                        </span>
+                      ) : (
+                        u.role.replaceAll("_", " ")
+                      )}
+                    </td>
                     <td className="px-4 py-3 capitalize">{u.status}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
@@ -509,7 +552,9 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
                         >
                           View
                         </button>
-                        {u.status !== "active" ? (
+                        {u.role === "owner" ? (
+                          <span className={`px-1 text-[11px] ${mutedClass}`}>Protected</span>
+                        ) : u.status !== "active" ? (
                           <button
                             type="button"
                             className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/15 dark:bg-transparent dark:text-slate-200 dark:hover:bg-white/5"
@@ -591,6 +636,21 @@ export function SuperAdminBusinessDetailPage(): JSX.Element {
           onClose={() => setViewUser(null)}
           resetPending={resetMut.isPending}
           onResetPassword={(userId, pw) => resetMut.mutate({ userId, password: pw })}
+        />
+      ) : null}
+
+      {createAdminOpen ? (
+        <SuperAdminAddUserModal
+          businesses={[b]}
+          defaultBusinessId={b.id}
+          defaultRole="admin"
+          lockRole
+          title="Create system admin"
+          subtitle="Adds an admin for this business only. The default owner admin stays protected and is never overwritten."
+          submitLabel="Create admin"
+          pending={createAdminMut.isPending}
+          onClose={() => setCreateAdminOpen(false)}
+          onCreate={(input) => createAdminMut.mutate(input)}
         />
       ) : null}
     </div>

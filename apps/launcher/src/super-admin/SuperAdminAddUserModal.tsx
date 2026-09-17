@@ -19,6 +19,15 @@ type Props = {
   onClose: () => void;
   onCreate: (input: CreatePlatformUser) => void;
   pending?: boolean;
+  /** Prefill / lock business (e.g. from business detail page). */
+  defaultBusinessId?: string;
+  /** Prefill role. Defaults to admin for “Create admin”. */
+  defaultRole?: CreatePlatformUser["role"];
+  /** When true, role is fixed to defaultRole (Create system admin). */
+  lockRole?: boolean;
+  title?: string;
+  subtitle?: string;
+  submitLabel?: string;
 };
 
 export function SuperAdminAddUserModal({
@@ -26,12 +35,22 @@ export function SuperAdminAddUserModal({
   onClose,
   onCreate,
   pending,
+  defaultBusinessId,
+  defaultRole = "admin",
+  lockRole = false,
+  title = "Add user",
+  subtitle = "New login for a business. Password is saved so Super Admin can view it later.",
+  submitLabel = "Add user",
 }: Props): JSX.Element {
-  const [businessId, setBusinessId] = useState(businesses[0]?.id ?? "");
+  const initialBusiness =
+    defaultBusinessId && businesses.some((b) => b.id === defaultBusinessId)
+      ? defaultBusinessId
+      : (businesses[0]?.id ?? "");
+  const [businessId, setBusinessId] = useState(initialBusiness);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<CreatePlatformUser["role"]>("cashier");
+  const [role, setRole] = useState<CreatePlatformUser["role"]>(defaultRole);
   const [showPassword, setShowPassword] = useState(true);
 
   function submit(): void {
@@ -41,7 +60,7 @@ export function SuperAdminAddUserModal({
       name: name.trim() || undefined,
       email: email.trim(),
       password,
-      role,
+      role: lockRole ? defaultRole : role,
       branchScope: "All",
       pinRequired: false,
     });
@@ -62,11 +81,9 @@ export function SuperAdminAddUserModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 id="sa-add-user-title" className={`text-lg font-semibold ${headingClass}`}>
-              Add user
+              {title}
             </h3>
-            <p className={`mt-1 text-sm ${mutedClass}`}>
-              New login for a business. Password is saved so Super Admin can view it later.
-            </p>
+            <p className={`mt-1 text-sm ${mutedClass}`}>{subtitle}</p>
           </div>
           <button
             type="button"
@@ -79,10 +96,11 @@ export function SuperAdminAddUserModal({
 
         <div className="mt-4 space-y-3">
           <label className="block text-sm">
-            <span className={`font-medium ${mutedClass}`}>Business</span>
+            <span className={`font-medium ${mutedClass}`}>Business / system</span>
             <select
               className={`${fieldInputClass} mt-1 w-full`}
               value={businessId}
+              disabled={Boolean(defaultBusinessId)}
               onChange={(e) => setBusinessId(e.target.value)}
             >
               {businesses.map((b) => (
@@ -106,7 +124,7 @@ export function SuperAdminAddUserModal({
             <input
               type="email"
               className={`${fieldInputClass} mt-1 w-full`}
-              placeholder="user@example.com"
+              placeholder="admin@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -134,17 +152,26 @@ export function SuperAdminAddUserModal({
           </label>
           <label className="block text-sm">
             <span className={`font-medium ${mutedClass}`}>Role</span>
-            <select
-              className={`${fieldInputClass} mt-1 w-full capitalize`}
-              value={role}
-              onChange={(e) => setRole(e.target.value as CreatePlatformUser["role"])}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r} className="capitalize">
-                  {r.replaceAll("_", " ")}
-                </option>
-              ))}
-            </select>
+            {lockRole ? (
+              <p className={`${fieldInputClass} mt-1 w-full capitalize text-slate-800 dark:text-slate-100`}>
+                System admin
+                <span className={`ml-2 text-xs font-normal ${mutedClass}`}>
+                  (extra admin — default owner stays protected)
+                </span>
+              </p>
+            ) : (
+              <select
+                className={`${fieldInputClass} mt-1 w-full capitalize`}
+                value={role}
+                onChange={(e) => setRole(e.target.value as CreatePlatformUser["role"])}
+              >
+                {ROLES.map((r) => (
+                  <option key={r} value={r} className="capitalize">
+                    {r === "admin" ? "admin (system admin)" : r.replaceAll("_", " ")}
+                  </option>
+                ))}
+              </select>
+            )}
           </label>
         </div>
 
@@ -162,7 +189,7 @@ export function SuperAdminAddUserModal({
             disabled={!businessId || email.trim().length < 3 || password.length < 8 || pending}
             onClick={submit}
           >
-            {pending ? "Creating…" : "Add user"}
+            {pending ? "Creating…" : submitLabel}
           </button>
         </div>
       </div>
