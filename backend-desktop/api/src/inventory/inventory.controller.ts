@@ -196,11 +196,15 @@ export class InventoryController {
     @Query("branchCode") branchCode: string,
     @Param("reportId") reportId: string,
     @Query("filterDate") filterDate?: string,
+    @Query("dateFrom") dateFrom?: string,
+    @Query("dateTo") dateTo?: string,
     @Query("dateMode") dateMode?: string,
     @Query("cookingUnitId") cookingUnitId?: string,
   ) {
     return this.inventory.getReport(user.organizationId, branchCode?.trim() ?? "", reportId, {
       filterDate: filterDate?.trim() || undefined,
+      dateFrom: dateFrom?.trim() || undefined,
+      dateTo: dateTo?.trim() || undefined,
       dateMode: dateMode?.trim() as "activity" | "expiry" | "order" | undefined,
       cookingUnitId: cookingUnitId?.trim() || undefined,
     });

@@ -27,12 +27,14 @@ export class ReportsController {
     @Query("to") to?: string,
     @Query("fromTime") fromTime?: string,
     @Query("toTime") toTime?: string,
+    @Query("cookingUnitId") cookingUnitId?: string,
   ) {
     return this.reports.getReport(user.organizationId, branchCode?.trim() ?? "", reportId, {
       from: from?.trim() || undefined,
       to: to?.trim() || undefined,
       fromTime: fromTime?.trim() || undefined,
       toTime: toTime?.trim() || undefined,
+      cookingUnitId: cookingUnitId?.trim() || undefined,
     });
   }
 }

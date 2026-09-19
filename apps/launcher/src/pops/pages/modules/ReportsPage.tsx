@@ -1,10 +1,11 @@
 import { Button } from "@platform/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { instructionsRows, isoDateStamp, writeWorkbookDownload } from "../../../lib/excelTransfer";
 import { usePopsStore } from "../../../stores/popsStore";
 import { fetchVendorBills } from "../../api/accounting";
+import { fetchInventoryCookingUnits } from "../../api/inventory";
 import { fetchRestaurantReport, RESTAURANT_REPORTS } from "../../api/reports";
 import { TimeAmPmInput } from "../../components/TimeAmPmInput";
 import { formatPkr } from "../../hooks/useInventory";
@@ -30,20 +31,50 @@ function monthStartIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+function isIsoDate(value: string | null): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+const COOKING_UNIT_FILTER_REPORTS = new Set(["cooking-unit-sales", "cooking-unit-profit"]);
+
 export function ReportsPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const params = useParams<{ reportId?: string }>();
+  const [searchParams] = useSearchParams();
   const activeId = params.reportId ?? RESTAURANT_REPORTS[0]?.id ?? "sales-by-item";
-  const [from, setFrom] = useState(monthStartIso);
-  const [to, setTo] = useState(todayIso);
+  const [from, setFrom] = useState(() =>
+    isIsoDate(searchParams.get("from")) ? searchParams.get("from")! : monthStartIso(),
+  );
+  const [to, setTo] = useState(() =>
+    isIsoDate(searchParams.get("to"))
+      ? searchParams.get("to")!
+      : isIsoDate(searchParams.get("from"))
+        ? searchParams.get("from")!
+        : todayIso(),
+  );
   const [fromTime, setFromTime] = useState("00:00");
   const [toTime, setToTime] = useState("23:59");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
+  const [cookingUnitId, setCookingUnitId] = useState(() => searchParams.get("cookingUnitId") ?? "");
   const [vendorDrill, setVendorDrill] = useState<{ supplierId: string; name: string } | null>(null);
 
   useEffect(() => {
     setVendorDrill(null);
   }, [activeId, from, to, fromTime, toTime, branch?.code]);
+
+  useEffect(() => {
+    if (!COOKING_UNIT_FILTER_REPORTS.has(activeId)) setCookingUnitId("");
+  }, [activeId]);
+
+  useEffect(() => {
+    const nextFrom = searchParams.get("from");
+    const nextTo = searchParams.get("to");
+    const nextUnit = searchParams.get("cookingUnitId");
+    if (isIsoDate(nextFrom)) setFrom(nextFrom);
+    if (isIsoDate(nextTo)) setTo(nextTo);
+    else if (isIsoDate(nextFrom)) setTo(nextFrom);
+    if (nextUnit && COOKING_UNIT_FILTER_REPORTS.has(activeId)) setCookingUnitId(nextUnit);
+  }, [searchParams, activeId]);
 
   const categories = useMemo(
     () => ["All", ...new Set(RESTAURANT_REPORTS.map((r) => r.category))],
@@ -59,12 +90,38 @@ export function ReportsPage(): JSX.Element {
   );
 
   const activeMeta = RESTAURANT_REPORTS.find((r) => r.id === activeId) ?? RESTAURANT_REPORTS[0];
+  const showCookingUnitFilter = COOKING_UNIT_FILTER_REPORTS.has(activeId);
+
+  const cookingUnitsQuery = useQuery({
+    queryKey: ["inventory", "cooking-units", branch?.code],
+    enabled: Boolean(branch?.code && showCookingUnitFilter),
+    queryFn: () => fetchInventoryCookingUnits(branch!.code),
+  });
+
+  const cookingUnits = cookingUnitsQuery.data?.units.filter((u) => u.isActive) ?? [];
+  const selectedUnitName =
+    cookingUnits.find((u) => u.id === cookingUnitId)?.name ?? null;
 
   const reportQuery = useQuery({
-    queryKey: ["reports", branch?.code, activeId, from, to, fromTime, toTime],
+    queryKey: [
+      "reports",
+      branch?.code,
+      activeId,
+      from,
+      to,
+      fromTime,
+      toTime,
+      showCookingUnitFilter ? cookingUnitId : "",
+    ],
     enabled: Boolean(branch?.code && activeId && activeId !== "universal-ledger"),
     queryFn: () =>
-      fetchRestaurantReport(branch!.code, activeId, { from, to, fromTime, toTime }),
+      fetchRestaurantReport(branch!.code, activeId, {
+        from,
+        to,
+        fromTime,
+        toTime,
+        ...(showCookingUnitFilter && cookingUnitId ? { cookingUnitId } : {}),
+      }),
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
@@ -87,6 +144,7 @@ export function ReportsPage(): JSX.Element {
             Label: r.label,
             Qty: r.qty ?? "",
             Amount: r.amount ?? "",
+            Bills: r.billCount ?? "",
             Received: r.receivedQty ?? "",
             Usage: r.usageQty ?? "",
             Sales: r.salesQty ?? "",
@@ -95,6 +153,7 @@ export function ReportsPage(): JSX.Element {
             COGS: r.cogs ?? "",
             Profit: r.profit ?? "",
             Stock: r.stockQty ?? "",
+            Products: r.products ?? "",
             Debit: r.debit ?? "",
             Credit: r.credit ?? "",
             Balance: r.balance ?? "",
@@ -127,6 +186,7 @@ export function ReportsPage(): JSX.Element {
   const isInOutReport = activeId === "in-out";
   const isUniversalLedger = activeId === "universal-ledger";
   const isCookingUnitReport = activeId === "cooking-unit-profit";
+  const isCookingUnitSales = activeId === "cooking-unit-sales";
   const isVendorsBalance = activeId === "vendors-balance";
 
   const vendorBillsQuery = useQuery({
@@ -304,7 +364,54 @@ export function ReportsPage(): JSX.Element {
             ))}
           </select>
         </label>
+        {showCookingUnitFilter ? (
+          <label className="flex min-w-[12rem] flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Cooking unit
+            </span>
+            <select
+              className={fieldInputClass}
+              value={cookingUnitId}
+              onChange={(e) => setCookingUnitId(e.target.value)}
+            >
+              <option value="">All units</option>
+              {cookingUnits.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </ModuleFilterBar>
+
+      {showCookingUnitFilter ? (
+        <p className="text-xs text-slate-500">
+          Date/time range select karein
+          {selectedUnitName ? (
+            <>
+              {" "}
+              · Cooking unit: <span className="font-medium text-amber-600 dark:text-amber-300">{selectedUnitName}</span>
+            </>
+          ) : (
+            " · All cooking units"
+          )}
+          {isCookingUnitSales
+            ? " — no-recipe food cost ke liye sale (step 3). Transfer + stock in hand Inventory reports mein hain."
+            : " — stock, usage aur profit dikhega."}
+          {isCookingUnitSales ? (
+            <>
+              {" "}
+              <Link
+                to="/pops/inventory/reports"
+                className="font-medium text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                Food cost kit →
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900/40 lg:col-span-1">
@@ -344,6 +451,7 @@ export function ReportsPage(): JSX.Element {
               <p className="mt-0.5 text-xs text-slate-500">
                 {branch ? `${branch.name} (${branch.code})` : "No branch"}
                 {activeMeta?.category ? ` · ${activeMeta.category}` : null}
+                {selectedUnitName && showCookingUnitFilter ? ` · Unit ${selectedUnitName}` : null}
                 {isUniversalLedger
                   ? ` · ${from} → ${to}`
                   : reportQuery.data?.from && reportQuery.data?.to
@@ -420,6 +528,53 @@ export function ReportsPage(): JSX.Element {
                   .
                 </p>
               ) : null}
+            </div>
+          ) : isCookingUnitSales ? (
+            <div className="mt-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-200/80">
+                    {selectedUnitName
+                      ? `${selectedUnitName} — sale in selected dates`
+                      : "Total sale (all cooking units)"}
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {selectedUnitName
+                      ? `${selectedUnitName} ne is date range mein ye sale ki hai.`
+                      : "Har cooking unit ki date-wise sale — neeche grand total."}
+                  </p>
+                </div>
+                <div className="text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-200">
+                  {formatPkr(Number(reportQuery.data?.totals?.revenue ?? 0))}
+                </div>
+              </div>
+              <SimpleTable
+                rowKey={(r) => `${String(r.label)}-${String(r.cookingUnitId ?? "unassigned")}`}
+                columns={[
+                  { key: "label", header: "Cooking unit" },
+                  {
+                    key: "billCount",
+                    header: "Bills",
+                    render: (r) => Number(r.billCount ?? 0).toLocaleString(),
+                  },
+                  {
+                    key: "salesQty",
+                    header: "Items sold",
+                    render: (r) => Number(r.salesQty ?? r.qty ?? 0).toLocaleString(),
+                  },
+                  {
+                    key: "revenue",
+                    header: "Sale (Rs)",
+                    render: (r) => formatPkr(Number(r.revenue ?? r.amount ?? 0)),
+                  },
+                  {
+                    key: "products",
+                    header: "Top items",
+                    render: (r) => String(r.products ?? r.meta ?? "—"),
+                  },
+                ]}
+                rows={rows as unknown as Record<string, unknown>[]}
+              />
             </div>
           ) : isCookingUnitReport ? (
             <div className="mt-4 overflow-x-auto">

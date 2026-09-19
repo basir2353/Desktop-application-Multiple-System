@@ -7,6 +7,7 @@ export const RESTAURANT_REPORT_DEFS = [
   { id: "cash-report", name: "Cash Report", category: "Cash" },
   { id: "sales-by-kitchen", name: "Sales by kitchen", category: "Sales" },
   { id: "kitchen-sale", name: "Kitchen Sale Report", category: "Sales" },
+  { id: "cooking-unit-sales", name: "Cooking unit sales", category: "Sales" },
   { id: "sales-by-employee", name: "Sales by employee", category: "Sales" },
   { id: "sales-by-order-type", name: "Sales by order type", category: "Sales" },
   { id: "delivery", name: "Delivery report", category: "Operations" },

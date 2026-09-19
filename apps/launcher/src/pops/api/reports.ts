@@ -30,6 +30,7 @@ export type RestaurantReportQuery = {
   to?: string;
   fromTime?: string;
   toTime?: string;
+  cookingUnitId?: string;
 };
 
 export async function fetchRestaurantReportCatalog(): Promise<RestaurantReportCatalog> {
@@ -54,6 +55,7 @@ export async function fetchRestaurantReport(
   if (options?.to) params.set("to", options.to);
   if (options?.fromTime) params.set("fromTime", options.fromTime);
   if (options?.toTime) params.set("toTime", options.toTime);
+  if (options?.cookingUnitId) params.set("cookingUnitId", options.cookingUnitId);
 
   try {
     const res = await authFetch(`/v1/reports/${reportId}?${params}`);

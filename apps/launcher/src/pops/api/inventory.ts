@@ -348,12 +348,16 @@ export async function fetchInventoryReport(
   reportId: string,
   options?: {
     filterDate?: string;
+    dateFrom?: string;
+    dateTo?: string;
     dateMode?: "activity" | "expiry" | "order";
     cookingUnitId?: string;
   },
 ): Promise<InventoryReport> {
   const params = new URLSearchParams({ branchCode });
   if (options?.filterDate) params.set("filterDate", options.filterDate);
+  if (options?.dateFrom) params.set("dateFrom", options.dateFrom);
+  if (options?.dateTo) params.set("dateTo", options.dateTo);
   if (options?.dateMode) params.set("dateMode", options.dateMode);
   if (options?.cookingUnitId) params.set("cookingUnitId", options.cookingUnitId);
   const res = await authFetch(`/v1/inventory/reports/${reportId}?${params}`);
@@ -610,7 +614,7 @@ export const INVENTORY_REPORTS = [
   { id: "consumption", name: "Ingredient Consumption", category: "Restaurant" as const },
   { id: "recipe-cost", name: "Recipe Cost", category: "Restaurant" as const },
   { id: "waste", name: "Waste Analysis", category: "Restaurant" as const },
-  { id: "cooking-unit-stock", name: "Kitchen section stock", category: "Restaurant" as const },
+  { id: "cooking-unit-stock", name: "Cooking unit stock in hand", category: "Restaurant" as const },
   { id: "purchases", name: "Purchase Report", category: "Purchase" as const },
   { id: "suppliers", name: "Supplier Report", category: "Supplier" as const },
 ];

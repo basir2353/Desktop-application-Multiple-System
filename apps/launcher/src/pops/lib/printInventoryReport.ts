@@ -30,13 +30,13 @@ function columnsForReport(reportId: string): PrintColumn[] {
   switch (reportId) {
     case "cooking-unit-stock":
       return [
-        { key: "kitchenSection", header: "Kitchen section" },
+        { key: "kitchenSection", header: "Cooking unit" },
         { key: "productCategory", header: "Category" },
         { key: "sku", header: "SKU" },
         { key: "productName", header: "Product" },
         {
           key: "quantity",
-          header: "Qty",
+          header: "Qty in hand",
           render: (r) => `${cell(r.quantity)} ${cell(r.unit)}`,
         },
         { key: "stockValue", header: "Value (Rs)", render: (r) => money(r.stockValue) },
@@ -147,9 +147,22 @@ export function buildInventoryReportHtml(options: {
     })
     .join("");
 
+  const dateLabel =
+    report.dateFrom && report.dateTo && report.dateFrom === report.dateTo
+      ? report.dateFrom
+      : report.dateFrom && report.dateTo
+        ? `${report.dateFrom} → ${report.dateTo}`
+        : report.dateFrom
+          ? `From ${report.dateFrom}`
+          : report.dateTo
+            ? `Until ${report.dateTo}`
+            : report.filterDate
+              ? report.filterDate
+              : null;
+
   const metaParts = [
     branchName,
-    report.filterDate ? `Filter ${report.dateMode ?? ""} ${report.filterDate}` : null,
+    dateLabel ? `Filter ${report.dateMode ?? ""} ${dateLabel}`.trim() : null,
     cookingUnitLabel ? `Cooking unit: ${cookingUnitLabel}` : null,
     `Generated ${report.lastGenerated}`,
   ].filter(Boolean);

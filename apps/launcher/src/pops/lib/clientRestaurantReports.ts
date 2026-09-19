@@ -12,7 +12,7 @@ import {
 } from "../api/accounting";
 import { fetchCompletedOrders } from "../api/billing";
 import { fetchEmployeeAdvances, fetchEmployees, fetchHrPayrollRuns } from "../api/hr";
-import { fetchBranchInventory, fetchInventoryReport } from "../api/inventory";
+import { fetchBranchInventory, fetchInventoryCookingUnits, fetchInventoryReport } from "../api/inventory";
 import { fetchKitchenCancellations, fetchKitchenTickets } from "../api/kitchen";
 import { fetchBranchFloor } from "../api/tables";
 import { fetchBranchMenu } from "../api/menu";
@@ -116,12 +116,13 @@ function base(
 export async function buildClientRestaurantReport(
   branchCode: string,
   reportId: string,
-  options?: { from?: string; to?: string; fromTime?: string; toTime?: string },
+  options?: { from?: string; to?: string; fromTime?: string; toTime?: string; cookingUnitId?: string },
 ): Promise<RestaurantReport> {
   const from = options?.from;
   const to = options?.to;
   const fromTime = options?.fromTime;
   const toTime = options?.toTime;
+  const cookingUnitId = options?.cookingUnitId;
   const meta = base(reportId, from, to);
 
   if (reportId === "profit-loss") {
@@ -864,6 +865,115 @@ export async function buildClientRestaurantReport(
     }
     const rows = [...map.entries()].map(([label, v]) => ({ label, qty: v.qty, amount: v.amount }));
     return { ...meta, rows, empty: rows.length === 0 };
+  }
+
+  if (reportId === "cooking-unit-sales") {
+    let menuById = new Map<
+      string,
+      { name: string; cookingUnitId: string | null; cookingUnitName: string }
+    >();
+    try {
+      const [menu, unitsRes] = await Promise.all([
+        fetchBranchMenu(branchCode),
+        fetchInventoryCookingUnits(branchCode),
+      ]);
+      const unitName = new Map(
+        unitsRes.units.map((u) => [u.id, u.name] as const),
+      );
+      const catUnit = new Map(
+        menu.categories.map((c) => [
+          c.id,
+          {
+            cookingUnitId: c.cookingUnitId ?? null,
+            cookingUnitName: c.cookingUnitId
+              ? (unitName.get(c.cookingUnitId) ?? "Kitchen / Unassigned")
+              : "Kitchen / Unassigned",
+          },
+        ]),
+      );
+      menuById = new Map(
+        menu.items.map((item) => {
+          const cat = catUnit.get(item.categoryId);
+          return [
+            item.id,
+            {
+              name: item.name,
+              cookingUnitId: cat?.cookingUnitId ?? null,
+              cookingUnitName: cat?.cookingUnitName ?? "Kitchen / Unassigned",
+            },
+          ];
+        }),
+      );
+    } catch {
+      // fall through with unassigned bucket
+    }
+
+    const rowsMap = new Map<
+      string,
+      {
+        label: string;
+        cookingUnitId?: string;
+        billIds: Set<string>;
+        salesQty: number;
+        revenue: number;
+        products: Set<string>;
+      }
+    >();
+
+    for (const bill of bills) {
+      for (const line of parseLines(bill)) {
+        const menu = line.menuItemId ? menuById.get(line.menuItemId) : undefined;
+        const unitId = menu?.cookingUnitId ?? null;
+        if (cookingUnitId && unitId !== cookingUnitId) continue;
+        const qty = Number(line.qty ?? 0);
+        const revenue = qty * Number(line.unitPrice ?? 0);
+        if (qty <= 0 && revenue <= 0) continue;
+        const key = unitId ?? "unassigned";
+        const existing = rowsMap.get(key) ?? {
+          label: menu?.cookingUnitName ?? "Kitchen / Unassigned",
+          cookingUnitId: unitId ?? undefined,
+          billIds: new Set<string>(),
+          salesQty: 0,
+          revenue: 0,
+          products: new Set<string>(),
+        };
+        existing.billIds.add(bill.id);
+        existing.salesQty += qty;
+        existing.revenue += revenue;
+        const productName = (line.label || menu?.name || "Item").trim();
+        if (productName) existing.products.add(productName);
+        rowsMap.set(key, existing);
+      }
+    }
+
+    const rows = [...rowsMap.values()]
+      .map((row) => ({
+        label: row.label,
+        cookingUnitId: row.cookingUnitId,
+        qty: row.salesQty,
+        amount: row.revenue,
+        billCount: row.billIds.size,
+        salesQty: row.salesQty,
+        revenue: row.revenue,
+        products: [...row.products].slice(0, 8).join(", "),
+        meta: `${row.billIds.size} bills`,
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    return {
+      ...meta,
+      description: cookingUnitId
+        ? "Sale qty + Rs for the selected cooking unit (local)"
+        : "Date-wise cooking unit sales (local aggregate)",
+      rows,
+      totals: {
+        units: rows.length,
+        bills: rows.reduce((s, r) => s + r.billCount, 0),
+        salesQty: rows.reduce((s, r) => s + r.salesQty, 0),
+        revenue: rows.reduce((s, r) => s + r.revenue, 0),
+      },
+      empty: rows.length === 0,
+    };
   }
 
   if (reportId === "kitchen-sale") {

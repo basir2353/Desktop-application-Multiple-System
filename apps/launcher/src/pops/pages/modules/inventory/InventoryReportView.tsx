@@ -332,14 +332,14 @@ export function InventoryReportView({
       return (
         <SimpleTable
           rowKey={(r) => cell(r.id)}
-          columns={[
-            { key: "kitchenSection", header: "Kitchen section", render: (r) => cell(r.kitchenSection) },
-            { key: "productCategory", header: "Product category", render: (r) => cell(r.productCategory) },
-            { key: "sku", header: "SKU", render: (r) => cell(r.sku) },
-            { key: "productName", header: "Product", render: (r) => cell(r.productName) },
-            { key: "quantity", header: "Qty", render: (r) => `${cell(r.quantity)} ${cell(r.unit)}` },
-            { key: "stockValue", header: "Value (Rs)", render: (r) => formatPkrCell(r.stockValue) },
-          ]}
+            columns={[
+              { key: "kitchenSection", header: "Cooking unit", render: (r) => cell(r.kitchenSection) },
+              { key: "productCategory", header: "Product category", render: (r) => cell(r.productCategory) },
+              { key: "sku", header: "SKU", render: (r) => cell(r.sku) },
+              { key: "productName", header: "Product", render: (r) => cell(r.productName) },
+              { key: "quantity", header: "Qty in hand", render: (r) => `${cell(r.quantity)} ${cell(r.unit)}` },
+              { key: "stockValue", header: "Value (Rs)", render: (r) => formatPkrCell(r.stockValue) },
+            ]}
           rows={rows.filter(isRecord)}
         />
       );

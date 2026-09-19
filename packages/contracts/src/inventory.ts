@@ -459,6 +459,8 @@ export const inventoryReportSchema = z.object({
   description: z.string(),
   lastGenerated: z.string().nullable(),
   filterDate: z.string().nullable().optional(),
+  dateFrom: z.string().nullable().optional(),
+  dateTo: z.string().nullable().optional(),
   dateMode: z.enum(["activity", "expiry", "order"]).nullable().optional(),
   data: z.unknown().optional(),
   summary: z
@@ -473,6 +475,8 @@ export const inventoryReportSchema = z.object({
 export const INVENTORY_REPORT_DATE_MODES = ["activity", "expiry", "order"] as const;
 export const inventoryReportQuerySchema = z.object({
   filterDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   dateMode: z.enum(INVENTORY_REPORT_DATE_MODES).optional(),
   cookingUnitId: z.string().uuid().optional(),
 });

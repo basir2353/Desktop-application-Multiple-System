@@ -380,14 +380,25 @@ export class InventoryService implements OnModuleInit {
     reportId: string,
     query: {
       filterDate?: string;
+      dateFrom?: string;
+      dateTo?: string;
       dateMode?: "activity" | "expiry" | "order";
       cookingUnitId?: string;
     } = {},
   ) {
     const today = new Date().toISOString().slice(0, 10);
     const filterDate = query.filterDate;
+    const dateFrom = query.dateFrom || filterDate || undefined;
+    const dateTo = query.dateTo || filterDate || undefined;
     const dateMode = query.dateMode ?? "activity";
     const cookingUnitId = query.cookingUnitId;
+    const hasDateFilter = Boolean(dateFrom || dateTo || filterDate);
+    const dateMeta = {
+      filterDate: filterDate ?? (dateFrom && dateTo && dateFrom === dateTo ? dateFrom : null),
+      dateFrom: dateFrom ?? null,
+      dateTo: dateTo ?? null,
+      dateMode: hasDateFilter ? dateMode : null,
+    };
 
     if (reportId === "stock-transfers") {
       const { transfers } = await this.listTransfers(organizationId, branchCode);
@@ -414,9 +425,7 @@ export class InventoryService implements OnModuleInit {
             };
           }),
       );
-      if (filterDate) {
-        rows = rows.filter((row) => row.date === filterDate);
-      }
+      rows = rows.filter((row) => this.isDateInReportRange(row.date, dateFrom, dateTo));
       rows.sort((a, b) =>
         a.kitchenSection.localeCompare(b.kitchenSection) || b.date.localeCompare(a.date),
       );
@@ -429,8 +438,7 @@ export class InventoryService implements OnModuleInit {
           ? "Stock transfer lines for the selected cooking unit (with value)"
           : "Each stock transfer line by cooking unit / kitchen section (with value)",
         lastGenerated: today,
-        filterDate: filterDate ?? null,
-        dateMode: filterDate ? dateMode : null,
+        ...dateMeta,
         data: rows,
         summary: { totalValue, lineCount: rows.length },
       };
@@ -453,7 +461,8 @@ export class InventoryService implements OnModuleInit {
         products: string;
       }>();
       for (const transfer of transfers) {
-        if (filterDate && transfer.createdAt.slice(0, 10) !== filterDate) continue;
+        const transferDate = transfer.createdAt.slice(0, 10);
+        if (!this.isDateInReportRange(transferDate, dateFrom, dateTo)) continue;
         const toKitchen = /kitchen/i.test(transfer.toWarehouseName ?? "");
         const fromKitchen = /kitchen/i.test(transfer.fromWarehouseName ?? "");
         for (const item of transfer.items) {
@@ -511,11 +520,10 @@ export class InventoryService implements OnModuleInit {
         name: "Cooking unit transfer report",
         category: "Inventory",
         description: cookingUnitId
-          ? "Transfer qty + value for the selected cooking unit"
-          : "How much stock (qty + Rs value) was transferred into each cooking unit",
+          ? "Transfer qty + value for the selected cooking unit — step 1 of no-recipe food cost"
+          : "How much stock (qty + Rs value) was transferred into each cooking unit — step 1 of no-recipe food cost",
         lastGenerated: today,
-        filterDate: filterDate ?? null,
-        dateMode: filterDate ? dateMode : null,
+        ...dateMeta,
         data,
         summary: { totalValue, sectionCount: data.length },
       };
@@ -562,13 +570,15 @@ export class InventoryService implements OnModuleInit {
         : null;
       return {
         id: reportId,
-        name: "Kitchen section stock",
+        name: "Cooking unit stock in hand",
         category: "Restaurant",
         description: unitLabel
-          ? `Ingredient stock for ${unitLabel} (qty + Rs value)`
-          : "Ingredient stock by kitchen section and product category",
+          ? `Stock in hand for ${unitLabel} (qty + Rs value) — no-recipe food cost closing stock`
+          : "Cooking unit stock in hand by section and product (qty + Rs) — use with transfer + sales for food cost",
         lastGenerated: today,
         filterDate: null,
+        dateFrom: null,
+        dateTo: null,
         dateMode: null,
         data: rows,
       };
@@ -652,7 +662,7 @@ export class InventoryService implements OnModuleInit {
     const report = reports[reportId];
     if (!report) throw new NotFoundException(`Report not found: ${reportId}`);
 
-    const rows = this.applyReportDateFilter(report.rows, reportId, filterDate, dateMode);
+    const rows = this.applyReportDateFilter(report.rows, reportId, dateFrom, dateTo, dateMode);
 
     return {
       id: reportId,
@@ -660,10 +670,21 @@ export class InventoryService implements OnModuleInit {
       category: report.category,
       description: report.description,
       lastGenerated: today,
-      filterDate: filterDate ?? null,
-      dateMode: filterDate ? dateMode : null,
+      ...dateMeta,
       data: rows,
     };
+  }
+
+  private isDateInReportRange(
+    date: string | null | undefined,
+    dateFrom?: string,
+    dateTo?: string,
+  ): boolean {
+    if (!dateFrom && !dateTo) return true;
+    if (!date) return false;
+    if (dateFrom && date < dateFrom) return false;
+    if (dateTo && date > dateTo) return false;
+    return true;
   }
 
   private sliceDateOnly(value: unknown): string | null {
@@ -671,14 +692,15 @@ export class InventoryService implements OnModuleInit {
     return String(value).slice(0, 10);
   }
 
-  private rowMatchesReportDate(
+  private rowMatchesReportDateRange(
     row: Record<string, unknown>,
     reportId: string,
-    filterDate: string,
+    dateFrom: string | undefined,
+    dateTo: string | undefined,
     mode: "activity" | "expiry" | "order",
   ): boolean {
     const match = (...keys: string[]) =>
-      keys.some((key) => this.sliceDateOnly(row[key]) === filterDate);
+      keys.some((key) => this.isDateInReportRange(this.sliceDateOnly(row[key]), dateFrom, dateTo));
 
     switch (reportId) {
       case "expiry":
@@ -704,16 +726,23 @@ export class InventoryService implements OnModuleInit {
   private applyReportDateFilter(
     rows: unknown[],
     reportId: string,
-    filterDate: string | undefined,
+    dateFrom: string | undefined,
+    dateTo: string | undefined,
     mode: "activity" | "expiry" | "order",
   ): unknown[] {
-    if (!filterDate) return rows;
+    if (!dateFrom && !dateTo) return rows;
     const dateReports = new Set(["expiry", "consumption", "waste", "purchases", "suppliers"]);
     if (!dateReports.has(reportId)) return rows;
 
     return rows.filter((row) => {
       if (!row || typeof row !== "object") return false;
-      return this.rowMatchesReportDate(row as Record<string, unknown>, reportId, filterDate, mode);
+      return this.rowMatchesReportDateRange(
+        row as Record<string, unknown>,
+        reportId,
+        dateFrom,
+        dateTo,
+        mode,
+      );
     });
   }
 
@@ -2870,6 +2899,7 @@ export class InventoryService implements OnModuleInit {
         unit: storeUnits.name,
         quantity: storeCookingUnitStock.quantity,
         unitCostPkr: storeCookingUnitStock.unitCostPkr,
+        productCostPkr: storeProducts.purchasePricePkr,
       })
       .from(storeCookingUnitStock)
       .innerJoin(storeProducts, eq(storeProducts.id, storeCookingUnitStock.productId))
@@ -2879,7 +2909,20 @@ export class InventoryService implements OnModuleInit {
         eq(storeCookingUnitStock.branchId, branch.id),
         cookingUnitId ? eq(storeCookingUnitStock.cookingUnitId, cookingUnitId) : undefined,
       ));
-    return rows.map((row) => ({ ...row, unit: row.unit ?? "Piece" }));
+    return rows.map((row) => {
+      const stockCost = Number(row.unitCostPkr ?? 0);
+      const productCost = Number(row.productCostPkr ?? 0);
+      return {
+        id: row.id,
+        cookingUnitId: row.cookingUnitId,
+        productId: row.productId,
+        productName: row.productName,
+        sku: row.sku,
+        unit: row.unit ?? "Piece",
+        quantity: Number(row.quantity ?? 0),
+        unitCostPkr: stockCost > 0 ? stockCost : productCost,
+      };
+    });
   }
 
   async createCookingUnit(

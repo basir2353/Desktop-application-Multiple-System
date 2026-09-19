@@ -83,7 +83,13 @@ export class ReportsService {
     organizationId: string,
     branchCode: string,
     reportId: string,
-    query: { from?: string; to?: string; fromTime?: string; toTime?: string } = {},
+    query: {
+      from?: string;
+      to?: string;
+      fromTime?: string;
+      toTime?: string;
+      cookingUnitId?: string;
+    } = {},
   ) {
     const def = RESTAURANT_REPORT_DEFS.find((r) => r.id === reportId);
     if (!def) throw new NotFoundException(`Unknown report: ${reportId}`);
@@ -94,6 +100,7 @@ export class ReportsService {
     const to = query.to?.trim() || today;
     const fromTime = this.normalizeTime(query.fromTime, "00:00");
     const toTime = this.normalizeTime(query.toTime, "23:59");
+    const cookingUnitId = query.cookingUnitId?.trim() || undefined;
     if (from > to) throw new BadRequestException("`from` must be on or before `to`");
 
     const generatedAt = new Date().toISOString();
@@ -122,6 +129,14 @@ export class ReportsService {
           description:
             "Pakistani / Fast Food / Outside sales — map categories via Print sections (desktop) or category names.",
           ...(await this.kitchenSaleReport(organizationId, branch.id, range)),
+        };
+      case "cooking-unit-sales":
+        return {
+          ...base,
+          description: cookingUnitId
+            ? "Sale qty + Rs for the selected cooking unit in the date range — no-recipe food cost step 3"
+            : "Date-wise cooking unit sales (qty + Rs) — use with transfer + stock in hand for no-recipe food cost",
+          ...(await this.cookingUnitSales(organizationId, branch.id, range, cookingUnitId)),
         };
       case "sales-by-employee":
         return { ...base, ...this.salesByEmployee(await this.completedBills(organizationId, branch.id, range)) };
@@ -211,7 +226,10 @@ export class ReportsService {
       case "ingredients-stock":
         return { ...base, ...(await this.ingredientsStock(organizationId, branch.id)) };
       case "cooking-unit-profit":
-        return { ...base, ...(await this.cookingUnitProfit(organizationId, branch.id, range)) };
+        return {
+          ...base,
+          ...(await this.cookingUnitProfit(organizationId, branch.id, range, cookingUnitId)),
+        };
       case "day-book":
         return { ...base, ...(await this.dayBook(organizationId, branch.id, range)) };
       case "in-out":
@@ -1435,10 +1453,117 @@ export class ReportsService {
     };
   }
 
+  private async cookingUnitSales(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+    cookingUnitId?: string,
+  ) {
+    const [units, bills, menuRows] = await Promise.all([
+      this.db.select().from(storeCookingUnits).where(and(
+        eq(storeCookingUnits.organizationId, organizationId),
+        eq(storeCookingUnits.branchId, branchId),
+      )),
+      this.completedBills(organizationId, branchId, range),
+      this.db.select({
+        itemId: popsMenuItems.id,
+        itemName: popsMenuItems.name,
+        categoryName: popsMenuCategories.name,
+        cookingUnitId: popsMenuCategories.cookingUnitId,
+      }).from(popsMenuItems).innerJoin(
+        popsMenuCategories,
+        eq(popsMenuCategories.id, popsMenuItems.categoryId),
+      ).where(and(
+        eq(popsMenuItems.organizationId, organizationId),
+        eq(popsMenuItems.branchId, branchId),
+      )),
+    ]);
+
+    const unitMap = new Map(units.map((unit) => [unit.id, unit]));
+    const menuById = new Map(menuRows.map((row) => [row.itemId, row]));
+    const rows = new Map<string, {
+      label: string;
+      cookingUnitId?: string;
+      billIds: Set<string>;
+      lineCount: number;
+      salesQty: number;
+      revenue: number;
+      products: Set<string>;
+    }>();
+
+    const getRow = (unitId: string | null | undefined) => {
+      const key = unitId ?? "unassigned";
+      const unit = unitId ? unitMap.get(unitId) : undefined;
+      const existing = rows.get(key);
+      if (existing) return existing;
+      const created = {
+        label: unit?.name ?? "Kitchen / Unassigned",
+        cookingUnitId: unitId ?? undefined,
+        billIds: new Set<string>(),
+        lineCount: 0,
+        salesQty: 0,
+        revenue: 0,
+        products: new Set<string>(),
+      };
+      rows.set(key, created);
+      return created;
+    };
+
+    for (const bill of bills) {
+      for (const line of this.parseLines(bill.linesJson)) {
+        const menu = line.menuItemId ? menuById.get(line.menuItemId) : undefined;
+        const unitId = menu?.cookingUnitId ?? null;
+        if (cookingUnitId && unitId !== cookingUnitId) continue;
+        const qty = Number(line.qty ?? 0);
+        const revenue = qty * Number(line.unitPrice ?? 0);
+        if (qty <= 0 && revenue <= 0) continue;
+        const target = getRow(unitId);
+        target.billIds.add(bill.id);
+        target.lineCount += 1;
+        target.salesQty += qty;
+        target.revenue += revenue;
+        const productName = (line.label || menu?.itemName || "Item").trim();
+        if (productName) target.products.add(productName);
+      }
+    }
+
+    // When filtering to one unit with no sales, still show a zero row so UI is clear.
+    if (cookingUnitId && !rows.has(cookingUnitId)) {
+      getRow(cookingUnitId);
+    }
+
+    const reportRows = [...rows.values()]
+      .map((row) => ({
+        label: row.label,
+        cookingUnitId: row.cookingUnitId,
+        qty: row.salesQty,
+        amount: row.revenue,
+        billCount: row.billIds.size,
+        lineCount: row.lineCount,
+        salesQty: row.salesQty,
+        revenue: row.revenue,
+        products: [...row.products].slice(0, 8).join(", "),
+        meta: `${row.billIds.size} bills · ${row.lineCount} lines`,
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    return {
+      rows: reportRows,
+      totals: {
+        units: reportRows.length,
+        bills: reportRows.reduce((sum, row) => sum + row.billCount, 0),
+        salesQty: reportRows.reduce((sum, row) => sum + row.salesQty, 0),
+        revenue: reportRows.reduce((sum, row) => sum + row.revenue, 0),
+      },
+      empty: reportRows.length === 0,
+    };
+  }
+
   private async cookingUnitProfit(
     organizationId: string,
     branchId: string,
     range: { from: string; to: string; fromTime: string; toTime: string },
+    cookingUnitId?: string,
   ) {
     const [units, stock, movements, bills, menuRows, recipes, recipeLines, ingredients, products] = await Promise.all([
       this.db.select().from(storeCookingUnits).where(and(
@@ -1586,7 +1711,8 @@ export class ReportsService {
       profit: row.revenue - row.cogs,
       stockQty: row.stockQty,
       stockValue: row.stockValue,
-    })).sort((a, b) => b.revenue - a.revenue);
+    })).filter((row) => !cookingUnitId || row.cookingUnitId === cookingUnitId)
+      .sort((a, b) => b.revenue - a.revenue);
     return {
       rows: reportRows,
       totals: {
