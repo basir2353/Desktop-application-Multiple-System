@@ -1,0 +1,11 @@
+{
+  "version": "0.3.67",
+  "notes": "Desktop restaurant update 0.3.67",
+  "pub_date": "2026-09-16T12:00:10.033Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSMWtPYXc1endxUWNQclZoblJRSW9PODZ5SFpTMWVqcUtyQ2hiNWxWNU5qKzRwelVmbmhLZzVHK3VlMjBTc1hoZ2xHVTE2ZG14bU5TeFEvdEZQdFozYkJpZkxoeTU2OGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTYwMDA4CWZpbGU6UmVzdGF1cmFudCBNYW5hZ2VtZW50IFN5c3RlbV8wLjMuNjdfeDY0LXNldHVwLmV4ZQpqejNMaUhXSzlDRDZPc3k2UXMxcXphV09BY1ZjYlFtSHByU1M3MElLZU5WbExQSkpDTmxFRDlPMVV1cElqVDdNYzJNaG5OREN6NysveEpjNUlEWVBBZz09Cg==",
+      "url": "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-v0.3.67/Restaurant-Management-System_0.3.67_x64-setup.exe"
+    }
+  }
+}

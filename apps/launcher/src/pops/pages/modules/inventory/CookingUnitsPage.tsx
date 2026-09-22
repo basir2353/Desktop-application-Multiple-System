@@ -7,7 +7,7 @@ import {
   fetchInventoryCookingUnits,
   updateInventoryCookingUnit,
 } from "../../../api/inventory";
-import { inputClass, selectClass, useInventoryAccess } from "../../../hooks/useInventory";
+import { formatPkr, inputClass, selectClass, useInventoryAccess } from "../../../hooks/useInventory";
 import { printHtmlDocumentAndWait } from "../../../lib/printTicket";
 import { PageHeader } from "../../../ui/PageHeader";
 import { InventoryError, InventoryLoading } from "./InventoryUi";
@@ -23,6 +23,13 @@ function escapeHtml(value: unknown): string {
 function formatStockQty(value: number): string {
   if (!Number.isFinite(value)) return "0";
   return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
+function rowStockValue(row: { quantity: number; unitCostPkr?: number | null }): number {
+  const qty = Number(row.quantity || 0);
+  const cost = Number(row.unitCostPkr || 0);
+  if (!Number.isFinite(qty) || !Number.isFinite(cost)) return 0;
+  return qty * cost;
 }
 
 function totalsByUnit(rows: { unit: string; quantity: number }[]): { unit: string; qty: number }[] {
@@ -104,6 +111,11 @@ export function CookingUnitsPage(): JSX.Element {
     units.find((unit) => unit.id === sectionFilter)?.name ?? "All sections";
   const stockTotals = useMemo(() => totalsByUnit(filteredStock), [filteredStock]);
   const stockTotalLabel = formatUnitTotals(stockTotals);
+  const stockValueTotal = useMemo(
+    () => filteredStock.reduce((sum, row) => sum + rowStockValue(row), 0),
+    [filteredStock],
+  );
+  const stockValueLabel = formatPkr(stockValueTotal);
 
   async function printStock(): Promise<void> {
     if (filteredStock.length === 0) {
@@ -117,12 +129,15 @@ export function CookingUnitsPage(): JSX.Element {
       const rowsHtml = filteredStock
         .map((row) => {
           const section = units.find((unit) => unit.id === row.cookingUnitId)?.name ?? "Unassigned";
+          const value = rowStockValue(row);
           return `<tr>
             <td>${escapeHtml(section)}</td>
             <td>${escapeHtml(row.productName)}</td>
             <td>${escapeHtml(row.sku)}</td>
             <td>${escapeHtml(row.unit)}</td>
             <td class="num">${escapeHtml(formatStockQty(row.quantity))}</td>
+            <td class="num">${escapeHtml(formatPkr(Number(row.unitCostPkr || 0)))}</td>
+            <td class="num">${escapeHtml(formatPkr(value))}</td>
           </tr>`;
         })
         .join("");
@@ -162,6 +177,8 @@ export function CookingUnitsPage(): JSX.Element {
         <th>SKU</th>
         <th>Unit</th>
         <th class="num">Quantity</th>
+        <th class="num">Unit cost</th>
+        <th class="num">Value (Rs)</th>
       </tr>
     </thead>
     <tbody>${rowsHtml}</tbody>
@@ -169,11 +186,14 @@ export function CookingUnitsPage(): JSX.Element {
       <tr>
         <td colspan="4">${escapeHtml(selectedSectionName)} total</td>
         <td class="num">${escapeHtml(stockTotalLabel)}</td>
+        <td></td>
+        <td class="num">${escapeHtml(stockValueLabel)}</td>
       </tr>
     </tfoot>
   </table>
   <div class="total-box">
-    ${escapeHtml(selectedSectionName)} stock total: ${totalsHtml || "0"}
+    <div>${escapeHtml(selectedSectionName)} stock total: ${totalsHtml || "0"}</div>
+    <div style="margin-top:6px"><strong>Stock value: ${escapeHtml(stockValueLabel)}</strong></div>
   </div>
 </body>
 </html>`;
@@ -339,7 +359,7 @@ export function CookingUnitsPage(): JSX.Element {
           <p className="text-xs text-slate-500">No rows match this filter.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px] text-left text-xs">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="border-b border-slate-800 text-slate-400">
                 <tr>
                   <th className="px-2 py-2">Cooking Unit</th>
@@ -347,6 +367,8 @@ export function CookingUnitsPage(): JSX.Element {
                   <th className="px-2 py-2">SKU</th>
                   <th className="px-2 py-2">Unit</th>
                   <th className="px-2 py-2 text-right">Quantity</th>
+                  <th className="px-2 py-2 text-right">Unit cost</th>
+                  <th className="px-2 py-2 text-right">Value (Rs)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
@@ -357,6 +379,8 @@ export function CookingUnitsPage(): JSX.Element {
                     <td className="px-2 py-2 text-slate-500">{row.sku}</td>
                     <td className="px-2 py-2 text-slate-400">{row.unit}</td>
                     <td className="px-2 py-2 text-right font-medium text-amber-200">{formatStockQty(row.quantity)}</td>
+                    <td className="px-2 py-2 text-right text-slate-300">{formatPkr(Number(row.unitCostPkr || 0))}</td>
+                    <td className="px-2 py-2 text-right font-medium text-emerald-200">{formatPkr(rowStockValue(row))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -368,6 +392,10 @@ export function CookingUnitsPage(): JSX.Element {
                   <td className="px-2 py-3 text-right text-sm font-bold text-amber-200">
                     {stockTotalLabel}
                   </td>
+                  <td className="px-2 py-3" />
+                  <td className="px-2 py-3 text-right text-sm font-bold text-emerald-200">
+                    {stockValueLabel}
+                  </td>
                 </tr>
               </tfoot>
             </table>
@@ -375,10 +403,13 @@ export function CookingUnitsPage(): JSX.Element {
               <span className="text-xs font-medium text-amber-100">
                 {selectedSectionName} stock total
               </span>
-              <span className="text-sm font-bold text-amber-200">{stockTotalLabel}</span>
+              <div className="text-right">
+                <div className="text-sm font-bold text-amber-200">{stockTotalLabel}</div>
+                <div className="text-sm font-bold text-emerald-200">Value {stockValueLabel}</div>
+              </div>
             </div>
             <p className="mt-2 text-[11px] text-slate-500">
-              {filteredStock.length} row{filteredStock.length === 1 ? "" : "s"}
+              {filteredStock.length} row{filteredStock.length === 1 ? "" : "s"} · Value = qty × unit cost
             </p>
           </div>
         )}
