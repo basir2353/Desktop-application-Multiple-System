@@ -31,7 +31,7 @@ export function TradeFlowNotesPage(): JSX.Element {
     <div className="tf-app space-y-5">
       <PageHeader title="Credit / Debit" subtitle="Adjust a customer or supplier balance without a full invoice." />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-5">
         <TfField label="Note type">
           <select className={tfInputClass} value={kind} onChange={(e) => setKind(e.target.value as "credit" | "debit")}>
             <option value="credit">Credit note</option>
@@ -62,7 +62,7 @@ export function TradeFlowNotesPage(): JSX.Element {
           </TfField>
         </div>
       </div>
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Kind</th><th className="px-3 py-2">Party</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Notes</th><th className="px-3 py-2" /></tr></thead>
         <tbody>
           {(rows.data ?? []).map((n) => (
@@ -72,7 +72,7 @@ export function TradeFlowNotesPage(): JSX.Element {
               <td className="px-3 py-2">{formatPkr(n.amountPkr)}</td>
               <td className="px-3 py-2">{n.notes ?? "—"}</td>
               <td className="px-3 py-2">
-                <button type="button" className="text-violet-700" onClick={() => printTradeFlowSlip(`${n.kind === "credit" ? "Credit" : "Debit"} note`, [["Party", n.partyName], ["Amount", formatPkr(n.amountPkr)], ["Notes", n.notes ?? ""], ["Date", new Date(n.createdAt).toLocaleString()]])}>Print</button>
+                <button type="button" className="text-amber-800 dark:text-amber-300" onClick={() => printTradeFlowSlip(`${n.kind === "credit" ? "Credit" : "Debit"} note`, [["Party", n.partyName], ["Amount", formatPkr(n.amountPkr)], ["Notes", n.notes ?? ""], ["Date", new Date(n.createdAt).toLocaleString()]])}>Print</button>
               </td>
             </tr>
           ))}

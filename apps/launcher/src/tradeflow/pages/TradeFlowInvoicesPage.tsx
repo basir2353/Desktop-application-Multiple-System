@@ -34,12 +34,12 @@ export function TradeFlowInvoicesPage(): JSX.Element {
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
       <div className="flex gap-2">
         {(["a4", "a5", "thermal"] as const).map((s) => (
-          <button key={s} type="button" onClick={() => setSize(s)} className={`rounded-lg px-3 py-1.5 text-sm ${size === s ? "bg-violet-600 text-white" : "border border-slate-300 dark:border-slate-700"}`}>
+          <button key={s} type="button" onClick={() => setSize(s)} className={`rounded-lg px-3 py-1.5 text-sm ${size === s ? "bg-amber-700 text-white" : "border border-slate-300 dark:border-slate-700"}`}>
             {s.toUpperCase()}
           </button>
         ))}
       </div>
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2">Invoice</th>
@@ -64,7 +64,7 @@ export function TradeFlowInvoicesPage(): JSX.Element {
               <td className="px-3 py-2">{formatPkr(inv.receivedPkr)}</td>
               <td className="px-3 py-2 capitalize">{inv.status}</td>
               <td className="px-3 py-2">
-                <button type="button" className="text-violet-700" onClick={() => printTradeFlowInvoice(inv, size, branch?.code)}>
+                <button type="button" className="text-amber-800 dark:text-amber-300" onClick={() => printTradeFlowInvoice(inv, size, branch?.code)}>
                   Print
                 </button>
                 <button

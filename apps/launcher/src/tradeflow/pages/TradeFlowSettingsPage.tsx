@@ -162,7 +162,7 @@ export function TradeFlowSettingsPage(): JSX.Element {
               setError(null);
               setNotice(null);
             }}
-            className={`rounded-lg px-3 py-1.5 text-sm ${tab === item.id ? "bg-violet-600 text-white" : "border border-slate-300 dark:border-slate-700"}`}
+            className={`rounded-lg px-3 py-1.5 text-sm ${tab === item.id ? "bg-amber-700 text-white" : "border border-slate-300 dark:border-slate-700"}`}
           >
             {item.label}
           </button>
@@ -170,19 +170,19 @@ export function TradeFlowSettingsPage(): JSX.Element {
       </div>
 
       {tab === "settings" ? (
-        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
           <p className="text-sm text-slate-500">This text is appended to every customer and supplier WhatsApp.</p>
           <TfField label="Default WhatsApp message">
             <textarea className={`${tfInputClass} min-h-32`} value={message} onChange={(e) => setMessage(e.target.value)} />
           </TfField>
-          <button type="button" disabled={!message.trim() || save.isPending} onClick={() => save.mutate()} className="rounded-lg bg-violet-600 px-4 py-2 text-white disabled:opacity-50">
+          <button type="button" disabled={!message.trim() || save.isPending} onClick={() => save.mutate()} className="rounded-lg bg-amber-700 px-4 py-2 text-white disabled:opacity-50">
             Save default message
           </button>
         </section>
       ) : null}
 
       {tab === "invoice" ? (
-        <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
+        <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
           <TfField label="Customer">
             <select className={tfInputClass} value={customerId} onChange={(e) => { setCustomerId(e.target.value); setInvoiceId(""); setPreview(null); }}>
               <option value="">All customers</option>
@@ -203,7 +203,7 @@ export function TradeFlowSettingsPage(): JSX.Element {
       ) : null}
 
       {tab === "reminder" ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
           <TfField label="Customer">
             <select className={tfInputClass} value={customerId} onChange={(e) => { setCustomerId(e.target.value); setPreview(null); }}>
               <option value="">Select customer</option>
@@ -216,7 +216,7 @@ export function TradeFlowSettingsPage(): JSX.Element {
       ) : null}
 
       {tab === "supplier" ? (
-        <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
+        <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
           <TfField label="Supplier">
             <select className={tfInputClass} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); setPurchaseId(""); setPreview(null); }}>
               <option value="">Select supplier</option>
@@ -248,7 +248,7 @@ export function TradeFlowSettingsPage(): JSX.Element {
       ) : null}
 
       {preview ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
           <p className="text-xs uppercase tracking-wide text-slate-500">Preview</p>
           <p className="mt-1 text-sm font-medium">{preview.phone ?? "No phone on this party"}</p>
           <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-200">{preview.message}</pre>

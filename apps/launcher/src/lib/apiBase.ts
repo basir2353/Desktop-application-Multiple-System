@@ -14,9 +14,20 @@ const DEPRECATED_LIVE_URLS = new Set([
 /** Baked at build time — overrides default when set. */
 const BAKED_API_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");
 
+function isLocalDevUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return /127\.0\.0\.1|localhost/i.test(url);
+  }
+}
+
 function normalizeLiveUrl(url: string): string {
   const trimmed = url.trim().replace(/\/$/, "");
-  if (!trimmed || DEPRECATED_LIVE_URLS.has(trimmed)) return RAILWAY_API_URL;
+  if (!trimmed || DEPRECATED_LIVE_URLS.has(trimmed) || isLocalDevUrl(trimmed)) {
+    return RAILWAY_API_URL;
+  }
   return trimmed;
 }
 

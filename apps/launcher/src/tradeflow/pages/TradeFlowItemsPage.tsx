@@ -86,7 +86,7 @@ export function TradeFlowItemsPage(): JSX.Element {
       />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-4">
         <TfField label="Item name">
           <input className={tfInputClass} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Marble chips" />
         </TfField>
@@ -128,7 +128,7 @@ export function TradeFlowItemsPage(): JSX.Element {
           Sample items (Brick, Cement, Crush, Sand, Steel) can be edited. Use Add item for any new material.
         </p>
       )}
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2">Item</th>
@@ -146,7 +146,7 @@ export function TradeFlowItemsPage(): JSX.Element {
             <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-500">No items yet. Add the first material above.</td></tr>
           ) : null}
           {(query.data ?? []).map((item) => (
-            <tr key={item.id} className={`border-t border-slate-100 dark:border-slate-800 ${editId === item.id ? "bg-violet-50/60 dark:bg-violet-950/20" : ""}`}>
+            <tr key={item.id} className={`border-t border-slate-100 dark:border-slate-800 ${editId === item.id ? "bg-amber-50 dark:bg-amber-500/10/60 dark:bg-amber-950/20" : ""}`}>
               <td className="px-3 py-2">{item.name} <span className="text-xs text-slate-500">{item.sku}</span></td>
               <td className="px-3 py-2">{item.unit}</td>
               <td className="px-3 py-2">{item.onHandQty} {item.unit}</td>
@@ -155,7 +155,7 @@ export function TradeFlowItemsPage(): JSX.Element {
               <td className="px-3 py-2">{item.freeQty}</td>
               <td className="px-3 py-2">{formatPkr(item.defaultRatePkr)}</td>
               <td className="px-3 py-2">
-                <button type="button" className="text-violet-700" onClick={() => startEdit(item)}>Edit</button>
+                <button type="button" className="text-amber-800 dark:text-amber-300" onClick={() => startEdit(item)}>Edit</button>
               </td>
             </tr>
           ))}

@@ -71,7 +71,7 @@ export function TradeFlowBookingsPage(): JSX.Element {
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {error || create.error ? <div className={noticeErrorClass}>{error ?? (create.error as Error).message}</div> : null}
 
-      <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-4">
         <TfField label="New party name">
           <input className={tfInputClass} value={newParty} onChange={(e) => setNewParty(e.target.value)} placeholder="e.g. Ahmed Traders" />
         </TfField>
@@ -84,11 +84,11 @@ export function TradeFlowBookingsPage(): JSX.Element {
           </button>
         </div>
         <p className="self-end text-sm text-slate-500">
-          Kashif and Rehan are sample parties. Add more here or on <Link className="text-violet-700" to="/pops/tradeflow/customers">Parties</Link>.
+          Kashif and Rehan are sample parties. Add more here or on <Link className="text-amber-800 dark:text-amber-300" to="/pops/tradeflow/customers">Parties</Link>.
         </p>
       </section>
 
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
         <TfField label="Party">
           <select className={tfInputClass} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
             <option value="">Select party</option>
@@ -134,7 +134,7 @@ export function TradeFlowBookingsPage(): JSX.Element {
           {selected.lastRatePkr != null ? ` · last party rate ${formatPkr(selected.lastRatePkr)}` : ""}
         </p>
       ) : null}
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2">Party</th>

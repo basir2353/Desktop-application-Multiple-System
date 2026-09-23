@@ -15,13 +15,13 @@ export function TradeFlowStockPage(): JSX.Element {
     <div className="tf-app space-y-5">
       <PageHeader title="Stock" subtitle="On-hand, booked, and free quantity in both units." />
       {(query.data ?? []).length === 0 ? (
-        <p className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/40">
+        <p className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/40">
           No stock yet. Add items first.
         </p>
       ) : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {(query.data ?? []).map((item) => (
-          <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+          <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
             <h2 className="font-semibold text-slate-900 dark:text-white">{item.name}</h2>
             <p className="text-xs text-slate-500">{item.sku} · {item.unit} / {item.altUnit}</p>
             <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">

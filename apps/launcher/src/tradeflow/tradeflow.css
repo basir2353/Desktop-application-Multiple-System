@@ -1,5 +1,8 @@
 .tf-app,
 .tf-pos {
+  --tf-accent: #b45309;
+  --tf-accent-soft: rgba(180, 83, 9, 0.14);
+  --tf-accent-ring: rgba(180, 83, 9, 0.25);
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
@@ -26,4 +29,21 @@
   letter-spacing: 0;
   text-shadow: none;
   font-synthesis: none;
+}
+
+.tf-primary-btn {
+  background: var(--tf-accent);
+  color: #fff;
+}
+
+.tf-primary-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.tf-primary-btn:disabled {
+  opacity: 0.5;
+}
+
+.tf-row-active {
+  background: var(--tf-accent-soft);
 }

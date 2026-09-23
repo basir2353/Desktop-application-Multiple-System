@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { fieldInputClass, panelClass } from "../../pops/lib/themeClasses";
 import { useSessionStore } from "../../stores/sessionStore";
 import { usePopsStore } from "../../stores/popsStore";
 import "../tradeflow.css";
@@ -9,13 +10,20 @@ export function formatPkr(amount: number): string {
   return `Rs ${amount.toLocaleString()}`;
 }
 
-export const tfInputClass =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-500";
+/** MaterialFlow inputs — POPS field chrome + full width. */
+export const tfInputClass = `w-full ${fieldInputClass}`;
 
+/** Copper/amber primary for MaterialFlow actions. */
 export const tfPrimaryBtn =
-  "h-[42px] w-full rounded-lg bg-violet-600 px-3 text-sm font-medium text-white disabled:opacity-50";
+  "tf-primary-btn h-[42px] w-full rounded-lg px-3 text-sm font-medium disabled:opacity-50";
+
 export const tfSecondaryBtn =
-  "h-[42px] w-full rounded-lg border border-slate-300 px-3 text-sm dark:border-slate-700 disabled:opacity-50";
+  "h-[42px] w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-800 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-50";
+
+export const tfPanelClass = panelClass;
+
+export const tfTableWrapClass =
+  "tf-table-wrap overflow-x-auto";
 
 export function useTradeFlowAccess() {
   const branch = usePopsStore((s) => s.branch);

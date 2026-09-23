@@ -91,9 +91,9 @@ export const businessSystems: Record<BusinessSystemId, BusinessSystem> = {
     shortName: "MaterialFlow",
     tagline: "Wholesale building-material trade",
     description: "Wholesale, bookings, ledgers, and distribution for building material trade.",
-    accentClass: "text-violet-400",
+    accentClass: "text-amber-600 dark:text-amber-400",
     iconLetter: "MF",
-    gradientClass: "from-violet-500 to-fuchsia-600",
+    gradientClass: "from-stone-700 to-amber-700",
     routePrefix: "/pops",
     hiddenNavPaths: new Set([
       "menu",

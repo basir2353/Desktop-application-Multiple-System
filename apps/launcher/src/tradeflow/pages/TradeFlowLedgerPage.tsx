@@ -2,11 +2,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../../pops/ui/PageHeader";
+import { ModuleSegmentedControl } from "../../pops/ui/ModuleToolbar";
 import { noticeErrorClass, noticeSuccessClass } from "../../pops/lib/themeClasses";
 import { createTradeFlowPayment, fetchTradeFlowCustomers, fetchTradeFlowLedger, fetchTradeFlowWhatsapp } from "../api/tradeflow";
 import { formatPkr, tfInputClass, tfPrimaryBtn, TfField, useInvalidateTradeFlow, useTradeFlowAccess } from "../hooks/useTradeFlow";
 import { sendTradeFlowWhatsapp } from "../lib/whatsappTradeFlow";
-
+import "../tradeflow.css";
 const FILTERS = [
   { id: "all", label: "All" },
   { id: "item", label: "Item detail" },
@@ -53,7 +54,7 @@ export function TradeFlowLedgerPage(): JSX.Element {
       <PageHeader title="Ledger" subtitle="Bookings, advances, delivered items, remaining, payments, sales, and returns." />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-[1fr_auto_auto_auto]">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-[1fr_auto_auto_auto]">
         <TfField label="Customer">
           <select
             className={tfInputClass}
@@ -98,13 +99,11 @@ export function TradeFlowLedgerPage(): JSX.Element {
           </button>
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {FILTERS.map((f) => (
-          <button key={f.id} type="button" onClick={() => setFilter(f.id)} className={`rounded-lg px-3 py-1.5 text-sm ${filter === f.id ? "bg-violet-600 text-white" : "border border-slate-300 dark:border-slate-700"}`}>
-            {f.label}
-          </button>
-        ))}
-      </div>
+      <ModuleSegmentedControl
+        value={filter}
+        onChange={setFilter}
+        options={FILTERS.map((f) => ({ id: f.id, label: f.label, accent: true }))}
+      />
       {data ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -118,7 +117,7 @@ export function TradeFlowLedgerPage(): JSX.Element {
             <Stat label="Closing" value={formatPkr(data.summary.closingBalancePkr)} />
           </div>
           {data.remainingBookings.length > 0 ? (
-            <section className="rounded-2xl border border-violet-200 bg-violet-50 p-4 dark:border-violet-900 dark:bg-violet-950/30">
+            <section className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-500/10 p-4 dark:border-amber-900 dark:bg-amber-950/30">
               <h3 className="font-semibold">Remaining booking</h3>
               <ul className="mt-2 text-sm">
                 {data.remainingBookings.map((b) => (
@@ -127,7 +126,7 @@ export function TradeFlowLedgerPage(): JSX.Element {
               </ul>
             </section>
           ) : null}
-          <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+          <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-3 py-2">When</th>
@@ -159,7 +158,7 @@ export function TradeFlowLedgerPage(): JSX.Element {
 
 function Stat({ label, value }: { label: string; value: string }): JSX.Element {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
       <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-lg font-semibold">{value}</p>
     </div>

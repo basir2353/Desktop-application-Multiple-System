@@ -85,7 +85,7 @@ export function TradeFlowPurchasePage(): JSX.Element {
       <PageHeader title="Purchase invoices" subtitle="Supplier balance, dual units, and WhatsApp to the supplier." />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {error || save.error ? <div className={noticeErrorClass}>{error ?? (save.error as Error).message}</div> : null}
-      <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-4">
         <TfField label="Supplier">
           <select className={tfInputClass} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
             <option value="">Select supplier</option>
@@ -108,7 +108,7 @@ export function TradeFlowPurchasePage(): JSX.Element {
           </div>
         </div>
       </section>
-      <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
         <TfField label="Item">
           <select className={tfInputClass} value={itemId} onChange={(e) => { setItemId(e.target.value); const item = (items.data ?? []).find((i: TradeFlowItem) => i.id === e.target.value); if (item) setRate(String(item.defaultRatePkr)); }}>
             <option value="">Select item</option>
@@ -132,7 +132,7 @@ export function TradeFlowPurchasePage(): JSX.Element {
         </div>
       </section>
       {picked ? <p className="text-sm text-slate-500">Stock: {picked.onHandQty} {picked.unit} · {formatPkr(picked.onHandAlt)} {picked.altUnit}</p> : null}
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Item</th><th className="px-3 py-2">Qty / unit</th><th className="px-3 py-2">Rate</th><th className="px-3 py-2">Amount</th></tr></thead>
         <tbody>
           {lines.map((l, i) => (
@@ -150,10 +150,10 @@ export function TradeFlowPurchasePage(): JSX.Element {
         <TfField label="Paid now Rs">
           <input className={`${tfInputClass} w-40`} value={paid} onChange={(e) => setPaid(e.target.value)} placeholder="0" />
         </TfField>
-        <button type="button" disabled={!supplierId || lines.length === 0 || save.isPending} onClick={() => save.mutate()} className="h-[42px] rounded-lg bg-violet-600 px-4 text-white disabled:opacity-50">Save purchase</button>
+        <button type="button" disabled={!supplierId || lines.length === 0 || save.isPending} onClick={() => save.mutate()} className="h-[42px] rounded-lg bg-amber-700 px-4 text-white disabled:opacity-50">Save purchase</button>
       </div>
       {saved ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
           <p className="font-semibold">{saved.invoiceNo} · {saved.supplierName}</p>
           <button
             type="button"
@@ -174,7 +174,7 @@ export function TradeFlowPurchasePage(): JSX.Element {
           </button>
         </div>
       ) : null}
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Invoice</th><th className="px-3 py-2">Supplier</th><th className="px-3 py-2">Total</th><th className="px-3 py-2">Paid</th></tr></thead>
         <tbody>
           {(purchases.data ?? []).map((p) => (

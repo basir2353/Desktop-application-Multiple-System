@@ -3,8 +3,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { clearDeviceInstall } from "./lib/deviceInstall";
-import { resolveLiveApiBaseUrl } from "./lib/apiBase";
+import { persistResolvedLiveUrl, resolveLiveApiBaseUrl, RAILWAY_API_URL } from "./lib/apiBase";
 import { maybeAutoBackupOnAppUpdate } from "./pops/lib/branchSettingsBackup";
+import { useDataModeStore } from "./stores/dataModeStore";
 import launcherPkg from "../package.json";
 import "./index.css";
 import "./theme-overrides.css";
@@ -23,6 +24,8 @@ try {
   }
   // Force Live Railway API (local Vite UI → hosted backend).
   // Also honor ?api=live|railway. Default this session to Live when ?api=local is absent.
+  // Must update both localStorage AND the zustand store — persist may have already
+  // hydrated "local" into memory before this block runs (import order).
   const apiParam = params.get("api");
   if (apiParam === "live" || apiParam === "railway" || apiParam !== "local") {
     localStorage.setItem(
@@ -32,6 +35,12 @@ try {
         version: 0,
       }),
     );
+    useDataModeStore.setState({
+      dataMode: "cloud",
+      apiPreset: "live",
+      cloudApiUrl: "",
+    });
+    persistResolvedLiveUrl(RAILWAY_API_URL);
   }
 } catch {
   // ignore storage errors

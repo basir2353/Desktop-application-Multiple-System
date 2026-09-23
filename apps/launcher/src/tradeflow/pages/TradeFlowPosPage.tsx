@@ -285,10 +285,10 @@ export function TradeFlowPosPage(): JSX.Element {
 
   return (
     <div className="tf-pos space-y-4">
-      <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-white dark:border-slate-800">
+      <header className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-white">
         <div>
-          <p className="text-[11px] uppercase text-slate-400">{isAdmin ? "Admin counter" : "Counter"}</p>
-          <h1 className="text-xl font-medium">MaterialFlow POS</h1>
+          <p className="text-[11px] uppercase tracking-wide text-amber-400/90">{isAdmin ? "Admin counter" : "Counter"}</p>
+          <h1 className="text-xl font-semibold">MaterialFlow POS</h1>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">
           <span className={`rounded-full px-3 py-1 ${paymentMode === "cash" ? "bg-emerald-500 text-white" : "bg-amber-400 text-slate-950"}`}>
@@ -306,7 +306,7 @@ export function TradeFlowPosPage(): JSX.Element {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.9fr)]">
         <div className="space-y-4">
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
+          <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="sm:col-span-2">
                 <span className="mb-1 block text-xs font-medium text-slate-500">Customer</span>
@@ -380,7 +380,7 @@ export function TradeFlowPosPage(): JSX.Element {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
+          <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <TfField label="Search item">
                 <input
@@ -427,7 +427,7 @@ export function TradeFlowPosPage(): JSX.Element {
                 />
               </TfField>
             </div>
-            <button type="button" onClick={() => addLine()} className="mt-3 h-12 w-full rounded-xl bg-violet-600 text-base font-medium text-white hover:bg-violet-500">
+            <button type="button" onClick={() => addLine()} className="mt-3 h-12 w-full rounded-xl bg-amber-700 text-base font-medium text-white hover:bg-amber-50 dark:bg-amber-500/100">
               Add item to bill
             </button>
             {picked ? (
@@ -444,7 +444,7 @@ export function TradeFlowPosPage(): JSX.Element {
                   type="button"
                   onClick={() => chooseItem(item)}
                   onDoubleClick={() => addLine(item)}
-                  className={`rounded-xl border p-3 text-left transition ${picked?.id === item.id ? "border-violet-500 bg-violet-50 dark:bg-violet-950/40" : "border-slate-200 bg-slate-50 hover:border-violet-300 dark:border-slate-700 dark:bg-slate-800/50"}`}
+                  className={`rounded-xl border p-3 text-left transition ${picked?.id === item.id ? "border-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:bg-amber-950/40" : "border-slate-200 bg-slate-50 hover:border-amber-500/50 dark:border-slate-700 dark:bg-slate-800/50"}`}
                 >
                   <p className="font-medium text-slate-900 dark:text-white">{item.name}</p>
                   <p className="mt-1 text-xs text-slate-500">{item.onHandQty} {item.unit} · {formatPkr(item.lastRatePkr ?? item.defaultRatePkr)}</p>
@@ -455,7 +455,7 @@ export function TradeFlowPosPage(): JSX.Element {
           </section>
 
           {isAdmin ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
+            <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
               <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">Stock snapshot</h2>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {items.slice(0, 8).map((item) => (
@@ -470,7 +470,7 @@ export function TradeFlowPosPage(): JSX.Element {
         </div>
 
         <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/50">
+          <section className="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/50">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
               <h2 className="font-medium">Bill</h2>
               <span className="text-xs text-slate-500">{cart.length} lines</span>
@@ -519,7 +519,7 @@ export function TradeFlowPosPage(): JSX.Element {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
+          <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <h3 className="text-sm font-medium">Invoice expenses</h3>
             <p className="mt-1 text-xs text-slate-500">Internal cost only. Not added to the party bill.</p>
             <div className="mt-2 grid grid-cols-[1fr_110px_auto] gap-2">
@@ -552,7 +552,7 @@ export function TradeFlowPosPage(): JSX.Element {
             {files.length > 0 ? <p className="mt-1 text-xs text-slate-500">{files.map((f) => f.fileName).join(", ")}</p> : null}
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
+          <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <TfField label="Receive now Rs">
               <input className={fieldClass} value={receiveAmount} onChange={(e) => setReceiveAmount(e.target.value)} placeholder={String(total)} />
             </TfField>
@@ -567,13 +567,13 @@ export function TradeFlowPosPage(): JSX.Element {
           </section>
 
           {saved ? (
-            <section ref={savedRef} className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+            <section ref={savedRef} className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
               <h3 className="font-medium">{saved.invoiceNo}</h3>
               <p className="text-sm text-slate-600">{saved.customerName} · {formatPkr(saved.totalPkr)} · received {formatPkr(saved.receivedPkr)}</p>
               {saved.expensePkr > 0 ? <p className="text-xs text-slate-500">Internal expenses {formatPkr(saved.expensePkr)}</p> : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 {(["a4", "a5", "thermal"] as const).map((size) => (
-                  <button key={size} type="button" className={`rounded-lg px-3 py-1.5 text-sm ${printSize === size ? "bg-violet-600 text-white" : "border border-slate-300 dark:border-slate-700"}`} onClick={() => setPrintSize(size)}>
+                  <button key={size} type="button" className={`rounded-lg px-3 py-1.5 text-sm ${printSize === size ? "bg-amber-700 text-white" : "border border-slate-300 dark:border-slate-700"}`} onClick={() => setPrintSize(size)}>
                     {size.toUpperCase()}
                   </button>
                 ))}

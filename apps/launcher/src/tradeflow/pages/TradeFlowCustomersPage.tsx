@@ -2,7 +2,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../../pops/ui/PageHeader";
-import { noticeErrorClass, noticeSuccessClass } from "../../pops/lib/themeClasses";
+import { ModuleSegmentedControl } from "../../pops/ui/ModuleToolbar";
+import {
+  emptyStateBoxClass,
+  linkActionClass,
+  noticeErrorClass,
+  noticeSuccessClass,
+  panelClass,
+} from "../../pops/lib/themeClasses";
 import {
   createTradeFlowCustomer,
   createTradeFlowSupplier,
@@ -12,8 +19,17 @@ import {
   updateTradeFlowCustomer,
   updateTradeFlowSupplier,
 } from "../api/tradeflow";
-import { formatPkr, tfInputClass, tfPrimaryBtn, TfField, useInvalidateTradeFlow, useTradeFlowAccess } from "../hooks/useTradeFlow";
+import {
+  formatPkr,
+  tfInputClass,
+  tfPrimaryBtn,
+  tfTableWrapClass,
+  TfField,
+  useInvalidateTradeFlow,
+  useTradeFlowAccess,
+} from "../hooks/useTradeFlow";
 import { sendTradeFlowWhatsapp } from "../lib/whatsappTradeFlow";
+import "../tradeflow.css";
 
 export function TradeFlowCustomersPage(): JSX.Element {
   const { branch } = useTradeFlowAccess();
@@ -25,8 +41,16 @@ export function TradeFlowCustomersPage(): JSX.Element {
   const [editId, setEditId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const customers = useQuery({ queryKey: ["tradeflow", "customers", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchTradeFlowCustomers(branch!.code) });
-  const suppliers = useQuery({ queryKey: ["tradeflow", "suppliers", branch?.code], enabled: Boolean(branch?.code), queryFn: () => fetchTradeFlowSuppliers(branch!.code) });
+  const customers = useQuery({
+    queryKey: ["tradeflow", "customers", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchTradeFlowCustomers(branch!.code),
+  });
+  const suppliers = useQuery({
+    queryKey: ["tradeflow", "suppliers", branch?.code],
+    enabled: Boolean(branch?.code),
+    queryFn: () => fetchTradeFlowSuppliers(branch!.code),
+  });
 
   const save = useMutation({
     mutationFn: async () => {
@@ -72,22 +96,27 @@ export function TradeFlowCustomersPage(): JSX.Element {
 
   return (
     <div className="tf-app space-y-5">
-      <PageHeader title="Parties" subtitle="Customers and suppliers with phone, address, closing balance, ledger, and WhatsApp." />
+      <PageHeader
+        title="Parties"
+        subtitle="Customers and suppliers with phone, address, closing balance, ledger, and WhatsApp."
+      />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
-      <div className="flex gap-2">
-        {(["customers", "suppliers"] as const).map((id) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => { setTab(id); setEditId(null); setName(""); setPhone(""); setAddress(""); }}
-            className={`rounded-lg px-3 py-1.5 text-sm capitalize ${tab === id ? "bg-violet-600 text-white" : "border border-slate-300 dark:border-slate-700"}`}
-          >
-            {id}
-          </button>
-        ))}
-      </div>
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-4">
+      <ModuleSegmentedControl
+        value={tab}
+        onChange={(id) => {
+          setTab(id);
+          setEditId(null);
+          setName("");
+          setPhone("");
+          setAddress("");
+        }}
+        options={[
+          { id: "customers", label: "Customers", accent: true },
+          { id: "suppliers", label: "Suppliers", accent: true },
+        ]}
+      />
+      <div className={`grid gap-3 p-4 sm:grid-cols-4 ${panelClass}`}>
         <TfField label="Name">
           <input className={tfInputClass} placeholder="e.g. Kashif" value={name} onChange={(e) => setName(e.target.value)} />
         </TfField>
@@ -103,37 +132,64 @@ export function TradeFlowCustomersPage(): JSX.Element {
           </button>
         </div>
       </div>
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
-        <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-          <tr>
-            <th className="px-3 py-2">Name</th>
-            <th className="px-3 py-2">Phone</th>
-            <th className="px-3 py-2">Address</th>
-            <th className="px-3 py-2">Closing balance</th>
-            <th className="px-3 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-t border-slate-100 dark:border-slate-800">
-              <td className="px-3 py-2">{row.name}{"isCash" in row && row.isCash ? " (Cash)" : ""}</td>
-              <td className="px-3 py-2">{row.phone ?? "—"}</td>
-              <td className="px-3 py-2">{row.address ?? "—"}</td>
-              <td className="px-3 py-2">{formatPkr(row.closingBalancePkr)}</td>
-              <td className="px-3 py-2">
-                {"isCash" in row && row.isCash ? null : (
-                  <span className="flex flex-wrap gap-3">
-                    {tab === "customers" ? <Link className="text-violet-700" to={`/pops/tradeflow/ledger?customerId=${row.id}`}>Ledger</Link> : null}
-                    <Link className="text-violet-700" to={`/pops/tradeflow/payments`}>{tab === "customers" ? "Receive" : "Pay"}</Link>
-                    <button type="button" className="text-slate-700" onClick={() => startEdit(row)}>Edit</button>
-                    <button type="button" className="text-emerald-700" onClick={() => void sendWa(tab === "customers" ? "customer" : "supplier", row.id, row.name)}>WhatsApp</button>
-                  </span>
-                )}
-              </td>
+      <div className={tfTableWrapClass}>
+        <table className="min-w-full bg-white text-sm dark:bg-slate-900/40">
+          <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500 dark:bg-slate-900">
+            <tr>
+              <th className="px-3 py-2">Name</th>
+              <th className="px-3 py-2">Phone</th>
+              <th className="px-3 py-2">Address</th>
+              <th className="px-3 py-2">Closing balance</th>
+              <th className="px-3 py-2" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="p-0">
+                  <div className={emptyStateBoxClass}>No {tab} yet.</div>
+                </td>
+              </tr>
+            ) : (
+              rows.map((row) => (
+                <tr key={row.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">
+                    {row.name}
+                    {"isCash" in row && row.isCash ? " (Cash)" : ""}
+                  </td>
+                  <td className="px-3 py-2">{row.phone ?? "—"}</td>
+                  <td className="px-3 py-2">{row.address ?? "—"}</td>
+                  <td className="px-3 py-2 tabular-nums">{formatPkr(row.closingBalancePkr)}</td>
+                  <td className="px-3 py-2">
+                    {"isCash" in row && row.isCash ? null : (
+                      <span className="flex flex-wrap gap-3">
+                        {tab === "customers" ? (
+                          <Link className={linkActionClass} to={`/pops/tradeflow/ledger?customerId=${row.id}`}>
+                            Ledger
+                          </Link>
+                        ) : null}
+                        <Link className={linkActionClass} to={`/pops/tradeflow/payments`}>
+                          {tab === "customers" ? "Receive" : "Pay"}
+                        </Link>
+                        <button type="button" className={linkActionClass} onClick={() => startEdit(row)}>
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="font-medium text-emerald-700 dark:text-emerald-300"
+                          onClick={() => void sendWa(tab === "customers" ? "customer" : "supplier", row.id, row.name)}
+                        >
+                          WhatsApp
+                        </button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

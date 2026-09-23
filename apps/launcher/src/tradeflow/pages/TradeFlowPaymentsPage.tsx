@@ -47,7 +47,7 @@ export function TradeFlowPaymentsPage(): JSX.Element {
       <PageHeader title="Payments" subtitle="Receive from a customer or pay a supplier. Closing balance updates immediately." />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {create.error ? <div className={noticeErrorClass}>{(create.error as Error).message}</div> : null}
-      <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
         <TfField label="Payment type">
           <select className={tfInputClass} value={partyType} onChange={(e) => { setPartyType(e.target.value as "customer" | "supplier"); setPartyId(""); setKind(e.target.value === "supplier" ? "pay" : "receive"); }}>
             <option value="customer">Customer receipt</option>
@@ -89,7 +89,7 @@ export function TradeFlowPaymentsPage(): JSX.Element {
         </div>
       </section>
       {selected ? <p className="text-sm text-slate-500">Current closing balance {formatPkr(selected.closingBalancePkr)}</p> : null}
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2">When</th>

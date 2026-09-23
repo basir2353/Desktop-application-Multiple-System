@@ -5,6 +5,8 @@ export {
   tfInputClass,
   tfPrimaryBtn,
   tfSecondaryBtn,
+  tfPanelClass,
+  tfTableWrapClass,
   useInvalidateTradeFlow,
   useTradeFlowAccess,
 } from "./useTradeFlow.ts";

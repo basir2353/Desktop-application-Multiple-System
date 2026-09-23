@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "../../pops/ui/PageHeader";
+import { ModuleSegmentedControl } from "../../pops/ui/ModuleToolbar";
 import { noticeErrorClass, noticeSuccessClass } from "../../pops/lib/themeClasses";
 import {
   createTradeFlowReturn,
@@ -10,7 +11,7 @@ import {
   fetchTradeFlowSuppliers,
 } from "../api/tradeflow";
 import { formatPkr, tfInputClass, tfPrimaryBtn, TfField, useInvalidateTradeFlow, useTradeFlowAccess } from "../hooks/useTradeFlow";
-
+import "../tradeflow.css";
 export function TradeFlowReturnsPage(): JSX.Element {
   const { branch } = useTradeFlowAccess();
   const invalidate = useInvalidateTradeFlow();
@@ -49,13 +50,18 @@ export function TradeFlowReturnsPage(): JSX.Element {
       <PageHeader title="Returns" subtitle="Sales return or purchase return, with item quantity when needed." />
       {notice ? <div className={noticeSuccessClass}>{notice}</div> : null}
       {create.error ? <div className={noticeErrorClass}>{(create.error as Error).message}</div> : null}
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-6">
-        <TfField label="Return type">
-          <select className={tfInputClass} value={kind} onChange={(e) => { setKind(e.target.value as "sales" | "purchase"); setPartyId(""); }}>
-            <option value="sales">Sales return</option>
-            <option value="purchase">Purchase return</option>
-          </select>
-        </TfField>
+      <ModuleSegmentedControl
+        value={kind}
+        onChange={(id) => {
+          setKind(id);
+          setPartyId("");
+        }}
+        options={[
+          { id: "sales", label: "Sales return", accent: true },
+          { id: "purchase", label: "Purchase return", accent: true },
+        ]}
+      />
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2 lg:grid-cols-5">
         <TfField label={kind === "sales" ? "Customer" : "Supplier"}>
           <select className={tfInputClass} value={partyId} onChange={(e) => setPartyId(e.target.value)}>
             <option value="">{kind === "sales" ? "Select customer" : "Select supplier"}</option>
@@ -77,13 +83,13 @@ export function TradeFlowReturnsPage(): JSX.Element {
         <div className="flex items-end">
           <button type="button" disabled={!partyId || !Number(amount) || create.isPending} onClick={() => create.mutate()} className={tfPrimaryBtn}>Save return</button>
         </div>
-        <div className="sm:col-span-2 lg:col-span-6">
+        <div className="sm:col-span-2 lg:col-span-5">
           <TfField label="Notes">
             <input className={tfInputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional narration" />
           </TfField>
         </div>
       </div>
-      <table className="min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
+      <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm dark:border-slate-800 dark:bg-slate-900/40">
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Kind</th><th className="px-3 py-2">Party</th><th className="px-3 py-2">Item</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Amount</th></tr></thead>
         <tbody>
           {(rows.data ?? []).map((r) => (

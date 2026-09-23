@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getApiBaseUrl, LOCAL_API_URL } from "../lib/apiBase";
+import { getApiBaseUrl, getLiveApiUrl, LOCAL_API_URL } from "../lib/apiBase";
 import { useDataModeStore, type ApiPreset } from "../stores/dataModeStore";
 
 type Props = {
@@ -7,7 +7,7 @@ type Props = {
 };
 
 const PRESETS: { id: ApiPreset; label: string; hint: string }[] = [
-  { id: "live", label: "Live (Railway)", hint: "Active OLD or NEW server" },
+  { id: "live", label: "Live (Railway)", hint: getLiveApiUrl() },
   { id: "local", label: "Local API", hint: LOCAL_API_URL },
 ];
 

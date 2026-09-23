@@ -91,10 +91,10 @@ export function TradeFlowMobilePage(): JSX.Element {
       {error ? <div className={noticeErrorClass}>{error}</div> : null}
       <div className="flex flex-wrap gap-2">
         {TABS.map((t) => (
-          <button key={t} type="button" onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-sm capitalize ${tab === t ? "bg-violet-600 text-white" : "border border-slate-300 dark:border-slate-700"}`}>{t}</button>
+          <button key={t} type="button" onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-sm capitalize ${tab === t ? "bg-amber-700 text-white" : "border border-slate-300 dark:border-slate-700"}`}>{t}</button>
         ))}
       </div>
-      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+      <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         {tab !== "purchase" && tab !== "expenses" ? (
           <TfField label="Customer">
             <select className={tfInputClass} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
@@ -137,7 +137,7 @@ export function TradeFlowMobilePage(): JSX.Element {
         <TfField label={tab === "sales" ? "Receive now Rs" : "Amount Rs"}>
           <input className={tfInputClass} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={tab === "sales" ? "Cash received" : "e.g. 5000"} />
         </TfField>
-        <button type="button" disabled={run.isPending} onClick={() => run.mutate()} className="w-full rounded-lg bg-violet-600 py-3 font-semibold text-white disabled:opacity-50">Save {tab}</button>
+        <button type="button" disabled={run.isPending} onClick={() => run.mutate()} className="w-full rounded-lg bg-amber-700 py-3 font-semibold text-white disabled:opacity-50">Save {tab}</button>
       </div>
       <div className="grid grid-cols-2 gap-2 text-sm">
         <Link className="rounded-xl border border-slate-200 p-3 dark:border-slate-800" to="/pops/tradeflow/pos">Full POS</Link>
