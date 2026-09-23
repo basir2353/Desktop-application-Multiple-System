@@ -172,6 +172,38 @@ const icons: Record<string, (props: IconProps) => JSX.Element> = {
       <path d="M7 8h4M7 12h10" />
     </Svg>
   ),
+  Parties: (p) => (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="3" />
+      <circle cx="16" cy="9" r="2.5" />
+      <path d="M3 20c0-2.8 2.2-5 5-5s5 2.2 5 5M14 20c0-2 1.6-3.6 3.6-4" />
+    </Svg>
+  ),
+  Purchases: (p) => (
+    <Svg {...p}>
+      <path d="M6 6h15l-1.5 9H7.5L6 6z" />
+      <circle cx="9" cy="19" r="1.5" />
+      <circle cx="17" cy="19" r="1.5" />
+    </Svg>
+  ),
+  Communications: (p) => (
+    <Svg {...p}>
+      <path d="M5 5h10a3 3 0 013 3v5a3 3 0 01-3 3H11l-4 3v-3H5a3 3 0 01-3-3V8a3 3 0 013-3z" />
+    </Svg>
+  ),
+  WhatsApp: (p) => (
+    <Svg {...p}>
+      <path d="M20 11.5A8.5 8.5 0 1111 4a8.5 8.5 0 019 7.5z" />
+      <path d="M8.5 17.5L6 20l.8-3.4" />
+      <path d="M9 10.2c.2 1.6 2.1 3.4 3.7 3.8M15 9.5c-.4-.4-1-.7-1.6-.7" />
+    </Svg>
+  ),
+  Operations: (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3v2M12 19v2M4.2 6.2l1.4 1.4M18.4 16.4l1.4 1.4M3 12h2M19 12h2M4.2 17.8l1.4-1.4M18.4 7.6l1.4-1.4" />
+    </Svg>
+  ),
   "Point of Sale": (p) => (
     <Svg {...p}>
       <rect x="3" y="3" width="18" height="18" rx="2" />

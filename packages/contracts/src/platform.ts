@@ -9,6 +9,7 @@ export const SYSTEM_TYPES = [
   "restaurant",
   "pharmacy",
   "general_store",
+  "tradeflow",
   "grocery",
   "retail",
 ] as const;
@@ -20,6 +21,7 @@ export const SYSTEM_TYPE_LABELS: Record<SystemType, string> = {
   restaurant: "Restaurant POS",
   pharmacy: "Pharmacy POS",
   general_store: "General Store POS",
+  tradeflow: "MaterialFlow ERP",
   grocery: "Grocery POS",
   retail: "Retail POS",
 };

@@ -6,9 +6,10 @@ import {
 } from "../pops/spec/modules";
 import { pharmacyNavItems } from "../pharmacy/spec/nav";
 import { storeNavItems } from "../store/spec/nav";
+import { tradeflowNavItems } from "../tradeflow/spec/nav";
 import { frontendIdToSystemType, systemTypeToFrontendId, type SystemType } from "@platform/contracts";
 
-export type BusinessSystemId = "restaurant" | "pharmacy" | "general-store";
+export type BusinessSystemId = "restaurant" | "pharmacy" | "general-store" | "tradeflow";
 
 export type BusinessSystem = {
   id: BusinessSystemId;
@@ -84,16 +85,44 @@ export const businessSystems: Record<BusinessSystemId, BusinessSystem> = {
     routePrefix: "/pops",
     hiddenNavPaths: generalStoreHidden,
   },
+  tradeflow: {
+    id: "tradeflow",
+    name: "MaterialFlow ERP",
+    shortName: "MaterialFlow",
+    tagline: "Wholesale building-material trade",
+    description: "Wholesale, bookings, ledgers, and distribution for building material trade.",
+    accentClass: "text-violet-400",
+    iconLetter: "MF",
+    gradientClass: "from-violet-500 to-fuchsia-600",
+    routePrefix: "/pops",
+    hiddenNavPaths: new Set([
+      "menu",
+      "tables",
+      "kitchen",
+      "waiter",
+      "delivery",
+      "inventory/recipes",
+      "inventory/ingredients",
+      "manufacturing",
+      "content",
+    ]),
+  },
 };
 
 export const businessSystemList: BusinessSystem[] = [
   businessSystems.restaurant,
   businessSystems.pharmacy,
   businessSystems["general-store"],
+  businessSystems.tradeflow,
 ];
 
 export function isBusinessSystemId(value: string): value is BusinessSystemId {
-  return value === "restaurant" || value === "pharmacy" || value === "general-store";
+  return (
+    value === "restaurant" ||
+    value === "pharmacy" ||
+    value === "general-store" ||
+    value === "tradeflow"
+  );
 }
 
 export function getBusinessSystem(id: BusinessSystemId | string | null | undefined): BusinessSystem {
@@ -128,6 +157,9 @@ export function getErpEntryPath(systemId: BusinessSystemId, hasBranch: boolean):
   if (systemId === "general-store") {
     return "/pops/store/pos";
   }
+  if (systemId === "tradeflow") {
+    return "/pops/tradeflow/pos";
+  }
   // Restaurant dashboard is admin-only; callers with a role should use erpEntryPathForRole.
   return "/pops/pos";
 }
@@ -158,6 +190,9 @@ export function resolveBusinessSystemFromPath(pathname: string): BusinessSystemI
   if (pathname.startsWith("/pops/store/") || pathname === "/pops/store") {
     return "general-store";
   }
+  if (pathname.startsWith("/pops/tradeflow/") || pathname === "/pops/tradeflow") {
+    return "tradeflow";
+  }
   return null;
 }
 
@@ -166,6 +201,7 @@ export function isRestaurantExclusivePath(pathname: string): boolean {
   const sub = pathname.replace(/^\/pops\/?/, "").replace(/\/$/, "");
   if (sub.startsWith("pharmacy/") || sub === "pharmacy") return false;
   if (sub.startsWith("store/") || sub === "store") return false;
+  if (sub.startsWith("tradeflow/") || sub === "tradeflow") return false;
   if (isSharedErpSubpath(sub)) return false;
   return true;
 }
@@ -191,6 +227,9 @@ export function getNavItemsForSystem(id: BusinessSystemId): PopsNavItem[] {
   }
   if (id === "general-store") {
     return storeNavItems;
+  }
+  if (id === "tradeflow") {
+    return tradeflowNavItems;
   }
   const hidden = businessSystems[id].hiddenNavPaths;
   const out: PopsNavItem[] = [];

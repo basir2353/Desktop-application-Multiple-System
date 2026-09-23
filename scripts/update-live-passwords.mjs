@@ -31,6 +31,7 @@ const OWNERS = [
   "admin.restaurant@pops.demo",
   "admin.pharmacy@pops.demo",
   "admin.store@pops.demo",
+  "admin.tradeflow@pops.demo",
   "admin.grocery@pops.demo",
   "admin.retail@pops.demo",
   "admin@platform.local",

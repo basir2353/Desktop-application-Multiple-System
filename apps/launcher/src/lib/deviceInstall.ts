@@ -1,4 +1,4 @@
-import { businessSystemIdFromSystemType, type BusinessSystemId } from "./businessSystems";
+import { businessSystemIdFromSystemType, isBusinessSystemId, type BusinessSystemId } from "./businessSystems";
 import { getLockedSystemId } from "./edition";
 
 const INSTALL_KEY = "platform-installed-system-v1";
@@ -25,7 +25,7 @@ export function readDeviceInstall(): DeviceInstall | null {
     const parsed = JSON.parse(raw) as Partial<DeviceInstall>;
     const systemId = parsed.systemId;
     if (!systemId) return null;
-    if (systemId !== "restaurant" && systemId !== "pharmacy" && systemId !== "general-store") {
+    if (!isBusinessSystemId(systemId)) {
       return null;
     }
     return {

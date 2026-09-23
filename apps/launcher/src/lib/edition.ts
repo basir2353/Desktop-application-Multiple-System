@@ -37,6 +37,8 @@ export const HAS_PHARMACY =
   __PLATFORM_EDITION__ === "suite" || __PLATFORM_EDITION__ === "pharmacy";
 export const HAS_GENERAL_STORE =
   __PLATFORM_EDITION__ === "suite" || __PLATFORM_EDITION__ === "general-store";
+export const HAS_TRADEFLOW =
+  __PLATFORM_EDITION__ === "suite" || __PLATFORM_EDITION__ === "tradeflow";
 
 function normalizeEdition(raw: string): PlatformEdition {
   if (!raw || raw === "suite" || raw === "all") return "suite";
@@ -67,5 +69,6 @@ export function isSystemAvailable(id: BusinessSystemId): boolean {
   if (id === "restaurant") return HAS_RESTAURANT;
   if (id === "pharmacy") return HAS_PHARMACY;
   if (id === "general-store") return HAS_GENERAL_STORE;
+  if (id === "tradeflow") return HAS_TRADEFLOW;
   return false;
 }

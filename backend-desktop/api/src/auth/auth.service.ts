@@ -137,6 +137,15 @@ export class AuthService implements OnModuleInit {
         city: "Karachi",
       },
       {
+        systemType: "tradeflow",
+        name: "TradeFlow Demo",
+        adminEmail: "admin.tradeflow@pops.demo",
+        adminName: "TradeFlow Owner",
+        branchCode: "TF-HQ",
+        branchName: "TradeFlow HQ",
+        city: "Islamabad",
+      },
+      {
         systemType: "grocery",
         name: "POPS Demo Grocery",
         adminEmail: "admin.grocery@pops.demo",

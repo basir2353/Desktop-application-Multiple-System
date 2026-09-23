@@ -60,6 +60,7 @@ import {
 } from "../../hooks/useTaxAuthorityFeatures";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useThemeStore } from "../../../stores/themeStore";
+import { useActiveSystemId } from "../../../hooks/useActiveSystemId";
 
 type OrderTypeChargeKey = {
   service: keyof PosSettings;
@@ -209,6 +210,8 @@ function DataResetPanel(props: {
 }
 
 export function SettingsPage(): JSX.Element {
+  const systemId = useActiveSystemId();
+  const isMaterialFlow = systemId === "tradeflow";
   const branch = usePopsStore((s) => s.branch);
   const setBranch = usePopsStore((s) => s.setBranch);
   const claims = useSessionStore((s) => s.claims);
@@ -458,7 +461,11 @@ export function SettingsPage(): JSX.Element {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        subtitle={`Branch configuration for ${branch.name} (${branch.code}) — POS, tax, FBR/PRA, and terminals.`}
+        subtitle={
+          isMaterialFlow
+            ? `Branch configuration for ${branch.name} (${branch.code}) — branch, appearance, and terminals.`
+            : `Branch configuration for ${branch.name} (${branch.code}) — POS, tax, FBR/PRA, and terminals.`
+        }
       />
 
       {notice ? (
@@ -540,13 +547,16 @@ export function SettingsPage(): JSX.Element {
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">Appearance</div>
         <p className="mt-1 text-xs text-slate-500">
-          Choose light or dark mode for the restaurant ERP interface. Current: {themeMode}.
+          Choose light or dark mode for the {isMaterialFlow ? "MaterialFlow" : "restaurant ERP"}{" "}
+          interface. Current: {themeMode}.
         </p>
         <div className="mt-3">
           <ThemeToggle />
         </div>
       </div>
 
+      {!isMaterialFlow ? (
+      <>
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">POS charges & tax</div>
         <p className="mt-1 text-xs text-slate-500">
@@ -1063,6 +1073,8 @@ export function SettingsPage(): JSX.Element {
           </Button>
         </div>
       </div>
+      </>
+      ) : null}
 
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">Authorized terminals</div>

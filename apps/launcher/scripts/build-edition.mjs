@@ -43,7 +43,7 @@ function resolveApiUrl() {
   return LIVE;
 }
 
-const VALID = new Set(["restaurant", "general-store", "pharmacy", "suite"]);
+const VALID = new Set(["restaurant", "general-store", "pharmacy", "tradeflow", "suite"]);
 
 const edition = (process.argv[2] ?? "").trim();
 if (!VALID.has(edition)) {

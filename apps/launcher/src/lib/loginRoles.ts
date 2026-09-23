@@ -56,6 +56,7 @@ const DEMO_ADMIN_EMAIL_BY_SYSTEM: Record<BusinessSystemId, string> = {
   restaurant: "admin.restaurant@pops.demo",
   pharmacy: "admin.pharmacy@pops.demo",
   "general-store": "admin.store@pops.demo",
+  tradeflow: "admin.tradeflow@pops.demo",
 };
 
 function restaurantStaff(): LoginRoleOption[] {
@@ -109,6 +110,37 @@ export function loginRolesForSystem(systemId: BusinessSystemId): {
           label: "Inventory manager",
           description: "Stock, purchases, and expiry",
           demoEmail: DEMO_EMAIL.hr,
+        },
+      ],
+    };
+  }
+
+  if (systemId === "tradeflow") {
+    return {
+      admin: {
+        id: "admin",
+        label: "Admin",
+        description: "Full MaterialFlow control, users, and trade modules",
+        demoEmail: DEMO_ADMIN_EMAIL_BY_SYSTEM.tradeflow,
+      },
+      staff: [
+        {
+          id: "manager",
+          label: "Manager",
+          description: STAFF_DESCRIPTIONS.manager,
+          demoEmail: DEMO_EMAIL.manager,
+        },
+        {
+          id: "cashier",
+          label: "Staff",
+          description: STAFF_DESCRIPTIONS.cashier,
+          demoEmail: DEMO_EMAIL.cashier,
+        },
+        {
+          id: "accountant",
+          label: "Accountant",
+          description: STAFF_DESCRIPTIONS.accountant,
+          demoEmail: DEMO_EMAIL.accountant,
         },
       ],
     };

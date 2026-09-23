@@ -5,7 +5,7 @@ import type { Plugin } from "vite";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const routesDir = path.resolve(__dirname, "src", "routes");
 
-type SystemKey = "restaurant" | "pharmacy" | "general-store";
+type SystemKey = "restaurant" | "pharmacy" | "general-store" | "tradeflow";
 
 // Each system's route module is the single entry point to all of that system's
 // pages (every page is a `lazy(() => import(...))` inside it). Stubbing the
@@ -16,12 +16,14 @@ const ROUTE_MODULES: Record<SystemKey, string> = {
   restaurant: path.join(routesDir, "restaurantRoutes.tsx"),
   pharmacy: path.join(routesDir, "pharmacyRoutes.tsx"),
   "general-store": path.join(routesDir, "generalStoreRoutes.tsx"),
+  tradeflow: path.join(routesDir, "tradeflowRoutes.tsx"),
 };
 
 const STUBS: Record<SystemKey, string> = {
   restaurant: "export function restaurantRoutes(){return null}",
   pharmacy: "export function pharmacyRoutes(){return null}",
   "general-store": "export function generalStoreRoutes(){return null}",
+  tradeflow: "export function tradeflowRoutes(){return null}",
 };
 
 function normalize(id: string): string {

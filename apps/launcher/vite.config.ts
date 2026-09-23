@@ -8,7 +8,7 @@ import { editionExcludePlugin } from "./vite.edition-plugin";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.resolve(__dirname, "../..");
 
-const VALID_EDITIONS = new Set(["suite", "restaurant", "pharmacy", "general-store"]);
+const VALID_EDITIONS = new Set(["suite", "restaurant", "pharmacy", "general-store", "tradeflow"]);
 
 function resolveEdition(env: Record<string, string>): string {
   const raw = (process.env.PLATFORM_EDITION ?? env.PLATFORM_EDITION ?? env.VITE_PLATFORM_EDITION ?? "suite").trim();

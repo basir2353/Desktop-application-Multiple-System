@@ -18,6 +18,7 @@ export * from "./platform-settings";
 export * from "./closing";
 export * from "./pharmacy";
 export * from "./store";
+export * from "./tradeflow";
 export * from "./security";
 export * from "./refresh-tokens";
 export * from "./tax-authority";

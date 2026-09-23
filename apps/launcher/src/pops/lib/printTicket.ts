@@ -2442,6 +2442,8 @@ export type PrintJobOptions = {
   systemPrinterName?: string;
   copies?: number;
   jobTitle?: string;
+  /** Thermal / sheet width for named OS printers. Restaurant default stays 80. */
+  paperWidthMm?: number;
   /**
    * When an assigned OS printer is set:
    * - true (default): fail if native print fails (do not silently open the dialog)
@@ -2489,7 +2491,7 @@ export async function printHtmlDocumentDetailed(
       content: plain + "\n\n",
       jobName: jobTitle,
       copies,
-      paperWidthMm: 80,
+      paperWidthMm: options?.paperWidthMm ?? 80,
     });
     if (result.ok) return { ok: true, usedNamedPrinter: true };
     if (requireNamed) {

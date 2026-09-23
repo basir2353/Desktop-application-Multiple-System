@@ -98,6 +98,10 @@ export default function HomeScreen() {
     return <Redirect href="/" />;
   }
 
+  if (claims?.systemType === "tradeflow") {
+    return <Redirect href="/tradeflow-home" />;
+  }
+
   if (resolveStaffRole(claims) === "rider") {
     return <Redirect href="/rider-home" />;
   }

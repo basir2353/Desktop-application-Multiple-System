@@ -5,6 +5,7 @@ export type AccessTokenClaims = {
   role?: string;
   branchScope?: string;
   riderId?: string;
+  systemType?: string | null;
   exp?: number;
 };
 

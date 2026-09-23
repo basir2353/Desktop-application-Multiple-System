@@ -1882,6 +1882,7 @@ function PrinterProfilesTab({
                           <option value="100mm">100mm roll</option>
                           <option value="custom">Custom (branch mm)</option>
                           <option value="A4">A4</option>
+                          <option value="A5">A5</option>
                         </select>
                         {printer.paperSize === "custom" ? (
                           <input
@@ -2473,6 +2474,7 @@ function PrinterAssignmentTab({
                             <option value="100mm">100mm roll</option>
                             <option value="custom">Custom</option>
                             <option value="A4">A4</option>
+                            <option value="A5">A5</option>
                           </select>
                           {p.paperSize === "custom" ? (
                             <input
@@ -3168,7 +3170,12 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
   const [searchParams] = useSearchParams();
   const systemId = useActiveSystemId();
   const isStore = systemId === "general-store";
-  const sectionPreset: PrinterSectionPreset = isStore ? "general-store" : "restaurant";
+  const isTradeFlow = systemId === "tradeflow";
+  const sectionPreset: PrinterSectionPreset = isStore
+    ? "general-store"
+    : isTradeFlow
+      ? "tradeflow"
+      : "restaurant";
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [printHistoryTick, setPrintHistoryTick] = useState(0);
   const printQueueAlertCount = useMemo(() => {
@@ -3500,7 +3507,7 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
             categories={categories}
             items={items}
             notify={notify}
-            isStore={isStore}
+            isStore={isStore || isTradeFlow}
           />
           <PrinterProfilesTab
             branchCode={branchCode}
@@ -3509,7 +3516,7 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
             systemPrinters={allSystemPrinters.length > 0 ? allSystemPrinters : systemPrinters}
             staffLabelById={staffLabelById}
             notify={notify}
-            isStore={isStore}
+            isStore={isStore || isTradeFlow}
           />
         </div>
       ) : null}
@@ -3542,7 +3549,7 @@ function PrinterManagement({ branchCode }: { branchCode: string }): JSX.Element 
                 role: u.role,
               }))}
               notify={notify}
-              isStore={isStore}
+              isStore={isStore || isTradeFlow}
             />
           ) : null}
           {routingSub === "sections" ? (
@@ -3608,13 +3615,14 @@ export function PrinterPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const systemId = useActiveSystemId();
   const isStore = systemId === "general-store";
+  const isTradeFlow = systemId === "tradeflow";
   const [notice, setNotice] = useState<string | null>(null);
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [posStation, setPosStation] = useState(() => isPosPrintStationEnabled());
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
-    enabled: Boolean(branch?.code) && !isStore,
+    enabled: Boolean(branch?.code) && !isStore && !isTradeFlow,
     queryFn: () => fetchBranchMenuAdmin(branch!.code),
   });
 
@@ -3646,7 +3654,9 @@ export function PrinterPage(): JSX.Element {
         subtitle={
           isStore
             ? "Select a General Store branch to configure receipt and counter printers."
-            : "Select a branch to configure printer settings."
+            : isTradeFlow
+              ? "Select a MaterialFlow branch to configure A4, A5, and thermal printers."
+              : "Select a branch to configure printer settings."
         }
       />
     );
@@ -3671,7 +3681,9 @@ export function PrinterPage(): JSX.Element {
         subtitle={
           isStore
             ? `General Store printer setup for ${branch.name} (${branch.code}) — sections, profiles, routing, and receipt slips.`
-            : `Printer configuration for ${branch.name} (${branch.code}) — sections, profiles, routing, and KOT template.`
+            : isTradeFlow
+              ? `MaterialFlow printer setup for ${branch.name} (${branch.code}) — same restaurant printer workflow, with A4, A5, and thermal.`
+              : `Printer configuration for ${branch.name} (${branch.code}) — sections, profiles, routing, and KOT template.`
         }
       />
 
@@ -3711,6 +3723,15 @@ export function PrinterPage(): JSX.Element {
 
       <PrinterManagement branchCode={branch.code} />
 
+      {isTradeFlow ? (
+        <div className="rounded-lg border border-violet-200 bg-violet-50 p-4 dark:border-violet-900 dark:bg-violet-950/30">
+          <div className="text-sm font-semibold text-slate-900 dark:text-white">MaterialFlow print sizes</div>
+          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+            Assign Windows printers to the A4, A5, and Thermal sections above. POS and invoices then
+            send to the matching printer — same Auto-print setup as restaurant.
+          </p>
+        </div>
+      ) : (
       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
         <div className="text-sm font-semibold text-slate-900 dark:text-white">
           {isStore ? "Receipt / slip customization" : "Kitchen ticket customization"}
@@ -3729,6 +3750,7 @@ export function PrinterPage(): JSX.Element {
           />
         </div>
       </div>
+      )}
 
       <div className="max-w-2xl overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">

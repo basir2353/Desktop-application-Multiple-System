@@ -1254,7 +1254,7 @@ export class PlatformService {
   async listSystemTypes(): Promise<{ id: SystemType; label: string }[]> {
     const { SYSTEM_TYPE_LABELS } = await import("@platform/contracts");
     // Only systems with a shipped ERP shell (exclude grocery/retail placeholders).
-    const shipped: SystemType[] = ["restaurant", "pharmacy", "general_store"];
+    const shipped: SystemType[] = ["restaurant", "pharmacy", "general_store", "tradeflow"];
     return shipped.map((id) => ({ id, label: SYSTEM_TYPE_LABELS[id] }));
   }
 

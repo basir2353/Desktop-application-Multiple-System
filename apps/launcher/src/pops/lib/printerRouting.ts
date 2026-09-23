@@ -9,7 +9,7 @@
 import type { PosCartLine } from "./posCart";
 import { loadPrinterSections, savePrinterSections, type PrinterSection } from "./printerSections";
 
-export type PrinterPaperSize = "58mm" | "80mm" | "100mm" | "A4" | "custom";
+export type PrinterPaperSize = "58mm" | "80mm" | "100mm" | "A4" | "A5" | "custom";
 
 /** Slip text size on this printer (KOT / receipt). */
 export type PrinterTextScale = "S" | "M" | "L";
@@ -178,6 +178,7 @@ function normalizeProfile(raw: Partial<PrinterProfile> & Pick<PrinterProfile, "i
       raw.paperSize === "80mm" ||
       raw.paperSize === "100mm" ||
       raw.paperSize === "A4" ||
+      raw.paperSize === "A5" ||
       raw.paperSize === "custom"
         ? raw.paperSize
         : "80mm",
@@ -486,6 +487,30 @@ export function resolveReceiptPrinter(
   return pickOnlineThenAny(withOs) ?? pickOnlineThenAny(typed);
 }
 
+/** TradeFlow invoice print: A4 / A5 / Thermal section printer, then receipt default. */
+export function resolveTradeFlowPrinter(
+  branchCode: string | undefined,
+  size: "a4" | "a5" | "thermal",
+  userId?: string | null,
+): PrinterProfile | null {
+  if (!branchCode) return null;
+  const state = loadPrinterRouting(branchCode);
+  const sectionId = size;
+  const paper: PrinterPaperSize = size === "thermal" ? "80mm" : size === "a5" ? "A5" : "A4";
+  const sectionIds = state.sectionPrinters[sectionId] ?? [];
+  const fromSection = sectionIds
+    .map((id) => state.printers.find((p) => p.id === id))
+    .filter((p): p is PrinterProfile => Boolean(p));
+  const sectionWithOs = fromSection.filter((p) => p.systemPrinterName?.trim());
+  const byPaper = state.printers.filter((p) => p.paperSize === paper && p.systemPrinterName?.trim());
+  return (
+    pickOnlineThenAny(sectionWithOs) ??
+    pickOnlineThenAny(fromSection) ??
+    pickOnlineThenAny(byPaper) ??
+    resolveReceiptPrinter(branchCode, userId)
+  );
+}
+
 /**
  * Who owns this print job for routing:
  * - Prefer the logged-in staff who clicked Print (waiter / rider / cashier).
@@ -645,7 +670,20 @@ export function printerTypeForSection(section: {
 }): PrinterType {
   const id = section.id.toLowerCase();
   const n = section.name.toLowerCase();
-  if (id === "receipt" || n.includes("receipt") || n.includes("bill") || n.includes("cashier")) {
+  if (
+    id === "receipt" ||
+    id === "invoice" ||
+    id === "a4" ||
+    id === "a5" ||
+    id === "thermal" ||
+    n.includes("receipt") ||
+    n.includes("bill") ||
+    n.includes("cashier") ||
+    n.includes("invoice") ||
+    n === "a4" ||
+    n === "a5" ||
+    n.includes("thermal")
+  ) {
     return "receipt";
   }
   if (id === "counter" || n.includes("counter")) return "counter";

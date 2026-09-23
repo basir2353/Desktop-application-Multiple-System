@@ -8,6 +8,7 @@ import { useActiveSystemId } from "../../hooks/useActiveSystemId";
 import { getBusinessSystem } from "../../lib/businessSystems";
 import { PHARMACY_ROLE_LABELS } from "../../pharmacy/spec/nav";
 import { STORE_ROLE_LABELS } from "../../store/spec/nav";
+import { TRADEFLOW_ROLE_LABELS } from "../../tradeflow/spec/nav";
 import { fetchPopsBranches } from "../api/operations";
 import { isMonitoringBranch } from "../lib/branchScope";
 import {
@@ -45,6 +46,13 @@ const storeRoles: { id: PopsRole; label: string }[] = [
   { id: "hr", label: STORE_ROLE_LABELS.warehouse_manager! },
 ];
 
+const tradeflowRoles: { id: PopsRole; label: string }[] = [
+  { id: "admin", label: TRADEFLOW_ROLE_LABELS.admin! },
+  { id: "manager", label: TRADEFLOW_ROLE_LABELS.manager! },
+  { id: "cashier", label: TRADEFLOW_ROLE_LABELS.cashier! },
+  { id: "accountant", label: TRADEFLOW_ROLE_LABELS.accountant! },
+];
+
 function toPopsBranch(row: { id: string; code: string; name: string; city: string }): PopsBranch {
   return { id: row.id, code: row.code, name: row.name, city: row.city };
 }
@@ -64,7 +72,14 @@ export function BranchSelectPage(): JSX.Element {
   const pinSession = usePopsStore((s) => s.pinSession);
   const systemId = useActiveSystemId();
   const system = getBusinessSystem(systemId);
-  const roles = systemId === "pharmacy" ? pharmacyRoles : systemId === "general-store" ? storeRoles : restaurantRoles;
+  const roles =
+    systemId === "pharmacy"
+      ? pharmacyRoles
+      : systemId === "general-store"
+        ? storeRoles
+        : systemId === "tradeflow"
+          ? tradeflowRoles
+          : restaurantRoles;
   const permissions = claims?.permissions ?? [];
   const canManageUsers = canManageOrgUsers(permissions);
   const canSetupWithoutBranch = canEnterErpWithoutBranch(permissions);

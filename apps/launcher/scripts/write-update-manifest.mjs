@@ -22,7 +22,7 @@ import { join } from "node:path";
 
 const edition = (process.argv[2] ?? "").trim();
 const versionArg = (process.argv[3] ?? "").trim();
-const VALID = new Set(["suite", "restaurant", "general-store", "pharmacy"]);
+const VALID = new Set(["suite", "restaurant", "general-store", "pharmacy", "tradeflow"]);
 if (!VALID.has(edition)) {
   console.error(`Usage: node scripts/write-update-manifest.mjs <${[...VALID].join("|")}> [version]`);
   process.exit(1);
@@ -49,6 +49,7 @@ const productHints = {
   restaurant: /restaurant/i,
   "general-store": /general\s*store|retail/i,
   pharmacy: /pharmacy/i,
+  tradeflow: /tradeflow/i,
 };
 const hint = productHints[edition];
 function versionTuple(name) {

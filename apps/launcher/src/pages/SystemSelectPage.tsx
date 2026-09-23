@@ -121,7 +121,7 @@ export function SystemSelectPage(): JSX.Element {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-5xl bg-slate-50 px-6 py-10 dark:bg-slate-950">
+    <div className="mx-auto min-h-screen max-w-4xl bg-slate-50 px-6 py-10 dark:bg-slate-950">
       <header className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">
@@ -137,7 +137,7 @@ export function SystemSelectPage(): JSX.Element {
         <ThemeToggle compact />
       </header>
 
-      <div className="mt-10 grid gap-5 md:grid-cols-3">
+      <div className="mt-10 grid gap-5 sm:grid-cols-2">
         {availableSystems.map((system) => (
           <SystemCard key={system.id} system={system} onSelect={onSelect} />
         ))}

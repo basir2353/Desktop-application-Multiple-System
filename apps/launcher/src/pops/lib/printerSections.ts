@@ -35,10 +35,21 @@ export const DEFAULT_STORE_PRINTER_SECTIONS: PrinterSection[] = [
   { id: "back-office", name: "Back office", icon: "🖨️", color: "#94a3b8", enabled: true, isSystem: true, sortOrder: 5 },
 ];
 
-export type PrinterSectionPreset = "restaurant" | "general-store";
+/** TradeFlow defaults — same printer workflow, invoice paper sizes. */
+export const DEFAULT_TRADEFLOW_PRINTER_SECTIONS: PrinterSection[] = [
+  { id: "invoice", name: "Invoice", icon: "🧾", color: "#8b5cf6", enabled: true, isSystem: true, sortOrder: 0 },
+  { id: "a4", name: "A4", icon: "📄", color: "#38bdf8", enabled: true, isSystem: true, sortOrder: 1 },
+  { id: "a5", name: "A5", icon: "📃", color: "#22d3ee", enabled: true, isSystem: true, sortOrder: 2 },
+  { id: "thermal", name: "Thermal", icon: "🖨️", color: "#a3e635", enabled: true, isSystem: true, sortOrder: 3 },
+  { id: "receipt", name: "Receipt", icon: "🧾", color: "#f59e0b", enabled: true, isSystem: true, sortOrder: 4 },
+];
+
+export type PrinterSectionPreset = "restaurant" | "general-store" | "tradeflow";
 
 export function defaultPrinterSectionsFor(preset: PrinterSectionPreset = "restaurant"): PrinterSection[] {
-  return preset === "general-store" ? DEFAULT_STORE_PRINTER_SECTIONS : DEFAULT_PRINTER_SECTIONS;
+  if (preset === "general-store") return DEFAULT_STORE_PRINTER_SECTIONS;
+  if (preset === "tradeflow") return DEFAULT_TRADEFLOW_PRINTER_SECTIONS;
+  return DEFAULT_PRINTER_SECTIONS;
 }
 
 export const PRINTER_SECTIONS_CHANGED_EVENT = "pops-printer-sections-changed";
@@ -74,20 +85,22 @@ export function loadPrinterSections(
   const stored = all[branchCode];
   if (!stored || stored.length === 0) return defaults;
 
-  // Ensure Kitchen Sale Report sections exist on older branches.
-  const missingSale = KITCHEN_SALE_PRINT_SECTIONS.filter(
-    (sale) => !stored.some((s) => s.id === sale.id),
-  );
+  // Ensure Kitchen Sale Report sections exist on older restaurant branches only.
   let merged = stored;
-  if (missingSale.length > 0) {
-    merged = [
-      ...missingSale.map((s, i) => ({
-        ...s,
-        sortOrder: Math.min(...stored.map((x) => x.sortOrder), 0) - missingSale.length + i,
-      })),
-      ...stored,
-    ];
-    savePrinterSections(branchCode, merged);
+  if (preset === "restaurant") {
+    const missingSale = KITCHEN_SALE_PRINT_SECTIONS.filter(
+      (sale) => !stored.some((s) => s.id === sale.id),
+    );
+    if (missingSale.length > 0) {
+      merged = [
+        ...missingSale.map((s, i) => ({
+          ...s,
+          sortOrder: Math.min(...stored.map((x) => x.sortOrder), 0) - missingSale.length + i,
+        })),
+        ...stored,
+      ];
+      savePrinterSections(branchCode, merged);
+    }
   }
 
   // General Store: replace leftover restaurant Kitchen/Bar defaults with store sections.
@@ -95,6 +108,16 @@ export function loadPrinterSections(
     preset === "general-store" &&
     merged.some((s) => s.id === "kitchen" || s.id === "bar") &&
     !merged.some((s) => s.id === "receipt")
+  ) {
+    savePrinterSections(branchCode, defaults);
+    return defaults;
+  }
+
+  // TradeFlow: replace leftover restaurant Kitchen/Bar defaults with A4 / A5 / Thermal.
+  if (
+    preset === "tradeflow" &&
+    merged.some((s) => s.id === "kitchen" || s.id === "bar") &&
+    !merged.some((s) => s.id === "a4" || s.id === "thermal" || s.id === "invoice")
   ) {
     savePrinterSections(branchCode, defaults);
     return defaults;

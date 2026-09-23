@@ -61,7 +61,7 @@ export function clampCustomPaperWidthMm(value: number, fallback = 80): number {
   return clamp(value, MIN_CUSTOM_PAPER_MM, MAX_CUSTOM_PAPER_MM, fallback);
 }
 
-const VALID_PAPER: PrinterPaperSize[] = ["58mm", "80mm", "100mm", "A4", "custom"];
+const VALID_PAPER: PrinterPaperSize[] = ["58mm", "80mm", "100mm", "A4", "A5", "custom"];
 
 export function paperWidthMm(
   paper: PrinterPaperSize,
@@ -76,6 +76,8 @@ export function paperWidthMm(
       return 100;
     case "A4":
       return 210;
+    case "A5":
+      return 148;
     case "custom":
       return clampCustomPaperWidthMm(customPaperWidthMm);
     default:
@@ -97,7 +99,7 @@ export function isWidePaperWidth(
   customPaperWidthMm = DEFAULT_THERMAL_PRINT_SETTINGS.customPaperWidthMm,
 ): boolean {
   const mm = paperWidthMm(paper, customPaperWidthMm);
-  return mm >= 72 && paper !== "A4";
+  return mm >= 72 && paper !== "A4" && paper !== "A5";
 }
 
 export function paperSizeLabel(
@@ -105,6 +107,7 @@ export function paperSizeLabel(
   customPaperWidthMm = DEFAULT_THERMAL_PRINT_SETTINGS.customPaperWidthMm,
 ): string {
   if (paper === "A4") return "A4 sheet";
+  if (paper === "A5") return "A5 sheet";
   if (paper === "custom") return `${paperWidthMm(paper, customPaperWidthMm)}mm roll`;
   return `${paper} roll`;
 }

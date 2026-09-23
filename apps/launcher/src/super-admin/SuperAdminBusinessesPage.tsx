@@ -109,7 +109,7 @@ export function SuperAdminBusinessesPage(): JSX.Element {
     [settings.data?.entries],
   );
 
-  /** Only ERP shells we actually ship (Restaurant / Pharmacy / General Store). */
+  /** Only ERP shells we actually ship (Restaurant / Pharmacy / Store / TradeFlow). */
   const shippedSystemOptions = useMemo(() => {
     const fromApp = businessSystemList.map((s) => {
       const id = systemTypeForBusinessSystemId(s.id);

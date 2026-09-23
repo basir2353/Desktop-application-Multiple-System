@@ -22,15 +22,15 @@ export class RootErrorBoundary extends Component<Props, State> {
           <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Something went wrong</h1>
           <p className="mt-3 whitespace-pre-wrap break-words text-sm text-red-600 dark:text-red-300/90">{this.state.error.message}</p>
           <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-            If you just opened the platform shell, start the sample remote with{" "}
-            <code className="rounded bg-slate-900 px-1.5 py-0.5 text-xs text-indigo-200">pnpm dev:module:sample</code> or
-            sign in to POPS from the login screen.
+            {this.state.error.message.includes("dynamically imported module")
+              ? "This page failed to load. Reload keeps you on the same screen."
+              : "If this keeps happening, reload the page or sign in again."}
           </p>
           <Button
             className="mt-6"
             onClick={() => {
               this.setState({ error: null });
-              window.location.assign("/");
+              window.location.reload();
             }}
           >
             Reload app

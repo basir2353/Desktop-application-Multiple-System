@@ -1,0 +1,29 @@
+.tf-app,
+.tf-pos {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tf-app h1,
+.tf-app h2,
+.tf-app h3,
+.tf-app label,
+.tf-app button,
+.tf-app p,
+.tf-app span,
+.tf-app th,
+.tf-app td,
+.tf-pos h1,
+.tf-pos h2,
+.tf-pos h3,
+.tf-pos label,
+.tf-pos button,
+.tf-pos p,
+.tf-pos span,
+.tf-pos th,
+.tf-pos td {
+  letter-spacing: 0;
+  text-shadow: none;
+  font-synthesis: none;
+}

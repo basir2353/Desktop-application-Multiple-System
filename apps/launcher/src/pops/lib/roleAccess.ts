@@ -155,6 +155,9 @@ export function erpEntryPathForRole(
   if (systemId === "general-store") {
     return role === "admin" ? "/pops/store/dashboard" : "/pops/store/pos";
   }
+  if (systemId === "tradeflow") {
+    return role === "admin" ? "/pops/tradeflow/dashboard" : "/pops/tradeflow/pos";
+  }
 
   switch (role) {
     case "cashier":
