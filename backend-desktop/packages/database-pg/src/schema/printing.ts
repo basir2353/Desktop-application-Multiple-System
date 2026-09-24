@@ -90,6 +90,22 @@ export const printJobsCloud = pgTable("print_jobs_cloud", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Admin Panel user → printer assignment (kitchen / receipt / bar). Used by mobile punch & print. */
+export const printUserAssignments = pgTable("print_user_assignments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  branchCode: text("branch_code").notNull(),
+  userId: text("user_id").notNull(),
+  profileId: text("profile_id").notNull(),
+  printerType: text("printer_type").notNull().default("kitchen"),
+  printerName: text("printer_name").notNull(),
+  windowsPrinterName: text("windows_printer_name"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const printAlerts = pgTable("print_alerts", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id")

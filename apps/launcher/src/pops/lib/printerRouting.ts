@@ -244,16 +244,33 @@ function writeAll(data: Record<string, PrinterRoutingState>, branchCode: string)
   }
 }
 
+function routingKey(branchCode: string): string {
+  return branchCode.trim().toUpperCase();
+}
+
 export function loadPrinterRouting(branchCode: string | undefined): PrinterRoutingState {
   if (!branchCode) return emptyState();
   const all = readAll();
-  return normalizeState(all[branchCode]);
+  const key = routingKey(branchCode);
+  if (all[key]) return normalizeState(all[key]);
+  const found = Object.keys(all).find((k) => routingKey(k) === key);
+  return normalizeState(found ? all[found] : undefined);
+}
+
+function queuePushUserPrinterAssignments(branchCode: string): void {
+  void import("./printerAssignmentSync").then((mod) => {
+    mod.queuePushUserPrinterAssignments(branchCode);
+  });
 }
 
 function saveState(branchCode: string, state: PrinterRoutingState): void {
   const all = readAll();
-  all[branchCode] = state;
-  writeAll(all, branchCode);
+  const key = routingKey(branchCode);
+  for (const existing of Object.keys(all)) {
+    if (existing !== key && routingKey(existing) === key) delete all[existing];
+  }
+  all[key] = state;
+  writeAll(all, key);
 }
 
 // --- Printer profiles -------------------------------------------------
@@ -328,6 +345,7 @@ export function toggleUserPrinter(
   if (next.length === 0) delete userPrinters[userId];
   else userPrinters[userId] = next;
   saveState(branchCode, { ...state, userPrinters });
+  queuePushUserPrinterAssignments(branchCode);
 }
 
 export function setUserPrinters(branchCode: string, userId: string, printerIds: string[]): void {
@@ -337,6 +355,7 @@ export function setUserPrinters(branchCode: string, userId: string, printerIds: 
   if (valid.length === 0) delete userPrinters[userId];
   else userPrinters[userId] = valid;
   saveState(branchCode, { ...state, userPrinters });
+  queuePushUserPrinterAssignments(branchCode);
 }
 
 /**
@@ -380,10 +399,79 @@ export function getPrintersForUser(
 ): PrinterProfile[] {
   if (!branchCode || !userId) return [];
   const state = loadPrinterRouting(branchCode);
-  const ids = state.userPrinters[userId] ?? [];
+  const wanted = userId.trim().toLowerCase();
+  const matchedKey =
+    state.userPrinters[userId] != null
+      ? userId
+      : Object.keys(state.userPrinters).find((key) => key.trim().toLowerCase() === wanted);
+  const ids = matchedKey ? (state.userPrinters[matchedKey] ?? []) : [];
   return ids
     .map((id) => state.printers.find((p) => p.id === id))
     .filter((p): p is PrinterProfile => Boolean(p));
+}
+
+export type RemoteUserPrinterAssignment = {
+  userId: string;
+  profileId: string;
+  printerType: string;
+  printerName: string;
+  windowsPrinterName?: string | null;
+};
+
+/** Replace this branch's user→printer map with the backend copy (no re-upload). */
+export function applyRemoteUserAssignments(
+  branchCode: string,
+  rows: RemoteUserPrinterAssignment[],
+): void {
+  const state = loadPrinterRouting(branchCode);
+  const printers = [...state.printers];
+  const userPrinters: Record<string, string[]> = {};
+  for (const row of rows) {
+    const userId = row.userId.trim();
+    const profileId = row.profileId.trim();
+    if (!userId || !profileId) continue;
+    if (!printers.some((p) => p.id === profileId)) {
+      const type = (ALL_PRINTER_TYPES.has(row.printerType) ? row.printerType : "kitchen") as PrinterType;
+      printers.push({
+        id: profileId,
+        name: row.printerName || "Assigned printer",
+        printerType: type,
+        paperSize: "80mm",
+        copies: 1,
+        textScale: "M",
+        autoCut: true,
+        status: "online",
+        systemPrinterName: row.windowsPrinterName?.trim() || undefined,
+      });
+    } else if (row.windowsPrinterName?.trim()) {
+      const idx = printers.findIndex((p) => p.id === profileId);
+      if (idx >= 0 && !printers[idx].systemPrinterName?.trim()) {
+        printers[idx] = { ...printers[idx], systemPrinterName: row.windowsPrinterName.trim() };
+      }
+    }
+    const current = userPrinters[userId] ?? [];
+    if (!current.includes(profileId)) userPrinters[userId] = [...current, profileId];
+  }
+  saveState(branchCode, { ...state, printers, userPrinters });
+}
+
+export function snapshotUserAssignments(branchCode: string): RemoteUserPrinterAssignment[] {
+  const state = loadPrinterRouting(branchCode);
+  const rows: RemoteUserPrinterAssignment[] = [];
+  for (const [userId, ids] of Object.entries(state.userPrinters)) {
+    for (const profileId of ids) {
+      const profile = state.printers.find((p) => p.id === profileId);
+      if (!profile) continue;
+      rows.push({
+        userId,
+        profileId,
+        printerType: profile.printerType,
+        printerName: profile.name,
+        windowsPrinterName: profile.systemPrinterName ?? null,
+      });
+    }
+  }
+  return rows;
 }
 
 /** User ids that share a printer profile. */

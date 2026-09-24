@@ -8,6 +8,7 @@ import {
 import {
   createPrintJobSchema,
   printerHeartbeatSchema,
+  savePrintUserAssignmentsSchema,
   PRINTING_CLOUD_QUEUE_ENABLED_KEY,
   type CreatePrintJob,
   type PrinterHeartbeat,
@@ -19,6 +20,7 @@ import {
   printBranchServers,
   printJobsCloud,
   printPrinterNodes,
+  printUserAssignments,
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
@@ -673,6 +675,96 @@ export class PrintingService {
     }
 
     return server;
+  }
+
+  private assignmentsReady: Promise<void> | null = null;
+
+  private ensureAssignmentsTable(): Promise<void> {
+    if (!this.assignmentsReady) {
+      this.assignmentsReady = this.db
+        .execute(
+          sql.raw(`CREATE TABLE IF NOT EXISTS print_user_assignments (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            branch_code text NOT NULL,
+            user_id text NOT NULL,
+            profile_id text NOT NULL,
+            printer_type text NOT NULL DEFAULT 'kitchen',
+            printer_name text NOT NULL,
+            windows_printer_name text,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+          )`),
+        )
+        .then(() =>
+          this.db.execute(
+            sql.raw(`CREATE UNIQUE INDEX IF NOT EXISTS print_user_assignments_org_branch_user_profile_uidx
+              ON print_user_assignments (organization_id, branch_code, user_id, profile_id)`),
+          ),
+        )
+        .then(() => undefined);
+    }
+    return this.assignmentsReady;
+  }
+
+  async listUserAssignments(user: AccessJwtPayload, branchCode?: string) {
+    await this.ensureAssignmentsTable();
+    const organizationId = this.orgId(user);
+    const code = branchCode?.trim();
+    const rows = code
+      ? await this.db
+          .select()
+          .from(printUserAssignments)
+          .where(
+            and(
+              eq(printUserAssignments.organizationId, organizationId),
+              sql`upper(${printUserAssignments.branchCode}) = upper(${code})`,
+            ),
+          )
+      : await this.db
+          .select()
+          .from(printUserAssignments)
+          .where(eq(printUserAssignments.organizationId, organizationId));
+    return rows.map((row) => ({
+      userId: row.userId,
+      profileId: row.profileId,
+      printerType: row.printerType,
+      printerName: row.printerName,
+      windowsPrinterName: row.windowsPrinterName,
+      branchCode: row.branchCode,
+    }));
+  }
+
+  async saveUserAssignments(user: AccessJwtPayload, body: unknown) {
+    await this.ensureAssignmentsTable();
+    const parsed = savePrintUserAssignmentsSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const organizationId = this.orgId(user);
+    const branchCode = parsed.data.branchCode.trim();
+    const now = new Date();
+    await this.db
+      .delete(printUserAssignments)
+      .where(
+        and(
+          eq(printUserAssignments.organizationId, organizationId),
+          sql`upper(${printUserAssignments.branchCode}) = upper(${branchCode})`,
+        ),
+      );
+    if (parsed.data.assignments.length > 0) {
+      await this.db.insert(printUserAssignments).values(
+        parsed.data.assignments.map((row) => ({
+          organizationId,
+          branchCode,
+          userId: row.userId.trim(),
+          profileId: row.profileId.trim(),
+          printerType: row.printerType.trim() || "kitchen",
+          printerName: row.printerName.trim(),
+          windowsPrinterName: row.windowsPrinterName?.trim() || null,
+          updatedAt: now,
+        })),
+      );
+    }
+    return { ok: true, count: parsed.data.assignments.length };
   }
 
   async listAlerts(user: AccessJwtPayload) {

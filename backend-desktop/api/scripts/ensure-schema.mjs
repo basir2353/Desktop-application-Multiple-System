@@ -427,6 +427,20 @@ const STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS print_jobs_cloud_org_branch_idx
     ON print_jobs_cloud (organization_id, branch_code, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS print_user_assignments (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    branch_code text NOT NULL,
+    user_id text NOT NULL,
+    profile_id text NOT NULL,
+    printer_type text NOT NULL DEFAULT 'kitchen',
+    printer_name text NOT NULL,
+    windows_printer_name text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS print_user_assignments_org_branch_user_profile_uidx
+    ON print_user_assignments (organization_id, branch_code, user_id, profile_id)`,
   `CREATE TABLE IF NOT EXISTS print_alerts (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

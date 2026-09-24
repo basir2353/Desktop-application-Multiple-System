@@ -58,4 +58,17 @@ describe("resolvePrimaryPrinterForSection — two printers", () => {
     const picked = routing.resolvePrimaryPrinterForSection("BR2", "kitchen", null);
     expect(picked?.id).toBe(b.id);
   });
+
+  it("finds a kitchen printer assigned under a different branch-code case and user id case", async () => {
+    const routing = await import("../printerRouting");
+    const kitchen = routing.addPrinterProfile("main", "Kitchen", {
+      printerType: "kitchen",
+      systemPrinterName: "EPSON TM-T82",
+    });
+    routing.setUserPrinters("main", "Waiter-ABC", [kitchen.id]);
+
+    const picked = routing.resolvePrinterForUser("MAIN", "waiter-abc", "kitchen");
+    expect(picked?.systemPrinterName).toBe("EPSON TM-T82");
+    expect(routing.loadPrinterRouting("Main").userPrinters["Waiter-ABC"]).toEqual([kitchen.id]);
+  });
 });

@@ -192,6 +192,21 @@ export class PrintingController implements OnModuleDestroy {
     return this.printing.heartbeat(user, body);
   }
 
+  @Get("user-assignments")
+  @RequirePermissions("pops.read")
+  listUserAssignments(
+    @CurrentUser() user: AccessJwtPayload,
+    @Query("branchCode") branchCode?: string,
+  ) {
+    return this.printing.listUserAssignments(user, branchCode);
+  }
+
+  @Post("user-assignments")
+  @RequirePermissions("pops.read")
+  saveUserAssignments(@CurrentUser() user: AccessJwtPayload, @Body() body: unknown) {
+    return this.printing.saveUserAssignments(user, body);
+  }
+
   @Get("alerts")
   @RequirePermissions("pops.read")
   alerts(@CurrentUser() user: AccessJwtPayload) {

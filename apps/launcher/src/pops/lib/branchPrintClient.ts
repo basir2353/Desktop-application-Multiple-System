@@ -618,6 +618,34 @@ export async function resolveSilentSystemPrinterName(input: {
     return n;
   };
 
+  if (userId && (isKot || kind === "receipt")) {
+    try {
+      const { resolvePrinterForUser } = await import("./printerRouting");
+      const preferred = isKot ? (["kitchen", "bar"] as const) : (["receipt", "counter"] as const);
+      const matchAssigned = (assigned: { systemPrinterName?: string; name?: string } | null) => {
+        const linked =
+          acceptPhysical(assigned?.systemPrinterName) ??
+          acceptPdfFileTarget(assigned?.systemPrinterName);
+        if (linked) return linked;
+        const label = assigned?.name?.trim() || assigned?.systemPrinterName?.trim() || "";
+        if (!label) return null;
+        return (
+          osNames.find((n) => n.toLowerCase() === label.toLowerCase()) ??
+          osNames.find((n) => namesRoughlyMatch(n, label)) ??
+          null
+        );
+      };
+      for (const type of preferred) {
+        const assignedName = matchAssigned(resolvePrinterForUser(branchCode, userId, type));
+        if (assignedName) return assignedName;
+      }
+      const anyAssigned = matchAssigned(resolvePrinterForUser(branchCode, userId));
+      if (anyAssigned) return anyAssigned;
+    } catch {
+      // fall through to section / hint routing
+    }
+  }
+
   // Exact / fuzzy OS spooler name (when mobile sends a real Windows printer name).
   const hintLooksLikeSoftLabel =
     Boolean(hint) &&
@@ -644,7 +672,19 @@ export async function resolveSilentSystemPrinterName(input: {
     } = await import("./printerRouting");
     const routing = loadPrinterRouting(branchCode);
 
-    if (isKot) {
+      if (isKot) {
+      // User's assigned kitchen/bar printer wins, even when the section has none.
+      const assignedKitchen = resolvePrinterForUser(branchCode, userId, "kitchen");
+      const assignedKitchenName =
+        acceptPhysical(assignedKitchen?.systemPrinterName) ??
+        acceptPdfFileTarget(assignedKitchen?.systemPrinterName);
+      if (assignedKitchenName) return assignedKitchenName;
+      const assignedBar = resolvePrinterForUser(branchCode, userId, "bar");
+      const assignedBarName =
+        acceptPhysical(assignedBar?.systemPrinterName) ??
+        acceptPdfFileTarget(assignedBar?.systemPrinterName);
+      if (assignedBarName) return assignedBarName;
+
       // Same as cashier: Assign Users / section first — never let "Kitchen 1" steal the route.
       if (sectionId) {
         const sectionKot = resolveKotPrinter(branchCode, sectionId, userId, "kitchen");
@@ -1356,6 +1396,17 @@ export function ensureCloudPrintPoller(branchCode: string): void {
       const settings = loadBranchPrintSettings(code);
       // Live claim always runs while this EXE is open for the branch (cloudHeartbeat can disable).
       if (settings.cloudHeartbeat === false) return;
+
+      try {
+        const { pullUserPrinterAssignments, pushUserPrinterAssignments } = await import(
+          "./printerAssignmentSync"
+        );
+        const branch = settings.branchCode || code;
+        await pushUserPrinterAssignments(branch);
+        await pullUserPrinterAssignments(branch);
+      } catch {
+        // local assignment still applies if the API is briefly unreachable
+      }
 
       const { authFetch } = await import("../../lib/authFetch");
       const res = await authFetch(`/v1/printing/jobs/claim`, {

@@ -469,27 +469,33 @@ export class AuthService implements OnModuleInit {
         .from(organizationMemberships)
         .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
         .where(eq(organizationMemberships.userId, user.id))
-        .limit(1);
+        .limit(20);
     } catch (err) {
       this.rethrowAuthDbError(err, "Could not load organization membership");
     }
 
-    const row0 = membership[0];
+    const row0 =
+      membership.find(
+        (row) =>
+          row.membership.active !== false &&
+          row.org.status === "active" &&
+          (!row.org.licenceExpiresAt || row.org.licenceExpiresAt.getTime() >= Date.now()),
+      ) ?? membership[0];
     if (!row0) throw new UnauthorizedException("No organization membership");
 
     const m = row0.membership;
     let org = row0.org;
 
     if (org.status === "deleted" || org.status === "suspended" || org.status === "inactive") {
-      // Soft-deleted businesses stay deleted (Super Admin Delete). Only reactivate
-      // suspended/inactive seed demos on login — never status "deleted".
+      // Seed demo businesses (LIC-DEMO) can sign in again after a delete so restaurant
+      // desktop/mobile keep working. Other deleted businesses stay deleted.
       const isSeedDemoOrg =
         typeof org.licenceKey === "string" && org.licenceKey.toUpperCase().startsWith("LIC-DEMO-");
       const isDemoEmail =
         normalizedEmail.endsWith("@pops.demo") ||
         normalizedEmail ===
           (this.config.get<string>("SEED_USER_EMAIL") ?? "admin.restaurant@pops.demo").toLowerCase();
-      if (org.status !== "deleted" && isSeedDemoOrg && isDemoEmail) {
+      if (isSeedDemoOrg && isDemoEmail) {
         const [restored] = await this.db
           .update(organizations)
           .set({ status: "active", updatedAt: new Date() })

@@ -217,6 +217,21 @@ export const printAlertSchema = z.object({
 });
 export type PrintAlert = z.infer<typeof printAlertSchema>;
 
+export const printUserAssignmentSchema = z.object({
+  userId: z.string().min(1).max(80),
+  profileId: z.string().min(1).max(120),
+  printerType: z.string().min(1).max(40),
+  printerName: z.string().min(1).max(200),
+  windowsPrinterName: z.string().max(200).nullable().optional(),
+});
+export type PrintUserAssignment = z.infer<typeof printUserAssignmentSchema>;
+
+export const savePrintUserAssignmentsSchema = z.object({
+  branchCode: z.string().min(1).max(64),
+  assignments: z.array(printUserAssignmentSchema).max(2000),
+});
+export type SavePrintUserAssignments = z.infer<typeof savePrintUserAssignmentsSchema>;
+
 /** Default LAN port for Branch Print Server HTTP API */
 export const BRANCH_PRINT_SERVER_DEFAULT_PORT = 9740;
 
