@@ -2,6 +2,7 @@ import type { InventoryReport } from "@platform/contracts";
 import { formatPkr } from "../../../hooks/useInventory";
 import { Badge } from "../../../ui/Badge";
 import { SimpleTable } from "../../../ui/SimpleTable";
+import { StockLeftTotal } from "./InventoryUi";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -328,10 +329,23 @@ export function InventoryReportView({
       );
     }
 
-    case "cooking-unit-stock":
+    case "cooking-unit-stock": {
+      const stockRows = rows.filter(isRecord);
+      const bySection = new Map<string, number>();
+      let totalValue = 0;
+      for (const row of stockRows) {
+        const value = typeof row.stockValue === "number" ? row.stockValue : Number(row.stockValue) || 0;
+        totalValue += value;
+        const name = cell(row.kitchenSection);
+        bySection.set(name, (bySection.get(name) ?? 0) + value);
+      }
+      const parts = [...bySection.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([name, value]) => ({ id: name, label: name, value }));
       return (
-        <SimpleTable
-          rowKey={(r) => cell(r.id)}
+        <div className="space-y-2">
+          <SimpleTable
+            rowKey={(r) => cell(r.id)}
             columns={[
               { key: "kitchenSection", header: "Cooking unit", render: (r) => cell(r.kitchenSection) },
               { key: "productCategory", header: "Product category", render: (r) => cell(r.productCategory) },
@@ -340,9 +354,21 @@ export function InventoryReportView({
               { key: "quantity", header: "Qty in hand", render: (r) => `${cell(r.quantity)} ${cell(r.unit)}` },
               { key: "stockValue", header: "Value (Rs)", render: (r) => formatPkrCell(r.stockValue) },
             ]}
-          rows={rows.filter(isRecord)}
-        />
+            rows={stockRows}
+          />
+          <StockLeftTotal
+            title={cookingUnitLabel ? `${cookingUnitLabel} — stock left` : "Stock left — all cooking units"}
+            hint={
+              cookingUnitLabel
+                ? `${cookingUnitLabel} ke paas ab itni value ka stock bacha hai (${stockRows.length} products).`
+                : `Har product alag hai. Ye total hai ke cooking units mein kitna stock bacha hai (${stockRows.length} products).`
+            }
+            total={totalValue}
+            parts={parts.length > 1 ? parts : []}
+          />
+        </div>
       );
+    }
 
     default: {
       const typedRows = rows.filter(isRecord);

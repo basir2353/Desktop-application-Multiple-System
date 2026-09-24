@@ -16,7 +16,7 @@ import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
 import { ModuleFilterBar, ModuleSegmentedControl } from "../../../ui/ModuleToolbar";
-import { InventoryError, InventoryLoading } from "./InventoryUi";
+import { InventoryError, InventoryLoading, StockLeftTotal, summarizeIngredientStock } from "./InventoryUi";
 import { InventoryReportView } from "./InventoryReportView";
 
 function categoryTone(cat: string): "neutral" | "info" | "success" | "warning" {
@@ -207,6 +207,11 @@ export function InventoryReportsPage(): JSX.Element {
     onError: (e: Error) => setError(e.message),
   });
 
+  const stockLeft = useMemo(
+    () => summarizeIngredientStock(inventoryQuery.data?.ingredients ?? []),
+    [inventoryQuery.data?.ingredients],
+  );
+
   if (inventoryQuery.isLoading) return <InventoryLoading />;
   if (inventoryQuery.isError) return <InventoryError message={(inventoryQuery.error as Error).message} />;
 
@@ -282,6 +287,18 @@ export function InventoryReportsPage(): JSX.Element {
         }
       />
       {error ? <InventoryError message={error} /> : null}
+
+      <StockLeftTotal
+        title="Stock left — overall"
+        hint={
+          selectedUnitName
+            ? `${selectedUnitName} highlight hai. Bara number poori branch ka bacha hua stock hai (on-hand × unit cost).`
+            : "Har cheez alag nazar aati hai. Ye total hai ke branch mein ab kitna stock bacha hai (on-hand × unit cost). Store back stock hai, baqi cooking units hain."
+        }
+        total={stockLeft.total}
+        parts={stockLeft.parts}
+        highlightId={cookingUnitId || null}
+      />
 
       <div className={`${cardClass} border-amber-500/30 bg-amber-500/5 p-4`}>
         <div className="flex flex-wrap items-start justify-between gap-3">

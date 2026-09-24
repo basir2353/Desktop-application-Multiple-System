@@ -47,3 +47,190 @@
 .tf-row-active {
   background: var(--tf-accent-soft);
 }
+
+/* MaterialFlow POS — dense counter shell */
+.tf-pos-shell {
+  display: grid;
+  gap: 0.75rem;
+  min-height: calc(100vh - 9rem);
+}
+
+@media (min-width: 1280px) {
+  .tf-pos-shell {
+    grid-template-columns: minmax(0, 1.55fr) minmax(340px, 0.9fr);
+    align-items: start;
+  }
+}
+
+.tf-pos-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(30 41 59);
+  background: rgb(2 6 23);
+  color: #fff;
+}
+
+.tf-pos-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.tf-pos-chip-cash {
+  background: rgb(16 185 129);
+  color: #fff;
+}
+
+.tf-pos-chip-credit {
+  background: rgb(251 191 36);
+  color: rgb(15 23 42);
+}
+
+.tf-pos-link {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  color: rgb(226 232 240);
+  text-decoration: none;
+}
+
+.tf-pos-link:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.tf-pos-panel {
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: #fff;
+  color: rgb(15 23 42);
+}
+
+.dark .tf-pos-panel,
+html.dark .tf-pos-panel {
+  border-color: rgb(51 65 85);
+  background: rgb(15 23 42);
+  color: rgb(241 245 249);
+}
+
+.tf-pos-item {
+  text-align: left;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
+  color: rgb(15 23 42);
+  padding: 0.7rem 0.75rem;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.dark .tf-pos-item,
+html.dark .tf-pos-item {
+  border-color: rgb(71 85 105);
+  background: rgb(30 41 59);
+  color: rgb(248 250 252);
+}
+
+.tf-pos-item:hover {
+  border-color: rgba(180, 83, 9, 0.55);
+}
+
+.tf-pos-item.is-picked {
+  border-color: rgb(180 83 9);
+  background: var(--tf-accent-soft);
+}
+
+.tf-pos-item-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: inherit;
+}
+
+.tf-pos-item-meta {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: rgb(100 116 139);
+}
+
+.dark .tf-pos-item-meta,
+html.dark .tf-pos-item-meta {
+  color: rgb(148 163 184);
+}
+
+.tf-pos-item-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  max-height: min(42vh, 420px);
+  overflow: auto;
+  padding: 0.15rem;
+}
+
+@media (min-width: 640px) {
+  .tf-pos-item-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .tf-pos-item-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.tf-pos-bill {
+  position: sticky;
+  top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 8.5rem);
+  overflow: hidden;
+}
+
+.tf-pos-bill-lines {
+  flex: 1 1 auto;
+  min-height: 140px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.tf-pos-pay-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.tf-pos-pay-primary {
+  border-radius: 0.5rem;
+  background: rgb(5 150 105);
+  padding: 0.8rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.tf-pos-pay-primary:disabled {
+  opacity: 0.45;
+}
+
+.tf-pos-pay-secondary {
+  border-radius: 0.5rem;
+  border: 1px solid rgb(203 213 225);
+  padding: 0.8rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgb(15 23 42);
+  background: transparent;
+}
+
+.dark .tf-pos-pay-secondary {
+  border-color: rgb(51 65 85);
+  color: rgb(226 232 240);
+}

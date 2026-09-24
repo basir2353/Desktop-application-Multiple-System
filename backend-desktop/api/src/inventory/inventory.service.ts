@@ -568,6 +568,8 @@ export class InventoryService implements OnModuleInit {
       const unitLabel = cookingUnitId
         ? (stockRows[0]?.cookingUnitName ?? "selected unit")
         : null;
+      const totalValue = rows.reduce((sum, row) => sum + row.stockValue, 0);
+      const sectionCount = new Set(rows.map((row) => row.kitchenSection)).size;
       return {
         id: reportId,
         name: "Cooking unit stock in hand",
@@ -581,6 +583,7 @@ export class InventoryService implements OnModuleInit {
         dateTo: null,
         dateMode: null,
         data: rows,
+        summary: { totalValue, lineCount: rows.length, sectionCount },
       };
     }
 

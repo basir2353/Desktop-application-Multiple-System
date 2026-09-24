@@ -13,7 +13,7 @@ import { accentValueClass, linkActionClass, linkDangerClass } from "../../../lib
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SimpleTable } from "../../../ui/SimpleTable";
-import { InventoryError, InventoryFormPanel, InventoryLoading } from "./InventoryUi";
+import { InventoryError, InventoryFormPanel, InventoryLoading, StockLeftTotal, summarizeIngredientStock } from "./InventoryUi";
 
 function stockStatus(i: Ingredient): { label: string; tone: "success" | "warning" | "danger" } {
   const onHand = i.onHandStock ?? i.currentStock;
@@ -178,6 +178,7 @@ export function IngredientsPage(): JSX.Element {
     const matchCat = !categoryFilter || i.categoryId === categoryFilter;
     return matchSearch && matchCat;
   });
+  const stockLeft = summarizeIngredientStock(ingredients);
 
   return (
     <div className="space-y-4">
@@ -352,6 +353,17 @@ export function IngredientsPage(): JSX.Element {
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </div>
+
+      <StockLeftTotal
+        title="Stock left — overall"
+        hint={
+          search || categoryFilter
+            ? "Is filter ki list ka total — kitna stock bacha hai (on-hand × unit cost)."
+            : "Har ingredient alag hai. Ye total hai ke ab kitna stock bacha hai (on-hand × unit cost)."
+        }
+        total={stockLeft.total}
+        parts={stockLeft.parts}
+      />
 
       <SimpleTable<Ingredient>
         rowKey={(r) => r.id}
