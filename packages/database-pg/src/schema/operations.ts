@@ -67,6 +67,9 @@ export const popsKitchenTickets = pgTable(
     /** Waiter/user who took the order — only they (or managers) may edit it. */
     createdByUserId: uuid("created_by_user_id"),
     createdByName: text("created_by_name"),
+    /** Last user who edited order contents (items/notes/table) — not kitchen status bumps. */
+    updatedByUserId: uuid("updated_by_user_id"),
+    updatedByName: text("updated_by_name"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -96,6 +99,8 @@ export const popsKitchenLineCancellations = pgTable("pops_kitchen_line_cancellat
   ticketStatusAtCancel: text("ticket_status_at_cancel").notNull(),
   canceledByUserId: uuid("canceled_by_user_id"),
   canceledByName: text("canceled_by_name"),
+  /** Why the order/line was canceled (required for full order cancel). */
+  reason: text("reason"),
   source: text("source").notNull().default("pos_edit"),
   canceledAt: timestamp("canceled_at", { withTimezone: true }).notNull().defaultNow(),
 });

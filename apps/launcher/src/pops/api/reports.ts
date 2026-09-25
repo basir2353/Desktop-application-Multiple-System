@@ -77,7 +77,20 @@ export async function fetchRestaurantReport(
       const vendorsBalanceNeedsUpgrade =
         reportId === "vendors-balance" &&
         !report.rows.some((r) => typeof (r as { supplierId?: string }).supplierId === "string");
-      if (cashNeedsUpgrade || inOutNeedsUpgrade || vendorsBalanceNeedsUpgrade) {
+      const canceledNeedsUpgrade =
+        reportId === "canceled-orders" &&
+        !report.rows.some((r) => /Order cancel|Reason:/i.test(String(r.meta ?? "")));
+      const editedNeedsClient =
+        reportId === "edited-orders" &&
+        (report.empty ||
+          !report.rows.some((r) => /Updated by|Kitchen edit|Bill edit/i.test(String(r.meta ?? ""))));
+      if (
+        cashNeedsUpgrade ||
+        inOutNeedsUpgrade ||
+        vendorsBalanceNeedsUpgrade ||
+        canceledNeedsUpgrade ||
+        editedNeedsClient
+      ) {
         try {
           return await buildClientRestaurantReport(branchCode, reportId, options);
         } catch {

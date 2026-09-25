@@ -1,3 +1,4 @@
+import { type KitchenTicket } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useMemo, useState } from "react";
@@ -14,6 +15,7 @@ import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { fetchOrders } from "../src/api/billing";
 import { fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { AdminShell } from "../src/components/AdminBottomNav";
+import { CancelOrderReasonModal } from "../src/components/CancelOrderReasonModal";
 import { filterActiveKitchenTickets } from "../src/lib/orderHistory";
 import {
   Card,
@@ -50,6 +52,7 @@ export default function AdminOrdersScreen() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
   const [error, setError] = useState<string | null>(null);
+  const [cancelTicket, setCancelTicket] = useState<KitchenTicket | null>(null);
   const ordersPoll = useLiveRefetchInterval(20_000);
   const kitchenPoll = useLiveRefetchInterval(15_000);
 
@@ -75,6 +78,25 @@ export default function AdminOrdersScreen() {
     onSuccess: () => {
       setError(null);
       void qc.invalidateQueries({ queryKey: ["admin", "kitchen", branchCode] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async ({ ticket, reason }: { ticket: KitchenTicket; reason: string }) => {
+      await updateKitchenTicket(ticket.id, {
+        status: "done",
+        recordAsCancellation: true,
+        cancellationReason: reason,
+      });
+    },
+    onSuccess: () => {
+      setError(null);
+      setCancelTicket(null);
+      void qc.invalidateQueries({ queryKey: ["admin", "kitchen", branchCode] });
+      void qc.invalidateQueries({ queryKey: ["kitchen"] });
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+      void qc.invalidateQueries({ queryKey: ["tables"] });
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -215,21 +237,40 @@ export default function AdminOrdersScreen() {
                       <StatusBadge status={kitchenStatusLabel(ticket.status)} />
                     </View>
                     {next ? (
-                      <Pressable
-                        disabled={advance.isPending}
-                        onPress={() => advance.mutate({ id: ticket.id, status: next })}
-                        style={{
-                          alignSelf: "flex-start",
-                          paddingHorizontal: 12,
-                          paddingVertical: 8,
-                          borderRadius: 8,
-                          backgroundColor: colors.accent,
-                        }}
-                      >
-                        <Text style={{ color: colors.accentText, fontWeight: "700", fontSize: 12 }}>
-                          Mark {next}
-                        </Text>
-                      </Pressable>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        <Pressable
+                          disabled={advance.isPending || cancelMutation.isPending}
+                          onPress={() => advance.mutate({ id: ticket.id, status: next })}
+                          style={{
+                            alignSelf: "flex-start",
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            backgroundColor: colors.accent,
+                          }}
+                        >
+                          <Text style={{ color: colors.accentText, fontWeight: "700", fontSize: 12 }}>
+                            Mark {next}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          disabled={advance.isPending || cancelMutation.isPending}
+                          onPress={() => setCancelTicket(ticket)}
+                          style={{
+                            alignSelf: "flex-start",
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: "rgba(248, 113, 113, 0.5)",
+                            backgroundColor: "rgba(248, 113, 113, 0.12)",
+                          }}
+                        >
+                          <Text style={{ color: "#f87171", fontWeight: "700", fontSize: 12 }}>
+                            Cancel order
+                          </Text>
+                        </Pressable>
+                      </View>
                     ) : null}
                   </View>
                 );
@@ -276,6 +317,21 @@ export default function AdminOrdersScreen() {
           </Card>
         ) : null}
       </ScrollView>
+
+      <CancelOrderReasonModal
+        visible={Boolean(cancelTicket)}
+        title={cancelTicket ? `Cancel ${orderRefFromTicket(cancelTicket)}` : "Cancel order"}
+        subtitle="Reason is required. This cancels the open order and logs it in cancellations."
+        confirmLabel="Cancel order"
+        loading={cancelMutation.isPending}
+        onClose={() => {
+          if (!cancelMutation.isPending) setCancelTicket(null);
+        }}
+        onConfirm={(reason) => {
+          if (!cancelTicket) return;
+          cancelMutation.mutate({ ticket: cancelTicket, reason });
+        }}
+      />
     </AdminShell>
   );
 }

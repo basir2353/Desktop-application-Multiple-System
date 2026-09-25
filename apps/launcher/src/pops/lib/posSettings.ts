@@ -56,6 +56,11 @@ export type PosSettings = {
    */
   fullScreenMenuEnabled: boolean;
   /**
+   * When on, POS shows the Latest orders sidebar (search, filters, Edit/Print/Close).
+   * Local UI preference (not synced to mobile tax API).
+   */
+  showLatestOrdersPanel: boolean;
+  /**
    * Default full-screen / menu browse mode: categories first, or all items flat.
    * Local UI preference (not synced to mobile tax API).
    */
@@ -92,6 +97,7 @@ export const DEFAULT_POS_SETTINGS: PosSettings = {
   taxOnStaffFood: true,
   showBillNotes: true,
   fullScreenMenuEnabled: true,
+  showLatestOrdersPanel: true,
   menuViewMode: "category",
   autoPrintOrderDineIn: false,
   autoPrintOrderTakeaway: false,
@@ -135,6 +141,7 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     taxOnStaffFood: input.taxOnStaffFood ?? DEFAULT_POS_SETTINGS.taxOnStaffFood,
     showBillNotes: input.showBillNotes ?? DEFAULT_POS_SETTINGS.showBillNotes,
     fullScreenMenuEnabled: input.fullScreenMenuEnabled ?? DEFAULT_POS_SETTINGS.fullScreenMenuEnabled,
+    showLatestOrdersPanel: input.showLatestOrdersPanel ?? DEFAULT_POS_SETTINGS.showLatestOrdersPanel,
     menuViewMode: input.menuViewMode === "all" ? "all" : "category",
     autoPrintOrderDineIn: input.autoPrintOrderDineIn ?? DEFAULT_POS_SETTINGS.autoPrintOrderDineIn,
     autoPrintOrderTakeaway: input.autoPrintOrderTakeaway ?? DEFAULT_POS_SETTINGS.autoPrintOrderTakeaway,
@@ -246,7 +253,7 @@ export function savePosSettings(branchCode: string, settings: PosSettings): void
 export function posSettingsFromTaxApi(
   tax: TaxSettings,
   /** Preserve local-only UI flags across cloud sync. */
-  localUi?: Partial<Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "menuViewMode" |
+  localUi?: Partial<Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "showLatestOrdersPanel" | "menuViewMode" |
     "autoPrintOrderDineIn" | "autoPrintOrderTakeaway" | "autoPrintOrderDelivery" |
     "autoPrintFinalDineIn" | "autoPrintFinalTakeaway" | "autoPrintFinalDelivery">>,
 ): PosSettings {
@@ -258,6 +265,7 @@ export function posSettingsFromTaxApi(
       taxPct: Number.isFinite(charges.taxPct) ? charges.taxPct : tax.salesTaxPct,
       showBillNotes: localUi?.showBillNotes,
       fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
+      showLatestOrdersPanel: localUi?.showLatestOrdersPanel,
       menuViewMode: localUi?.menuViewMode,
       autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
@@ -275,6 +283,7 @@ export function posSettingsFromTaxApi(
     onlineTaxPct: DEFAULT_POS_SETTINGS.onlineTaxPct,
     showBillNotes: localUi?.showBillNotes,
     fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
+    showLatestOrdersPanel: localUi?.showLatestOrdersPanel,
     menuViewMode: localUi?.menuViewMode,
     autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
     autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,

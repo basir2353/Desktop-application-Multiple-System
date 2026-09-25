@@ -1,12 +1,13 @@
 import { type Bill, type KitchenTicket, type MenuItem } from "@platform/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLiveRefetchInterval } from "../src/hooks/useLiveRefetchInterval";
 import { fetchOrders } from "../src/api/billing";
-import { fetchKitchenTickets } from "../src/api/kitchen";
+import { fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { fetchBranchMenu } from "../src/api/menu";
+import { CancelOrderReasonModal } from "../src/components/CancelOrderReasonModal";
 import {
   Card,
   Chip,
@@ -29,7 +30,7 @@ import {
 import { filterActiveKitchenTickets, kitchenTicketTotal } from "../src/lib/orderHistory";
 import { printBillReceipt, printCartBill, printKitchenOrder } from "../src/lib/printBill";
 import { inferOrderModeFromStation } from "../src/lib/orderMode";
-import { resolveStaffRole } from "../src/lib/roles";
+import { canCloseOrders, resolveStaffRole } from "../src/lib/roles";
 import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, posTaxSettingsFromApi } from "../src/lib/posTaxSettings";
 import { fetchTaxSettings } from "../src/api/accounting";
 import { useBranchStore } from "../src/stores/branchStore";
@@ -89,6 +90,7 @@ function ticketCheckoutTotal(
 
 export default function OrdersScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
   const branch = useBranchStore((s) => s.branch);
@@ -96,6 +98,7 @@ export default function OrdersScreen() {
   const [tab, setTab] = useState<OrdersTab>("active");
   const [notice, setNotice] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<string | null>(null);
+  const [cancelTicket, setCancelTicket] = useState<KitchenTicket | null>(null);
   const printLockRef = useRef<Set<string>>(new Set());
 
   const kitchenPoll = useLiveRefetchInterval(15_000);
@@ -115,6 +118,24 @@ export default function OrdersScreen() {
     queryFn: () => fetchOrders(branchCode),
     refetchInterval: ordersPoll,
     staleTime: 15_000,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async ({ ticket, reason }: { ticket: KitchenTicket; reason: string }) => {
+      await updateKitchenTicket(ticket.id, {
+        status: "done",
+        recordAsCancellation: true,
+        cancellationReason: reason,
+      });
+    },
+    onSuccess: (_data, { ticket }) => {
+      setCancelTicket(null);
+      setNotice(`Order ${orderRefFromTicket(ticket)} canceled.`);
+      void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["tables"] });
+    },
+    onError: (e: Error) => setNotice(e.message || "Could not cancel order."),
   });
 
   const menuQuery = useQuery({
@@ -309,6 +330,9 @@ export default function OrdersScreen() {
             active.map((ticket) => {
               const canEdit = canEditKitchenTicket(ticket) && ownsKitchenTicket(ticket, claims?.sub);
               const canTransfer = canTransferKitchenTicket(ticket, claims?.sub);
+              const canCancel =
+                canEditKitchenTicket(ticket) &&
+                (canCloseOrders(claims) || ownsKitchenTicket(ticket, claims?.sub));
               const isDineIn = inferOrderModeFromStation(ticket.stationLabel) === "dine-in";
               const isPrinting = printingId === ticket.id;
               const isPrintingBill = printingId === `bill-${ticket.id}`;
@@ -390,6 +414,23 @@ export default function OrdersScreen() {
                         }}
                       >
                         <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 13 }}>Edit order</Text>
+                      </Pressable>
+                    ) : null}
+                    {canCancel ? (
+                      <Pressable
+                        onPress={() => setCancelTicket(ticket)}
+                        disabled={cancelMutation.isPending}
+                        style={{
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: "rgba(248, 113, 113, 0.5)",
+                          backgroundColor: "rgba(248, 113, 113, 0.12)",
+                          paddingHorizontal: 14,
+                          paddingVertical: 10,
+                          opacity: cancelMutation.isPending ? 0.6 : 1,
+                        }}
+                      >
+                        <Text style={{ color: "#f87171", fontWeight: "700", fontSize: 13 }}>Cancel</Text>
                       </Pressable>
                     ) : null}
                     {canTransfer ? (
@@ -488,6 +529,21 @@ export default function OrdersScreen() {
           })
         )}
       </ScrollView>
+
+      <CancelOrderReasonModal
+        visible={Boolean(cancelTicket)}
+        title={cancelTicket ? `Cancel ${orderRefFromTicket(cancelTicket)}` : "Cancel order"}
+        subtitle="Reason is required. This cancels the open order."
+        confirmLabel="Cancel order"
+        loading={cancelMutation.isPending}
+        onClose={() => {
+          if (!cancelMutation.isPending) setCancelTicket(null);
+        }}
+        onConfirm={(reason) => {
+          if (!cancelTicket) return;
+          cancelMutation.mutate({ ticket: cancelTicket, reason });
+        }}
+      />
     </Screen>
   );
 }

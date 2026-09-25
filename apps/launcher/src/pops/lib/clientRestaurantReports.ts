@@ -521,7 +521,15 @@ export async function buildClientRestaurantReport(
         label: c.label,
         qty: c.qtyCanceled,
         amount: c.qtyCanceled * (c.unitPricePkr ?? 0),
-        meta: `${c.ticketRef} · ${c.source}`,
+        meta: [
+          c.orderRef ?? c.ticketRef,
+          c.source,
+          c.canceledByName ? `by ${c.canceledByName}` : null,
+          c.reason ? `Reason: ${c.reason}` : null,
+          c.canceledAt,
+        ]
+          .filter(Boolean)
+          .join(" · "),
       }));
     return {
       ...meta,
@@ -535,15 +543,136 @@ export async function buildClientRestaurantReport(
   }
 
   if (reportId === "canceled-orders") {
-    const voidBills = (await fetchCompletedOrders(branchCode)).filter(
-      (b) => b.status === "void" && inRange(b.createdAt, from, to, fromTime, toTime),
-    );
-    const rows = voidBills.map((b) => ({
-      label: b.billRef,
-      amount: b.total,
-      meta: `${b.tableLabel} · ${b.waiterName}`,
-    }));
-    return { ...meta, rows, empty: rows.length === 0 };
+    const [voidBills, cancels] = await Promise.all([
+      fetchCompletedOrders(branchCode).then((bills) =>
+        bills.filter((b) => b.status === "void" && inRange(b.createdAt, from, to, fromTime, toTime)),
+      ),
+      fetchKitchenCancellations(branchCode, { from, to }),
+    ]);
+
+    const byTicket = new Map<
+      string,
+      {
+        orderRef: string | null;
+        ticketRef: string;
+        stationLabel: string;
+        canceledByName: string | null;
+        reason: string | null;
+        amount: number;
+        qty: number;
+        canceledAt: string;
+      }
+    >();
+    for (const c of cancels.cancellations) {
+      if (c.source !== "order_close") continue;
+      if (!inRange(c.canceledAt, from, to, fromTime, toTime)) continue;
+      const cur = byTicket.get(c.ticketId) ?? {
+        orderRef: c.orderRef,
+        ticketRef: c.ticketRef,
+        stationLabel: c.stationLabel,
+        canceledByName: c.canceledByName,
+        reason: c.reason ?? null,
+        amount: 0,
+        qty: 0,
+        canceledAt: c.canceledAt,
+      };
+      cur.amount += c.qtyCanceled * (c.unitPricePkr ?? 0);
+      cur.qty += c.qtyCanceled;
+      if (!cur.reason && c.reason) cur.reason = c.reason;
+      if (!cur.canceledByName && c.canceledByName) cur.canceledByName = c.canceledByName;
+      byTicket.set(c.ticketId, cur);
+    }
+
+    const rows = [
+      ...voidBills.map((b) => ({
+        label: b.orderRef?.trim() || b.billRef,
+        amount: b.total,
+        qty: 1,
+        meta: [
+          "Void bill",
+          b.tableLabel,
+          b.waiterName ? `by ${b.waiterName}` : null,
+          b.voidReason ? `Reason: ${b.voidReason}` : null,
+          b.billRef,
+          b.createdAt,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+      ...[...byTicket.values()].map((c) => ({
+        label: c.orderRef?.trim() || c.ticketRef,
+        amount: c.amount,
+        qty: c.qty,
+        meta: [
+          "Order cancel",
+          c.stationLabel,
+          c.canceledByName ? `by ${c.canceledByName}` : null,
+          c.reason ? `Reason: ${c.reason}` : null,
+          c.ticketRef,
+          c.canceledAt,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+    ];
+
+    return {
+      ...meta,
+      rows,
+      totals: {
+        orders: rows.length,
+        amount: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+        qty: rows.reduce((s, r) => s + (r.qty ?? 0), 0),
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  if (reportId === "edited-orders") {
+    const [tickets, bills] = await Promise.all([
+      fetchKitchenTickets(branchCode, { scope: "all" }),
+      fetchCompletedOrders(branchCode),
+    ]);
+    const ticketRows = tickets
+      .filter((t) => Boolean(t.updatedByName?.trim()) && inRange(t.createdAt, from, to, fromTime, toTime))
+      .map((t) => ({
+        label: t.orderRef?.trim() || t.ticketRef,
+        qty: 1,
+        meta: [
+          "Kitchen edit",
+          t.stationLabel,
+          t.createdByName ? `Taken by ${t.createdByName}` : null,
+          t.updatedByName ? `Updated by ${t.updatedByName}` : null,
+          t.status,
+          t.createdAt,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      }));
+    const billRows = bills
+      .filter((b) => Boolean(b.updatedByName?.trim()) && inRange(b.createdAt, from, to, fromTime, toTime))
+      .map((b) => ({
+        label: b.orderRef?.trim() || b.billRef,
+        amount: b.total,
+        qty: 1,
+        meta: [
+          "Bill edit",
+          b.tableLabel,
+          b.waiterName ? `Taken by ${b.waiterName}` : null,
+          b.updatedByName ? `Updated by ${b.updatedByName}` : null,
+          b.status,
+          b.createdAt,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      }));
+    const rows = [...ticketRows, ...billRows];
+    return {
+      ...meta,
+      rows,
+      totals: { orders: rows.length },
+      empty: rows.length === 0,
+    };
   }
 
   if (reportId === "kitchen-printing-logs" || reportId === "kitchen-missing-log") {

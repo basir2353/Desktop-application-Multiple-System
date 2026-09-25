@@ -36,6 +36,9 @@ export const kitchenTicketSchema = z.object({
   /** Waiter/user who took the order. Null for legacy tickets or desktop counter orders. */
   createdById: z.string().uuid().nullable().optional(),
   createdByName: z.string().nullable().optional(),
+  /** Last user who edited items/notes/table. Null until first content edit. */
+  updatedById: z.string().uuid().nullable().optional(),
+  updatedByName: z.string().nullable().optional(),
 });
 
 export const kitchenTicketListSchema = z.object({
@@ -83,9 +86,24 @@ export const updateKitchenTicketSchema = z.object({
   notes: z.string().max(500).nullable().optional(),
   /**
    * When true with status "done", log remaining unpaid kitchen lines as cancellations
-   * (Latest orders → Close). Kitchen "mark done" must omit this.
+   * (Latest orders → Cancel order). Kitchen "mark done" must omit this.
    */
   recordAsCancellation: z.boolean().optional(),
+  /**
+   * Required when recordAsCancellation is true — why the open order was canceled.
+   */
+  cancellationReason: z.string().trim().min(3).max(300).optional(),
+}).superRefine((value, ctx) => {
+  if (value.recordAsCancellation === true) {
+    const reason = value.cancellationReason?.trim() ?? "";
+    if (reason.length < 3) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cancellationReason"],
+        message: "Cancellation reason is required (at least 3 characters).",
+      });
+    }
+  }
 });
 
 export type KitchenTicket = z.infer<typeof kitchenTicketSchema>;
@@ -108,6 +126,7 @@ export const kitchenLineCancellationSchema = z.object({
   ticketStatusAtCancel: kitchenTicketStatusSchema,
   canceledByName: z.string().nullable(),
   source: z.string(),
+  reason: z.string().nullable().optional(),
   canceledAt: z.string(),
 });
 

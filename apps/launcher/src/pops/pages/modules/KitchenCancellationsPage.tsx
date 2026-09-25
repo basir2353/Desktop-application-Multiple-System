@@ -99,7 +99,7 @@ export function KitchenCancellationsPage(): JSX.Element {
       ) : rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700">
           No kitchen cancellations in this date range. They appear when an already-sent item is removed/qty-cut, or when
-          an open (unpaid) order is Closed from Latest orders.
+          an open (unpaid) order is Canceled (with a required reason) from Latest orders.
         </div>
       ) : (
         <SimpleTable<KitchenLineCancellation>
@@ -133,6 +133,11 @@ export function KitchenCancellationsPage(): JSX.Element {
               key: "canceledByName",
               header: "Canceled by",
               render: (r) => r.canceledByName ?? "—",
+            },
+            {
+              key: "reason",
+              header: "Reason",
+              render: (r) => r.reason?.trim() || "—",
             },
             {
               key: "source",

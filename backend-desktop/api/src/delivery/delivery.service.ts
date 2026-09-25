@@ -543,6 +543,8 @@ export class DeliveryService implements OnApplicationBootstrap {
         | null,
       createdById: row.createdByUserId ?? null,
       createdByName: row.createdByName ?? null,
+      updatedById: row.updatedByUserId ?? null,
+      updatedByName: row.updatedByName ?? null,
     };
   }
 

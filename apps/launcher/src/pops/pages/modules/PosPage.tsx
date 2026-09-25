@@ -426,6 +426,7 @@ export function PosPage(): JSX.Element {
     const synced = posSettingsFromTaxApi(cloudPosSettingsQuery.data, {
       showBillNotes: local.showBillNotes,
       fullScreenMenuEnabled: local.fullScreenMenuEnabled,
+      showLatestOrdersPanel: local.showLatestOrdersPanel,
       menuViewMode: local.menuViewMode,
       autoPrintOrderDineIn: local.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
@@ -1692,6 +1693,27 @@ export function PosPage(): JSX.Element {
     setPrintNotice({ message: "Edit cancelled.", tone: "success" });
   }
 
+  /** Clear ticket / abandon edit and start a blank new order (manual). */
+  function startNewManualOrder(): void {
+    const hasWork =
+      Boolean(editingOrder) ||
+      cart.length > 0 ||
+      Boolean(kitchenNote.trim()) ||
+      Boolean(deliveryCustomer.trim()) ||
+      Boolean(deliveryPhone.trim()) ||
+      Boolean(deliveryAddress.trim());
+    if (hasWork) {
+      const ok = window.confirm(
+        editingOrder
+          ? "Discard this edit and start a new order?"
+          : "Clear the current ticket and start a new order?",
+      );
+      if (!ok) return;
+    }
+    resetAfterBill();
+    setPrintNotice({ message: "New order ready — add items from the menu.", tone: "success" });
+  }
+
   function openTableTransfer(): void {
     if (editingOrder?.kind === "ticket" && mode === "dine-in") {
       const ticket = (kitchenQuery.data ?? []).find((row) => row.id === editingOrder.ticketId);
@@ -2885,7 +2907,11 @@ export function PosPage(): JSX.Element {
       ) : null}
 
       {/* Main POS grid — UI zoom is applied globally from the top nav */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-3 lg:grid-rows-1 lg:items-stretch">
+      <div
+        className={`grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-rows-1 lg:items-stretch ${
+          posSettings.showLatestOrdersPanel ? "lg:grid-cols-3" : "lg:grid-cols-2"
+        }`}
+      >
         {/* Menu column */}
         <div className="flex min-h-0 min-w-0 flex-col">
           {/* Category pills — list or icon tiles */}
@@ -3248,6 +3274,15 @@ export function PosPage(): JSX.Element {
                     Cancel
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={startNewManualOrder}
+                  title="Start a new blank order"
+                  aria-label="New order"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-lg font-bold leading-none text-slate-950 shadow-sm transition hover:bg-amber-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+                >
+                  +
+                </button>
                 <span className="rounded-lg bg-amber-100 px-2.5 py-1 font-mono text-sm font-bold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
                   {orderRef}
                 </span>
@@ -4105,19 +4140,21 @@ export function PosPage(): JSX.Element {
         </div>
 
         {/* Latest orders sidebar */}
-        <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
-          <PosLatestOrdersPanel
-            orders={recentOrders}
-            isLoading={kitchenQuery.isLoading || ordersQuery.isLoading}
-            isError={kitchenQuery.isError || ordersQuery.isError}
-            onEdit={loadRecentOrderForEdit}
-            onPayOrder={loadRecentOrderForPayment}
-            closeAfterPayBillId={closeAfterPayBillId}
-            onCloseAfterPayHandled={() => setCloseAfterPayBillId(null)}
-            onNotice={(message, tone = "success") => setPrintNotice({ message, tone })}
-            quickPrintRef={latestOrdersQuickPrintRef}
-          />
-        </div>
+        {posSettings.showLatestOrdersPanel ? (
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <PosLatestOrdersPanel
+              orders={recentOrders}
+              isLoading={kitchenQuery.isLoading || ordersQuery.isLoading}
+              isError={kitchenQuery.isError || ordersQuery.isError}
+              onEdit={loadRecentOrderForEdit}
+              onPayOrder={loadRecentOrderForPayment}
+              closeAfterPayBillId={closeAfterPayBillId}
+              onCloseAfterPayHandled={() => setCloseAfterPayBillId(null)}
+              onNotice={(message, tone = "success") => setPrintNotice({ message, tone })}
+              quickPrintRef={latestOrdersQuickPrintRef}
+            />
+          </div>
+        ) : null}
       </div>
 
       {checkoutModal ? (

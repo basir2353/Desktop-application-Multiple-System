@@ -156,6 +156,11 @@ export class ReportsService {
           ...base,
           ...(await this.canceledOrders(organizationId, branch.id, range)),
         };
+      case "edited-orders":
+        return {
+          ...base,
+          ...(await this.editedOrders(organizationId, branch.id, range)),
+        };
       case "item-remove":
         return {
           ...base,
@@ -566,14 +571,170 @@ export class ReportsService {
       )
       .orderBy(desc(popsBills.createdAt));
 
-    const rows = voids.map((b) => ({
-      label: b.billRef,
-      amount: b.totalPkr,
-      meta: `${b.tableLabel} · ${b.waiterName}`,
-    }));
+    const cancelLines = await this.db
+      .select()
+      .from(popsKitchenLineCancellations)
+      .where(
+        and(
+          eq(popsKitchenLineCancellations.organizationId, organizationId),
+          eq(popsKitchenLineCancellations.branchId, branchId),
+          eq(popsKitchenLineCancellations.source, "order_close"),
+          gte(popsKitchenLineCancellations.canceledAt, this.rangeStart(range)),
+          lte(popsKitchenLineCancellations.canceledAt, this.rangeEnd(range)),
+        ),
+      )
+      .orderBy(desc(popsKitchenLineCancellations.canceledAt))
+      .limit(1000);
+
+    /** Group full-order cancel lines by ticket so one cancel = one report row. */
+    const byTicket = new Map<
+      string,
+      {
+        orderRef: string | null;
+        ticketRef: string;
+        stationLabel: string;
+        canceledByName: string | null;
+        reason: string | null;
+        amount: number;
+        qty: number;
+        canceledAt: string;
+      }
+    >();
+    for (const row of cancelLines) {
+      const cur = byTicket.get(row.ticketId) ?? {
+        orderRef: row.orderRef,
+        ticketRef: row.ticketRef,
+        stationLabel: row.stationLabel,
+        canceledByName: row.canceledByName,
+        reason: row.reason,
+        amount: 0,
+        qty: 0,
+        canceledAt: row.canceledAt.toISOString(),
+      };
+      cur.amount += row.qtyCanceled * (row.unitPricePkr ?? 0);
+      cur.qty += row.qtyCanceled;
+      if (!cur.reason && row.reason) cur.reason = row.reason;
+      if (!cur.canceledByName && row.canceledByName) cur.canceledByName = row.canceledByName;
+      byTicket.set(row.ticketId, cur);
+    }
+
+    const rows = [
+      ...voids.map((b) => ({
+        label: b.orderRef?.trim() || b.billRef,
+        amount: b.totalPkr,
+        qty: 1,
+        meta: [
+          "Void bill",
+          b.tableLabel,
+          b.waiterName ? `by ${b.waiterName}` : null,
+          b.voidReason ? `Reason: ${b.voidReason}` : null,
+          b.billRef,
+          b.createdAt.toISOString(),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+      ...[...byTicket.values()].map((c) => ({
+        label: c.orderRef?.trim() || c.ticketRef,
+        amount: c.amount,
+        qty: c.qty,
+        meta: [
+          "Order cancel",
+          c.stationLabel,
+          c.canceledByName ? `by ${c.canceledByName}` : null,
+          c.reason ? `Reason: ${c.reason}` : null,
+          c.ticketRef,
+          c.canceledAt,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+    ].sort((a, b) => {
+      const aAt = a.meta.slice(-24);
+      const bAt = b.meta.slice(-24);
+      return bAt.localeCompare(aAt);
+    });
+
     return {
       rows,
-      totals: { orders: rows.length, amount: rows.reduce((s, r) => s + (r.amount ?? 0), 0) },
+      totals: {
+        orders: rows.length,
+        amount: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+        qty: rows.reduce((s, r) => s + (r.qty ?? 0), 0),
+      },
+      empty: rows.length === 0,
+    };
+  }
+
+  private async editedOrders(organizationId: string, branchId: string, range: { from: string; to: string; fromTime: string; toTime: string }) {
+    const tickets = await this.db
+      .select()
+      .from(popsKitchenTickets)
+      .where(
+        and(
+          eq(popsKitchenTickets.organizationId, organizationId),
+          eq(popsKitchenTickets.branchId, branchId),
+          gte(popsKitchenTickets.createdAt, this.rangeStart(range)),
+          lte(popsKitchenTickets.createdAt, this.rangeEnd(range)),
+          sql`${popsKitchenTickets.updatedByName} is not null`,
+          sql`trim(${popsKitchenTickets.updatedByName}) <> ''`,
+        ),
+      )
+      .orderBy(desc(popsKitchenTickets.createdAt))
+      .limit(500);
+
+    const bills = await this.db
+      .select()
+      .from(popsBills)
+      .where(
+        and(
+          eq(popsBills.organizationId, organizationId),
+          eq(popsBills.branchId, branchId),
+          gte(popsBills.createdAt, this.rangeStart(range)),
+          lte(popsBills.createdAt, this.rangeEnd(range)),
+          sql`${popsBills.updatedByName} is not null`,
+          sql`trim(${popsBills.updatedByName}) <> ''`,
+        ),
+      )
+      .orderBy(desc(popsBills.createdAt))
+      .limit(500);
+
+    const rows = [
+      ...tickets.map((t) => ({
+        label: t.orderRef?.trim() || t.ticketRef,
+        qty: 1,
+        amount: undefined as number | undefined,
+        meta: [
+          "Kitchen edit",
+          t.stationLabel,
+          t.createdByName ? `Taken by ${t.createdByName}` : null,
+          t.updatedByName ? `Updated by ${t.updatedByName}` : null,
+          t.status,
+          t.createdAt.toISOString(),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+      ...bills.map((b) => ({
+        label: b.orderRef?.trim() || b.billRef,
+        qty: 1,
+        amount: b.totalPkr,
+        meta: [
+          "Bill edit",
+          b.tableLabel,
+          b.waiterName ? `Taken by ${b.waiterName}` : null,
+          b.updatedByName ? `Updated by ${b.updatedByName}` : null,
+          b.status,
+          b.createdAt.toISOString(),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+    ].sort((a, b) => b.meta.localeCompare(a.meta));
+
+    return {
+      rows,
+      totals: { orders: rows.length },
       empty: rows.length === 0,
     };
   }
@@ -597,7 +758,15 @@ export class ReportsService {
       label: r.label,
       qty: r.qtyCanceled,
       amount: r.qtyCanceled * (r.unitPricePkr ?? 0),
-      meta: `${r.ticketRef} · ${r.source} · ${r.canceledAt.toISOString()}`,
+      meta: [
+        r.orderRef ?? r.ticketRef,
+        r.source,
+        r.canceledByName ? `by ${r.canceledByName}` : null,
+        r.reason ? `Reason: ${r.reason}` : null,
+        r.canceledAt.toISOString(),
+      ]
+        .filter(Boolean)
+        .join(" · "),
     }));
     return {
       rows,

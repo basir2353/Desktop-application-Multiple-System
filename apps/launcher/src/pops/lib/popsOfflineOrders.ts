@@ -77,6 +77,8 @@ export function materialiseOfflineBill(input: CreateBill, id?: string): Bill {
     tableLabel: input.tableLabel,
     waiterId: input.waiterId ?? null,
     waiterName: input.waiterName ?? "POS Counter",
+    updatedById: null,
+    updatedByName: null,
     lines: input.lines,
     notes: input.notes ?? null,
     subtotal: totals.subtotal,
@@ -124,6 +126,8 @@ export function materialiseOfflineKot(input: CreateKitchenTicket, id?: string): 
     deliveryStatus: null,
     createdById: null,
     createdByName: null,
+    updatedById: null,
+    updatedByName: null,
   };
 }
 

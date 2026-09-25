@@ -51,7 +51,7 @@ import {
 import { getWaiterPrinter } from "../lib/waiterPrinterSettings";
 import { loadBillPrintSettings } from "../lib/billPrintSettings";
 import { resolveBillPrintSettingsForReceipt } from "../lib/billReceiptTemplateAssignments";
-import { fetchCompletedOrders } from "../api/billing";
+import { fetchCompletedOrders, voidBill } from "../api/billing";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay, inferPosModeFromLabel } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
@@ -65,6 +65,7 @@ import {
 import { PosOrderDetailModal } from "./PosOrderDetailModal";
 import { ChangeOrderTableModal } from "./ChangeOrderTableModal";
 import { ReceiptPrintPreviewModal } from "./ReceiptPrintPreviewModal";
+import { CancelOrderReasonModal } from "./CancelOrderReasonModal";
 
 type Props = {
   orders: PosRecentOrder[];
@@ -177,6 +178,7 @@ export function PosLatestOrdersPanel({
   });
   const [viewOrder, setViewOrder] = useState<PosRecentOrder | null>(null);
   const [changeTableOrder, setChangeTableOrder] = useState<PosRecentOrder | null>(null);
+  const [cancelOrder, setCancelOrder] = useState<PosRecentOrder | null>(null);
   const [printPreview, setPrintPreview] = useState<{
     input: Omit<PrintTicketInput, "kind">;
     printerName?: string;
@@ -216,33 +218,64 @@ export function PosLatestOrdersPanel({
       // Always hide from Latest orders immediately (local dismiss).
       if (branch?.code) dismissPosOrder(branch.code, order.id);
 
+      // Paid/close path only — unpaid cancel must use cancelOrderMutation (reason required).
       if (order.kind === "pending" && order.pendingTicket) {
-        const ticketId = order.pendingTicket.id;
-        // Offline / local-only tickets never exist on the API.
         try {
-          removeOfflineKot(ticketId);
+          removeOfflineKot(order.pendingTicket.id);
         } catch {
           /* ignore */
-        }
-        try {
-          await updateKitchenTicket(ticketId, { status: "done", recordAsCancellation: true });
-        } catch {
-          // Still closed in the panel via dismiss — API may be old / offline.
         }
       }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["kitchen", branch?.code] });
-      void queryClient.invalidateQueries({ queryKey: ["kitchen", "cancellations"] });
       void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
       void queryClient.invalidateQueries({ queryKey: ["tables", branch?.code] });
       setDismissedRevision((n) => n + 1);
       setSelectedId(null);
     },
     onError: () => {
-      // Dismiss already applied — refresh UI filter.
       setDismissedRevision((n) => n + 1);
       setSelectedId(null);
+    },
+  });
+
+  const cancelOrderMutation = useMutation({
+    mutationFn: async ({ order, reason }: { order: PosRecentOrder; reason: string }) => {
+      if (branch?.code) dismissPosOrder(branch.code, order.id);
+
+      if (order.kind === "pending" && order.pendingTicket) {
+        const ticketId = order.pendingTicket.id;
+        try {
+          removeOfflineKot(ticketId);
+        } catch {
+          /* ignore */
+        }
+        await updateKitchenTicket(ticketId, {
+          status: "done",
+          recordAsCancellation: true,
+          cancellationReason: reason,
+        });
+        return;
+      }
+
+      if (order.bill && (order.bill.status === "held" || order.bill.status === "open")) {
+        await voidBill(order.bill.id, reason);
+      }
+    },
+    onSuccess: (_data, { order }) => {
+      void queryClient.invalidateQueries({ queryKey: ["kitchen", branch?.code] });
+      void queryClient.invalidateQueries({ queryKey: ["kitchen", "cancellations"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
+      void queryClient.invalidateQueries({ queryKey: ["tables", branch?.code] });
+      setDismissedRevision((n) => n + 1);
+      setSelectedId(null);
+      setCancelOrder(null);
+      onNotice?.(`Order ${order.ref} canceled.`, "success");
+    },
+    onError: (err: Error) => {
+      setDismissedRevision((n) => n + 1);
+      onNotice?.(err.message || "Could not cancel order.", "error");
     },
   });
 
@@ -907,6 +940,10 @@ export function PosLatestOrdersPanel({
                 const showChangeTable =
                   canManageTables && canChangePosRecentOrderTable(order) && Boolean(branch?.code);
                 const showEdit = Boolean(onEdit) && canEditPosRecentOrder(order);
+                const showCancel =
+                  (order.kind === "pending" && Boolean(order.pendingTicket)) ||
+                  order.bill?.status === "held" ||
+                  order.bill?.status === "open";
                 const showRpra =
                   canShowRpraForBill({
                     praFakeEnabled,
@@ -942,6 +979,20 @@ export function PosLatestOrdersPanel({
                         title="Open order in ticket panel to add/remove items"
                       >
                         Edit
+                      </button>
+                    ) : null}
+                    {showCancel ? (
+                      <button
+                        type="button"
+                        className="rounded border border-rose-300 px-1.5 py-0.5 text-[9px] font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-700/60 dark:text-rose-300 dark:hover:border-rose-500/50 dark:hover:bg-rose-500/10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCancelOrder(order);
+                        }}
+                        disabled={cancelOrderMutation.isPending}
+                        title="Cancel this order — reason required"
+                      >
+                        Cancel
                       </button>
                     ) : null}
                     <button
@@ -1043,9 +1094,19 @@ export function PosLatestOrdersPanel({
                               {order.orderMode} · {station}
                             </span>
                           </div>
-                          <div className="mt-0.5 flex items-center gap-2 text-[9px] text-slate-500 dark:text-slate-500">
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] text-slate-500 dark:text-slate-500">
                             <span>{formatRecentOrderTime(order.createdAt)}</span>
                             <span className="truncate">{order.statusLabel}</span>
+                            {order.orderTakerName ? (
+                              <span className="truncate" title={`Order taker: ${order.orderTakerName}`}>
+                                By {order.orderTakerName}
+                              </span>
+                            ) : null}
+                            {order.updatedByName ? (
+                              <span className="truncate" title={`Updated by: ${order.updatedByName}`}>
+                                Updated {order.updatedByName}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                         <div className="shrink-0 text-right">
@@ -1104,6 +1165,13 @@ export function PosLatestOrdersPanel({
                         <span className="block text-[8px] text-slate-500">
                           {formatRecentOrderTime(order.createdAt)}
                         </span>
+                        {order.orderTakerName || order.updatedByName ? (
+                          <span className="block truncate text-[8px] text-slate-500">
+                            {order.orderTakerName ? `By ${order.orderTakerName}` : null}
+                            {order.orderTakerName && order.updatedByName ? " · " : null}
+                            {order.updatedByName ? `Updated ${order.updatedByName}` : null}
+                          </span>
+                        ) : null}
                       </div>
 
                       <div className="mt-1">
@@ -1158,6 +1226,21 @@ export function PosLatestOrdersPanel({
       </aside>
 
       {viewOrder ? <PosOrderDetailModal order={viewOrder} onClose={() => setViewOrder(null)} /> : null}
+
+      <CancelOrderReasonModal
+        open={Boolean(cancelOrder)}
+        title={cancelOrder ? `Cancel ${cancelOrder.ref}` : "Cancel order"}
+        subtitle="Reason is required. This cancels the open order and logs it in kitchen cancellations."
+        confirmLabel="Cancel order"
+        loading={cancelOrderMutation.isPending}
+        onClose={() => {
+          if (!cancelOrderMutation.isPending) setCancelOrder(null);
+        }}
+        onConfirm={(reason) => {
+          if (!cancelOrder) return;
+          cancelOrderMutation.mutate({ order: cancelOrder, reason });
+        }}
+      />
 
       {changeTableOrder?.pendingTicket && branch?.code ? (
         <ChangeOrderTableModal

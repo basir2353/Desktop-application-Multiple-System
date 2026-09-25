@@ -269,6 +269,7 @@ export function SettingsPage(): JSX.Element {
     const fromCloud = posSettingsFromTaxApi(cloudTaxQuery.data, {
       showBillNotes: local.showBillNotes,
       fullScreenMenuEnabled: local.fullScreenMenuEnabled,
+      showLatestOrdersPanel: local.showLatestOrdersPanel,
       menuViewMode: local.menuViewMode,
       autoPrintOrderDineIn: local.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
@@ -674,6 +675,25 @@ export function SettingsPage(): JSX.Element {
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
             Category wise: categories on top, items below. All items: every dish in one list.
+          </p>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-700/80 bg-slate-950/40 p-3">
+          <div className="text-xs font-semibold text-slate-300">Display · Latest orders</div>
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={draft.showLatestOrdersPanel}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, showLatestOrdersPanel: e.target.checked }))
+              }
+            />
+            Show Latest orders panel on POS
+          </label>
+          <p className="mt-1 text-[10px] text-slate-500">
+            On: right-side Latest orders list (search, filters, Edit / Print / Close / Cancel). Off: hide
+            that panel so menu + ticket use the full width.
           </p>
         </div>
 

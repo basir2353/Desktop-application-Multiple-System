@@ -11,6 +11,7 @@ import {
 } from "../src/api/accounting";
 import { fetchOrders } from "../src/api/billing";
 import { fetchEmployeeAdvances } from "../src/api/hr";
+import { fetchKitchenCancellations, fetchKitchenTickets } from "../src/api/kitchen";
 import { DateRangeFilter, defaultDateRange, type DateRangeValue } from "../src/components/DateRangeFilter";
 import { AdminShell } from "../src/components/AdminBottomNav";
 import { Card, Notice, Screen, StatCard, Subtitle, colors } from "../src/components/ui";
@@ -25,13 +26,24 @@ import { isAdminOrIncharge } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
-type TabId = "cash" | "customer" | "charges" | "discount" | "party" | "salary" | "expense";
+type TabId =
+  | "cash"
+  | "customer"
+  | "charges"
+  | "discount"
+  | "canceled"
+  | "edited"
+  | "party"
+  | "salary"
+  | "expense";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "cash", label: "Cash" },
   { id: "customer", label: "Customer" },
   { id: "charges", label: "Charges" },
   { id: "discount", label: "Discount" },
+  { id: "canceled", label: "Canceled" },
+  { id: "edited", label: "Edited" },
   { id: "party", label: "Party" },
   { id: "salary", label: "Salary" },
   { id: "expense", label: "Expense" },
@@ -83,6 +95,20 @@ export default function AdminReportsScreen() {
     queryFn: () => fetchCashMovements(cashSessionQuery.data!.id),
     enabled: allowed && Boolean(cashSessionQuery.data?.id) && tab === "cash",
   });
+  const cancelsQuery = useQuery({
+    queryKey: ["admin", "cancellations", branchCode, range.from, range.to],
+    queryFn: () =>
+      fetchKitchenCancellations(branchCode!, {
+        from: range.from,
+        to: range.to,
+      }),
+    enabled: allowed && Boolean(branchCode) && tab === "canceled",
+  });
+  const kitchenAllQuery = useQuery({
+    queryKey: ["admin", "kitchen-all", branchCode],
+    queryFn: () => fetchKitchenTickets(branchCode!, { scope: "all" }),
+    enabled: allowed && Boolean(branchCode) && tab === "edited",
+  });
 
   const rangedOrders = useMemo(
     () => filterOrdersByDateRange(ordersQuery.data ?? [], range.from, range.to),
@@ -90,6 +116,81 @@ export default function AdminReportsScreen() {
   );
   const charges = useMemo(() => chargesReportFromOrders(rangedOrders), [rangedOrders]);
   const discounts = useMemo(() => discountRowsFromOrders(rangedOrders), [rangedOrders]);
+
+  const canceledRows = useMemo(() => {
+    const list = cancelsQuery.data?.cancellations ?? [];
+    const byTicket = new Map<
+      string,
+      {
+        label: string;
+        amount: number;
+        qty: number;
+        by: string | null;
+        reason: string | null;
+        station: string;
+        when: string;
+      }
+    >();
+    for (const c of list) {
+      if (c.source !== "order_close") continue;
+      if (!inDateRange(c.canceledAt, range.from, range.to)) continue;
+      const cur = byTicket.get(c.ticketId) ?? {
+        label: c.orderRef?.trim() || c.ticketRef,
+        amount: 0,
+        qty: 0,
+        by: c.canceledByName,
+        reason: c.reason ?? null,
+        station: c.stationLabel,
+        when: c.canceledAt,
+      };
+      cur.amount += c.qtyCanceled * (c.unitPricePkr ?? 0);
+      cur.qty += c.qtyCanceled;
+      if (!cur.reason && c.reason) cur.reason = c.reason;
+      if (!cur.by && c.canceledByName) cur.by = c.canceledByName;
+      byTicket.set(c.ticketId, cur);
+    }
+    const rows = [...byTicket.values()].sort((a, b) => b.when.localeCompare(a.when));
+    return {
+      rows,
+      totalAmount: rows.reduce((s, r) => s + r.amount, 0),
+      totalQty: rows.reduce((s, r) => s + r.qty, 0),
+    };
+  }, [cancelsQuery.data, range.from, range.to]);
+
+  const editedRows = useMemo(() => {
+    const tickets = (kitchenAllQuery.data ?? [])
+      .filter((t) => Boolean(t.updatedByName?.trim()) && inDateRange(t.createdAt, range.from, range.to))
+      .map((t) => ({
+        label: t.orderRef?.trim() || t.ticketRef,
+        amount: null as number | null,
+        meta: [
+          t.stationLabel,
+          t.createdByName ? `Taken ${t.createdByName}` : null,
+          t.updatedByName ? `Updated ${t.updatedByName}` : null,
+          t.status,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        when: t.createdAt,
+      }));
+    const bills = (ordersQuery.data ?? [])
+      .filter((b) => Boolean(b.updatedByName?.trim()) && inDateRange(b.createdAt, range.from, range.to))
+      .map((b) => ({
+        label: b.orderRef?.trim() || b.billRef,
+        amount: b.total,
+        meta: [
+          b.tableLabel,
+          b.waiterName ? `Taken ${b.waiterName}` : null,
+          b.updatedByName ? `Updated ${b.updatedByName}` : null,
+          b.status,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        when: b.createdAt,
+      }));
+    const rows = [...tickets, ...bills].sort((a, b) => b.when.localeCompare(a.when));
+    return { rows, count: rows.length };
+  }, [kitchenAllQuery.data, ordersQuery.data, range.from, range.to]);
 
   const partyRows = useMemo(() => {
     const customers = new Map<string, { name: string; phone: string | null; balance: number }>();
@@ -355,6 +456,105 @@ export default function AdminReportsScreen() {
                       </Text>
                     </View>
                     <Text style={{ color: colors.warning, fontWeight: "800" }}>-{formatPkr(row.discount)}</Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </>
+        ) : null}
+
+        {tab === "canceled" ? (
+          <>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <StatCard
+                label="Canceled orders"
+                value={String(canceledRows.rows.length)}
+                hint={`${canceledRows.totalQty} items`}
+                accent="#f87171"
+              />
+              <StatCard
+                label="Value"
+                value={formatPkr(canceledRows.totalAmount)}
+                hint="Order cancels"
+                accent="#f87171"
+              />
+            </View>
+            <Card>
+              {cancelsQuery.isLoading ? (
+                <Text style={{ color: colors.muted }}>Loading…</Text>
+              ) : cancelsQuery.isError ? (
+                <Notice>{(cancelsQuery.error as Error).message}</Notice>
+              ) : canceledRows.rows.length === 0 ? (
+                <Text style={{ color: colors.muted }}>
+                  No canceled orders in this range. Cancel from POS/mobile with a reason to log here.
+                </Text>
+              ) : (
+                canceledRows.rows.map((row) => (
+                  <View
+                    key={`${row.label}-${row.when}`}
+                    style={{
+                      paddingVertical: 10,
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.border,
+                      gap: 2,
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+                      <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13, flex: 1 }}>
+                        {row.label}
+                      </Text>
+                      <Text style={{ color: "#f87171", fontWeight: "800" }}>{formatPkr(row.amount)}</Text>
+                    </View>
+                    <Text style={{ color: colors.muted, fontSize: 11 }}>
+                      {[row.station, row.by ? `by ${row.by}` : null, `qty ${row.qty}`]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
+                    {row.reason ? (
+                      <Text style={{ color: colors.text, fontSize: 12 }}>Reason: {row.reason}</Text>
+                    ) : null}
+                  </View>
+                ))
+              )}
+            </Card>
+          </>
+        ) : null}
+
+        {tab === "edited" ? (
+          <>
+            <StatCard
+              label="Edited orders"
+              value={String(editedRows.count)}
+              hint="Who updated after create"
+              accent={colors.accent}
+            />
+            <Card>
+              {kitchenAllQuery.isLoading || ordersQuery.isLoading ? (
+                <Text style={{ color: colors.muted }}>Loading…</Text>
+              ) : editedRows.rows.length === 0 ? (
+                <Text style={{ color: colors.muted }}>
+                  No edited orders in this range. Edits appear after someone updates items/notes/table.
+                </Text>
+              ) : (
+                editedRows.rows.map((row) => (
+                  <View
+                    key={`${row.label}-${row.when}`}
+                    style={{
+                      paddingVertical: 10,
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.border,
+                      gap: 2,
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+                      <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13, flex: 1 }}>
+                        {row.label}
+                      </Text>
+                      {row.amount != null ? (
+                        <Text style={{ color: colors.accent, fontWeight: "800" }}>{formatPkr(row.amount)}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={{ color: colors.muted, fontSize: 11 }}>{row.meta}</Text>
                   </View>
                 ))
               )}

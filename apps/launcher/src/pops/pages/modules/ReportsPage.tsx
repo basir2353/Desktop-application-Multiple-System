@@ -434,8 +434,20 @@ export function ReportsPage(): JSX.Element {
           </ul>
           <div className="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800">
             <Link
+              to="/pops/reports/canceled-orders"
+              className="block text-xs text-emerald-600 hover:underline dark:text-emerald-400"
+            >
+              Canceled orders report →
+            </Link>
+            <Link
+              to="/pops/reports/edited-orders"
+              className="mt-1 block text-xs text-emerald-600 hover:underline dark:text-emerald-400"
+            >
+              Edited orders report →
+            </Link>
+            <Link
               to="/pops/reports/kitchen-cancellations"
-              className="text-xs text-emerald-600 hover:underline dark:text-emerald-400"
+              className="mt-1 block text-xs text-emerald-600 hover:underline dark:text-emerald-400"
             >
               Kitchen cancellations (detail) →
             </Link>

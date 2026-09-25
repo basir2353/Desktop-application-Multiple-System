@@ -31,6 +31,7 @@ import { useSessionStore } from "../../../stores/sessionStore";
 import { BillCustomizationPanel } from "../../components/BillCustomizationPanel";
 import { BillDetailModal } from "../../components/BillDetailModal";
 import { BillFormModal, type BillFormValues } from "../../components/BillFormModal";
+import { CancelOrderReasonModal } from "../../components/CancelOrderReasonModal";
 import { CompleteHeldBillModal } from "../../components/CompleteHeldBillModal";
 import { OrderDateFiltersBar } from "../../components/OrderDateFiltersBar";
 import {
@@ -319,11 +320,14 @@ export function BillManagementPage(): JSX.Element {
     onError: (err: Error) => setNotice(err.message),
   });
 
+  const [voidTarget, setVoidTarget] = useState<Bill | null>(null);
+
   const voidMutation = useMutation({
-    mutationFn: (billId: string) => voidBill(billId),
+    mutationFn: ({ billId, reason }: { billId: string; reason: string }) => voidBill(billId, reason),
     onSuccess: (bill) => {
       invalidate();
       setDetailBill(null);
+      setVoidTarget(null);
       setNotice(`Bill ${bill.billRef} voided.`);
     },
     onError: (err: Error) => setNotice(err.message),
@@ -373,8 +377,7 @@ export function BillManagementPage(): JSX.Element {
   }
 
   function confirmVoid(bill: Bill): void {
-    if (!confirm(`Void bill ${bill.billRef}? This cannot be undone.`)) return;
-    voidMutation.mutate(bill.id);
+    setVoidTarget(bill);
   }
 
   if (!branch?.code) {
@@ -691,6 +694,21 @@ export function BillManagementPage(): JSX.Element {
           }
         />
       ) : null}
+
+      <CancelOrderReasonModal
+        open={Boolean(voidTarget)}
+        title={voidTarget ? `Void ${voidTarget.billRef}` : "Void bill"}
+        subtitle="Reason is required before this bill can be voided. This cannot be undone."
+        confirmLabel="Void bill"
+        loading={voidMutation.isPending}
+        onClose={() => {
+          if (!voidMutation.isPending) setVoidTarget(null);
+        }}
+        onConfirm={(reason) => {
+          if (!voidTarget) return;
+          voidMutation.mutate({ billId: voidTarget.id, reason });
+        }}
+      />
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/30 dark:text-slate-400">
         Need full POS checkout with menu grid?{" "}

@@ -62,6 +62,9 @@ export const billSchema = z.object({
   tableLabel: z.string(),
   waiterId: z.string().uuid().nullable(),
   waiterName: z.string(),
+  /** Last user who edited a held bill. Null until first edit. */
+  updatedById: z.string().uuid().nullable().optional(),
+  updatedByName: z.string().nullable().optional(),
   lines: z.array(billLineSchema),
   notes: z.string().nullable(),
   subtotal: z.number(),
@@ -83,6 +86,8 @@ export const billSchema = z.object({
   praQrPayload: z.string().nullable().optional(),
   praIssuedAt: z.string().nullable().optional(),
   createdAt: z.string(),
+  /** Set when bill was voided — why it was canceled. */
+  voidReason: z.string().nullable().optional(),
 });
 
 export const orderListSchema = z.object({
@@ -129,7 +134,7 @@ export const updateBillSchema = z.object({
 });
 
 export const voidBillSchema = z.object({
-  reason: z.string().max(200).optional(),
+  reason: z.string().trim().min(3).max(300),
 });
 
 export type WaiterOption = z.infer<typeof waiterOptionSchema>;

@@ -8,7 +8,7 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from "@nestjs/common";
-import { and, desc, eq, gte, inArray, ne, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import type { CompleteBill, CreateBill, CreateWaiter, UpdateBill, UpdateWaiter } from "@platform/contracts";
 import { permissionsForPopsRole } from "@platform/contracts";
 import {
@@ -53,6 +53,23 @@ export class BillingService implements OnApplicationBootstrap {
   ) {}
 
   onApplicationBootstrap(): void {
+    void (async () => {
+      try {
+        await this.db.execute(
+          sql.raw("ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS updated_by_user_id uuid"),
+        );
+        await this.db.execute(
+          sql.raw("ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS updated_by_name text"),
+        );
+        await this.db.execute(
+          sql.raw("ALTER TABLE pops_bills ADD COLUMN IF NOT EXISTS void_reason text"),
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Bill schema ensure skipped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    })();
     void this.seedSampleBillsIfEmpty().catch((err) => {
       this.logger.warn(
         `Bill seed skipped: ${err instanceof Error ? err.message : String(err)}`,
@@ -429,6 +446,19 @@ export class BillingService implements OnApplicationBootstrap {
       deliveryCharge,
     );
 
+    let updatedByUserId: string | null = null;
+    let updatedByName: string | null = null;
+    if (editor?.userId) {
+      updatedByUserId = editor.userId;
+      const userRows = await this.db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, editor.userId))
+        .limit(1);
+      const email = userRows[0]?.email;
+      updatedByName = email ? waiterDisplayName(email) : null;
+    }
+
     const [row] = await this.db
       .update(popsBills)
       .set({
@@ -444,6 +474,8 @@ export class BillingService implements OnApplicationBootstrap {
         totalPkr: totals.total,
         ...(input.riderId !== undefined ? { riderId: input.riderId } : {}),
         deliveryChargePkr: totals.deliveryCharge,
+        updatedByUserId,
+        updatedByName,
       })
       .where(eq(popsBills.id, billId))
       .returning();
@@ -452,7 +484,11 @@ export class BillingService implements OnApplicationBootstrap {
     return this.mapBill(row);
   }
 
-  async voidBill(organizationId: string, billId: string) {
+  async voidBill(organizationId: string, billId: string, reason: string) {
+    const voidReason = reason.trim();
+    if (voidReason.length < 3) {
+      throw new BadRequestException("Void reason is required (at least 3 characters).");
+    }
     const rows = await this.db
       .select()
       .from(popsBills)
@@ -471,7 +507,7 @@ export class BillingService implements OnApplicationBootstrap {
     }
     const [row] = await this.db
       .update(popsBills)
-      .set({ status: "void" })
+      .set({ status: "void", voidReason })
       .where(eq(popsBills.id, billId))
       .returning();
 
@@ -745,6 +781,8 @@ export class BillingService implements OnApplicationBootstrap {
       tableLabel: row.tableLabel,
       waiterId: row.waiterId,
       waiterName: row.waiterName,
+      updatedById: row.updatedByUserId ?? null,
+      updatedByName: row.updatedByName ?? null,
       lines,
       notes: row.notes,
       subtotal: row.subtotalPkr,
@@ -766,6 +804,7 @@ export class BillingService implements OnApplicationBootstrap {
       praQrPayload: row.praQrPayload ?? null,
       praIssuedAt: row.praIssuedAt ? row.praIssuedAt.toISOString() : null,
       createdAt: row.createdAt.toISOString(),
+      voidReason: row.voidReason ?? null,
     };
   }
 

@@ -161,8 +161,12 @@ export async function updateBill(billId: string, input: UpdateBill): Promise<Bil
   return billSchema.parse(await res.json());
 }
 
-export async function voidBill(billId: string): Promise<Bill> {
-  const res = await authFetch(`/v1/billing/bills/${billId}/void`, { method: "PATCH" });
+export async function voidBill(billId: string, reason: string): Promise<Bill> {
+  const res = await authFetch(`/v1/billing/bills/${billId}/void`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: reason.trim() }),
+  });
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(err?.message ?? `Void bill failed: ${res.status}`);

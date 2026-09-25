@@ -18,6 +18,9 @@ export const popsBills = pgTable(
     tableLabel: text("table_label").notNull(),
     waiterId: uuid("waiter_id").references(() => users.id, { onDelete: "set null" }),
     waiterName: text("waiter_name").notNull(),
+    /** Last user who edited a held bill (items/notes/table). */
+    updatedByUserId: uuid("updated_by_user_id"),
+    updatedByName: text("updated_by_name"),
     linesJson: text("lines_json").notNull(),
     notes: text("notes"),
     subtotalPkr: integer("subtotal_pkr").notNull(),
@@ -43,6 +46,8 @@ export const popsBills = pgTable(
     praInvoiceId: text("pra_invoice_id"),
     praQrPayload: text("pra_qr_payload"),
     praIssuedAt: timestamp("pra_issued_at", { withTimezone: true }),
+    /** Why this bill was voided / canceled. */
+    voidReason: text("void_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("pops_bills_branch_status_created_idx").on(t.branchId, t.status, t.createdAt)],

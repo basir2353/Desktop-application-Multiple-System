@@ -60,6 +60,8 @@ export function PosOrderDetailModal({ order, onClose }: Props): JSX.Element {
             <Meta label="Order type" value={order.orderMode} />
             <Meta label="Station / table" value={order.stationLabel} />
             <Meta label="Placed" value={formatOrderDateTime(order.createdAt)} />
+            {order.orderTakerName ? <Meta label="Order taker" value={order.orderTakerName} /> : null}
+            {order.updatedByName ? <Meta label="Updated by" value={order.updatedByName} /> : null}
             {detail.kind === "pending" ? (
               <>
                 <Meta label="Ticket ref" value={detail.ticketRef} />

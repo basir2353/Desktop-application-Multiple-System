@@ -15,6 +15,7 @@ import {
   createWaiterSchema,
   updateBillSchema,
   updateWaiterSchema,
+  voidBillSchema,
 } from "@platform/contracts";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -102,8 +103,13 @@ export class BillingController {
 
   @Patch("bills/:billId/void")
   @RequirePermissions("pops.read")
-  voidBill(@CurrentUser() user: AccessJwtPayload, @Param("billId") billId: string) {
-    return this.billing.voidBill(user.organizationId, billId);
+  voidBill(
+    @CurrentUser() user: AccessJwtPayload,
+    @Param("billId") billId: string,
+    @Body() body: unknown,
+  ) {
+    const parsed = voidBillSchema.parse(body ?? {});
+    return this.billing.voidBill(user.organizationId, billId, parsed.reason);
   }
 
   @Delete("bills/:billId")

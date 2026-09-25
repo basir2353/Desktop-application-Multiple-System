@@ -13,6 +13,7 @@ export const RESTAURANT_REPORT_DEFS = [
   { id: "delivery", name: "Delivery report", category: "Operations" },
   { id: "discount", name: "Discount report", category: "Sales" },
   { id: "canceled-orders", name: "Canceled orders", category: "Operations" },
+  { id: "edited-orders", name: "Edited orders", category: "Operations" },
   { id: "item-remove", name: "Item remove", category: "Operations" },
   { id: "cashier-overshort", name: "Cashier over/short", category: "Cash" },
   { id: "profit-loss", name: "Profit & loss", category: "Finance" },

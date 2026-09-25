@@ -1,9 +1,11 @@
 import {
   createKitchenTicketSchema,
+  kitchenLineCancellationListSchema,
   kitchenTicketListSchema,
   kitchenTicketSchema,
   updateKitchenTicketSchema,
   type CreateKitchenTicket,
+  type KitchenLineCancellationList,
   type KitchenTicket,
   type UpdateKitchenTicket,
 } from "@platform/contracts";
@@ -20,8 +22,12 @@ async function wakeApi(): Promise<void> {
   }
 }
 
-export async function fetchKitchenTickets(branchCode: string): Promise<KitchenTicket[]> {
+export async function fetchKitchenTickets(
+  branchCode: string,
+  opts?: { scope?: "active" | "done" | "all" },
+): Promise<KitchenTicket[]> {
   const params = new URLSearchParams({ branchCode });
+  if (opts?.scope) params.set("scope", opts.scope);
   const res = await authFetch(`/v1/kitchen/tickets?${params}`);
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -129,4 +135,19 @@ export async function updateKitchenTicket(
     }
     return kitchenTicketSchema.parse(await res.json());
   }
+}
+
+export async function fetchKitchenCancellations(
+  branchCode: string,
+  opts?: { from?: string; to?: string },
+): Promise<KitchenLineCancellationList> {
+  const params = new URLSearchParams({ branchCode });
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  const res = await authFetch(`/v1/kitchen/cancellations?${params}`);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Kitchen cancellations failed: ${res.status}`);
+  }
+  return kitchenLineCancellationListSchema.parse(await res.json());
 }

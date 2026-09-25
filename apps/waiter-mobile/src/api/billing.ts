@@ -4,6 +4,7 @@ import {
   createBillSchema,
   orderListSchema,
   updateBillSchema,
+  voidBillSchema,
   type Bill,
   type CompleteBill,
   type CreateBill,
@@ -127,6 +128,20 @@ export async function completeBill(billId: string, input: CompleteBill): Promise
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(err?.message ?? `Complete bill failed: ${res.status}`);
+  }
+  return billSchema.parse(await res.json());
+}
+
+export async function voidBill(billId: string, reason: string): Promise<Bill> {
+  const body = voidBillSchema.parse({ reason });
+  const res = await authFetch(`/v1/billing/bills/${billId}/void`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Void bill failed: ${res.status}`);
   }
   return billSchema.parse(await res.json());
 }

@@ -48,6 +48,10 @@ export type PosRecentOrder = {
   statusLabel: string;
   statusTone: "warning" | "info" | "success" | "neutral";
   createdAt: string;
+  /** Staff who originally took / created the order. */
+  orderTakerName: string | null;
+  /** Staff who last edited items/notes/table (null if never updated). */
+  updatedByName: string | null;
   detail: PosRecentOrderDetail;
   /** Original bill for paid orders (reprint, etc.). */
   bill?: Bill;
@@ -175,6 +179,8 @@ function mapTicket(t: KitchenTicket, settings: PosSettings): PosRecentOrder {
     statusLabel: label,
     statusTone: tone,
     createdAt: t.createdAt,
+    orderTakerName: t.createdByName?.trim() || null,
+    updatedByName: t.updatedByName?.trim() || null,
     kitchenTicket: t,
     pendingTicket: {
       id: t.id,
@@ -213,6 +219,8 @@ function mapBill(b: Bill): PosRecentOrder {
     statusLabel: isHeld ? "On hold" : "Paid",
     statusTone: isHeld ? "warning" : "success",
     createdAt: b.createdAt,
+    orderTakerName: b.waiterName?.trim() || null,
+    updatedByName: b.updatedByName?.trim() || null,
     bill: b,
     detail: {
       kind: "paid",
@@ -315,6 +323,8 @@ export function filterPosRecentOrders(
       order.summary,
       order.orderMode,
       order.statusLabel,
+      order.orderTakerName ?? "",
+      order.updatedByName ?? "",
       detail.kind === "paid" ? detail.billRef : detail.ticketRef,
       detail.kind === "paid" ? detail.waiterName : "",
       detail.orderRef ?? "",

@@ -3,7 +3,9 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
 } from "@nestjs/common";
 import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import type { CreateBill, CreateKitchenTicket, KitchenTicketStatus, UpdateKitchenTicket } from "@platform/contracts";
@@ -30,13 +32,35 @@ import {
 type StoredLine = { label: string; qty: number; unitPrice: number; menuItemId?: string };
 
 @Injectable()
-export class KitchenService {
+export class KitchenService implements OnModuleInit {
+  private readonly logger = new Logger(KitchenService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: PlatformPgDb,
     private readonly billing: BillingService,
     private readonly delivery: DeliveryService,
     private readonly closing: ClosingService,
   ) {}
+
+  onModuleInit(): void {
+    void (async () => {
+      try {
+        await this.db.execute(
+          sql.raw("ALTER TABLE pops_kitchen_tickets ADD COLUMN IF NOT EXISTS updated_by_user_id uuid"),
+        );
+        await this.db.execute(
+          sql.raw("ALTER TABLE pops_kitchen_tickets ADD COLUMN IF NOT EXISTS updated_by_name text"),
+        );
+        await this.db.execute(
+          sql.raw("ALTER TABLE pops_kitchen_line_cancellations ADD COLUMN IF NOT EXISTS reason text"),
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Kitchen ticket schema ensure skipped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    })();
+  }
 
   async listTickets(organizationId: string, branchCode: string, scope: "active" | "done" | "all" = "active") {
     const branch = await this.resolveBranch(organizationId, branchCode);
@@ -432,6 +456,19 @@ export class KitchenService {
       throw new BadRequestException("A rider is required for delivery orders.");
     }
 
+    let updatedByUserId: string | null | undefined;
+    let updatedByName: string | null | undefined;
+    if (isContentEdit && editor?.userId) {
+      updatedByUserId = editor.userId;
+      const userRows = await this.db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, editor.userId))
+        .limit(1);
+      const email = userRows[0]?.email;
+      updatedByName = email ? waiterDisplayName(email) : null;
+    }
+
     const [row] = await this.db
       .update(popsKitchenTickets)
       .set({
@@ -451,18 +488,27 @@ export class KitchenService {
         ...(nextStatus === "cooking" && !existing.startedAt
           ? { startedAt: new Date() }
           : {}),
+        ...(updatedByUserId !== undefined
+          ? { updatedByUserId, updatedByName: updatedByName ?? null }
+          : {}),
       })
       .where(eq(popsKitchenTickets.id, ticketId))
       .returning();
 
     if (!row) throw new NotFoundException("Kitchen ticket not found");
 
-    // Latest orders → Close sends recordAsCancellation. Kitchen "mark done" does not.
+    // Latest orders → Cancel order sends recordAsCancellation. Kitchen "mark done" does not.
     const closingOpenTicket =
       existing.status !== "done" &&
       nextStatus === "done" &&
       input.lines === undefined &&
       input.recordAsCancellation === true;
+    const cancellationReason = input.cancellationReason?.trim() || null;
+    if (closingOpenTicket && !cancellationReason) {
+      throw new BadRequestException(
+        "Cancellation reason is required when canceling an open order.",
+      );
+    }
     if (closingOpenTicket && pendingCancellations.length === 0) {
       const hasCompletedBill = Boolean(billId);
       if (!hasCompletedBill) {
@@ -510,6 +556,7 @@ export class KitchenService {
           ticketStatusAtCancel: existing.status,
           canceledByUserId: editor?.userId ?? null,
           canceledByName,
+          reason: closingOpenTicket ? cancellationReason : null,
           source,
         })),
       );
@@ -559,6 +606,7 @@ export class KitchenService {
         ticketStatusAtCancel: row.ticketStatusAtCancel as KitchenTicketStatus,
         canceledByName: row.canceledByName,
         source: row.source,
+        reason: row.reason ?? null,
         canceledAt: row.canceledAt.toISOString(),
       };
     });
