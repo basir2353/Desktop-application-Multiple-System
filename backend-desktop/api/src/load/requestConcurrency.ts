@@ -1,8 +1,34 @@
 import type { NextFunction, Request, Response } from "express";
+import {
+  resolveApiMaxConcurrent,
+  resolveApiQueueMax,
+} from "../infra/scaleProfile";
 
 type Waiter = {
   resolve: () => void;
 };
+
+export type RequestLoadStats = {
+  active: number;
+  queued: number;
+  maxConcurrent: number;
+  maxQueue: number;
+  rejectedTotal: number;
+  acceptedTotal: number;
+};
+
+let sharedStats: RequestLoadStats = {
+  active: 0,
+  queued: 0,
+  maxConcurrent: 60,
+  maxQueue: 150,
+  rejectedTotal: 0,
+  acceptedTotal: 0,
+};
+
+export function getRequestLoadStats(): RequestLoadStats {
+  return { ...sharedStats, queued: sharedStats.queued };
+}
 
 /**
  * Soft load-shed: cap concurrent request handlers; queue overflow briefly;
@@ -14,12 +40,26 @@ export function createRequestConcurrencyMiddleware(opts?: {
 }) {
   const maxConcurrent = Math.max(
     1,
-    opts?.maxConcurrent ?? Number(process.env.API_MAX_CONCURRENT ?? 60),
+    opts?.maxConcurrent ?? resolveApiMaxConcurrent(),
   );
-  const maxQueue = Math.max(0, opts?.maxQueue ?? Number(process.env.API_QUEUE_MAX ?? 150));
+  const maxQueue = Math.max(0, opts?.maxQueue ?? resolveApiQueueMax());
 
   let active = 0;
   const waiters: Waiter[] = [];
+  let rejectedTotal = 0;
+  let acceptedTotal = 0;
+
+  const syncStats = () => {
+    sharedStats = {
+      active,
+      queued: waiters.length,
+      maxConcurrent,
+      maxQueue,
+      rejectedTotal,
+      acceptedTotal,
+    };
+  };
+  syncStats();
 
   function release(): void {
     active = Math.max(0, active - 1);
@@ -28,20 +68,30 @@ export function createRequestConcurrencyMiddleware(opts?: {
       active += 1;
       next.resolve();
     }
+    syncStats();
   }
 
   function acquire(): Promise<"ok" | "full"> {
     if (active < maxConcurrent) {
       active += 1;
+      acceptedTotal += 1;
+      syncStats();
       return Promise.resolve("ok");
     }
     if (waiters.length >= maxQueue) {
+      rejectedTotal += 1;
+      syncStats();
       return Promise.resolve("full");
     }
     return new Promise((resolve) => {
       waiters.push({
-        resolve: () => resolve("ok"),
+        resolve: () => {
+          acceptedTotal += 1;
+          resolve("ok");
+          syncStats();
+        },
       });
+      syncStats();
     });
   }
 

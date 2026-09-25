@@ -3,10 +3,13 @@
 # Live hosted API:
 #   https://backend-desktop-production-600b.up.railway.app
 #   Health: /health
+#   Scale:  /health/scale
 #
 # Railway settings:
 #   Root Directory: backend-desktop
 #   Dockerfile path: Dockerfile
+#   Replicas: 4–8 for SCALE_PROFILE=high (set in dashboard)
+#   Add Redis plugin and set REDIS_URL
 #
 # Do not use RUN --mount=type=cache,... here. Railway Metal builders reject
 # every cache-mount id format ("missing the cacheKey prefix from its id").
@@ -37,6 +40,11 @@ ENV RAILWAY_SKIP_SCHEMA_PUSH=1
 ENV RAILWAY_SKIP_SEED_BOOT=1
 ENV RAILWAY_ENSURE_AUTH_SCHEMA=1
 ENV RAILWAY_RUN_ENSURE_SCHEMA=0
-ENV DATABASE_POOL_MAX=5
-ENV NODE_OPTIONS=--max-old-space-size=420
+# Scale profile B (~2k–10k concurrent with multi-replica + Redis + larger Postgres).
+# Override any of these in Railway Variables without rebuilding.
+ENV SCALE_PROFILE=high
+ENV DATABASE_POOL_MAX=15
+ENV API_MAX_CONCURRENT=200
+ENV API_QUEUE_MAX=800
+ENV NODE_OPTIONS=--max-old-space-size=1536
 CMD ["node", "/app/api/scripts/start-railway.mjs"]

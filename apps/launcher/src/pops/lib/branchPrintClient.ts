@@ -961,13 +961,21 @@ async function printPngToResolvedPrinter(input: {
     }
   }
 
+  const hasHtml = Boolean(input.html?.trim());
   const rendered = await pngBytesFromPayload(
     { kind: input.kind as PrintJobPayload["kind"], html: input.html, copies, paperSize: paperSize ?? undefined },
     paperSize,
     input.branchCode,
   );
   if (!rendered) {
-    return { ok: false, error: "Missing image/HTML payload for silent print" };
+    // Live jobs often had HTML — html-to-image failed (e.g. remote business logo).
+    // Keep the old string only when the payload was truly empty.
+    return {
+      ok: false,
+      error: hasHtml
+        ? "Could not render receipt image for silent print"
+        : "Missing image/HTML payload for silent print",
+    };
   }
 
   const result = await printImageToSystemPrinter({
@@ -1257,6 +1265,15 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         }
       }
 
+      // Data-URL logo only — remote Content Updation logos break html-to-image silent raster.
+      let businessLogoSrc: string | null = null;
+      try {
+        const { resolveBusinessLogoDataUrl } = await import("./businessLogo");
+        businessLogoSrc = await resolveBusinessLogoDataUrl(job.branchCode);
+      } catch {
+        businessLogoSrc = null;
+      }
+
       const base = {
         branchName,
         branchCode: job.branchCode,
@@ -1279,10 +1296,11 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         payments: payments.length ? payments : undefined,
         praFiscal,
         billPrintSettings: loadBillPrintSettings(job.branchCode),
+        businessLogoSrc,
       };
       const enriched = withPrinterProfile(base, profile);
       const html = buildTicketHtml({ ...enriched, kind: "receipt" });
-      return printPngToResolvedPrinter({
+      const rebuilt = await printPngToResolvedPrinter({
         branchCode: job.branchCode,
         kind: "receipt",
         orderId: job.orderId,
@@ -1294,6 +1312,13 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         copies: resolveJobCopies(enriched.copies),
         paperSize: enriched.paperSize ?? null,
       });
+      if (rebuilt.ok) return rebuilt;
+      // Fall through to mobile HTML if EXE rebuild raster failed (logo/CORS/etc.).
+      if (payload.html?.trim()) {
+        console.warn("[branchPrint] receipt rebuild raster failed; trying mobile HTML", rebuilt.error);
+      } else {
+        return rebuilt;
+      }
     } catch (err) {
       // Fall through to legacy HTML path if rebuild fails.
       console.warn("[branchPrint] structured mobile rebuild failed", err);

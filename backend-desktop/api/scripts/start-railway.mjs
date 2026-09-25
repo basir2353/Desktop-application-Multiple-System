@@ -144,6 +144,16 @@ normalizeDatabaseUrl();
 requireEnv("DATABASE_URL");
 requireEnv("JWT_ACCESS_SECRET");
 
+const scaleProfile = (process.env.SCALE_PROFILE ?? "default").trim().toLowerCase() || "default";
+console.log(
+  `[railway] SCALE_PROFILE=${scaleProfile} pool=${process.env.DATABASE_POOL_MAX ?? "(profile default)"} concurrent=${process.env.API_MAX_CONCURRENT ?? "(profile default)"} queue=${process.env.API_QUEUE_MAX ?? "(profile default)"}`,
+);
+if ((scaleProfile === "high" || scaleProfile === "enterprise") && !process.env.REDIS_URL?.trim()) {
+  console.warn(
+    "[railway] SCALE_PROFILE needs REDIS_URL for multi-replica safety — add Railway Redis and set REDIS_URL.",
+  );
+}
+
 // Skip drizzle-kit push on boot — it often fails on existing Railway DBs
 // ("column id is in a primary key") and previously caused permanent 502s.
 const skipPush = (process.env.RAILWAY_SKIP_SCHEMA_PUSH ?? "1") !== "0";

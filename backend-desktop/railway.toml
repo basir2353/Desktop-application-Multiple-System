@@ -1,19 +1,22 @@
 # Railway config when Root Directory = backend-desktop
 #
-# Railway UI → Settings:
-#   Root Directory: backend-desktop
-#   Builder: Dockerfile
-#   Dockerfile path: Dockerfile
+# Dashboard (required for 10k path — agent cannot set these without your account):
+#   1) Service → Settings → Replicas: start at 4, scale to 6–8
+#   2) Add Redis plugin → copy REDIS_URL into API variables
+#   3) Upgrade Postgres plan; add PgBouncer if connection count grows
+#   4) Variables: paste from infra/production.scale.env
+#   5) Confirm https://…/health/scale returns status ok + redisOk true
 
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
-watchPatterns = ["api/**", "packages/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json", "Dockerfile", "railway.toml", "railway.json", ".npmrc"]
+watchPatterns = ["api/**", "packages/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json", "Dockerfile", "railway.toml", "railway.json", ".npmrc", "infra/**"]
 
 [deploy]
 startCommand = "node /app/api/scripts/start-railway.mjs"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
-# Redeploy trigger: keep healthcheck window at 5 minutes.
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+# Hint only — set actual replica count in Railway dashboard if this key is ignored.
+numReplicas = 4

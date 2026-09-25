@@ -1,19 +1,86 @@
-import { Controller, Get, Inject } from "@nestjs/common";
+import { Controller, Get, Inject, Optional } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import type { PlatformPgDb } from "@platform/database-pg";
-import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import type pg from "pg";
+import { DRIZZLE, DRIZZLE_POOL } from "../drizzle/drizzle.tokens";
+import { pingRedis } from "../infra/redisPing";
+import { resolveScaleProfile, scaleDefaults } from "../infra/scaleProfile";
+import { getRequestLoadStats } from "../load/requestConcurrency";
 
 @Controller("health")
 export class HealthController {
-  constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PlatformPgDb,
+    @Optional() @Inject(DRIZZLE_POOL) private readonly pool?: pg.Pool,
+  ) {}
 
   @Get()
-  getHealth(): { status: string; ts: string; build: string } {
+  getHealth(): { status: string; ts: string; build: string; scaleProfile: string } {
     return {
       status: "ok",
       ts: new Date().toISOString(),
       // Bump this string whenever we need to confirm Railway picked up a deploy.
-      build: "waste-decimal-qty-2026-09-17",
+      build: "scale-high-infra-2026-09-25",
+      scaleProfile: resolveScaleProfile(),
+    };
+  }
+
+  /**
+   * Scale / capacity snapshot for Railway replicas + Redis + DB pool.
+   * Use this after setting SCALE_PROFILE=high to verify the live stack.
+   */
+  @Get("scale")
+  async getScaleHealth(): Promise<{
+    status: "ok" | "degraded";
+    profile: string;
+    checks: Record<string, boolean | number | string | null>;
+    recommendations: string[];
+  }> {
+    const defaults = scaleDefaults();
+    const load = getRequestLoadStats();
+    const redis = await pingRedis();
+    const mem = process.memoryUsage();
+
+    const checks: Record<string, boolean | number | string | null> = {
+      scaleProfile: defaults.profile,
+      recommendedReplicas: defaults.recommendedReplicas,
+      requireRedis: defaults.requireRedis,
+      redisConfigured: redis.configured,
+      redisOk: redis.ok,
+      redisLatencyMs: redis.latencyMs,
+      dbPoolMax: this.pool?.options.max ?? Number(process.env.DATABASE_POOL_MAX ?? 0),
+      dbPoolTotal: this.pool?.totalCount ?? -1,
+      dbPoolIdle: this.pool?.idleCount ?? -1,
+      dbPoolWaiting: this.pool?.waitingCount ?? -1,
+      apiActive: load.active,
+      apiQueued: load.queued,
+      apiMaxConcurrent: load.maxConcurrent,
+      apiMaxQueue: load.maxQueue,
+      apiRejectedTotal: load.rejectedTotal,
+      heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+      rssMb: Math.round(mem.rss / 1024 / 1024),
+      nodeOptions: process.env.NODE_OPTIONS ?? "",
+    };
+
+    if (redis.error) checks.redisError = redis.error;
+
+    try {
+      await this.db.execute(sql`select 1`);
+      checks.dbConnected = true;
+    } catch (err) {
+      checks.dbConnected = false;
+      checks.dbError = err instanceof Error ? err.message : String(err);
+    }
+
+    const redisReady = !defaults.requireRedis || redis.ok;
+    const dbReady = checks.dbConnected === true;
+    const status = redisReady && dbReady ? "ok" : "degraded";
+
+    return {
+      status,
+      profile: defaults.profile,
+      checks,
+      recommendations: defaults.notes,
     };
   }
 

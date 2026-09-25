@@ -5,6 +5,7 @@ import { NestExpressApplication } from "@nestjs/platform-express";
 import compression from "compression";
 import { AppModule } from "./app.module";
 import { ZodExceptionFilter } from "./http/zod-exception.filter";
+import { resolveScaleProfile, scaleDefaults } from "./infra/scaleProfile";
 import { createRequestConcurrencyMiddleware } from "./load/requestConcurrency";
 
 const compressionMiddleware =
@@ -44,6 +45,13 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: false });
   if (process.env.NODE_ENV === "production") {
     app.useLogger(["error", "warn", "log"]);
+  }
+  const scale = scaleDefaults(resolveScaleProfile());
+  console.log(
+    `[api] Scale profile=${scale.profile} poolDefault=${scale.databasePoolMax} concurrent=${scale.apiMaxConcurrent} queue=${scale.apiQueueMax} replicasHint=${scale.recommendedReplicas}`,
+  );
+  if (scale.requireRedis && !process.env.REDIS_URL?.trim()) {
+    console.warn("[api] REDIS_URL missing — multi-replica cache/queues will not be shared.");
   }
   app.use(compressionMiddleware());
   app.use(createRequestConcurrencyMiddleware());

@@ -2,7 +2,7 @@
   "expo": {
     "name": "POPS Waiter",
     "slug": "pops-waiter",
-    "version": "1.1.56",
+    "version": "1.1.58",
     "orientation": "portrait",
     "scheme": "pops-waiter",
     "userInterfaceStyle": "dark",
@@ -19,7 +19,7 @@
         "backgroundColor": "#0f172a"
       },
       "package": "com.platform.pops.waiter",
-      "versionCode": 1156,
+      "versionCode": 1158,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
@@ -27,6 +27,9 @@
       ],
       "usesCleartextTraffic": true
     },
-    "plugins": ["expo-router", "expo-secure-store"]
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
   }
 }

@@ -2,7 +2,8 @@ import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-qu
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { bootstrapSession, SessionExpiredError } from "../src/lib/authFetch";
 import { OfflineBanner } from "../src/components/OfflineBanner";
 import { MobileUpdateBanner } from "../src/components/MobileUpdateBanner";
@@ -12,6 +13,9 @@ import { warmApiConnection } from "../src/lib/warmApi";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 import { useThemeStore } from "../src/stores/themeStore";
+
+/** Hard cap so SecureStore hangs never leave a permanent white screen. */
+const BOOT_HYDRATE_TIMEOUT_MS = 4000;
 
 class RootErrorBoundary extends Component<
   { children: ReactNode },
@@ -170,6 +174,7 @@ export default function RootLayout() {
   const hydrateTheme = useThemeStore((s) => s.hydrate);
   const sessionHydrated = useSessionStore((s) => s.hydrated);
   const branchHydrated = useBranchStore((s) => s.hydrated);
+  const colors = getColors();
 
   useEffect(() => {
     void warmApiConnection();
@@ -179,6 +184,22 @@ export default function RootLayout() {
     void hydrateSession();
     void hydrateBranch();
     void hydrateTheme();
+    // Fail-open: never stay on a blank white root forever.
+    const timer = setTimeout(() => {
+      const session = useSessionStore.getState();
+      const branch = useBranchStore.getState();
+      const theme = useThemeStore.getState();
+      if (!session.hydrated) {
+        useSessionStore.setState({ hydrated: true });
+      }
+      if (!branch.hydrated) {
+        useBranchStore.setState({ hydrated: true });
+      }
+      if (!theme.hydrated) {
+        useThemeStore.setState({ hydrated: true });
+      }
+    }, BOOT_HYDRATE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
   }, [hydrateSession, hydrateBranch, hydrateTheme]);
 
   useEffect(() => {
@@ -187,14 +208,29 @@ export default function RootLayout() {
   }, [sessionHydrated]);
 
   if (!sessionHydrated || !branchHydrated) {
-    return null;
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg,
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+        }}
+      >
+        <ActivityIndicator color={colors.accent} size="large" />
+        <Text style={{ color: colors.muted, fontSize: 13 }}>Starting…</Text>
+      </View>
+    );
   }
 
   return (
-    <RootErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <ThemedStack />
-      </QueryClientProvider>
-    </RootErrorBoundary>
+    <SafeAreaProvider>
+      <RootErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <ThemedStack />
+        </QueryClientProvider>
+      </RootErrorBoundary>
+    </SafeAreaProvider>
   );
 }

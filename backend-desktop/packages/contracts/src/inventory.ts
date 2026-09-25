@@ -741,7 +741,8 @@ export const inventoryWarehouseListSchema = z.object({
       z.object({
         warehouseId: z.string().uuid(),
         productId: z.string().uuid(),
-        quantity: z.number().int().nonnegative(),
+        // Decimal qty allowed (kg / L / partial packs) — DB stores real numbers.
+        quantity: z.number().nonnegative(),
       }),
     )
     .optional(),

@@ -2619,6 +2619,34 @@ async function binarizePngBytes(png: Uint8Array, threshold = 168): Promise<Uint8
   }
 }
 
+/**
+ * Remote http(s) <img> taints html-to-image and aborts the whole silent raster.
+ * Inline as data URLs when fetch works; otherwise drop the image so text still prints.
+ */
+async function inlineRemoteImagesForRaster(doc: Document): Promise<void> {
+  const imgs = Array.from(doc.images ?? []);
+  await Promise.all(
+    imgs.map(async (img) => {
+      const src = (img.currentSrc || img.getAttribute("src") || "").trim();
+      if (!src || src.startsWith("data:") || src.startsWith("blob:")) return;
+      try {
+        const res = await fetch(src);
+        if (!res.ok) throw new Error(`logo fetch ${res.status}`);
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (!buf.length) throw new Error("empty image");
+        let binary = "";
+        for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i]!);
+        const contentType =
+          res.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
+        const dataUrl = `data:${contentType};base64,${btoa(binary)}`;
+        img.setAttribute("src", dataUrl);
+      } catch {
+        img.remove();
+      }
+    }),
+  );
+}
+
 /** Rasterize styled ticket HTML so Auto/named printers print the exact preview design. */
 export async function renderTicketHtmlToPngBytes(
   html: string,
@@ -2657,7 +2685,13 @@ export async function renderTicketHtmlToPngBytes(
     } catch {
       /* ignore */
     }
-    // Wait for remote/local images (PRA QR) so silent PNG matches the intended slip.
+    // Business logo / PRA assets: convert remote URLs → data URLs before toPng.
+    try {
+      await inlineRemoteImagesForRaster(idoc);
+    } catch {
+      /* ignore */
+    }
+    // Wait for local/data images so silent PNG matches the intended slip.
     try {
       const imgs = Array.from(idoc.images ?? []);
       await Promise.race([
@@ -2885,8 +2919,19 @@ async function printTicketDetailedCore(input: PrintTicketInput): Promise<PrintJo
   const copies = Math.max(1, input.copies ?? 1);
   const thermal = resolveThermalSettings(input);
   const paper = resolvePaperSize(input, thermal);
+  // Prefer data-URL logo so silent html-to-image is not blocked by remote CORS.
+  let printInput = input;
+  if (input.kind === "receipt" && input.businessLogoSrc === undefined && input.branchCode) {
+    try {
+      const { resolveBusinessLogoDataUrl } = await import("./businessLogo");
+      const businessLogoSrc = await resolveBusinessLogoDataUrl(input.branchCode);
+      printInput = { ...input, businessLogoSrc };
+    } catch {
+      printInput = { ...input, businessLogoSrc: null };
+    }
+  }
   // Same styled HTML for preview, Auto print, and dialog — never a different slip.
-  const styledHtml = buildTicketHtml(input);
+  const styledHtml = buildTicketHtml(printInput);
   const paperMm = paperWidthMm(paper, thermal.customPaperWidthMm);
 
   // Option 19: Accountant / Owner / non-POS PCs must not steal the thermal spooler.

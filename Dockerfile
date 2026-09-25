@@ -30,4 +30,9 @@ RUN mkdir -p /app/api/data/uploads
 EXPOSE 8080
 ENV HOST=0.0.0.0
 ENV PORT=8080
+ENV SCALE_PROFILE=high
+ENV DATABASE_POOL_MAX=15
+ENV API_MAX_CONCURRENT=200
+ENV API_QUEUE_MAX=800
+ENV NODE_OPTIONS=--max-old-space-size=1536
 CMD ["node", "/app/api/scripts/start-railway.mjs"]
