@@ -54,8 +54,21 @@ export async function getValidAccessToken(): Promise<string> {
 }
 
 export async function bootstrapSession(): Promise<void> {
-  const { accessToken, refreshToken } = useSessionStore.getState();
+  const state = useSessionStore.getState();
+  const { accessToken, refreshToken, claims, setTokens, waiterEmail } = state;
   if (!accessToken || !refreshToken) return;
+
+  // Hydrate can keep a token while claims stay null (decode failure). Re-decode so
+  // print routing / role checks work after app reopen without forcing sign-in.
+  if (!claims) {
+    try {
+      const decoded = decodeAccessToken(accessToken);
+      setTokens(accessToken, refreshToken, decoded, waiterEmail ?? undefined);
+    } catch {
+      /* refresh below may still recover */
+    }
+  }
+
   if (!isAccessTokenExpired(accessToken)) return;
   try {
     await refreshAccessToken();

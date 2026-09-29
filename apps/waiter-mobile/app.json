@@ -2,13 +2,14 @@
   "expo": {
     "name": "POPS Waiter",
     "slug": "pops-waiter",
-    "version": "1.1.59",
+    "version": "1.1.62",
     "orientation": "portrait",
     "scheme": "pops-waiter",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B1220",
     "newArchEnabled": false,
     "splash": {
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#0B1220"
     },
     "ios": {
       "supportsTablet": true,
@@ -19,7 +20,7 @@
         "backgroundColor": "#0f172a"
       },
       "package": "com.platform.pops.waiter",
-      "versionCode": 1159,
+      "versionCode": 1162,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",

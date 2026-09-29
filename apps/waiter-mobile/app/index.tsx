@@ -71,6 +71,7 @@ const roleTabs: StaffRole[] =
 
 export default function LoginScreen() {
   const router = useRouter();
+  const sessionHydrated = useSessionStore((s) => s.hydrated);
   const accessToken = useSessionStore((s) => s.accessToken);
   const claims = useSessionStore((s) => s.claims);
   const setTokens = useSessionStore((s) => s.setTokens);
@@ -95,6 +96,19 @@ export default function LoginScreen() {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
     return () => subscription.remove();
   }, [accessToken]);
+
+  // Wait for SecureStore hydrate so we don't redirect/flash with empty session.
+  // Never return null — empty Screen + react-native-screens = blank FrameLayout on some OEMs.
+  // RootLayout already shows a "Starting..." overlay while !sessionHydrated.
+  if (!sessionHydrated) {
+    return (
+      <Screen safeTop>
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }} collapsable={false}>
+          <Subtitle>Starting...</Subtitle>
+        </View>
+      </Screen>
+    );
+  }
 
   if (accessToken && !loading && !postLoginNav) {
     if (isAdminApp) {

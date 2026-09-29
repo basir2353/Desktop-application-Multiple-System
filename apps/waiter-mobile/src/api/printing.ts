@@ -4,7 +4,18 @@ import type {
   PrintDiscoveryResult,
   PrintJobPayload,
 } from "@platform/contracts";
-import { authFetch } from "../lib/authFetch";
+import { authFetch, SessionExpiredError } from "../lib/authFetch";
+import { getApiBaseUrl } from "../lib/apiBase";
+import { isLikelyNetworkFailure, mobileFetch } from "../lib/mobileFetch";
+
+/** Warm TLS / DNS before print POST (same pattern as kitchen ticket writes). */
+async function wakeApi(): Promise<void> {
+  try {
+    await mobileFetch(`${getApiBaseUrl()}/health`, { method: "GET" });
+  } catch {
+    // best-effort — print still runs
+  }
+}
 
 /** Cloud-registered branch print servers (from desktop heartbeats). */
 export async function fetchBranchPrintServers(options?: {
@@ -53,7 +64,8 @@ export async function createCloudPrintJob(input: {
     deviceLabel: input.deviceLabel ?? "waiter-mobile",
     payload: input.payload,
   };
-  try {
+
+  async function postOnce(): Promise<{ ok: boolean; jobId?: string; error?: string }> {
     const res = await authFetch(`/v1/printing/print-job`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -65,8 +77,29 @@ export async function createCloudPrintJob(input: {
     }
     const json = (await res.json().catch(() => null)) as { id?: string } | null;
     return { ok: true, jobId: json?.id };
+  }
+
+  // Cold-start after app reopen: kitchen ticket create already warms+retries, but
+  // print used to be one-shot and fail silently until the user signed in again.
+  await wakeApi();
+  try {
+    return await postOnce();
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "cloud print failed" };
+    if (err instanceof SessionExpiredError) throw err;
+    if (!isLikelyNetworkFailure(err)) {
+      return { ok: false, error: err instanceof Error ? err.message : "cloud print failed" };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await wakeApi();
+    try {
+      return await postOnce();
+    } catch (retryErr) {
+      if (retryErr instanceof SessionExpiredError) throw retryErr;
+      return {
+        ok: false,
+        error: retryErr instanceof Error ? retryErr.message : "cloud print failed",
+      };
+    }
   }
 }
 

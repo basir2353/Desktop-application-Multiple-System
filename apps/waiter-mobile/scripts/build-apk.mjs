@@ -562,6 +562,34 @@ function applyAndroidPatches(buildPaths) {
   patchExpoModulesCoreReactNativeDir(buildPaths);
   writeLocalProperties(buildPaths.androidDir);
   patchAndroidCleartextTraffic(buildPaths.androidDir);
+  patchAndroidWindowBackground(buildPaths.androidDir);
+}
+
+/**
+ * Light AppTheme + NavigationContainer fallback=null → empty white window on some OEMs.
+ * Force a dark windowBackground so the first native frame matches the JS boot shell.
+ */
+function patchAndroidWindowBackground(androidDirPath) {
+  const stylesPath = join(androidDirPath, "app", "src", "main", "res", "values", "styles.xml");
+  if (!existsSync(stylesPath)) return;
+  let text = readFileSync(stylesPath, "utf8");
+  if (text.includes("android:windowBackground")) {
+    text = text.replace(
+      /<item name="android:windowBackground">[^<]*<\/item>/,
+      '<item name="android:windowBackground">#0B1220</item>',
+    );
+  } else {
+    text = text.replace(
+      /(<item name="android:statusBarColor">[^<]*<\/item>)/,
+      '$1\n    <item name="android:windowBackground">#0B1220</item>',
+    );
+  }
+  text = text.replace(
+    /<item name="android:statusBarColor">[^<]*<\/item>/,
+    '<item name="android:statusBarColor">#0B1220</item>',
+  );
+  writeFileSync(stylesPath, text);
+  console.log("[build-apk] Forced dark android:windowBackground (#0B1220)");
 }
 
 /**
@@ -727,7 +755,20 @@ const gradleEnv = {
     : {}),
 };
 
-// Metro writes sourcemaps here before Gradle creates the folder (clean prebuild).
+// Drop stale Hermes/Metro embed + merge assets so JS source changes always ship,
+// then recreate folders Metro expects before Gradle starts.
+for (const stale of [
+  join(paths.androidDir, "app", "build", "intermediates", "assets", "release"),
+  join(paths.androidDir, "app", "build", "intermediates", "compressed_assets", "release"),
+  join(paths.androidDir, "app", "build", "intermediates", "merged_assets"),
+  join(paths.androidDir, "app", "build", "generated", "assets", "createBundleReleaseJsAndAssets"),
+  join(paths.androidDir, "app", "build", "intermediates", "sourcemaps", "react", "release"),
+]) {
+  if (existsSync(stale)) {
+    rmSync(stale, { recursive: true, force: true });
+    console.log(`[build-apk] Cleared stale assets: ${stale}`);
+  }
+}
 mkdirSync(
   join(paths.androidDir, "app", "build", "intermediates", "sourcemaps", "react", "release"),
   { recursive: true },
@@ -765,6 +806,30 @@ if (!existsSync(paths.apkSrc)) {
   console.error("[build-apk] APK not found at expected path:", paths.apkSrc);
   process.exit(1);
 }
+
+function apkContainsJsBundle(apkPath) {
+  const result = spawnSync("jar", ["tf", apkPath], { encoding: "utf8", shell: isWin });
+  if (result.status !== 0) {
+    // Fallback: unzip -l style via PowerShell is avoided; try listing via node zlib is heavy.
+    console.warn("[build-apk] jar tf failed; skipping bundle check");
+    return true;
+  }
+  const listing = result.stdout ?? "";
+  return (
+    listing.includes("index.android.bundle") ||
+    listing.includes("assets/index.android.bundle") ||
+    /assets\/.*\.bundle/.test(listing)
+  );
+}
+
+if (!apkContainsJsBundle(paths.apkSrc)) {
+  console.error(
+    "[build-apk] FATAL: APK is missing index.android.bundle (would white-screen/crash on device).",
+  );
+  console.error("[build-apk] Path:", paths.apkSrc);
+  process.exit(1);
+}
+console.log("[build-apk] Verified index.android.bundle is inside APK");
 
 const outDir = join(appRoot, "dist");
 mkdirSync(outDir, { recursive: true });

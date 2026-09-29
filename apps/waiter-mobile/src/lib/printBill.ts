@@ -659,7 +659,16 @@ async function printHtml(
       let userId: string | null = null;
       try {
         const { useSessionStore } = await import("../stores/sessionStore");
-        userId = useSessionStore.getState().claims?.sub ?? null;
+        const { decodeAccessToken } = await import("./jwt");
+        const session = useSessionStore.getState();
+        userId = session.claims?.sub ?? null;
+        if (!userId && session.accessToken) {
+          try {
+            userId = decodeAccessToken(session.accessToken).sub;
+          } catch {
+            userId = null;
+          }
+        }
       } catch {
         userId = null;
       }

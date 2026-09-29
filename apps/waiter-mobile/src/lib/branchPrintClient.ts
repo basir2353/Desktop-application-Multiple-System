@@ -273,6 +273,9 @@ export async function trySilentBranchPrint(input: {
 
   if (transport === "live") {
     try {
+      // Match login path: warm Railway before the first print after cold start / reopen.
+      const { warmApiConnection } = await import("./warmApi");
+      await warmApiConnection();
       const { createCloudPrintJob } = await import("../api/printing");
       const cloud = await createCloudPrintJob({
         branchCode: input.branchCode,

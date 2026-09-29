@@ -579,10 +579,10 @@ export default function OrderScreen() {
           wasEdit
             ? printed
               ? "Order updated — UPDATE REVISED sent (changed items only)."
-              : "Order updated successfully."
+              : "Order updated, but kitchen print failed — check Live link / desktop EXE / Printers."
             : printed
               ? "Order sent — print request to desktop (Live/IP/Server)."
-              : "Order sent to kitchen successfully.",
+              : "Order saved, but kitchen print failed — check Live link / desktop EXE / Printers.",
         );
       }
       if (wasEdit) router.replace("/order");
