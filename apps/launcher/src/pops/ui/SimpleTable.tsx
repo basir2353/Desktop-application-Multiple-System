@@ -13,11 +13,14 @@ export function SimpleTable<T extends object>({
   rows,
   rowKey,
   onRowClick,
+  rowClassName,
 }: {
   columns: SimpleColumn<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   onRowClick?: (row: T) => void;
+  /** Optional per-row class (e.g. kitchen new-order yellow highlight). */
+  rowClassName?: (row: T) => string | undefined;
 }): JSX.Element {
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800/70 dark:bg-slate-900/20">
@@ -32,22 +35,31 @@ export function SimpleTable<T extends object>({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 dark:divide-slate-800/80">
-          {rows.map((row) => (
-            <tr
-              key={rowKey(row)}
-              className={[
-                "transition hover:bg-slate-50 dark:hover:bg-slate-900/40",
-                onRowClick ? "cursor-pointer" : "",
-              ].join(" ")}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-            >
-              {columns.map((c, i) => (
-                <td key={c.id ?? `${String(c.key)}-${i}`} className={`px-3 py-2 text-slate-800 dark:text-slate-200 ${c.className ?? ""}`}>
-                  {c.render ? c.render(row) : String(row[c.key as keyof T] ?? "—")}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const extra = rowClassName?.(row)?.trim() ?? "";
+            return (
+              <tr
+                key={rowKey(row)}
+                className={[
+                  "transition hover:bg-slate-50 dark:hover:bg-slate-900/40",
+                  onRowClick ? "cursor-pointer" : "",
+                  extra,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+              >
+                {columns.map((c, i) => (
+                  <td
+                    key={c.id ?? `${String(c.key)}-${i}`}
+                    className={`px-3 py-2 text-slate-800 dark:text-slate-200 ${c.className ?? ""}`}
+                  >
+                    {c.render ? c.render(row) : String(row[c.key as keyof T] ?? "—")}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

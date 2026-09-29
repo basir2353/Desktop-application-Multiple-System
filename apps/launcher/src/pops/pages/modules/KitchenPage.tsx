@@ -1,7 +1,7 @@
 import { Button } from "@platform/ui";
 import type { KitchenTicket } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAdaptiveRefetchInterval } from "../../../lib/useAdaptiveRefetchInterval";
 import { usePopsStore } from "../../../stores/popsStore";
 import { fetchCompletedOrders } from "../../api/billing";
@@ -13,6 +13,8 @@ import {
 } from "../../api/kitchen";
 import { fetchPopsBranches } from "../../api/operations";
 import { fetchOrgUsers } from "../../api/users";
+import { useKitchenTicketAlerts } from "../../hooks/useKitchenTicketAlerts";
+import { unlockKitchenBell } from "../../lib/kitchenBell";
 import { isMonitoringBranch, kitchenBranchCodes, storeBranchCodes } from "../../lib/branchScope";
 import {
   cacheKitchenCompleted,
@@ -116,13 +118,16 @@ function kitchenItemsSummary(order: UnifiedOrder): string {
 export function KitchenPage(): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
-  const livePollMs = useAdaptiveRefetchInterval(5_000);
+  // Kitchen display screens stay open — poll a bit faster than default POS pages.
+  const livePollMs = useAdaptiveRefetchInterval(3_000);
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"active" | "completed">("active");
   const [selectedOrder, setSelectedOrder] = useState<UnifiedOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completedBump, setCompletedBump] = useState(0);
+  const [displayMode, setDisplayMode] = useState(false);
+  const displayRootRef = useRef<HTMLDivElement | null>(null);
   const monitoringView = isMonitoringBranch(branch?.code);
 
   // Warm UUID→name cache so KOT "By" shows staff name, not user id.
@@ -158,6 +163,7 @@ export function KitchenPage(): JSX.Element {
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     },
     refetchInterval: livePollMs,
+    refetchIntervalInBackground: true,
   });
 
   const ticketsQuery = useQuery({
@@ -177,6 +183,7 @@ export function KitchenPage(): JSX.Element {
       return { tickets, branchByTicketId };
     },
     refetchInterval: livePollMs,
+    refetchIntervalInBackground: true,
   });
 
   const doneTicketsQuery = useQuery({
@@ -204,11 +211,51 @@ export function KitchenPage(): JSX.Element {
       return { tickets, branchByTicketId };
     },
     refetchInterval: livePollMs,
+    refetchIntervalInBackground: true,
   });
 
   const kitchenTickets = ticketsQuery.data?.tickets ?? [];
   const ticketBranchById = ticketsQuery.data?.branchByTicketId ?? new Map<string, string>();
   const doneTicketBranchById = doneTicketsQuery.data?.branchByTicketId ?? ticketBranchById;
+
+  const {
+    attention,
+    clearAttention,
+    clearAllAttention,
+    soundEnabled,
+    setSoundEnabled,
+  } = useKitchenTicketAlerts(kitchenTickets, Boolean(branch?.code));
+
+  useEffect(() => {
+    function onFsChange(): void {
+      if (!document.fullscreenElement) setDisplayMode(false);
+    }
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  async function toggleDisplayMode(): Promise<void> {
+    const root = displayRootRef.current;
+    if (!displayMode) {
+      await unlockKitchenBell();
+      setDisplayMode(true);
+      setView("active");
+      try {
+        await root?.requestFullscreen?.();
+      } catch {
+        /* fullscreen optional — layout still enlarges */
+      }
+      return;
+    }
+    setDisplayMode(false);
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   const activeOrders = useMemo(() => kitchenActiveOrders(kitchenTickets), [kitchenTickets]);
 
@@ -290,7 +337,7 @@ export function KitchenPage(): JSX.Element {
 
       return { prevActive, prevDone };
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       invalidate();
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ["kitchen", "active"] }),
@@ -299,6 +346,7 @@ export function KitchenPage(): JSX.Element {
       ]);
       setSelectedOrder(null);
       setCompletingId(null);
+      clearAttention(vars.id);
       setView("completed");
       setNotice("Order completed and moved to Completed.");
     },
@@ -342,12 +390,47 @@ export function KitchenPage(): JSX.Element {
     return <p className="text-sm text-slate-500">Select a branch to view kitchen orders.</p>;
   }
 
+  const attentionCount = attention.size;
+
   return (
-    <div className="space-y-3">
+    <div
+      ref={displayRootRef}
+      className={[
+        "space-y-3",
+        displayMode
+          ? "min-h-screen bg-slate-950 p-4 text-slate-100 md:p-6"
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <ModuleToolbar
-        title="Kitchen"
+        title={displayMode ? "Kitchen Display" : "Kitchen"}
         trailing={
           <>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 px-2.5 text-xs"
+              title={soundEnabled ? "Mute kitchen bell" : "Unmute kitchen bell"}
+              onClick={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                if (next) void unlockKitchenBell();
+              }}
+            >
+              {soundEnabled ? "Bell on" : "Bell muted"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 px-2.5 text-xs"
+              onClick={() => {
+                void toggleDisplayMode();
+              }}
+            >
+              {displayMode ? "Exit display" : "Display mode"}
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -383,6 +466,27 @@ export function KitchenPage(): JSX.Element {
       {notice ? (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           {notice}
+        </p>
+      ) : null}
+      {attentionCount > 0 && view === "active" ? (
+        <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-yellow-400/50 bg-yellow-400/20 px-3 py-2 text-xs font-medium text-yellow-950 dark:text-yellow-100">
+          <span>
+            {attentionCount} new / updated order{attentionCount === 1 ? "" : "s"} — yellow rows need attention.
+            Bell rings on every new or changed ticket.
+          </span>
+          <button
+            type="button"
+            className="rounded-md bg-yellow-500/30 px-2 py-1 text-[11px] font-semibold hover:bg-yellow-500/50"
+            onClick={() => clearAllAttention()}
+          >
+            Clear highlights
+          </button>
+        </p>
+      ) : null}
+      {displayMode ? (
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+          Display mode — auto-refresh every few seconds. Keep this screen on the kitchen monitor. Yellow =
+          new or updated order.
         </p>
       ) : null}
       {monitoringView ? (
@@ -424,7 +528,24 @@ export function KitchenPage(): JSX.Element {
         <SimpleTable
           rowKey={(r) => r.id}
           rows={filtered}
-          onRowClick={setSelectedOrder}
+          onRowClick={(row) => {
+            if (row.source === "kitchen") clearAttention(row.ticket.id);
+            setSelectedOrder(row);
+          }}
+          rowClassName={(row) => {
+            if (view !== "active" || row.source !== "kitchen") return undefined;
+            const kind = attention.get(row.ticket.id);
+            if (!kind) return undefined;
+            // Bright yellow so kitchen staff can spot from across the room.
+            return [
+              "bg-yellow-300/90 text-slate-900 shadow-[inset_0_0_0_2px_rgba(234,179,8,0.9)]",
+              "dark:bg-yellow-400/35 dark:text-yellow-50",
+              kind === "new" ? "animate-pulse" : "",
+              displayMode ? "text-base [&_td]:py-3" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+          }}
           columns={[
             {
               key: "ref",
@@ -435,10 +556,16 @@ export function KitchenPage(): JSX.Element {
                   className={tableOrderRefClass}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (r.source === "kitchen") clearAttention(r.ticket.id);
                     setSelectedOrder(r);
                   }}
                 >
                   {unifiedOrderRef(r)}
+                  {view === "active" && r.source === "kitchen" && attention.get(r.ticket.id) ? (
+                    <span className="ml-2 rounded bg-yellow-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                      {attention.get(r.ticket.id) === "new" ? "New" : "Updated"}
+                    </span>
+                  ) : null}
                 </button>
               ),
             },
@@ -477,7 +604,15 @@ export function KitchenPage(): JSX.Element {
               key: "items",
               header: "Items",
               render: (r) => (
-                <span className="line-clamp-2 max-w-xs text-slate-400" title={kitchenItemsSummary(r)}>
+                <span
+                  className={[
+                    "line-clamp-2 max-w-xs text-slate-400",
+                    displayMode ? "line-clamp-3 max-w-md text-sm text-slate-200" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  title={kitchenItemsSummary(r)}
+                >
                   {kitchenItemsSummary(r)}
                 </span>
               ),

@@ -89,7 +89,8 @@ export const updateKitchenTicketSchema = z.object({
    */
   recordAsCancellation: z.boolean().optional(),
   /**
-   * Required when recordAsCancellation is true — why the open order was canceled.
+   * Required when recordAsCancellation is true (full order cancel), and when editing
+   * an open ticket's lines (qty increase / decrease / remove / add).
    */
   cancellationReason: z.string().trim().min(3).max(300).optional(),
 }).superRefine((value, ctx) => {

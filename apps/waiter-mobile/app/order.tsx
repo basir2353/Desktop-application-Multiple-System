@@ -25,6 +25,7 @@ import {
 } from "../src/lib/mobileDisplaySettings";
 import { DeliveryMap } from "../src/components/DeliveryMap";
 import { DishVariantModal } from "../src/components/DishVariantModal";
+import { CancelOrderReasonModal } from "../src/components/CancelOrderReasonModal";
 import { createBill, fetchOrders, updateBill } from "../src/api/billing";
 import { createKitchenTicket, fetchKitchenTickets, updateKitchenTicket } from "../src/api/kitchen";
 import { fetchRiders } from "../src/api/delivery";
@@ -136,6 +137,8 @@ export default function OrderScreen() {
   const printLockRef = useRef(false);
   /** Cart snapshot when edit started — UPDATE KOT prints only the delta. */
   const kotBaselineRef = useRef<KotBaselineLine[] | null>(null);
+  const pendingLineChangeReasonRef = useRef<string | null>(null);
+  const [lineChangeReasonOpen, setLineChangeReasonOpen] = useState(false);
   const [orderWriteBusy, setOrderWriteBusy] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const kitchenPoll = useLiveRefetchInterval(15_000);
@@ -529,10 +532,13 @@ export default function OrderScreen() {
             }
           : {};
       if (editingOrder?.kind === "ticket") {
+        const changeReason = pendingLineChangeReasonRef.current;
+        pendingLineChangeReasonRef.current = null;
         return updateKitchenTicket(editingOrder.ticketId, {
           stationLabel,
           lines,
           notes: payloadNotes ?? null,
+          ...(changeReason ? { cancellationReason: changeReason } : {}),
           ...deliveryExtras,
         });
       }
@@ -605,8 +611,26 @@ export default function OrderScreen() {
       setNotice(targetErr);
       return;
     }
+    if (editingOrder?.kind === "ticket" && kotBaselineRef.current) {
+      const deltas = diffKotLines(kotBaselineRef.current, cart);
+      if (deltas.length > 0) {
+        setLineChangeReasonOpen(true);
+        return;
+      }
+    }
     sendLockRef.current = true;
     // Safety unlock if a hung request never settles (seen on flaky mobile networks).
+    setTimeout(() => {
+      sendLockRef.current = false;
+    }, 95_000);
+    sendMutation.mutate();
+  }
+
+  function confirmLineChangeReason(reason: string): void {
+    pendingLineChangeReasonRef.current = reason;
+    setLineChangeReasonOpen(false);
+    if (sendLockRef.current || sendMutation.isPending) return;
+    sendLockRef.current = true;
     setTimeout(() => {
       sendLockRef.current = false;
     }, 95_000);
@@ -1833,6 +1857,16 @@ export default function OrderScreen() {
           }}
         />
       ) : null}
+      <CancelOrderReasonModal
+        visible={lineChangeReasonOpen}
+        title="Reason for order change"
+        subtitle="Qty kam/zyada ya item change karne se pehle reason likhna zaroori hai."
+        confirmLabel="Update order"
+        loadingLabel="Updating…"
+        loading={sendMutation.isPending}
+        onClose={() => setLineChangeReasonOpen(false)}
+        onConfirm={confirmLineChangeReason}
+      />
     </Screen>
   );
 }

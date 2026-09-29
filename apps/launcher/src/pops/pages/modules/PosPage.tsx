@@ -145,6 +145,7 @@ import { openAdvanceTotalsByEmployee } from "../../lib/employeeAdvancesLocal";
 import { formatSelectBalance } from "../../lib/selectMeta";
 import { SearchableSelect } from "../../ui/SearchableSelect";
 import { PosTableTransferPickerModal } from "../../components/PosTableTransferPickerModal";
+import { CancelOrderReasonModal } from "../../components/CancelOrderReasonModal";
 import { cartToBillLines } from "../../lib/posCheckout";
 import { buildPosInventorySaleWarnings, recipeWarningForMenuAdd } from "../../lib/posInventorySaleCheck";
 import { fieldInputClass } from "../../lib/themeClasses";
@@ -398,6 +399,8 @@ export function PosPage(): JSX.Element {
   );
   /** Lines as loaded when editing a kitchen ticket — used for UPDATE delta KOT. */
   const kotBaselineRef = useRef<KotBaselineLine[] | null>(null);
+  const pendingLineChangeReasonRef = useRef<string | null>(null);
+  const [lineChangeReasonOpen, setLineChangeReasonOpen] = useState(false);
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
@@ -1819,10 +1822,13 @@ export function PosPage(): JSX.Element {
             (row) => row.id === editingOrder.ticketId,
           );
           const effectiveStation = liveTicket?.stationLabel?.trim() || stationLabel;
+          const changeReason = pendingLineChangeReasonRef.current;
+          pendingLineChangeReasonRef.current = null;
           return await updateKitchenTicket(editingOrder.ticketId, {
             stationLabel: effectiveStation,
             lines: kitchenLines(),
             notes: kitchenOrderNotes ?? null,
+            ...(changeReason ? { cancellationReason: changeReason } : {}),
             ...deliveryExtras(),
           });
         } catch (updateErr) {
@@ -2402,6 +2408,24 @@ export function PosPage(): JSX.Element {
   }
 
   function runPrintOrder(): void {
+    requestCreateOrUpdateOrder();
+  }
+
+  function requestCreateOrUpdateOrder(): void {
+    if (createOrderMutation.isPending) return;
+    if (editingOrder?.kind === "ticket" && kotBaselineRef.current) {
+      const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
+      if (deltas.length > 0) {
+        setLineChangeReasonOpen(true);
+        return;
+      }
+    }
+    createOrderMutation.mutate();
+  }
+
+  function confirmLineChangeReason(reason: string): void {
+    pendingLineChangeReasonRef.current = reason;
+    setLineChangeReasonOpen(false);
     createOrderMutation.mutate();
   }
 
@@ -2572,7 +2596,7 @@ export function PosPage(): JSX.Element {
         return;
       }
       if (createOrderMutation.isPending) return;
-      createOrderMutation.mutate();
+      requestCreateOrUpdateOrder();
     },
     pay: () => {
       if (cart.length === 0 || checkoutMutation.isPending) return;
@@ -4097,7 +4121,7 @@ export function PosPage(): JSX.Element {
                   className={POS_PRIMARY_ORDER_BTN}
                   title={`${POS_SHORTCUTS.quickOrder.label} (${POS_SHORTCUTS.quickOrder.key})`}
                   disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
-                  onClick={() => createOrderMutation.mutate()}
+                  onClick={() => requestCreateOrUpdateOrder()}
                 >
                   {createOrderMutation.isPending
                     ? "…"
@@ -4363,6 +4387,16 @@ export function PosPage(): JSX.Element {
               pendingPraPayRef.current = null;
             });
         }}
+      />
+
+      <CancelOrderReasonModal
+        open={lineChangeReasonOpen}
+        title="Reason for order change"
+        subtitle="Qty increase/decrease or item change requires a reason before updating the kitchen order."
+        confirmLabel="Update order"
+        loading={createOrderMutation.isPending}
+        onClose={() => setLineChangeReasonOpen(false)}
+        onConfirm={confirmLineChangeReason}
       />
 
       <PraFiscalInvoiceModal

@@ -7,6 +7,7 @@ type Props = {
   title?: string;
   subtitle?: string;
   confirmLabel?: string;
+  loadingLabel?: string;
   loading?: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
@@ -20,6 +21,7 @@ export function CancelOrderReasonModal({
   title = "Cancel order",
   subtitle = "Reason is required before this order can be canceled.",
   confirmLabel = "Cancel order",
+  loadingLabel = "Canceling…",
   loading = false,
   onClose,
   onConfirm,
@@ -60,7 +62,7 @@ export function CancelOrderReasonModal({
             editable={!loading}
             multiline
             maxLength={300}
-            placeholder="e.g. Customer left, wrong table, duplicate order…"
+            placeholder="e.g. Customer asked for less, extra portion, wrong qty…"
             placeholderTextColor={colors.muted}
             style={styles.input}
             autoFocus
@@ -82,7 +84,7 @@ export function CancelOrderReasonModal({
             </View>
             <View style={styles.actionHalf}>
               <Button
-                label={loading ? "Canceling…" : confirmLabel}
+                label={loading ? loadingLabel : confirmLabel}
                 onPress={submit}
                 loading={loading}
                 disabled={!valid || loading}

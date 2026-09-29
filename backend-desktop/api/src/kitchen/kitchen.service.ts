@@ -358,6 +358,7 @@ export class KitchenService implements OnModuleInit {
       const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, withDest);
       const previousLines = this.linesFromTicket(existing);
       pendingCancellations = diffCanceledLines(previousLines, enrichedLines);
+      const lineQtyIncreased = hasIncreasedLines(previousLines, enrichedLines);
       linesJson = JSON.stringify(
         enrichedLines.map((l) => ({
           label: l.label,
@@ -371,7 +372,19 @@ export class KitchenService implements OnModuleInit {
         input.notes !== undefined
           ? input.notes?.trim() || null
           : this.extractNotesFromSummary(existing.itemsSummary);
-      const notes = joinOrderNotes(baseNotes, absorbedDestNotes);
+      const editReason = input.cancellationReason?.trim() || null;
+      if (
+        (pendingCancellations.length > 0 || lineQtyIncreased) &&
+        (!editReason || editReason.length < 3)
+      ) {
+        throw new BadRequestException(
+          "Reason is required when changing order quantities (increase or decrease).",
+        );
+      }
+      const notesWithReason = editReason
+        ? applyLineChangeReasonToNotes(baseNotes, editReason)
+        : baseNotes;
+      const notes = joinOrderNotes(notesWithReason, absorbedDestNotes);
       itemsSummary = notes ? `${lineText} · ${notes}` : lineText;
     } else if (input.notes !== undefined) {
       const storedLines = mergeStoredLines(this.linesFromTicket(existing), absorbedDestLines);
@@ -556,7 +569,8 @@ export class KitchenService implements OnModuleInit {
           ticketStatusAtCancel: existing.status,
           canceledByUserId: editor?.userId ?? null,
           canceledByName,
-          reason: closingOpenTicket ? cancellationReason : null,
+          // Full cancel + KOT qty decrease / remove both store the typed reason.
+          reason: cancellationReason,
           source,
         })),
       );
@@ -973,6 +987,29 @@ function diffCanceledLines(
     }
   }
   return canceled;
+}
+
+function hasIncreasedLines(
+  previous: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+  next: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+): boolean {
+  const oldMap = aggregateLines(previous);
+  const newMap = aggregateLines(next);
+  for (const [key, newLine] of newMap) {
+    const oldQty = oldMap.get(key)?.qty ?? 0;
+    if (newLine.qty > oldQty) return true;
+  }
+  return false;
+}
+
+/** Persist qty-edit reason into notes so increases (not only decreases) are auditable. */
+function applyLineChangeReasonToNotes(notes: string | null, reason: string | null): string | null {
+  const stripped = (notes ?? "")
+    .replace(/(?:^|\s·\s*)Change reason:\s*.+$/i, "")
+    .trim();
+  if (!reason) return stripped || null;
+  const tag = `Change reason: ${reason}`;
+  return stripped ? `${stripped} · ${tag}` : tag;
 }
 
 function parseDayStart(value: string): Date | null {
