@@ -25,9 +25,10 @@ if errorlevel 1 (
 echo Publishing %TAG% to %REPO% from %DIR%
 gh release view "%TAG%" --repo "%REPO%" >nul 2>&1
 if errorlevel 1 (
-  gh release create "%TAG%" --repo "%REPO%" --title "Desktop %VER% (auto-update)" --notes "Signed desktop installers with Tauri auto-update." "%DIR%\*"
+  gh release create "%TAG%" --repo "%REPO%" --latest --title "Desktop %VER% (auto-update)" --notes "Signed desktop installers with Tauri auto-update." "%DIR%\*"
 ) else (
   gh release upload "%TAG%" --repo "%REPO%" "%DIR%\*" --clobber
+  gh release edit "%TAG%" --repo "%REPO%" --latest
 )
 
 echo.
