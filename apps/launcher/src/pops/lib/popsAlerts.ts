@@ -8,6 +8,7 @@ export type PopsAlertTone = "info" | "warning" | "danger";
 
 export type PopsAlertKind =
   | "new_order"
+  | "order_update_accepted"
   | "kitchen_slow"
   | "low_stock"
   | "print_failed"
@@ -73,6 +74,22 @@ export function newOrderAlert(ticket: KitchenTicket): PopsAlert {
   };
 }
 
+export function orderUpdateAcceptedAlert(ticket: KitchenTicket): PopsAlert {
+  const ref = ticket.orderRef ?? ticket.ticketRef;
+  const by = ticket.updateAcknowledgedByName?.trim();
+  return {
+    id: `order-update-accepted-${ticket.id}-${ticket.contentRevision ?? 0}-${ticket.updateAcknowledgedAt ?? ""}`,
+    kind: "order_update_accepted",
+    tone: "info",
+    title: "Kitchen accepted update",
+    message: by
+      ? `${ref} · ${ticket.stationLabel} — kitchen (${by}) accepted your edit`
+      : `${ref} · ${ticket.stationLabel} — kitchen accepted your order update`,
+    href: "/pops/orders",
+    at: ticket.updateAcknowledgedAt ?? new Date().toISOString(),
+  };
+}
+
 export function inventoryAlertsFromDashboard(dashboard: InventoryDashboard): PopsAlert[] {
   return dashboard.alerts.map((alert, index) => {
     const isOut = alert.type.toLowerCase().includes("out");
@@ -111,7 +128,8 @@ export function mergeAlerts(...groups: PopsAlert[][]): PopsAlert[] {
     print_timeout: 3,
     kitchen_slow: 4,
     low_stock: 5,
-    new_order: 6,
+    order_update_accepted: 6,
+    new_order: 7,
   };
 
   return merged.sort((a, b) => {

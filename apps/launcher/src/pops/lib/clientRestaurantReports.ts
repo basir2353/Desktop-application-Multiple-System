@@ -116,7 +116,7 @@ function base(
 export async function buildClientRestaurantReport(
   branchCode: string,
   reportId: string,
-  options?: { from?: string; to?: string; fromTime?: string; toTime?: string; cookingUnitId?: string },
+  options?: { from?: string; to?: string; fromTime?: string; toTime?: string; cookingUnitId?: string; cashierName?: string },
 ): Promise<RestaurantReport> {
   const from = options?.from;
   const to = options?.to;
@@ -138,6 +138,88 @@ export async function buildClientRestaurantReport(
     } catch {
       return { ...meta, rows: [], empty: true };
     }
+  }
+
+  if (reportId === "kitchen-pnl") {
+    const fromDay = from || new Date().toISOString().slice(0, 10);
+    const toDay = to || fromDay;
+    const [transfer, salesReport] = await Promise.all([
+      fetchInventoryReport(branchCode, "stock-transfers-by-section", {
+        dateFrom: fromDay,
+        dateTo: toDay,
+        dateMode: "activity",
+        ...(cookingUnitId ? { cookingUnitId } : {}),
+      }),
+      buildClientRestaurantReport(branchCode, "cooking-unit-sales", {
+        from: fromDay,
+        to: toDay,
+        fromTime: fromTime ?? "00:00",
+        toTime: toTime ?? "23:59",
+        ...(cookingUnitId ? { cookingUnitId } : {}),
+      }),
+    ]);
+
+    const transferByUnit = new Map<string, { label: string; stockIssue: number }>();
+    const transferRows = Array.isArray(transfer.data) ? transfer.data : [];
+    for (const row of transferRows) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as Record<string, unknown>;
+      const label = String(r.kitchenSection ?? r.label ?? "Kitchen").trim() || "Kitchen";
+      const unitKey = String(r.cookingUnitId ?? label);
+      const stockIssue = Number(r.valueIn ?? r.totalValue) || 0;
+      const cur = transferByUnit.get(unitKey) ?? { label, stockIssue: 0 };
+      cur.stockIssue += stockIssue;
+      transferByUnit.set(unitKey, cur);
+    }
+
+    const saleByUnit = new Map<string, { label: string; sale: number }>();
+    for (const row of salesReport.rows) {
+      const label = String(row.label ?? "Kitchen");
+      const unitKey = String((row as { cookingUnitId?: string }).cookingUnitId ?? label);
+      const sale = Number(row.revenue ?? row.amount ?? 0);
+      const cur = saleByUnit.get(unitKey) ?? { label, sale: 0 };
+      cur.sale += sale;
+      saleByUnit.set(unitKey, cur);
+    }
+
+    const keys = new Set([...transferByUnit.keys(), ...saleByUnit.keys()]);
+    const rows = [...keys].map((key) => {
+      const t = transferByUnit.get(key);
+      const s = saleByUnit.get(key);
+      const label = s?.label ?? t?.label ?? "Kitchen";
+      const stockIssue = t?.stockIssue ?? 0;
+      const sale = s?.sale ?? 0;
+      const profit = sale - stockIssue;
+      return {
+        label,
+        cookingUnitId: key.startsWith("unassigned") ? undefined : key,
+        stockIssue,
+        sale,
+        profit,
+        amount: profit,
+        qty: 1,
+        meta: `Issue ${stockIssue} · Sale ${sale}`,
+      };
+    }).sort((a, b) => b.profit - a.profit);
+
+    const stockIssueTotal = rows.reduce((sum, r) => sum + r.stockIssue, 0);
+    const saleTotal = rows.reduce((sum, r) => sum + r.sale, 0);
+    const profitTotal = saleTotal - stockIssueTotal;
+
+    return {
+      ...meta,
+      title: "Kitchen P&L (stock vs sale)",
+      description: cookingUnitId
+        ? "Selected kitchen: stock issue vs sale → profit"
+        : "Per kitchen: Total stock issue, Total sale, Profit (Sale − Issue)",
+      rows,
+      totals: {
+        stockIssue: stockIssueTotal,
+        sale: saleTotal,
+        profit: profitTotal,
+      },
+      empty: rows.length === 0,
+    };
   }
 
   if (reportId === "ingredients-stock") {
@@ -515,21 +597,20 @@ export async function buildClientRestaurantReport(
 
   if (reportId === "item-remove") {
     const data = await fetchKitchenCancellations(branchCode, { from, to });
+    const cashierFilter = options?.cashierName?.trim().toLowerCase() || "";
     const rows = data.cancellations
       .filter((c) => inRange(c.canceledAt, from, to, fromTime, toTime))
+      .filter((c) => {
+        if (!cashierFilter) return true;
+        return (c.canceledByName ?? "").trim().toLowerCase() === cashierFilter;
+      })
       .map((c) => ({
         label: c.label,
         qty: c.qtyCanceled,
         amount: c.qtyCanceled * (c.unitPricePkr ?? 0),
-        meta: [
-          c.orderRef ?? c.ticketRef,
-          c.source,
-          c.canceledByName ? `by ${c.canceledByName}` : null,
-          c.reason ? `Reason: ${c.reason}` : null,
-          c.canceledAt,
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        cashier: c.canceledByName?.trim() || null,
+        reason: c.reason?.trim() || null,
+        meta: [c.orderRef ?? c.ticketRef, c.source, c.canceledAt].filter(Boolean).join(" · "),
       }));
     return {
       ...meta,

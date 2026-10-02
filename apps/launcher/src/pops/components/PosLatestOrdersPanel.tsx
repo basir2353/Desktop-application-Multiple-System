@@ -773,7 +773,7 @@ export function PosLatestOrdersPanel({
               <div className="text-[11px] font-semibold text-slate-200">Latest orders</div>
               <div className="mt-0.5 text-[10px] text-slate-500">
                 Select bill → <kbd className="rounded bg-slate-800 px-1 text-amber-300">P</kbd> quick
-                print · Close = PRA
+                print · Pay = invoice · Close = PRA
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -944,6 +944,7 @@ export function PosLatestOrdersPanel({
                   (order.kind === "pending" && Boolean(order.pendingTicket)) ||
                   order.bill?.status === "held" ||
                   order.bill?.status === "open";
+                const showPay = Boolean(onPayOrder) && canPayPosRecentOrder(order);
                 const showRpra =
                   canShowRpraForBill({
                     praFakeEnabled,
@@ -993,6 +994,19 @@ export function PosLatestOrdersPanel({
                         title="Cancel this order — reason required"
                       >
                         Cancel
+                      </button>
+                    ) : null}
+                    {showPay ? (
+                      <button
+                        type="button"
+                        className="rounded border border-emerald-400 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-600/60 dark:bg-emerald-600/20 dark:text-emerald-300 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/30"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onPayOrder?.(order);
+                        }}
+                        title="Open payment — final invoice prints after Pay (PRA if Active)"
+                      >
+                        Pay
                       </button>
                     ) : null}
                     <button

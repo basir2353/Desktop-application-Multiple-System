@@ -125,6 +125,7 @@ export function KitchenPage(): JSX.Element {
   const [selectedOrder, setSelectedOrder] = useState<UnifiedOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [completedBump, setCompletedBump] = useState(0);
   const [displayMode, setDisplayMode] = useState(false);
   const displayRootRef = useRef<HTMLDivElement | null>(null);
@@ -224,7 +225,11 @@ export function KitchenPage(): JSX.Element {
     clearAllAttention,
     soundEnabled,
     setSoundEnabled,
-  } = useKitchenTicketAlerts(kitchenTickets, Boolean(branch?.code));
+  } = useKitchenTicketAlerts(
+    kitchenTickets,
+    Boolean(branch?.code),
+    `${branch?.code ?? ""}|${kitchenBranchScope.join(",")}`,
+  );
 
   useEffect(() => {
     function onFsChange(): void {
@@ -368,6 +373,22 @@ export function KitchenPage(): JSX.Element {
     },
   });
 
+  const acceptUpdateMutation = useMutation({
+    mutationFn: (id: string) => updateKitchenTicket(id, { acknowledgeUpdate: true }),
+    onSuccess: (updated) => {
+      clearAttention(updated.id);
+      setAcceptingId(null);
+      invalidate();
+      void queryClient.refetchQueries({ queryKey: ["kitchen"] });
+      const ref = updated.orderRef ?? updated.ticketRef;
+      setNotice(`Update accepted for ${ref}. Cashier notified.`);
+    },
+    onError: (err: Error) => {
+      setAcceptingId(null);
+      setNotice(err.message);
+    },
+  });
+
   const bumpMutation = useMutation({
     mutationFn: () => {
       if (monitoringView) {
@@ -385,12 +406,15 @@ export function KitchenPage(): JSX.Element {
   const isLoading = ordersQuery.isLoading || ticketsQuery.isLoading || doneTicketsQuery.isLoading;
   const isError = ordersQuery.isError || ticketsQuery.isError || doneTicketsQuery.isError;
   const errorMessage = (ordersQuery.error ?? ticketsQuery.error ?? doneTicketsQuery.error) as Error | null;
+  const attentionCount = attention.size;
+  const pendingUpdateCount = useMemo(
+    () => kitchenTickets.filter((t) => t.status !== "done" && Boolean(t.updatePending)).length,
+    [kitchenTickets],
+  );
 
   if (!branch?.code) {
     return <p className="text-sm text-slate-500">Select a branch to view kitchen orders.</p>;
   }
-
-  const attentionCount = attention.size;
 
   return (
     <div
@@ -468,11 +492,12 @@ export function KitchenPage(): JSX.Element {
           {notice}
         </p>
       ) : null}
-      {attentionCount > 0 && view === "active" ? (
+      {(attentionCount > 0 || pendingUpdateCount > 0) && view === "active" ? (
         <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-yellow-400/50 bg-yellow-400/20 px-3 py-2 text-xs font-medium text-yellow-950 dark:text-yellow-100">
           <span>
-            {attentionCount} new / updated order{attentionCount === 1 ? "" : "s"} — yellow rows need attention.
-            Bell rings on every new or changed ticket.
+            {pendingUpdateCount > 0
+              ? `${pendingUpdateCount} order update${pendingUpdateCount === 1 ? "" : "s"} waiting for Accept — press Accept so cashier is notified.`
+              : `${attentionCount} new / updated order${attentionCount === 1 ? "" : "s"} — yellow rows need attention. Bell rings on every new or changed ticket.`}
           </span>
           <button
             type="button"
@@ -535,12 +560,13 @@ export function KitchenPage(): JSX.Element {
           rowClassName={(row) => {
             if (view !== "active" || row.source !== "kitchen") return undefined;
             const kind = attention.get(row.ticket.id);
-            if (!kind) return undefined;
+            const pending = Boolean(row.ticket.updatePending) || kind === "updated";
+            if (!kind && !row.ticket.updatePending) return undefined;
             // Bright yellow so kitchen staff can spot from across the room.
             return [
               "bg-yellow-300/90 text-slate-900 shadow-[inset_0_0_0_2px_rgba(234,179,8,0.9)]",
               "dark:bg-yellow-400/35 dark:text-yellow-50",
-              kind === "new" ? "animate-pulse" : "",
+              kind === "new" && !pending ? "animate-pulse" : "",
               displayMode ? "text-base [&_td]:py-3" : "",
             ]
               .filter(Boolean)
@@ -561,9 +587,11 @@ export function KitchenPage(): JSX.Element {
                   }}
                 >
                   {unifiedOrderRef(r)}
-                  {view === "active" && r.source === "kitchen" && attention.get(r.ticket.id) ? (
+                  {view === "active" && r.source === "kitchen" && (attention.get(r.ticket.id) || r.ticket.updatePending) ? (
                     <span className="ml-2 rounded bg-yellow-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                      {attention.get(r.ticket.id) === "new" ? "New" : "Updated"}
+                      {r.ticket.updatePending || attention.get(r.ticket.id) === "updated"
+                        ? "Updated"
+                        : "New"}
                     </span>
                   ) : null}
                 </button>
@@ -669,6 +697,21 @@ export function KitchenPage(): JSX.Element {
                     onClick={(e) => e.stopPropagation()}
                     role="presentation"
                   >
+                    {r.ticket.updatePending || attention.get(r.ticket.id) === "updated" ? (
+                      <Button
+                        type="button"
+                        className="h-7 border-0 bg-sky-600 px-2.5 text-[11px] font-semibold text-white hover:bg-sky-500"
+                        disabled={acceptUpdateMutation.isPending}
+                        onClick={() => {
+                          setAcceptingId(r.ticket.id);
+                          acceptUpdateMutation.mutate(r.ticket.id);
+                        }}
+                      >
+                        {acceptUpdateMutation.isPending && acceptingId === r.ticket.id
+                          ? "…"
+                          : "Accept"}
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       className="h-7 border-0 bg-emerald-600 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-500"

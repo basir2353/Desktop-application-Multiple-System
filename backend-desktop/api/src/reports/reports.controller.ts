@@ -28,6 +28,7 @@ export class ReportsController {
     @Query("fromTime") fromTime?: string,
     @Query("toTime") toTime?: string,
     @Query("cookingUnitId") cookingUnitId?: string,
+    @Query("cashierName") cashierName?: string,
   ) {
     return this.reports.getReport(user.organizationId, branchCode?.trim() ?? "", reportId, {
       from: from?.trim() || undefined,
@@ -35,6 +36,7 @@ export class ReportsController {
       fromTime: fromTime?.trim() || undefined,
       toTime: toTime?.trim() || undefined,
       cookingUnitId: cookingUnitId?.trim() || undefined,
+      cashierName: cashierName?.trim() || undefined,
     });
   }
 }

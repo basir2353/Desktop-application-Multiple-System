@@ -957,7 +957,7 @@ export function buildTicketHtml(input: PrintTicketInput): string {
   const totalsBlock =
     isReceipt && totalsRows.length > 0 ? `<div class="totals">${totalsRows.join("")}</div>` : "";
 
-  // Simple invoice (no PRA): Cash vs Card GST comparison + settled payment lines.
+  // Simple invoice (no PRA): one totals block — Sub Total / Service / Net (no Card vs Cash compare).
   const paymentSectionsHtml = (() => {
     if (!isReceipt || !fields) return "";
     const parts: string[] = [];
@@ -965,12 +965,15 @@ export function buildTicketHtml(input: PrintTicketInput): string {
     if (!input.praFiscal) {
       const settings = loadPosSettings(input.branchCode);
       const mode = inferPosModeFromLabel(input.tableLabel || input.modeLabel || "");
-      // Always use Settings for the Card vs Cash preview (never hardcode card=5%).
-      const cashGstPct = effectiveTaxPctForMode(settings, mode, "cash");
-      const cardGstPct = effectiveTaxPctForMode(settings, mode, "card");
+      const payments = (input.payments ?? []).filter((p) => p.amount > 0);
+      const paidCard = payments.some((p) => p.method === "card");
+      const paidCash = payments.some((p) => p.method === "cash");
+      // Prefer the method they actually paid with; default cash rates for open bills.
+      const gstChannel: "cash" | "card" =
+        paidCard && !paidCash ? "card" : paidCash && !paidCard ? "cash" : "cash";
+      const gstPct = effectiveTaxPctForMode(settings, mode, gstChannel);
       const delivery = Math.max(0, input.deliveryCharge ?? 0);
       const servicePct = effectiveServicePctForMode(settings, mode);
-      // DiscPct/DiscRs in notes must reduce Net — same as POS totals (Option 16).
       const discount =
         (input.discount ?? 0) > 0
           ? input.discount
@@ -979,55 +982,38 @@ export function buildTicketHtml(input: PrintTicketInput): string {
         (input.discountPct ?? 0) > 0
           ? input.discountPct
           : discountPctFromAmount(discount, input.subtotal ?? 0);
-      const cashTotals = computeTicketTotals(
+      const totals = computeTicketTotals(
         input.subtotal ?? 0,
         discount,
         servicePct,
-        cashGstPct,
-        delivery,
-      );
-      const cardTotals = computeTicketTotals(
-        input.subtotal ?? 0,
-        discount,
-        servicePct,
-        cardGstPct,
+        gstPct,
         delivery,
       );
       const money = (n: number) => formatMoney(n, moneyCompact);
-      // Match reference: side-by-side Card/Cash on 80mm+; stack only on narrow 58mm.
-      const stackCompare = narrowPaper;
-      const cardTitle = stackCompare ? "CARD PAYMENT" : "On Card Payment";
-      const cashTitle = stackCompare ? "CASH PAYMENT" : "On Cash Payment";
-      const midRows = (gstPct: number, gstAmt: number, serviceAmt: number) =>
-        [
-          `<div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>`,
+      parts.push(`
+      <div class="pay-simple">
+        <div class="row"><span class="label">Sub Total</span><span class="value">${money(input.subtotal)}</span></div>
+        ${
           discount > 0
             ? `<div class="row"><span class="label">Discount${discountPct > 0 ? ` (${discountPct}%)` : ""}</span><span class="value discount">${money(discount)}</span></div>`
-            : "",
-          serviceAmt > 0
-            ? `<div class="row"><span class="label">Service${servicePct > 0 ? ` (${servicePct}%)` : ""}</span><span class="value">${money(serviceAmt)}</span></div>`
-            : "",
+            : ""
+        }
+        ${
+          totals.service > 0
+            ? `<div class="row"><span class="label">Service${servicePct > 0 ? ` (${servicePct}%)` : ""}</span><span class="value">${money(totals.service)}</span></div>`
+            : ""
+        }
+        ${
           delivery > 0
             ? `<div class="row"><span class="label">Delivery</span><span class="value">${money(delivery)}</span></div>`
-            : "",
-          gstPct > 0 || gstAmt > 0
-            ? `<div class="row"><span class="label">GST (${gstPct}%)</span><span class="value">${money(gstAmt)}</span></div>`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("");
-      parts.push(`
-      <div class="pay-compare${stackCompare ? " pay-compare-stack" : ""}">
-        <div class="pay-compare-col">
-          <div class="pay-compare-title">${cardTitle}</div>
-          ${midRows(cardGstPct, cardTotals.tax, cardTotals.service)}
-          <div class="row grand pay-net"><span class="label">Net Total</span><span class="value">${money(cardTotals.total)}</span></div>
-        </div>
-        <div class="pay-compare-col">
-          <div class="pay-compare-title">${cashTitle}</div>
-          ${midRows(cashGstPct, cashTotals.tax, cashTotals.service)}
-          <div class="row grand pay-net"><span class="label">Net Total</span><span class="value">${money(cashTotals.total)}</span></div>
-        </div>
+            : ""
+        }
+        ${
+          gstPct > 0 || totals.tax > 0
+            ? `<div class="row"><span class="label">GST (${gstPct}%)</span><span class="value">${money(totals.tax)}</span></div>`
+            : ""
+        }
+        <div class="row grand pay-net"><span class="label">Net Total</span><span class="value">${money(totals.total)}</span></div>
       </div>`);
     }
 
@@ -2002,96 +1988,33 @@ export function buildTicketHtml(input: PrintTicketInput): string {
       padding-top: 8px;
       margin-top: 4px;
     }
-    .pay-compare {
-      display: flex;
-      flex-direction: row;
-      gap: ${narrowPaper ? "6px" : "8px"};
-      border-top: none;
-      margin-top: 8px;
-      padding-top: 0;
-      width: 100%;
-      max-width: 100%;
-      box-sizing: border-box;
+    .pay-simple {
+      margin: 6px 0 4px;
+      padding: 4px 0 2px;
+      border-top: 1px dashed #111;
     }
-    /* Narrow 58mm only: stack full-width. 80mm+ keeps side-by-side like the reference. */
-    .pay-compare.pay-compare-stack {
-      flex-direction: column;
-      gap: 6px;
-    }
-    .pay-compare-col {
-      flex: 1 1 50%;
-      min-width: 0;
-      width: auto;
-      border: 1px solid #000;
-      padding: ${narrowPaper ? "4px 3px 3px" : "5px 4px 4px"};
-      box-sizing: border-box;
-      overflow: visible;
-    }
-    .pay-compare.pay-compare-stack .pay-compare-col {
-      flex: 0 0 auto;
-      width: 100%;
-    }
-    .pay-compare-title {
-      font-size: ${Math.max(10, (isReceipt ? receiptFonts.rowLabel : kotBase) - (narrowPaper ? 1 : 1))}px;
-      font-weight: ${isReceipt ? 400 : 600};
-      text-align: center;
-      margin-bottom: 4px;
-      border-bottom: 1px dashed #000;
-      padding-bottom: 3px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .pay-compare.pay-compare-stack .pay-compare-title {
-      font-size: ${Math.max(12, isReceipt ? receiptFonts.rowLabel : kotBase)}px;
-      letter-spacing: 0.04em;
-      white-space: normal;
-      overflow: visible;
-      text-overflow: unset;
-    }
-    .pay-compare-col .row {
+    .pay-simple .row {
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
-      flex-wrap: nowrap;
-      gap: 6px;
-      margin: 2px 0;
-      width: 100%;
-      max-width: 100%;
-      box-sizing: border-box;
+      gap: 8px;
+      font-size: ${Math.max(10, Math.round(receiptFonts.body * 0.95))}px;
+      line-height: 1.35;
     }
-    .pay-compare-col .row .label {
-      flex: 1 1 auto;
-      min-width: 0;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    .pay-simple .row .label { text-align: left; }
+    .pay-simple .row .value { text-align: right; font-variant-numeric: tabular-nums; }
+    .pay-simple .row.pay-net {
+      margin-top: 2px;
+      padding-top: 3px;
+      border-top: 1px solid #111;
+      font-weight: 700;
     }
-    .pay-compare-col .row .value {
-      flex: 0 0 auto;
-      white-space: nowrap;
-      font-variant-numeric: tabular-nums;
-      text-align: right;
-      max-width: 55%;
-      overflow: hidden;
+    /* Legacy Card/Cash compare hidden — Option 34 uses .pay-simple only. */
+    .pay-compare,
+    .pay-compare-col,
+    .pay-compare-title {
+      display: none !important;
     }
-    .pay-compare-col .row.pay-net {
-      margin-top: 4px;
-      padding-top: 4px;
-      border-top: 1px solid #000;
-      align-items: center;
-    }
-    .pay-compare-col .row.pay-net .label {
-      font-weight: ${isReceipt ? 400 : 700};
-      white-space: nowrap;
-      flex: 0 0 auto;
-    }
-    .pay-compare-col .row.pay-net .value {
-      font-weight: ${isReceipt ? 400 : 700};
-      font-size: ${isReceipt ? receiptFonts.rowValue : kotBase}px;
-      margin-left: auto;
-      max-width: none;
-    }
+
     .pay-settled {
       margin-top: 8px;
       border-top: 1px dashed #000;

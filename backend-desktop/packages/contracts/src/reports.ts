@@ -17,6 +17,7 @@ export const RESTAURANT_REPORT_DEFS = [
   { id: "item-remove", name: "Item remove", category: "Operations" },
   { id: "cashier-overshort", name: "Cashier over/short", category: "Cash" },
   { id: "profit-loss", name: "Profit & loss", category: "Finance" },
+  { id: "kitchen-pnl", name: "Kitchen P&L (stock vs sale)", category: "Finance" },
   { id: "expense", name: "Expense report", category: "Finance" },
   { id: "sales-by-hall", name: "Sales by hall", category: "Sales" },
   { id: "cash-drawer", name: "Cash drawer report", category: "Cash" },

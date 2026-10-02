@@ -481,7 +481,7 @@ export function PosCheckoutModal({
                   ? "Save partial payment"
                   : mode === "invoice"
                     ? "Print invoice"
-                    : "Complete payment"}
+                    : "Pay"}
           </Button>
         </div>
       </div>

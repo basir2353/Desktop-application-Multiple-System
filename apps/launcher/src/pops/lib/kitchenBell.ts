@@ -5,7 +5,8 @@
 
 let sharedCtx: AudioContext | null = null;
 let lastPlayAt = 0;
-const MIN_GAP_MS = 400;
+/** One long alert per burst — ignore stacked polls. */
+const MIN_GAP_MS = 2_500;
 
 function getCtx(): AudioContext | null {
   try {
@@ -46,17 +47,17 @@ function tone(
   osc.type = "square";
   osc.frequency.setValueAtTime(freq, startAt);
   gain.gain.setValueAtTime(0.0001, startAt);
-  gain.gain.exponentialRampToValueAtTime(gainPeak, startAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(gainPeak, startAt + 0.03);
   gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
   osc.connect(gain);
   gain.connect(ctx.destination);
   osc.start(startAt);
-  osc.stop(startAt + duration + 0.02);
+  osc.stop(startAt + duration + 0.03);
 }
 
 /**
- * Three sharp high beeps — loud enough for a kitchen floor screen.
- * Debounced so a burst of tickets does not stack into chaos.
+ * Longer multi-beep alert (~1.8s) so kitchen staff hear it over floor noise.
+ * Debounced so refresh / multi-ticket bursts do not stack.
  */
 export async function playKitchenBell(): Promise<void> {
   const now = Date.now();
@@ -73,24 +74,26 @@ export async function playKitchenBell(): Promise<void> {
   if (ctx.state !== "running") return;
 
   const t0 = ctx.currentTime + 0.02;
-  // Triple ding: high → higher → high (square wave cuts through ambient noise).
-  tone(ctx, t0, 880, 0.18, 0.55);
-  tone(ctx, t0 + 0.22, 1174, 0.2, 0.6);
-  tone(ctx, t0 + 0.46, 988, 0.28, 0.5);
+  // Longer sequence: ding-ding-ding-ding (~1.8s total).
+  tone(ctx, t0, 880, 0.32, 0.58);
+  tone(ctx, t0 + 0.38, 1046, 0.32, 0.62);
+  tone(ctx, t0 + 0.76, 1174, 0.36, 0.65);
+  tone(ctx, t0 + 1.18, 988, 0.45, 0.55);
 }
 
+/** Stable content key — must NOT include mins / wait time (those change every poll). */
 export function ticketAttentionFingerprint(ticket: {
+  id: string;
   itemsSummary: string;
   stationLabel: string;
   priority: string;
   status: string;
-  updatedByName?: string | null;
 }): string {
   return [
+    ticket.id,
     ticket.itemsSummary.trim(),
     ticket.stationLabel.trim(),
     ticket.priority,
     ticket.status,
-    ticket.updatedByName?.trim() ?? "",
   ].join("|");
 }

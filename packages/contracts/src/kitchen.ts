@@ -39,6 +39,13 @@ export const kitchenTicketSchema = z.object({
   /** Last user who edited items/notes/table. Null until first content edit. */
   updatedById: z.string().uuid().nullable().optional(),
   updatedByName: z.string().nullable().optional(),
+  /** Increments on each content edit. Kitchen Accept acknowledges the latest revision. */
+  contentRevision: z.number().int().nonnegative().optional(),
+  /** ISO time when kitchen accepted the latest edit. Null = pending Accept. */
+  updateAcknowledgedAt: z.string().nullable().optional(),
+  updateAcknowledgedByName: z.string().nullable().optional(),
+  /** True when a content edit is waiting for kitchen Accept. */
+  updatePending: z.boolean().optional(),
 });
 
 export const kitchenTicketListSchema = z.object({
@@ -91,9 +98,11 @@ export const updateKitchenTicketSchema = z.object({
   recordAsCancellation: z.boolean().optional(),
   /**
    * Required when recordAsCancellation is true (full order cancel), and when editing
-   * an open ticket's lines (qty increase / decrease / remove / add).
+   * an open ticket's lines (qty decrease / remove).
    */
   cancellationReason: z.string().trim().min(3).max(300).optional(),
+  /** Kitchen staff Accept — clears pending update highlight and notifies cashier. */
+  acknowledgeUpdate: z.literal(true).optional(),
 }).superRefine((value, ctx) => {
   if (value.recordAsCancellation === true) {
     const reason = value.cancellationReason?.trim() ?? "";

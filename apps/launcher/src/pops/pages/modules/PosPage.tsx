@@ -29,6 +29,7 @@ import {
 import {
   printIssuedPraSlip,
 } from "../../lib/praIssueFlow";
+import { resolvePraFooterForPaidBill } from "../../lib/praPaidPrint";
 import { fetchCustomerInvoices, fetchOpenCashSession, fetchTaxSettings } from "../../api/accounting";
 import { fetchClosingStatus } from "../../api/closing";
 import { fetchRiders } from "../../api/delivery";
@@ -81,11 +82,13 @@ import {
 import {
   cartLinesToKotBaseline,
   diffKotLines,
+  kotDeltaRequiresChangeReason,
   kotDeltasToCartLines,
   type KotBaselineLine,
 } from "../../lib/kotLineDelta";
 import {
   formatSessionPrintName,
+  billToPrintInput,
   printKotDetailed,
   printReceiptDetailed,
   resolveSessionPrintName,
@@ -1043,9 +1046,8 @@ export function PosPage(): JSX.Element {
       inventoryReady: posInventorySaleQuery.isSuccess,
       inventoryFailed: posInventorySaleQuery.isError,
     });
+    // Soft side notice only — never block add with browser confirm.
     if (recipeWarn) {
-      const ok = window.confirm(`${recipeWarn}\n\nAdd to ticket anyway?`);
-      if (!ok) return;
       setPrintNotice({ message: recipeWarn, tone: "warning" });
     }
     const qty = opts?.qty ?? 1;
@@ -1587,7 +1589,9 @@ export function PosPage(): JSX.Element {
     setEditingOrder({ kind: "held-bill", billId: bill.id });
     setOrderRef(bill.orderRef ?? bill.billRef);
     setMode(inferPosModeFromStation(bill.tableLabel));
-    setCart(stripComplimentaryLines(cartFromBill(menuItems, bill)));
+    const loaded = stripComplimentaryLines(cartFromBill(menuItems, bill));
+    setCart(loaded);
+    kotBaselineRef.current = cartLinesToKotBaseline(loaded);
     setTicketServicePct(bill.servicePct);
     setDiscountAmountInput(bill.discount);
     setDiscountPctInput(bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0);
@@ -1921,10 +1925,21 @@ export function PosPage(): JSX.Element {
       if (editingOrder?.kind !== "held-bill") {
         throw new Error("No held bill selected for editing.");
       }
+      const changeReason = pendingLineChangeReasonRef.current;
+      pendingLineChangeReasonRef.current = null;
+      const notesBase = (kitchenOrderNotes ?? "")
+        .replace(/(?:^|\s·\s*)Change reason:\s*.+$/i, "")
+        .trim();
+      const notesWithReason =
+        changeReason && changeReason.trim().length >= 3
+          ? notesBase
+            ? `${notesBase} · Change reason: ${changeReason.trim()}`
+            : `Change reason: ${changeReason.trim()}`
+          : notesBase || null;
       return updateBill(editingOrder.billId, {
         tableLabel: billTableLabel,
         lines: cartToBillLines(effectiveCart),
-        notes: kitchenOrderNotes ?? null,
+        notes: notesWithReason,
         discountPkr: discount,
         servicePct: ticketServicePct,
         taxPct,
@@ -1934,6 +1949,9 @@ export function PosPage(): JSX.Element {
     },
     onSuccess: () => {
       invalidateOrderFeeds();
+      if (kotBaselineRef.current) {
+        kotBaselineRef.current = cartLinesToKotBaseline(effectiveCart);
+      }
       setPrintNotice({ message: "Held bill updated.", tone: "success" });
     },
     onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
@@ -2150,10 +2168,44 @@ export function PosPage(): JSX.Element {
       }
       pendingCloseAfterPayRef.current = false;
 
-      // Simple Card/Cash invoice = Latest-orders Print only (not auto on Pay/Invoice).
+      // Final customer invoice after Pay / Print invoice (PRA when Active, else simple slip).
+      let invoiceHint = "";
+      if (bill.status === "completed" && branch?.code) {
+        try {
+          const printUserId = resolvePrintUserId(
+            useSessionStore.getState().claims?.sub,
+            shiftWaiterId || null,
+          );
+          const profile = resolveReceiptPrinter(branch.code, printUserId);
+          let payload = billToPrintInput(branch.name, branch.code, bill);
+          if (praFeatureActive) {
+            const resolved = await resolvePraFooterForPaidBill({
+              branchCode: branch.code,
+              bill,
+              issueIfMissing: true,
+            });
+            if (resolved.footer) {
+              payload = { ...payload, praFiscal: resolved.footer };
+            }
+          }
+          const printed = await printReceiptDetailed(withPrinterProfile(payload, profile));
+          if (printed.ok) {
+            invoiceHint = payload.praFiscal?.invoiceNumber
+              ? ` Final invoice printed (PRA #${payload.praFiscal.invoiceNumber}).`
+              : " Final invoice printed.";
+          } else {
+            invoiceHint = ` Final invoice print failed${printed.error ? `: ${printed.error}` : ""} — use Print on the order.`;
+          }
+        } catch (printErr) {
+          invoiceHint = ` Final invoice print failed: ${
+            printErr instanceof Error ? printErr.message : "check receipt printer"
+          }.`;
+        }
+      }
+
       setPrintNotice({
         tone: noticeTone,
-        message: `${modeLabel} ${intent === "invoice" ? "saved" : "paid"} — ${bill.billRef}.${kotHint}${invHint} Simple invoice: Print button on the order.`,
+        message: `${modeLabel} ${intent === "invoice" ? "saved" : "paid"} — ${bill.billRef}.${kotHint}${invHint}${invoiceHint}`,
       });
       const phone = phoneFromBillNotes(bill.notes);
       if (phone || mode === "delivery") {
@@ -2415,7 +2467,7 @@ export function PosPage(): JSX.Element {
     if (createOrderMutation.isPending) return;
     if (editingOrder?.kind === "ticket" && kotBaselineRef.current) {
       const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
-      if (deltas.length > 0) {
+      if (kotDeltaRequiresChangeReason(deltas)) {
         setLineChangeReasonOpen(true);
         return;
       }
@@ -2423,9 +2475,25 @@ export function PosPage(): JSX.Element {
     createOrderMutation.mutate();
   }
 
+  function requestUpdateHeldBill(): void {
+    if (updateHeldBillMutation.isPending) return;
+    if (editingOrder?.kind === "held-bill" && kotBaselineRef.current) {
+      const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
+      if (kotDeltaRequiresChangeReason(deltas)) {
+        setLineChangeReasonOpen(true);
+        return;
+      }
+    }
+    updateHeldBillMutation.mutate();
+  }
+
   function confirmLineChangeReason(reason: string): void {
     pendingLineChangeReasonRef.current = reason;
     setLineChangeReasonOpen(false);
+    if (editingOrder?.kind === "held-bill") {
+      updateHeldBillMutation.mutate();
+      return;
+    }
     createOrderMutation.mutate();
   }
 
@@ -2592,7 +2660,7 @@ export function PosPage(): JSX.Element {
       if (cart.length === 0 || !branch?.code) return;
       if (editingOrder?.kind === "held-bill") {
         if (updateHeldBillMutation.isPending) return;
-        updateHeldBillMutation.mutate();
+        requestUpdateHeldBill();
         return;
       }
       if (createOrderMutation.isPending) return;
@@ -4111,7 +4179,7 @@ export function PosPage(): JSX.Element {
                   className={`${POS_PRIMARY_ORDER_BTN} col-span-2`}
                   title={`${POS_SHORTCUTS.quickOrder.label} (${POS_SHORTCUTS.quickOrder.key})`}
                   disabled={cart.length === 0 || updateHeldBillMutation.isPending || !branch?.code}
-                  onClick={() => updateHeldBillMutation.mutate()}
+                  onClick={() => requestUpdateHeldBill()}
                 >
                   {updateHeldBillMutation.isPending ? "…" : "Update hold"}
                 </button>
@@ -4392,9 +4460,9 @@ export function PosPage(): JSX.Element {
       <CancelOrderReasonModal
         open={lineChangeReasonOpen}
         title="Reason for order change"
-        subtitle="Qty increase/decrease or item change requires a reason before updating the kitchen order."
-        confirmLabel="Update order"
-        loading={createOrderMutation.isPending}
+        subtitle="Qty kam (minus) ya item remove par reason zaroori hai. Naya item add ya qty zyada karne par reason nahi chahiye."
+        confirmLabel={editingOrder?.kind === "held-bill" ? "Update hold" : "Update order"}
+        loading={createOrderMutation.isPending || updateHeldBillMutation.isPending}
         onClose={() => setLineChangeReasonOpen(false)}
         onConfirm={confirmLineChangeReason}
       />

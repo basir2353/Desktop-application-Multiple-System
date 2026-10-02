@@ -89,6 +89,7 @@ export class ReportsService {
       fromTime?: string;
       toTime?: string;
       cookingUnitId?: string;
+      cashierName?: string;
     } = {},
   ) {
     const def = RESTAURANT_REPORT_DEFS.find((r) => r.id === reportId);
@@ -101,6 +102,7 @@ export class ReportsService {
     const fromTime = this.normalizeTime(query.fromTime, "00:00");
     const toTime = this.normalizeTime(query.toTime, "23:59");
     const cookingUnitId = query.cookingUnitId?.trim() || undefined;
+    const cashierName = query.cashierName?.trim() || undefined;
     if (from > to) throw new BadRequestException("`from` must be on or before `to`");
 
     const generatedAt = new Date().toISOString();
@@ -164,7 +166,7 @@ export class ReportsService {
       case "item-remove":
         return {
           ...base,
-          ...(await this.itemRemove(organizationId, branch.id, range)),
+          ...(await this.itemRemove(organizationId, branch.id, range, cashierName)),
         };
       case "cashier-out":
       case "cashier-overshort":
@@ -739,7 +741,12 @@ export class ReportsService {
     };
   }
 
-  private async itemRemove(organizationId: string, branchId: string, range: { from: string; to: string; fromTime: string; toTime: string }) {
+  private async itemRemove(
+    organizationId: string,
+    branchId: string,
+    range: { from: string; to: string; fromTime: string; toTime: string },
+    cashierName?: string,
+  ) {
     const rowsDb = await this.db
       .select()
       .from(popsKitchenLineCancellations)
@@ -754,19 +761,19 @@ export class ReportsService {
       .orderBy(desc(popsKitchenLineCancellations.canceledAt))
       .limit(500);
 
-    const rows = rowsDb.map((r) => ({
+    const cashierKey = cashierName?.trim().toLowerCase() || "";
+    const rows = rowsDb
+      .filter((r) => {
+        if (!cashierKey) return true;
+        return (r.canceledByName ?? "").trim().toLowerCase() === cashierKey;
+      })
+      .map((r) => ({
       label: r.label,
       qty: r.qtyCanceled,
       amount: r.qtyCanceled * (r.unitPricePkr ?? 0),
-      meta: [
-        r.orderRef ?? r.ticketRef,
-        r.source,
-        r.canceledByName ? `by ${r.canceledByName}` : null,
-        r.reason ? `Reason: ${r.reason}` : null,
-        r.canceledAt.toISOString(),
-      ]
-        .filter(Boolean)
-        .join(" · "),
+      cashier: r.canceledByName?.trim() || null,
+      reason: r.reason?.trim() || null,
+      meta: [r.orderRef ?? r.ticketRef, r.source, r.canceledAt.toISOString()].filter(Boolean).join(" · "),
     }));
     return {
       rows,

@@ -119,6 +119,7 @@ export const popsNavItems: PopsNavItem[] = [
       { path: "reports/item-remove", label: "Item remove" },
       { path: "reports/cashier-overshort", label: "Cashier over/short" },
       { path: "reports/profit-loss", label: "Profit & loss" },
+      { path: "reports/kitchen-pnl", label: "Kitchen P&L" },
       { path: "reports/expense", label: "Expense report" },
       { path: "reports/sales-by-hall", label: "Sales by hall" },
       { path: "reports/cash-drawer", label: "Cash drawer" },

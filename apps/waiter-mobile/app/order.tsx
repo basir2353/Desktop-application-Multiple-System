@@ -77,7 +77,7 @@ import {
 } from "../src/lib/orderMode";
 import { resolveStaffRole, isCashierRole } from "../src/lib/roles";
 import { printBillReceipt, printCartBill, printCartOrder, printKitchenOrder } from "../src/lib/printBill";
-import { cartToKotBaseline, diffKotLines, type KotBaselineLine } from "../src/lib/kotLineDelta";
+import { cartToKotBaseline, diffKotLines, kotDeltaRequiresChangeReason, type KotBaselineLine } from "../src/lib/kotLineDelta";
 import { calcServiceTaxTotals, DEFAULT_POS_TAX_SETTINGS, posTaxSettingsFromApi } from "../src/lib/posTaxSettings";
 import { fetchTaxFeatures } from "../src/api/admin";
 import { fetchTaxSettings } from "../src/api/accounting";
@@ -613,7 +613,7 @@ export default function OrderScreen() {
     }
     if (editingOrder?.kind === "ticket" && kotBaselineRef.current) {
       const deltas = diffKotLines(kotBaselineRef.current, cart);
-      if (deltas.length > 0) {
+      if (kotDeltaRequiresChangeReason(deltas)) {
         setLineChangeReasonOpen(true);
         return;
       }
@@ -1860,7 +1860,7 @@ export default function OrderScreen() {
       <CancelOrderReasonModal
         visible={lineChangeReasonOpen}
         title="Reason for order change"
-        subtitle="Qty kam/zyada ya item change karne se pehle reason likhna zaroori hai."
+        subtitle="Qty kam (minus) ya item remove — reason likhna zaroori. Naya item add ya qty zyada par reason nahi."
         confirmLabel="Update order"
         loadingLabel="Updating…"
         loading={sendMutation.isPending}

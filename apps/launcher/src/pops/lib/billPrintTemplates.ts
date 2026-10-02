@@ -119,6 +119,56 @@ export function getBillPrintTemplate(
 export function starterBillPrintTemplates(): BillPrintStarterTemplate[] {
   return [
     {
+      name: "PRA Fiscal Bill",
+      description: "FBR / PRA — tax invoice layout with GST lines (use when PRA Active)",
+      settings: normalizeBillPrintSettings({
+        documentTitle: "TAX INVOICE",
+        headerSubtitle: "NTN / STRN · Address · Phone",
+        footerText: "Thank you — visit again",
+        footerSecondaryText: "Registered on PRA e-IMS",
+        layout: "standard",
+        headerAlign: "center",
+        baseFontSize: 13,
+        fields: {
+          ...DEFAULT_BILL_RECEIPT_FIELDS,
+          printerName: false,
+          headerSubtitle: true,
+          footerSecondary: true,
+          billRef: true,
+          waiterName: true,
+          tableLabel: true,
+          service: true,
+          tax: true,
+          discount: true,
+          delivery: true,
+        },
+      }),
+    },
+    {
+      name: "Normal Bill (Non-PRA)",
+      description: "Simple receipt without PRA fiscal footer — Sub Total / Service / Net",
+      settings: normalizeBillPrintSettings({
+        documentTitle: "RECEIPT",
+        headerSubtitle: "Address · Tel",
+        footerText: "Thank you — visit again",
+        footerSecondaryText: "POWERED BY POPS",
+        layout: "compact",
+        headerAlign: "center",
+        baseFontSize: 13,
+        fields: {
+          ...DEFAULT_BILL_RECEIPT_FIELDS,
+          printerName: false,
+          headerSubtitle: true,
+          footerSecondary: true,
+          billRef: true,
+          service: true,
+          tax: true,
+          discount: true,
+          delivery: true,
+        },
+      }),
+    },
+    {
       name: "Cafe Receipt",
       description: "Centered brand · RECEIPT · thank-you footer (cafe / kitchen & bar style)",
       settings: normalizeBillPrintSettings({

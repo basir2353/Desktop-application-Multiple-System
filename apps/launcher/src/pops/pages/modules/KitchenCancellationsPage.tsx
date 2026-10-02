@@ -34,6 +34,7 @@ export function KitchenCancellationsPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
   const [from, setFrom] = useState(todayIso);
   const [to, setTo] = useState(todayIso);
+  const [cashierName, setCashierName] = useState("");
 
   const query = useQuery({
     queryKey: ["kitchen", "cancellations", branch?.code, from, to],
@@ -45,13 +46,28 @@ export function KitchenCancellationsPage(): JSX.Element {
       }),
   });
 
-  const rows = query.data?.cancellations ?? [];
+  const allRows = query.data?.cancellations ?? [];
+  const cashiers = useMemo(() => {
+    const names = new Set<string>();
+    for (const c of allRows) {
+      const name = c.canceledByName?.trim();
+      if (name) names.add(name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [allRows]);
+
+  const rows = useMemo(() => {
+    const key = cashierName.trim().toLowerCase();
+    if (!key) return allRows;
+    return allRows.filter((c) => (c.canceledByName ?? "").trim().toLowerCase() === key);
+  }, [allRows, cashierName]);
+
   const totals = useMemo(
     () => ({
-      qty: query.data?.totalQtyCanceled ?? 0,
-      amount: query.data?.totalAmountPkr ?? 0,
+      qty: rows.reduce((s, r) => s + r.qtyCanceled, 0),
+      amount: rows.reduce((s, r) => s + r.amountPkr, 0),
     }),
-    [query.data],
+    [rows],
   );
 
   return (
@@ -69,6 +85,21 @@ export function KitchenCancellationsPage(): JSX.Element {
         <label className="flex min-w-[10rem] flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">To</span>
           <input className={fieldInputClass} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <label className="flex min-w-[12rem] flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cashier</span>
+          <select
+            className={fieldInputClass}
+            value={cashierName}
+            onChange={(e) => setCashierName(e.target.value)}
+          >
+            <option value="">All cashiers</option>
+            {cashiers.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
         </label>
       </ModuleFilterBar>
 
@@ -113,11 +144,21 @@ export function KitchenCancellationsPage(): JSX.Element {
             {
               key: "orderRef",
               header: "Order",
-              render: (r) => r.orderRef ?? "—",
+              render: (r) => (
+                <span className="block max-w-[9rem] truncate font-mono text-xs" title={r.orderRef ?? undefined}>
+                  {r.orderRef ?? "—"}
+                </span>
+              ),
             },
-            { key: "ticketRef", header: "KOT" },
-            { key: "stationLabel", header: "Station" },
-            { key: "label", header: "Item" },
+            {
+              key: "label",
+              header: "Item",
+              render: (r) => (
+                <span className="block max-w-[10rem] truncate font-medium" title={r.label}>
+                  {r.label}
+                </span>
+              ),
+            },
             { key: "qtyCanceled", header: "Qty" },
             {
               key: "amountPkr",
@@ -125,19 +166,18 @@ export function KitchenCancellationsPage(): JSX.Element {
               render: (r) => formatPkr(r.amountPkr),
             },
             {
-              key: "ticketStatusAtCancel",
-              header: "Kitchen status",
-              render: (r) => r.ticketStatusAtCancel,
-            },
-            {
               key: "canceledByName",
-              header: "Canceled by",
+              header: "Cashier",
               render: (r) => r.canceledByName ?? "—",
             },
             {
               key: "reason",
               header: "Reason",
-              render: (r) => r.reason?.trim() || "—",
+              render: (r) => (
+                <span className="block max-w-[14rem] truncate" title={r.reason?.trim() || undefined}>
+                  {r.reason?.trim() || "—"}
+                </span>
+              ),
             },
             {
               key: "source",

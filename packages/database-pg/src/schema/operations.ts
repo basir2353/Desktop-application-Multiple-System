@@ -70,6 +70,10 @@ export const popsKitchenTickets = pgTable(
     /** Last user who edited order contents (items/notes/table) — not kitchen status bumps. */
     updatedByUserId: uuid("updated_by_user_id"),
     updatedByName: text("updated_by_name"),
+    /** Bumps on each content edit; kitchen Accept clears pending via acknowledged_at. */
+    contentRevision: integer("content_revision").notNull().default(0),
+    updateAcknowledgedAt: timestamp("update_acknowledged_at", { withTimezone: true }),
+    updateAcknowledgedByName: text("update_acknowledged_by_name"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

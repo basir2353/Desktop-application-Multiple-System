@@ -7,6 +7,7 @@ import { usePopsStore } from "../../../stores/popsStore";
 import { fetchVendorBills } from "../../api/accounting";
 import { fetchInventoryCookingUnits } from "../../api/inventory";
 import { fetchRestaurantReport, RESTAURANT_REPORTS } from "../../api/reports";
+import { fetchKitchenCancellations } from "../../api/kitchen";
 import { TimeAmPmInput } from "../../components/TimeAmPmInput";
 import { formatPkr } from "../../hooks/useInventory";
 import { fieldInputClass } from "../../lib/themeClasses";
@@ -35,7 +36,12 @@ function isIsoDate(value: string | null): value is string {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
-const COOKING_UNIT_FILTER_REPORTS = new Set(["cooking-unit-sales", "cooking-unit-profit"]);
+const COOKING_UNIT_FILTER_REPORTS = new Set([
+  "cooking-unit-sales",
+  "cooking-unit-profit",
+  "kitchen-pnl",
+]);
+const CASHIER_FILTER_REPORTS = new Set(["item-remove"]);
 
 export function ReportsPage(): JSX.Element {
   const branch = usePopsStore((s) => s.branch);
@@ -56,6 +62,7 @@ export function ReportsPage(): JSX.Element {
   const [toTime, setToTime] = useState("23:59");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [cookingUnitId, setCookingUnitId] = useState(() => searchParams.get("cookingUnitId") ?? "");
+  const [cashierName, setCashierName] = useState("");
   const [vendorDrill, setVendorDrill] = useState<{ supplierId: string; name: string } | null>(null);
 
   useEffect(() => {
@@ -64,6 +71,10 @@ export function ReportsPage(): JSX.Element {
 
   useEffect(() => {
     if (!COOKING_UNIT_FILTER_REPORTS.has(activeId)) setCookingUnitId("");
+  }, [activeId]);
+
+  useEffect(() => {
+    if (!CASHIER_FILTER_REPORTS.has(activeId)) setCashierName("");
   }, [activeId]);
 
   useEffect(() => {
@@ -91,6 +102,8 @@ export function ReportsPage(): JSX.Element {
 
   const activeMeta = RESTAURANT_REPORTS.find((r) => r.id === activeId) ?? RESTAURANT_REPORTS[0];
   const showCookingUnitFilter = COOKING_UNIT_FILTER_REPORTS.has(activeId);
+  const showCashierFilter = CASHIER_FILTER_REPORTS.has(activeId);
+  const isItemRemove = activeId === "item-remove";
 
   const cookingUnitsQuery = useQuery({
     queryKey: ["inventory", "cooking-units", branch?.code],
@@ -102,6 +115,24 @@ export function ReportsPage(): JSX.Element {
   const selectedUnitName =
     cookingUnits.find((u) => u.id === cookingUnitId)?.name ?? null;
 
+  const cashiersQuery = useQuery({
+    queryKey: ["reports", "item-remove-cashiers", branch?.code, from, to],
+    enabled: Boolean(branch?.code && showCashierFilter),
+    queryFn: async () => {
+      const data = await fetchKitchenCancellations(branch!.code, {
+        from: from || undefined,
+        to: to || undefined,
+      });
+      const names = new Set<string>();
+      for (const c of data.cancellations) {
+        const name = c.canceledByName?.trim();
+        if (name) names.add(name);
+      }
+      return [...names].sort((a, b) => a.localeCompare(b));
+    },
+    staleTime: 30_000,
+  });
+
   const reportQuery = useQuery({
     queryKey: [
       "reports",
@@ -112,6 +143,7 @@ export function ReportsPage(): JSX.Element {
       fromTime,
       toTime,
       showCookingUnitFilter ? cookingUnitId : "",
+      showCashierFilter ? cashierName : "",
     ],
     enabled: Boolean(branch?.code && activeId && activeId !== "universal-ledger"),
     queryFn: () =>
@@ -121,6 +153,7 @@ export function ReportsPage(): JSX.Element {
         fromTime,
         toTime,
         ...(showCookingUnitFilter && cookingUnitId ? { cookingUnitId } : {}),
+        ...(showCashierFilter && cashierName ? { cashierName } : {}),
       }),
     refetchOnWindowFocus: true,
     staleTime: 0,
@@ -144,6 +177,8 @@ export function ReportsPage(): JSX.Element {
             Label: r.label,
             Qty: r.qty ?? "",
             Amount: r.amount ?? "",
+            Cashier: (r as { cashier?: string | null }).cashier ?? "",
+            Reason: (r as { reason?: string | null }).reason ?? "",
             Bills: r.billCount ?? "",
             Received: r.receivedQty ?? "",
             Usage: r.usageQty ?? "",
@@ -187,6 +222,7 @@ export function ReportsPage(): JSX.Element {
   const isUniversalLedger = activeId === "universal-ledger";
   const isCookingUnitReport = activeId === "cooking-unit-profit";
   const isCookingUnitSales = activeId === "cooking-unit-sales";
+  const isKitchenPnl = activeId === "kitchen-pnl";
   const isVendorsBalance = activeId === "vendors-balance";
 
   const vendorBillsQuery = useQuery({
@@ -250,12 +286,14 @@ export function ReportsPage(): JSX.Element {
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
-    const head =
-      "<th>Label</th><th>Qty</th><th>Amount</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Meta</th>";
+    const head = isItemRemove
+      ? "<th>Item</th><th>Qty</th><th>Amount</th><th>Cashier</th><th>Reason</th><th>Order / source</th>"
+      : "<th>Label</th><th>Qty</th><th>Amount</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Meta</th>";
     const body = rows
-      .map(
-        (r) =>
-          `<tr><td>${escape(r.label)}</td><td>${escape(r.qty ?? "")}</td><td>${escape(r.amount ?? "")}</td><td>${escape(r.debit ?? "")}</td><td>${escape(r.credit ?? "")}</td><td>${escape(r.balance ?? "")}</td><td>${escape(r.meta ?? "")}</td></tr>`,
+      .map((r) =>
+        isItemRemove
+          ? `<tr><td>${escape(r.label)}</td><td>${escape(r.qty ?? "")}</td><td>${escape(r.amount ?? "")}</td><td>${escape((r as { cashier?: string | null }).cashier ?? "")}</td><td>${escape((r as { reason?: string | null }).reason ?? "")}</td><td>${escape(r.meta ?? "")}</td></tr>`
+          : `<tr><td>${escape(r.label)}</td><td>${escape(r.qty ?? "")}</td><td>${escape(r.amount ?? "")}</td><td>${escape(r.debit ?? "")}</td><td>${escape(r.credit ?? "")}</td><td>${escape(r.balance ?? "")}</td><td>${escape(r.meta ?? "")}</td></tr>`,
       )
       .join("");
     const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escape(data.title)}</title>
@@ -378,6 +416,25 @@ export function ReportsPage(): JSX.Element {
               {cookingUnits.map((unit) => (
                 <option key={unit.id} value={unit.id}>
                   {unit.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {showCashierFilter ? (
+          <label className="flex min-w-[12rem] flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Cashier
+            </span>
+            <select
+              className={fieldInputClass}
+              value={cashierName}
+              onChange={(e) => setCashierName(e.target.value)}
+            >
+              <option value="">All cashiers</option>
+              {(cashiersQuery.data ?? []).map((name) => (
+                <option key={name} value={name}>
+                  {name}
                 </option>
               ))}
             </select>
@@ -540,6 +597,137 @@ export function ReportsPage(): JSX.Element {
                   .
                 </p>
               ) : null}
+            </div>
+          ) : isKitchenPnl ? (
+            <div className="mt-4 space-y-3">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                    Total stock issue
+                  </div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                    {formatPkr(Number(reportQuery.data?.totals?.stockIssue ?? 0))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-200">
+                    Total sale
+                  </div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                    {formatPkr(Number(reportQuery.data?.totals?.sale ?? 0))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                    Profit
+                  </div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-800 dark:text-emerald-200">
+                    {formatPkr(Number(reportQuery.data?.totals?.profit ?? 0))}
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-slate-500">Sale − Stock issue</p>
+                </div>
+              </div>
+              <SimpleTable
+                rowKey={(r) => `${String(r.label)}-${String(r.cookingUnitId ?? "")}`}
+                columns={[
+                  { key: "label", header: "Kitchen" },
+                  {
+                    key: "stockIssue",
+                    header: "Stock issue",
+                    render: (r) => formatPkr(Number((r as { stockIssue?: number }).stockIssue ?? 0)),
+                  },
+                  {
+                    key: "sale",
+                    header: "Sale",
+                    render: (r) => formatPkr(Number((r as { sale?: number }).sale ?? 0)),
+                  },
+                  {
+                    key: "profit",
+                    header: "Profit",
+                    render: (r) => formatPkr(Number((r as { profit?: number }).profit ?? r.amount ?? 0)),
+                  },
+                ]}
+                rows={rows as unknown as Record<string, unknown>[]}
+              />
+            </div>
+          ) : isItemRemove ? (
+            <div className="mt-4 space-y-2">
+              <p className="text-[11px] text-slate-500">
+                Item names are folded short. Reason and cashier are separate columns
+                {cashierName ? (
+                  <>
+                    {" "}
+                    · filtered by{" "}
+                    <span className="font-medium text-amber-600 dark:text-amber-300">{cashierName}</span>
+                  </>
+                ) : null}
+                .
+              </p>
+              <SimpleTable
+                rowKey={(r) =>
+                  `${String(r.label)}-${String(r.meta ?? "")}-${String(r.amount ?? "")}-${String(r.qty ?? "")}`
+                }
+                columns={[
+                  {
+                    key: "label",
+                    header: "Item",
+                    render: (r) => (
+                      <span
+                        className="block max-w-[10rem] truncate text-sm font-medium text-slate-800 dark:text-slate-100"
+                        title={String(r.label)}
+                      >
+                        {String(r.label)}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "qty",
+                    header: "Qty",
+                    render: (r) => (r.qty != null ? Number(r.qty).toLocaleString() : "—"),
+                  },
+                  {
+                    key: "amount",
+                    header: "Amount",
+                    render: (r) => (r.amount != null ? formatPkr(Number(r.amount)) : "—"),
+                  },
+                  {
+                    key: "cashier",
+                    header: "Cashier",
+                    render: (r) => {
+                      const name = (r as { cashier?: string | null }).cashier;
+                      return name?.trim() ? String(name) : "—";
+                    },
+                  },
+                  {
+                    key: "reason",
+                    header: "Reason",
+                    render: (r) => {
+                      const reason = (r as { reason?: string | null }).reason;
+                      return (
+                        <span
+                          className="block max-w-[14rem] truncate text-sm text-slate-700 dark:text-slate-200"
+                          title={reason?.trim() || undefined}
+                        >
+                          {reason?.trim() || "—"}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: "meta",
+                    header: "Order / source",
+                    render: (r) => (
+                      <span
+                        className="block max-w-[16rem] truncate text-xs text-slate-500"
+                        title={r.meta ? String(r.meta) : undefined}
+                      >
+                        {r.meta ? String(r.meta) : "—"}
+                      </span>
+                    ),
+                  },
+                ]}
+                rows={rows as unknown as Record<string, unknown>[]}
+              />
             </div>
           ) : isCookingUnitSales ? (
             <div className="mt-4 space-y-3">

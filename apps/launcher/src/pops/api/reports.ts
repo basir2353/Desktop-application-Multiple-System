@@ -31,6 +31,8 @@ export type RestaurantReportQuery = {
   fromTime?: string;
   toTime?: string;
   cookingUnitId?: string;
+  /** Filter item-remove / cancellations by cashier display name. */
+  cashierName?: string;
 };
 
 export async function fetchRestaurantReportCatalog(): Promise<RestaurantReportCatalog> {
@@ -50,12 +52,18 @@ export async function fetchRestaurantReport(
   reportId: string,
   options?: RestaurantReportQuery,
 ): Promise<RestaurantReport> {
+  // Client-only kitchen P&L (stock issue vs sale) until Railway ships the same aggregate.
+  if (reportId === "kitchen-pnl") {
+    return buildClientRestaurantReport(branchCode, reportId, options);
+  }
+
   const params = new URLSearchParams({ branchCode });
   if (options?.from) params.set("from", options.from);
   if (options?.to) params.set("to", options.to);
   if (options?.fromTime) params.set("fromTime", options.fromTime);
   if (options?.toTime) params.set("toTime", options.toTime);
   if (options?.cookingUnitId) params.set("cookingUnitId", options.cookingUnitId);
+  if (options?.cashierName) params.set("cashierName", options.cashierName);
 
   try {
     const res = await authFetch(`/v1/reports/${reportId}?${params}`);
@@ -84,12 +92,23 @@ export async function fetchRestaurantReport(
         reportId === "edited-orders" &&
         (report.empty ||
           !report.rows.some((r) => /Updated by|Kitchen edit|Bill edit/i.test(String(r.meta ?? ""))));
+      const itemRemoveNeedsUpgrade =
+        reportId === "item-remove" &&
+        (Boolean(options?.cashierName) ||
+          report.rows.some((r) => /Reason:/i.test(String(r.meta ?? ""))) ||
+          (report.rows.length > 0 &&
+            !report.rows.some(
+              (r) =>
+                typeof (r as { reason?: unknown }).reason === "string" ||
+                typeof (r as { cashier?: unknown }).cashier === "string",
+            )));
       if (
         cashNeedsUpgrade ||
         inOutNeedsUpgrade ||
         vendorsBalanceNeedsUpgrade ||
         canceledNeedsUpgrade ||
-        editedNeedsClient
+        editedNeedsClient ||
+        itemRemoveNeedsUpgrade
       ) {
         try {
           return await buildClientRestaurantReport(branchCode, reportId, options);

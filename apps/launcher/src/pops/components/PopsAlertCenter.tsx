@@ -36,6 +36,8 @@ function AlertRow({ alert, onNavigate }: { alert: PopsAlert; onNavigate?: () => 
         <Badge tone={alert.tone === "danger" ? "danger" : alert.tone === "warning" ? "warning" : "info"}>
           {alert.kind === "new_order"
             ? "Order"
+            : alert.kind === "order_update_accepted"
+              ? "Accepted"
             : alert.kind === "kitchen_slow"
               ? "Kitchen"
               : alert.kind.startsWith("print_")

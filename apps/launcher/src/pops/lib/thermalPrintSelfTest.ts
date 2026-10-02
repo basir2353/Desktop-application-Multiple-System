@@ -181,10 +181,12 @@ export function runThermalPrintSelfTest(input: {
 
   checks.push(
     check(
-      "card-cash-totals",
-      "Card/Cash GST compare present",
-      /CARD PAYMENT|On Card Payment/i.test(html) && /CASH PAYMENT|On Cash Payment/i.test(html),
-      "Card and Cash payment blocks found",
+      "simple-totals",
+      "Single Sub/Net totals block (no Card vs Cash compare)",
+      /Sub Total/i.test(html) &&
+        /Net Total/i.test(html) &&
+        !/On Card Payment|On Cash Payment|CARD PAYMENT|CASH PAYMENT/i.test(html),
+      "Simple totals found without Card/Cash compare",
     ),
   );
 

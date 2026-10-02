@@ -52,6 +52,21 @@ export class KitchenService implements OnModuleInit {
           sql.raw("ALTER TABLE pops_kitchen_tickets ADD COLUMN IF NOT EXISTS updated_by_name text"),
         );
         await this.db.execute(
+          sql.raw(
+            "ALTER TABLE pops_kitchen_tickets ADD COLUMN IF NOT EXISTS content_revision integer NOT NULL DEFAULT 0",
+          ),
+        );
+        await this.db.execute(
+          sql.raw(
+            "ALTER TABLE pops_kitchen_tickets ADD COLUMN IF NOT EXISTS update_acknowledged_at timestamptz",
+          ),
+        );
+        await this.db.execute(
+          sql.raw(
+            "ALTER TABLE pops_kitchen_tickets ADD COLUMN IF NOT EXISTS update_acknowledged_by_name text",
+          ),
+        );
+        await this.db.execute(
           sql.raw("ALTER TABLE pops_kitchen_line_cancellations ADD COLUMN IF NOT EXISTS reason text"),
         );
       } catch (err) {
@@ -358,7 +373,6 @@ export class KitchenService implements OnModuleInit {
       const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, withDest);
       const previousLines = this.linesFromTicket(existing);
       pendingCancellations = diffCanceledLines(previousLines, enrichedLines);
-      const lineQtyIncreased = hasIncreasedLines(previousLines, enrichedLines);
       linesJson = JSON.stringify(
         enrichedLines.map((l) => ({
           label: l.label,
@@ -373,12 +387,10 @@ export class KitchenService implements OnModuleInit {
           ? input.notes?.trim() || null
           : this.extractNotesFromSummary(existing.itemsSummary);
       const editReason = input.cancellationReason?.trim() || null;
-      if (
-        (pendingCancellations.length > 0 || lineQtyIncreased) &&
-        (!editReason || editReason.length < 3)
-      ) {
+      // Reason only when existing qty is reduced or an item is removed — not for new adds / increases.
+      if (pendingCancellations.length > 0 && (!editReason || editReason.length < 3)) {
         throw new BadRequestException(
-          "Reason is required when changing order quantities (increase or decrease).",
+          "Reason is required when reducing qty or removing an item.",
         );
       }
       const notesWithReason = editReason
@@ -471,15 +483,38 @@ export class KitchenService implements OnModuleInit {
 
     let updatedByUserId: string | null | undefined;
     let updatedByName: string | null | undefined;
-    if (isContentEdit && editor?.userId) {
-      updatedByUserId = editor.userId;
-      const userRows = await this.db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.id, editor.userId))
-        .limit(1);
-      const email = userRows[0]?.email;
-      updatedByName = email ? waiterDisplayName(email) : null;
+    let nextContentRevision: number | undefined;
+    let clearUpdateAck = false;
+    if (isContentEdit) {
+      nextContentRevision = Number(existing.contentRevision ?? 0) + 1;
+      clearUpdateAck = true;
+      if (editor?.userId) {
+        updatedByUserId = editor.userId;
+        const userRows = await this.db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, editor.userId))
+          .limit(1);
+        const email = userRows[0]?.email;
+        updatedByName = email ? waiterDisplayName(email) : null;
+      }
+    }
+
+    let acknowledgeAt: Date | undefined;
+    let acknowledgeByName: string | null | undefined;
+    if (input.acknowledgeUpdate === true && !isContentEdit) {
+      acknowledgeAt = new Date();
+      if (editor?.userId) {
+        const userRows = await this.db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, editor.userId))
+          .limit(1);
+        const email = userRows[0]?.email;
+        acknowledgeByName = email ? waiterDisplayName(email) : "Kitchen";
+      } else {
+        acknowledgeByName = "Kitchen";
+      }
     }
 
     const [row] = await this.db
@@ -503,6 +538,16 @@ export class KitchenService implements OnModuleInit {
           : {}),
         ...(updatedByUserId !== undefined
           ? { updatedByUserId, updatedByName: updatedByName ?? null }
+          : {}),
+        ...(nextContentRevision !== undefined ? { contentRevision: nextContentRevision } : {}),
+        ...(clearUpdateAck
+          ? { updateAcknowledgedAt: null, updateAcknowledgedByName: null }
+          : {}),
+        ...(acknowledgeAt
+          ? {
+              updateAcknowledgedAt: acknowledgeAt,
+              updateAcknowledgedByName: acknowledgeByName ?? "Kitchen",
+            }
           : {}),
       })
       .where(eq(popsKitchenTickets.id, ticketId))
@@ -987,19 +1032,6 @@ function diffCanceledLines(
     }
   }
   return canceled;
-}
-
-function hasIncreasedLines(
-  previous: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
-  next: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
-): boolean {
-  const oldMap = aggregateLines(previous);
-  const newMap = aggregateLines(next);
-  for (const [key, newLine] of newMap) {
-    const oldQty = oldMap.get(key)?.qty ?? 0;
-    if (newLine.qty > oldQty) return true;
-  }
-  return false;
 }
 
 /** Persist qty-edit reason into notes so increases (not only decreases) are auditable. */

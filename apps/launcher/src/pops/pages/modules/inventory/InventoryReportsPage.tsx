@@ -80,6 +80,8 @@ type FoodCostSnapshot = {
   transferValue: number;
   stockValue: number;
   salesValue: number;
+  /** Sale − stock issue (transfer in). */
+  profit: number;
   foodCostPct: number | null;
 };
 
@@ -195,10 +197,11 @@ export function InventoryReportsPage(): JSX.Element {
       }, 0);
 
       const salesValue = Number(sales.totals?.revenue ?? 0);
+      const profit = salesValue - transferValue;
       const foodCostPct =
         salesValue > 0 ? Math.round((transferValue / salesValue) * 1000) / 10 : null;
 
-      return { transferValue, stockValue, salesValue, foodCostPct };
+      return { transferValue, stockValue, salesValue, profit, foodCostPct };
     },
     onSuccess: (data) => {
       setFoodCostSnapshot(data);
@@ -350,39 +353,56 @@ export function InventoryReportsPage(): JSX.Element {
         </div>
 
         {foodCostSnapshot ? (
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-              <div className="text-[10px] uppercase tracking-wide text-slate-500">1 · Transfer in</div>
-              <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-                {formatPkr(foodCostSnapshot.transferValue)}
+          <div className="mt-3 space-y-2">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                  Total stock issue
+                </div>
+                <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                  {formatPkr(foodCostSnapshot.transferValue)}
+                </div>
+                <p className="mt-0.5 text-[10px] text-slate-500">Kitchen ko stock transfer</p>
+              </div>
+              <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-sky-800 dark:text-sky-200">
+                  Total sale
+                </div>
+                <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                  {formatPkr(foodCostSnapshot.salesValue)}
+                </div>
+                <p className="mt-0.5 text-[10px] text-slate-500">Us kitchen ki sale</p>
+              </div>
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  Profit
+                </div>
+                <div className="text-sm font-bold tabular-nums text-emerald-800 dark:text-emerald-200">
+                  {formatPkr(foodCostSnapshot.profit)}
+                </div>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Sale − Stock issue
+                  {selectedUnitName ? ` · ${selectedUnitName}` : " · all units"}
+                  {dateRangeLabel ? ` · ${dateRangeLabel}` : " · today"}
+                </p>
               </div>
             </div>
-            <div className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-              <div className="text-[10px] uppercase tracking-wide text-slate-500">2 · Stock in hand</div>
-              <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-                {formatPkr(foodCostSnapshot.stockValue)}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Stock in hand</div>
+                <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                  {formatPkr(foodCostSnapshot.stockValue)}
+                </div>
               </div>
-            </div>
-            <div className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-              <div className="text-[10px] uppercase tracking-wide text-slate-500">3 · Sale</div>
-              <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-                {formatPkr(foodCostSnapshot.salesValue)}
+              <div className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Est. food cost %</div>
+                <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                  {foodCostSnapshot.foodCostPct == null
+                    ? "—"
+                    : `${foodCostSnapshot.foodCostPct}%`}
+                </div>
+                <p className="mt-0.5 text-[10px] text-slate-500">Transfer ÷ Sale</p>
               </div>
-            </div>
-            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                Est. food cost
-              </div>
-              <div className="text-sm font-bold tabular-nums text-emerald-800 dark:text-emerald-200">
-                {foodCostSnapshot.foodCostPct == null
-                  ? "—"
-                  : `${foodCostSnapshot.foodCostPct}%`}
-              </div>
-              <p className="mt-0.5 text-[10px] text-slate-500">
-                Transfer ÷ Sale
-                {selectedUnitName ? ` · ${selectedUnitName}` : " · all units"}
-                {dateRangeLabel ? ` · ${dateRangeLabel}` : " · today"}
-              </p>
             </div>
           </div>
         ) : null}

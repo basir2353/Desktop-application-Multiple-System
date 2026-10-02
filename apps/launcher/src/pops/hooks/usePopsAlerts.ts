@@ -12,8 +12,10 @@ import {
   kitchenAlertsFromTickets,
   mergeAlerts,
   newOrderAlert,
+  orderUpdateAcceptedAlert,
   type PopsAlert,
 } from "../lib/popsAlerts";
+import { useSessionStore } from "../../stores/sessionStore";
 import {
   printAlertsFromState,
   PRINT_HISTORY_CHANGED_EVENT,
@@ -125,6 +127,7 @@ export function usePopsAlerts(): {
   isLoading: boolean;
 } {
   const branch = usePopsStore((s) => s.branch);
+  const sessionUserId = useSessionStore((s) => s.claims?.sub ?? null);
   const systemId = useActiveSystemId();
   const restaurantAlerts = systemId === "restaurant";
   const kitchenPollMs = useAdaptiveRefetchInterval(5_000);
@@ -137,6 +140,8 @@ export function usePopsAlerts(): {
   );
 
   const prevTicketIdsRef = useRef<Set<string>>(new Set());
+  /** Last seen kitchen ack timestamp per ticket — toast when null → set. */
+  const prevUpdateAckRef = useRef<Map<string, string | null>>(new Map());
   const prevStockAlertIdsRef = useRef<Set<string>>(new Set());
   const prevPrintAlertIdsRef = useRef<Set<string>>(new Set());
   const toastedKeysRef = useRef<Set<string>>(new Set());
@@ -234,6 +239,7 @@ export function usePopsAlerts(): {
     }
 
     prevTicketIdsRef.current = new Set();
+    prevUpdateAckRef.current = new Map();
     prevStockAlertIdsRef.current = new Set();
     prevPrintAlertIdsRef.current = new Set();
     toastedKeysRef.current = new Set();
@@ -250,6 +256,9 @@ export function usePopsAlerts(): {
 
     if (!kitchenInitializedRef.current) {
       prevTicketIdsRef.current = currentIds;
+      prevUpdateAckRef.current = new Map(
+        kitchenQuery.data.map((t) => [t.id, t.updateAcknowledgedAt ?? null] as const),
+      );
       kitchenInitializedRef.current = true;
       return;
     }
@@ -259,6 +268,17 @@ export function usePopsAlerts(): {
         const alert = newOrderAlert(ticket);
         pushToast(alert, `new-${ticket.id}`);
       }
+    }
+
+    for (const ticket of kitchenQuery.data) {
+      const prevAck = prevUpdateAckRef.current.get(ticket.id) ?? null;
+      const nextAck = ticket.updateAcknowledgedAt ?? null;
+      prevUpdateAckRef.current.set(ticket.id, nextAck);
+      if (!nextAck || prevAck === nextAck) continue;
+      // Only notify the cashier/waiter who made the edit (when known).
+      if (ticket.updatedById && sessionUserId && ticket.updatedById !== sessionUserId) continue;
+      const alert = orderUpdateAcceptedAlert(ticket);
+      pushToast(alert, `ack-${ticket.id}-${ticket.contentRevision ?? 0}-${nextAck}`);
     }
 
     for (const ticket of kitchenQuery.data) {
@@ -293,7 +313,7 @@ export function usePopsAlerts(): {
     }
 
     prevTicketIdsRef.current = currentIds;
-  }, [kitchenQuery.data, branch?.code, restaurantAlerts]);
+  }, [kitchenQuery.data, branch?.code, restaurantAlerts, sessionUserId]);
 
   useEffect(() => {
     if (!restaurantAlerts || !inventoryQuery.data) return;

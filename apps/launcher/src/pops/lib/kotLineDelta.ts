@@ -135,6 +135,16 @@ export function diffKotLines(
   return out;
 }
 
+/**
+ * Reason popup only when an existing line qty is reduced or removed.
+ * Adding new items or increasing qty does not require a reason.
+ */
+export function kotDeltaRequiresChangeReason(
+  deltas: Array<{ kind: KotDeltaKind }>,
+): boolean {
+  return deltas.some((d) => d.kind === "decrease" || d.kind === "cancel");
+}
+
 /** Turn deltas into cart lines so section routing still works. */
 export function kotDeltasToCartLines(deltas: KotDeltaLine[]): PosCartLine[] {
   return deltas.map((delta, index) => ({

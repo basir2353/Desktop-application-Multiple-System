@@ -545,6 +545,11 @@ export class DeliveryService implements OnApplicationBootstrap {
       createdByName: row.createdByName ?? null,
       updatedById: row.updatedByUserId ?? null,
       updatedByName: row.updatedByName ?? null,
+      contentRevision: Number(row.contentRevision ?? 0),
+      updateAcknowledgedAt: row.updateAcknowledgedAt?.toISOString() ?? null,
+      updateAcknowledgedByName: row.updateAcknowledgedByName ?? null,
+      updatePending:
+        Number(row.contentRevision ?? 0) > 0 && row.updateAcknowledgedAt == null,
     };
   }
 
