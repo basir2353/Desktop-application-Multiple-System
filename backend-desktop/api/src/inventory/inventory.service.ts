@@ -170,7 +170,7 @@ export class InventoryService implements OnModuleInit {
       .limit(1);
     if (existing.length > 0) {
       // Remember this branch already had stock so a later full wipe does not re-demo.
-      void markDemoSeedDone(this.db, branch.organizationId, branch.id, "inventory").catch(() => undefined);
+      await markDemoSeedDone(this.db, branch.organizationId, branch.id, "inventory");
       return;
     }
 
@@ -183,7 +183,12 @@ export class InventoryService implements OnModuleInit {
       .where(
         and(
           eq(popsInventoryAuditLogs.branchId, branch.id),
-          eq(popsInventoryAuditLogs.action, "Seed completed"),
+          inArray(popsInventoryAuditLogs.action, [
+            "Seed completed",
+            "Ingredient deleted",
+            "Category deleted",
+            "Supplier deleted",
+          ]),
         ),
       )
       .limit(1);
@@ -284,6 +289,7 @@ export class InventoryService implements OnModuleInit {
   async getDashboard(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(branch);
+    await this.dedupeCategoriesForBranch(branch.id);
 
     const ingredients = await this.loadIngredients(branch.id);
 
@@ -854,6 +860,12 @@ export class InventoryService implements OnModuleInit {
 
   async deleteCategory(organizationId: string, userEmail: string, categoryId: string) {
     const cat = await this.getCategory(organizationId, categoryId);
+    const itemCount = await this.countIngredientsInCategory(categoryId);
+    if (itemCount > 0) {
+      throw new BadRequestException(
+        `Cannot delete “${cat.name}” — ${itemCount} ingredient(s) still use it. Move or delete those first.`,
+      );
+    }
     await this.db.delete(popsInventoryCategories).where(eq(popsInventoryCategories.id, categoryId));
     await this.audit(organizationId, cat.branchId, userEmail, "Category deleted", "Categories", cat.name);
     return { ok: true };
@@ -999,6 +1011,25 @@ export class InventoryService implements OnModuleInit {
         await tx.delete(popsPurchaseOrderLines).where(eq(popsPurchaseOrderLines.ingredientId, ingredientId));
         await tx.delete(popsGoodsReceiptLines).where(eq(popsGoodsReceiptLines.ingredientId, ingredientId));
         await tx.delete(popsBranchTransfers).where(eq(popsBranchTransfers.ingredientId, ingredientId));
+        // Linked store catalog stock (auto-created with some ingredients).
+        if (ing.storeProductId) {
+          await tx
+            .delete(storeCookingUnitStock)
+            .where(eq(storeCookingUnitStock.productId, ing.storeProductId));
+          await tx
+            .delete(storeWarehouseStock)
+            .where(eq(storeWarehouseStock.productId, ing.storeProductId));
+          await tx
+            .update(storeProducts)
+            .set({
+              availableStock: 0,
+              reservedStock: 0,
+              damagedStock: 0,
+              expiredStock: 0,
+              inTransitStock: 0,
+            })
+            .where(eq(storeProducts.id, ing.storeProductId));
+        }
         await tx.delete(popsIngredients).where(eq(popsIngredients.id, ingredientId));
       });
     } catch (err) {
@@ -1013,6 +1044,17 @@ export class InventoryService implements OnModuleInit {
       throw err;
     }
     await this.audit(organizationId, ing.branchId, userEmail, "Ingredient deleted", "Ingredients", ing.name);
+
+    // Prevent demo reseed after user clears the last ingredient.
+    const remaining = await this.db
+      .select({ id: popsIngredients.id })
+      .from(popsIngredients)
+      .where(eq(popsIngredients.branchId, ing.branchId))
+      .limit(1);
+    if (remaining.length === 0) {
+      const { markDemoSeedDone } = await import("../lib/demo-seed-flag");
+      await markDemoSeedDone(this.db, organizationId, ing.branchId, "inventory");
+    }
     return { ok: true };
   }
 
@@ -1069,7 +1111,19 @@ export class InventoryService implements OnModuleInit {
 
   async deleteSupplier(organizationId: string, userEmail: string, supplierId: string) {
     const sup = await this.getSupplier(organizationId, supplierId);
-    await this.db.delete(popsSuppliers).where(eq(popsSuppliers.id, supplierId));
+    try {
+      await this.db.delete(popsSuppliers).where(eq(popsSuppliers.id, supplierId));
+    } catch (err) {
+      const code =
+        (err as { code?: string }).code ??
+        (err as { cause?: { code?: string } }).cause?.code;
+      if (code === "23503") {
+        throw new BadRequestException(
+          `Cannot delete “${sup.name}” — used on purchase orders or goods receipts.`,
+        );
+      }
+      throw err;
+    }
     await this.audit(organizationId, sup.branchId, userEmail, "Supplier deleted", "Suppliers", sup.name);
     return { ok: true };
   }
@@ -1497,7 +1551,22 @@ export class InventoryService implements OnModuleInit {
 
   async deleteRecipe(organizationId: string, userEmail: string, recipeId: string) {
     const recipe = await this.getRecipe(organizationId, recipeId);
-    await this.db.delete(popsRecipes).where(eq(popsRecipes.id, recipeId));
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx.delete(popsRecipeLines).where(eq(popsRecipeLines.recipeId, recipeId));
+        await tx.delete(popsRecipes).where(eq(popsRecipes.id, recipeId));
+      });
+    } catch (err) {
+      const code =
+        (err as { code?: string }).code ??
+        (err as { cause?: { code?: string } }).cause?.code;
+      if (code === "23503") {
+        throw new BadRequestException(
+          `Cannot delete recipe “${recipe.name}” — still linked to production or other records.`,
+        );
+      }
+      throw err;
+    }
     await this.audit(organizationId, recipe.branchId, userEmail, "Recipe deleted", "Recipe Management", recipe.name);
     return { ok: true };
   }

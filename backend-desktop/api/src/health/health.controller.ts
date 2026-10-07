@@ -20,7 +20,7 @@ export class HealthController {
       status: "ok",
       ts: new Date().toISOString(),
       // Bump this string whenever we need to confirm Railway picked up a deploy.
-      build: "scale-high-infra-2026-09-25",
+      build: "inventory-delete-fix-2026-10-07",
       scaleProfile: resolveScaleProfile(),
     };
   }
