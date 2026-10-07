@@ -159,6 +159,21 @@ export function PosLatestOrdersPanel({
   const [modeFilter, setModeFilter] = useState<PosRecentOrderModeFilter>("all");
 
   useEffect(() => {
+    function onFocusOpen(): void {
+      setModeFilter("all");
+    }
+    function onFocusClosed(): void {
+      setModeFilter("Paid");
+    }
+    window.addEventListener("pops-pos-focus-open-orders", onFocusOpen);
+    window.addEventListener("pops-pos-focus-closed-orders", onFocusClosed);
+    return () => {
+      window.removeEventListener("pops-pos-focus-open-orders", onFocusOpen);
+      window.removeEventListener("pops-pos-focus-closed-orders", onFocusClosed);
+    };
+  }, []);
+
+  useEffect(() => {
     if (
       modeFilter !== "all" &&
       modeFilter !== "Paid" &&

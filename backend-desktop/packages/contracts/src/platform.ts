@@ -510,6 +510,13 @@ export function applyOrgModuleCeiling(
   if (enabledModules == null) return [...permissions];
   const allowed = new Set(enabledModules);
   allowed.add("pops.read");
+  // Admin tooling must survive module ceilings that list nav modules only.
+  if (permissions.includes("*") || permissions.includes("pops.users.manage")) {
+    allowed.add("pops.users.manage");
+  }
+  if (permissions.includes("*") || permissions.includes("pops.accounting.manage")) {
+    allowed.add("pops.accounting.manage");
+  }
   if (permissions.includes("*")) {
     return [...allowed];
   }

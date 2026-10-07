@@ -145,6 +145,28 @@ export function kotDeltaRequiresChangeReason(
   return deltas.some((d) => d.kind === "decrease" || d.kind === "cancel");
 }
 
+/**
+ * Reason popup only after the grace window since the KOT / ticket baseline time.
+ * Within grace (e.g. just placed, fixing qty), no reason is required.
+ */
+export function kotChangeReasonGraceExpired(
+  baselineAtMs: number | null | undefined,
+  graceMinutes: number,
+  nowMs: number = Date.now(),
+): boolean {
+  if (baselineAtMs == null || !Number.isFinite(baselineAtMs) || baselineAtMs <= 0) {
+    return false;
+  }
+  const graceMs = Math.max(0, Math.round(graceMinutes)) * 60_000;
+  return nowMs - baselineAtMs >= graceMs;
+}
+
+export function parseKotBaselineAtMs(iso: string | null | undefined): number {
+  if (!iso) return Date.now();
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
 /** Turn deltas into cart lines so section routing still works. */
 export function kotDeltasToCartLines(deltas: KotDeltaLine[]): PosCartLine[] {
   return deltas.map((delta, index) => ({

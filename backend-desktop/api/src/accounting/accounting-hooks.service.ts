@@ -28,6 +28,52 @@ export class AccountingHooksService {
 
   constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
 
+  /**
+   * Remove sale (+ related COGS) journal entries for a deleted POS bill
+   * so day-to-day / date-range delete actually clears P&L.
+   */
+  async removeSaleJournalsForBill(
+    organizationId: string,
+    billRef: string,
+  ): Promise<number> {
+    const bySourceRef = await this.db
+      .select({ id: popsJournalEntries.id })
+      .from(popsJournalEntries)
+      .where(
+        and(
+          eq(popsJournalEntries.organizationId, organizationId),
+          eq(popsJournalEntries.sourceRef, billRef),
+        ),
+      );
+    const bySaleRef = await this.db
+      .select({ id: popsJournalEntries.id })
+      .from(popsJournalEntries)
+      .where(
+        and(
+          eq(popsJournalEntries.organizationId, organizationId),
+          eq(popsJournalEntries.entryRef, `JV-SALE-${billRef}`),
+        ),
+      );
+    const byCogsRef = await this.db
+      .select({ id: popsJournalEntries.id })
+      .from(popsJournalEntries)
+      .where(
+        and(
+          eq(popsJournalEntries.organizationId, organizationId),
+          eq(popsJournalEntries.entryRef, `JV-COGS-${billRef}`),
+        ),
+      );
+
+    const ids = [...new Set([...bySourceRef, ...bySaleRef, ...byCogsRef].map((e) => e.id))];
+    if (ids.length === 0) return 0;
+
+    for (const id of ids) {
+      await this.db.delete(popsJournalLines).where(eq(popsJournalLines.entryId, id));
+      await this.db.delete(popsJournalEntries).where(eq(popsJournalEntries.id, id));
+    }
+    return ids.length;
+  }
+
   async recordSaleFromBill(
     organizationId: string,
     branchId: string,

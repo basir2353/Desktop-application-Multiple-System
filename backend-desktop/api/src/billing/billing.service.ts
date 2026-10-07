@@ -17,6 +17,7 @@ import {
   popsBranches,
   popsKitchenTickets,
   popsRiders,
+  taxAuthorityInvoices,
   users,
   type PlatformPgDb,
 } from "@platform/database-pg";
@@ -525,6 +526,58 @@ export class BillingService implements OnApplicationBootstrap {
     const existing = rows[0];
     if (!existing || existing.organizationId !== organizationId) {
       throw new NotFoundException("Bill not found");
+    }
+
+    // Clear related ledgers / kitchen / tax so date-range delete actually zeros sales.
+    try {
+      await this.accountingHooks.removeSaleJournalsForBill(organizationId, existing.billRef);
+    } catch (err) {
+      this.logger.warn(
+        `Journal cleanup failed for ${existing.billRef}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    try {
+      await this.db
+        .delete(taxAuthorityInvoices)
+        .where(
+          and(
+            eq(taxAuthorityInvoices.organizationId, organizationId),
+            eq(taxAuthorityInvoices.sourceType, "bill"),
+            eq(taxAuthorityInvoices.sourceId, billId),
+          ),
+        );
+    } catch (err) {
+      this.logger.warn(
+        `Tax invoice cleanup failed for ${existing.billRef}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    try {
+      const orderRef = (existing.orderRef ?? "").trim();
+      if (orderRef) {
+        await this.db
+          .delete(popsKitchenTickets)
+          .where(
+            and(
+              eq(popsKitchenTickets.branchId, existing.branchId),
+              eq(popsKitchenTickets.orderRef, orderRef),
+            ),
+          );
+      }
+      await this.db
+        .delete(popsKitchenTickets)
+        .where(eq(popsKitchenTickets.billId, billId));
+    } catch (err) {
+      this.logger.warn(
+        `Kitchen ticket cleanup failed for ${existing.billRef}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
 
     await this.db.delete(popsBills).where(eq(popsBills.id, billId));

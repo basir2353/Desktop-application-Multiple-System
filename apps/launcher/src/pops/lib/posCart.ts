@@ -157,3 +157,10 @@ export function shouldOpenVariantPicker(item: MenuItem): boolean {
 export function itemNeedsPosPrompt(item: Pick<MenuItem, "askForPrice" | "askForQty">): boolean {
   return Boolean(item.askForPrice || item.askForQty);
 }
+
+/** Total qty of a menu item across all non-complimentary cart lines (all sizes). */
+export function itemQtyInCart(itemId: string, cartLines: PosCartLine[]): number {
+  return cartLines
+    .filter((line) => line.item.id === itemId && !line.isComplimentary)
+    .reduce((sum, line) => sum + line.qty, 0);
+}

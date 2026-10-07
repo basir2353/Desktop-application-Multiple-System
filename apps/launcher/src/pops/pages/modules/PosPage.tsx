@@ -37,6 +37,7 @@ import { createKitchenTicket, fetchKitchenTickets, isKitchenTicketMissingError, 
 import { fetchBranchMenu } from "../../api/menu";
 import { fetchBranchFloor } from "../../api/tables";
 import { PosDishVariantModal } from "../../components/PosDishVariantModal";
+import { PosDiscountModal } from "../../components/PosDiscountModal";
 import { PosItemPromptModal } from "../../components/PosItemPromptModal";
 import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
 import { PosOrderNotesModal } from "../../components/PosOrderNotesModal";
@@ -83,7 +84,9 @@ import {
   cartLinesToKotBaseline,
   diffKotLines,
   kotDeltaRequiresChangeReason,
+  kotChangeReasonGraceExpired,
   kotDeltasToCartLines,
+  parseKotBaselineAtMs,
   type KotBaselineLine,
 } from "../../lib/kotLineDelta";
 import {
@@ -105,7 +108,15 @@ import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
 import { loadWhatsAppShareSettings, shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
 import { resolveMenuImageUrl } from "../../lib/menuImageUrl";
-import { buildPosRecentOrders, canChangePosRecentOrderTable, canPayPosRecentOrder, type PosRecentOrder } from "../../lib/recentOrders";
+import {
+  buildPosRecentOrders,
+  canChangePosRecentOrderTable,
+  canPayPosRecentOrder,
+  filterDismissedPosOrders,
+  filterPosRecentOrdersByMode,
+  withClosedPosOrderStatus,
+  type PosRecentOrder,
+} from "../../lib/recentOrders";
 import {
   cartFromBill,
   cartFromKitchenTicket,
@@ -305,6 +316,10 @@ export function PosPage(): JSX.Element {
   const [discountPctInput, setDiscountPctInput] = useState(0);
   const [discountAmountInput, setDiscountAmountInput] = useState(0);
   const [discountEditedAs, setDiscountEditedAs] = useState<"pct" | "amount">("pct");
+  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  /** Per-ticket overrides from the Disc / charges panel. */
+  const [ticketTaxFree, setTicketTaxFree] = useState(false);
+  const [ticketServiceFree, setTicketServiceFree] = useState(false);
   const [posSettings, setPosSettings] = useState<PosSettings>(() => loadPosSettings(undefined));
   const [orderModeVisibility, setOrderModeVisibility] = useState<PosOrderModeVisibility>(
     () => DEFAULT_POS_ORDER_MODE_VISIBILITY,
@@ -402,8 +417,16 @@ export function PosPage(): JSX.Element {
   );
   /** Lines as loaded when editing a kitchen ticket — used for UPDATE delta KOT. */
   const kotBaselineRef = useRef<KotBaselineLine[] | null>(null);
+  /** When the current KOT baseline was established (ticket created / last kitchen sync). */
+  const kotBaselineAtRef = useRef<number | null>(null);
   const pendingLineChangeReasonRef = useRef<string | null>(null);
   const [lineChangeReasonOpen, setLineChangeReasonOpen] = useState(false);
+  /** When set, reason modal applies a qty change immediately (remove after KOT print). */
+  const [pendingQtyAdjust, setPendingQtyAdjust] = useState<{
+    lineKey: string;
+    nextQty: number;
+    lineLabel: string;
+  } | null>(null);
 
   const menuQuery = useQuery({
     queryKey: ["menu", branch?.code],
@@ -434,6 +457,9 @@ export function PosPage(): JSX.Element {
       fullScreenMenuEnabled: local.fullScreenMenuEnabled,
       showLatestOrdersPanel: local.showLatestOrdersPanel,
       menuViewMode: local.menuViewMode,
+      showPosTaxServiceFreeToggles: local.showPosTaxServiceFreeToggles,
+      kotChangeReasonGraceMinutes: local.kotChangeReasonGraceMinutes,
+      fullScreenTicketPanelSide: local.fullScreenTicketPanelSide,
       autoPrintOrderDineIn: local.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
       autoPrintOrderDelivery: local.autoPrintOrderDelivery,
@@ -483,12 +509,22 @@ export function PosPage(): JSX.Element {
     return () => window.removeEventListener(POS_SETTINGS_CHANGED_EVENT, onPosSettingsChanged);
   }, [branch?.code]);
 
-  const taxPct = effectiveTaxPctForMode(posSettings, mode);
+  const taxPct = ticketTaxFree ? 0 : effectiveTaxPctForMode(posSettings, mode);
   const defaultServicePct = effectiveServicePctForMode(posSettings, mode);
 
   useEffect(() => {
+    if (ticketServiceFree) {
+      setTicketServicePct(0);
+      return;
+    }
     setTicketServicePct(defaultServicePct);
-  }, [defaultServicePct]);
+  }, [defaultServicePct, ticketServiceFree]);
+
+  useEffect(() => {
+    if (posSettings.showPosTaxServiceFreeToggles) return;
+    setTicketTaxFree(false);
+    setTicketServiceFree(false);
+  }, [posSettings.showPosTaxServiceFreeToggles]);
 
   useEffect(() => {
     function applyDeliveryDefaults(settings: DeliverySettings): void {
@@ -799,6 +835,18 @@ export function PosPage(): JSX.Element {
     [kitchenQuery.data, ordersQuery.data, posSettings],
   );
 
+  /** Full-screen Open Orders: unpaid / still open (local dismisses hidden). */
+  const fullScreenOpenOrders = useMemo(() => {
+    const unpaid = filterPosRecentOrdersByMode(recentOrders, "all");
+    return branch?.code ? filterDismissedPosOrders(unpaid, branch.code) : unpaid;
+  }, [recentOrders, branch?.code]);
+
+  /** Full-screen Closed Orders: paid + locally closed labels. */
+  const fullScreenClosedOrders = useMemo(() => {
+    const paid = filterPosRecentOrdersByMode(recentOrders, "Paid");
+    return branch?.code ? withClosedPosOrderStatus(paid, branch.code) : paid;
+  }, [recentOrders, branch?.code]);
+
   const transferableOrders = useMemo(
     () => recentOrders.filter(canChangePosRecentOrderTable),
     [recentOrders],
@@ -854,6 +902,7 @@ export function PosPage(): JSX.Element {
       setEditingOrder(null);
       setCart([]);
       kotBaselineRef.current = null;
+      kotBaselineAtRef.current = null;
       setDiscountPctInput(0);
       setDiscountAmountInput(0);
       setDiscountEditedAs("pct");
@@ -863,7 +912,7 @@ export function PosPage(): JSX.Element {
       setOrderRef(peekNextOrderRef(branch?.code, nextMode));
     }
     if (posModeShowsCustomerPanel(nextMode)) {
-      setDeliveryDetailsOpen(true);
+      // Customer panel stays closed until cashier taps Customer (Option 37).
       // Restore Apply draft only while the same open ticket still has cart lines —
       // never paste last order's customer onto a blank new order.
       if (!editingOrder && branch?.code && cart.length > 0) {
@@ -1056,8 +1105,9 @@ export function PosPage(): JSX.Element {
     setCart((prev) => {
       const sortOrder = nextCartSortOrder(prev);
       const line = buildCartLine(item, variant, qty, sortOrder, unitPrice, lineNote);
-      // Open-price / custom qty / noted lines should not silently merge with catalog lines.
-      const canMerge = unitPrice == null && qty === 1 && !lineNote;
+      // Open-price / noted lines should not silently merge with catalog lines.
+      // Qty > 1 from the size picker still merges onto the same size line.
+      const canMerge = unitPrice == null && !lineNote;
       const i = canMerge ? prev.findIndex((l) => l.key === line.key) : -1;
       if (i >= 0) {
         const key = line.key;
@@ -1114,8 +1164,7 @@ export function PosPage(): JSX.Element {
       lines.find((line) => line.key.startsWith(`${preferredKey}::`)) ??
       sortCartLinesNewestFirst(lines)[0];
     if (!preferred) return;
-    setSelectedCartKey(preferred.key);
-    setQty(preferred.key, preferred.qty - 1);
+    requestSetQty(preferred.key, preferred.qty - 1);
   }
 
   function setLineDiscount(
@@ -1169,6 +1218,44 @@ export function PosPage(): JSX.Element {
       // Keep cart position fixed — only +/- quantity, do not bump sortOrder.
       return prev.map((l) => (l.key === lineKey ? { ...l, qty } : l));
     });
+  }
+
+  /** True when this cart line was already sent to the kitchen (KOT printed / loaded). */
+  function lineWasPrintedToKitchen(lineKey: string): boolean {
+    const baseline = kotBaselineRef.current;
+    if (!baseline || baseline.length === 0) return false;
+    return baseline.some((row) => row.key === lineKey && row.qty > 0);
+  }
+
+  /**
+   * Qty − / remove: if the item was already printed on a KOT AND the grace window
+   * has expired, ask for a reason immediately (per item). Increases never need a reason.
+   */
+  function requestSetQty(lineKey: string, nextQty: number): void {
+    const line = cart.find((l) => l.key === lineKey);
+    if (!line) return;
+    setSelectedCartKey(lineKey);
+    const needsReason =
+      nextQty < line.qty &&
+      lineWasPrintedToKitchen(lineKey) &&
+      kotChangeReasonGraceExpired(
+        kotBaselineAtRef.current,
+        posSettings.kotChangeReasonGraceMinutes,
+      );
+    if (!needsReason) {
+      setQty(lineKey, nextQty);
+      return;
+    }
+    setPendingQtyAdjust({
+      lineKey,
+      nextQty,
+      lineLabel: cartLinePrintLabel(line),
+    });
+    setLineChangeReasonOpen(true);
+  }
+
+  function requestRemoveLine(lineKey: string): void {
+    requestSetQty(lineKey, 0);
   }
 
   const menuById = useMemo(() => new Map(menuItems.map((item) => [item.id, item])), [menuItems]);
@@ -1457,6 +1544,7 @@ export function PosPage(): JSX.Element {
     setOrderRef(peekNextOrderRef(branch?.code, mode));
     setCart([]);
     kotBaselineRef.current = null;
+    kotBaselineAtRef.current = null;
     setDeliveryCustomer("");
     setDeliveryPhone("");
     setDeliveryAddress("");
@@ -1465,6 +1553,10 @@ export function PosPage(): JSX.Element {
     setDeliveryDetailsOpen(false);
     resetStaffFoodFields();
     setKitchenNote("");
+    setTicketTaxFree(false);
+    setTicketServiceFree(false);
+    setDiscountModalOpen(false);
+    setPendingQtyAdjust(null);
     // Do not carry last customer/discount into the next new order.
     clearPosCustomerDiscountDraft(branch?.code);
     beginNextOrderCycle();
@@ -1549,6 +1641,7 @@ export function PosPage(): JSX.Element {
     const loaded = stripComplimentaryLines(cartFromKitchenTicket(menuItems, ticket));
     setCart(loaded);
     kotBaselineRef.current = cartLinesToKotBaseline(loaded);
+    kotBaselineAtRef.current = parseKotBaselineAtMs(ticket.createdAt);
     const ticketNotes = resolveTicketDeliveryNotes(ticket) ?? ticket.notes ?? null;
     const savedDiscount = parseTicketDiscountFromNotes(ticketNotes);
     if (savedDiscount) {
@@ -1569,17 +1662,7 @@ export function PosPage(): JSX.Element {
     setDeliveryAddress(delivery.address);
     setKitchenNote(parseKitchenFreeNoteFromNotes(ticketNotes));
     applyTableFromStation(ticket.stationLabel);
-    const loadedMode = inferPosModeFromStation(ticket.stationLabel);
-    if (
-      loadedMode === "delivery" ||
-      loadedMode === "takeaway" ||
-      loadedMode === "online" ||
-      loadedMode === "foodpanda" ||
-      delivery.customer ||
-      delivery.phone
-    ) {
-      setDeliveryDetailsOpen(true);
-    }
+    // Customer panel stays collapsed — open only via Customer button (Option 37).
     setPrintNotice({ message: `Editing ${ticket.orderRef ?? ticket.ticketRef}. Add or remove items, then update.`, tone: "success" });
   }
 
@@ -1592,6 +1675,7 @@ export function PosPage(): JSX.Element {
     const loaded = stripComplimentaryLines(cartFromBill(menuItems, bill));
     setCart(loaded);
     kotBaselineRef.current = cartLinesToKotBaseline(loaded);
+    kotBaselineAtRef.current = parseKotBaselineAtMs(bill.createdAt);
     setTicketServicePct(bill.servicePct);
     setDiscountAmountInput(bill.discount);
     setDiscountPctInput(bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0);
@@ -1611,17 +1695,7 @@ export function PosPage(): JSX.Element {
     setDeliveryAddress(delivery.address);
     setKitchenNote(parseKitchenFreeNoteFromNotes(bill.notes));
     applyTableFromStation(bill.tableLabel);
-    const loadedMode = inferPosModeFromStation(bill.tableLabel);
-    if (
-      loadedMode === "delivery" ||
-      loadedMode === "takeaway" ||
-      loadedMode === "online" ||
-      loadedMode === "foodpanda" ||
-      delivery.customer ||
-      delivery.phone
-    ) {
-      setDeliveryDetailsOpen(true);
-    }
+    // Customer panel stays collapsed — open only via Customer button (Option 37).
     setPrintNotice({ message: `Editing held bill ${bill.orderRef ?? bill.billRef}.`, tone: "success" });
   }
 
@@ -1951,6 +2025,7 @@ export function PosPage(): JSX.Element {
       invalidateOrderFeeds();
       if (kotBaselineRef.current) {
         kotBaselineRef.current = cartLinesToKotBaseline(effectiveCart);
+        kotBaselineAtRef.current = Date.now();
       }
       setPrintNotice({ message: "Held bill updated.", tone: "success" });
     },
@@ -2467,7 +2542,11 @@ export function PosPage(): JSX.Element {
     if (createOrderMutation.isPending) return;
     if (editingOrder?.kind === "ticket" && kotBaselineRef.current) {
       const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
-      if (kotDeltaRequiresChangeReason(deltas)) {
+      const graceOver = kotChangeReasonGraceExpired(
+        kotBaselineAtRef.current,
+        posSettings.kotChangeReasonGraceMinutes,
+      );
+      if (graceOver && kotDeltaRequiresChangeReason(deltas)) {
         setLineChangeReasonOpen(true);
         return;
       }
@@ -2479,7 +2558,11 @@ export function PosPage(): JSX.Element {
     if (updateHeldBillMutation.isPending) return;
     if (editingOrder?.kind === "held-bill" && kotBaselineRef.current) {
       const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
-      if (kotDeltaRequiresChangeReason(deltas)) {
+      const graceOver = kotChangeReasonGraceExpired(
+        kotBaselineAtRef.current,
+        posSettings.kotChangeReasonGraceMinutes,
+      );
+      if (graceOver && kotDeltaRequiresChangeReason(deltas)) {
         setLineChangeReasonOpen(true);
         return;
       }
@@ -2488,7 +2571,21 @@ export function PosPage(): JSX.Element {
   }
 
   function confirmLineChangeReason(reason: string): void {
-    pendingLineChangeReasonRef.current = reason;
+    const trimmed = reason.trim();
+    if (pendingQtyAdjust) {
+      const prev = pendingLineChangeReasonRef.current;
+      const label = pendingQtyAdjust.lineLabel;
+      const note =
+        pendingQtyAdjust.nextQty <= 0
+          ? `Remove ${label}: ${trimmed}`
+          : `Qty ${label} → ${pendingQtyAdjust.nextQty}: ${trimmed}`;
+      pendingLineChangeReasonRef.current = prev ? `${prev}; ${note}` : note;
+      setQty(pendingQtyAdjust.lineKey, pendingQtyAdjust.nextQty);
+      setPendingQtyAdjust(null);
+      setLineChangeReasonOpen(false);
+      return;
+    }
+    pendingLineChangeReasonRef.current = trimmed;
     setLineChangeReasonOpen(false);
     if (editingOrder?.kind === "held-bill") {
       updateHeldBillMutation.mutate();
@@ -2500,6 +2597,33 @@ export function PosPage(): JSX.Element {
   function onPay(): void {
     setPrintNotice(null);
     setCheckoutModal("pay");
+  }
+
+  /**
+   * Full-screen Quick Bill / Close Order: settle as cash immediately.
+   * Does NOT open the payment-method modal.
+   */
+  function runSilentCashComplete(noticeLabel: string): void {
+    setPrintNotice(null);
+    const err = validateBillCheckout();
+    if (err) {
+      setPrintNotice({ message: err, tone: "error" });
+      return;
+    }
+    if (cart.length === 0 || checkoutMutation.isPending) return;
+    pendingCloseAfterPayRef.current = true;
+    checkoutMutation.mutate({
+      intent: "pay",
+      servicePct: ticketServicePct,
+      taxPct,
+      payments: [{ method: "cash", amount: total }],
+      status: "completed",
+      cashReceived: total,
+    });
+    setPrintNotice({
+      message: `${noticeLabel} — closing as cash…`,
+      tone: "success",
+    });
   }
 
   function runPrintInvoice(): void {
@@ -2649,8 +2773,7 @@ export function PosPage(): JSX.Element {
       const line =
         displayCart.find((l) => l.key === selectedCartKey) ?? displayCart[0] ?? null;
       if (!line) return;
-      setSelectedCartKey(line.key);
-      setQty(line.key, line.qty + 1);
+      requestSetQty(line.key, line.qty + 1);
     },
     orderType: () => {
       if (editingOrder) return;
@@ -2933,10 +3056,48 @@ export function PosPage(): JSX.Element {
         <PosFullScreenMenuOverlay
           categories={categories}
           items={menuItems}
-          cartLines={effectiveCart}
+          cartLines={displayCart}
+          selectedCartKey={selectedCartKey}
           totalQty={totalQty}
+          subtotal={subtotal}
+          discount={discount}
+          discountPct={discountPct}
+          service={service}
+          tax={tax}
           total={total}
+          ticketServicePct={ticketServicePct}
+          taxPct={taxPct}
+          showTaxRow={showTaxRow}
+          deliveryCharge={deliveryCharge}
+          showDeliveryCharge={mode === "delivery"}
+          orderRef={orderRef}
+          modeLabel={posOrderModeLabel(mode)}
+          editingLabel={
+            editingOrder
+              ? editingOrder.kind === "ticket"
+                ? "Modify order"
+                : "Modify hold"
+              : null
+          }
+          orderBusy={createOrderMutation.isPending || updateHeldBillMutation.isPending}
+          payBusy={checkoutMutation.isPending}
+          showTicketDiscount={showTicketDiscount}
+          autoDiscountEnabled={autoDiscountEnabled}
+          autoDiscountPct={autoDiscountPct}
+          autoDiscountAmount={autoDiscountAmount}
+          discountEditedAs={discountEditedAs}
+          discountPctInput={discountPctInput}
+          discountAmountInput={discountAmountInput}
+          ticketTaxFree={ticketTaxFree}
+          ticketServiceFree={ticketServiceFree}
+          showTaxServiceFreeToggles={posSettings.showPosTaxServiceFreeToggles}
+          orderMode={mode}
+          tableSelected={Boolean(selectedTableId)}
           initialViewMode={posSettings.menuViewMode}
+          ticketPanelSide={posSettings.fullScreenTicketPanelSide}
+          openOrders={fullScreenOpenOrders}
+          closedOrders={fullScreenClosedOrders}
+          ordersLoading={kitchenQuery.isLoading || ordersQuery.isLoading}
           priceLabel={(item) => {
             const original = menuItemDisplayPrice(item);
             if (happyHourActiveSlot?.percentOff) {
@@ -2947,10 +3108,51 @@ export function PosPage(): JSX.Element {
             }
             return { display: original };
           }}
+          onSelectCartLine={setSelectedCartKey}
+          onRequestSetQty={requestSetQty}
+          onRequestRemoveLine={requestRemoveLine}
           onAddItem={(item) => {
             onDishClick(item);
           }}
           onDecrementItem={decrementItemFromCart}
+          onOpenDiscount={() => setDiscountModalOpen(true)}
+          onToggleTaxFree={setTicketTaxFree}
+          onToggleServiceFree={setTicketServiceFree}
+          onPlaceOrder={() => {
+            if (editingOrder?.kind === "held-bill") requestUpdateHeldBill();
+            else requestCreateOrUpdateOrder();
+          }}
+          onPrintBill={() => runPrintInvoice()}
+          onQuickBill={() => runSilentCashComplete("Quick Bill")}
+          onCloseOrder={() => runSilentCashComplete("Close Order")}
+          onReprintKot={() => runPrintOrder()}
+          onPickOpenOrder={(order) => {
+            loadRecentOrderForEdit(order);
+          }}
+          onNewOrder={startNewManualOrder}
+          onSelectTables={() => {
+            if (mode !== "dine-in") switchMode("dine-in");
+            setModeConfirmed(true);
+            setSeatingModalOpen(true);
+            markSeatingModalShown();
+          }}
+          onTakeaway={() => {
+            switchMode("takeaway");
+            setModeConfirmed(true);
+          }}
+          onDineIn={() => {
+            switchMode("dine-in");
+            setModeConfirmed(true);
+          }}
+          onDelivery={() => {
+            switchMode("delivery");
+            setModeConfirmed(true);
+          }}
+          onTvDisplay={() => {
+            // Kitchen / TV board — open in new tab so counter POS stays open.
+            const path = location.pathname.replace(/\/pos\/?$/, "/kitchen");
+            window.open(path.endsWith("/kitchen") ? path : "/pops/kitchen", "_blank", "noopener,noreferrer");
+          }}
           onDone={() => setFullScreenMenuOpen(false)}
           onClose={() => setFullScreenMenuOpen(false)}
         />
@@ -2960,9 +3162,17 @@ export function PosPage(): JSX.Element {
         <PosDishVariantModal
           item={variantPickerItem}
           variants={resolvePosSellableVariants(variantPickerItem)}
-          onSelect={(variant) => {
-            beginAddToCart(variantPickerItem, variant);
+          onConfirm={(selections) => {
+            const item = variantPickerItem;
             setVariantPickerItem(null);
+            if (!item || selections.length === 0) return;
+            if (itemNeedsPosPrompt(item)) {
+              beginAddToCart(item, selections[0]?.variant ?? null);
+              return;
+            }
+            for (const { variant, qty } of selections) {
+              addVariantToCart(item, variant, { qty });
+            }
           }}
           onClose={() => setVariantPickerItem(null)}
         />
@@ -3311,7 +3521,8 @@ export function PosPage(): JSX.Element {
                         {item.name}
                       </span>
                       <span className="mt-0.5 text-xs font-semibold text-amber-200/90">
-                        {hasPicker ? "From " : ""}{displayPrice.toLocaleString()}
+                        {hasPicker ? "From " : ""}
+                        {displayPrice.toLocaleString()}
                         {showHappyHourPrice ? (
                           <span className="ml-1 font-normal text-slate-500 line-through">
                             {menuItemDisplayPrice(item).toLocaleString()}
@@ -3874,10 +4085,7 @@ export function PosPage(): JSX.Element {
                             <button
                               type="button"
                               className="flex h-6 w-6 items-center justify-center rounded text-sm text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800"
-                              onClick={() => {
-                                setSelectedCartKey(line.key);
-                                setQty(line.key, line.qty - 1);
-                              }}
+                              onClick={() => requestSetQty(line.key, line.qty - 1)}
                               aria-label="Decrease quantity"
                             >
                               −
@@ -3888,10 +4096,7 @@ export function PosPage(): JSX.Element {
                             <button
                               type="button"
                               className="flex h-6 w-6 items-center justify-center rounded text-sm text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800"
-                              onClick={() => {
-                                setSelectedCartKey(line.key);
-                                setQty(line.key, line.qty + 1);
-                              }}
+                              onClick={() => requestSetQty(line.key, line.qty + 1)}
                               aria-label="Increase quantity"
                             >
                               +
@@ -3971,10 +4176,7 @@ export function PosPage(): JSX.Element {
                         <button
                           type="button"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                          onClick={() => {
-                            setSelectedCartKey(line.key);
-                            setQty(line.key, line.qty - 1);
-                          }}
+                          onClick={() => requestSetQty(line.key, line.qty - 1)}
                           aria-label="Decrease quantity"
                         >
                           −
@@ -3986,10 +4188,7 @@ export function PosPage(): JSX.Element {
                           type="button"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-slate-700 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
                           title={`Qty + (${POS_SHORTCUTS.qtyIncrease.key} or +)`}
-                          onClick={() => {
-                            setSelectedCartKey(line.key);
-                            setQty(line.key, line.qty + 1);
-                          }}
+                          onClick={() => requestSetQty(line.key, line.qty + 1)}
                           aria-label="Increase quantity"
                         >
                           +
@@ -4457,13 +4656,52 @@ export function PosPage(): JSX.Element {
         }}
       />
 
+      <PosDiscountModal
+        open={discountModalOpen}
+        initialType={discountEditedAs === "amount" ? "currency" : "percent"}
+        initialValue={
+          discountEditedAs === "amount" ? discountAmountInput : discountPctInput
+        }
+        maxAmount={itemEligibility.discountableSubtotal}
+        onClose={() => setDiscountModalOpen(false)}
+        onApply={(type, value) => {
+          if (type === "percent") onDiscountPctChange(value);
+          else onDiscountAmountChange(value);
+          setDiscountModalOpen(false);
+        }}
+      />
+
       <CancelOrderReasonModal
         open={lineChangeReasonOpen}
-        title="Reason for order change"
-        subtitle="Qty kam (minus) ya item remove par reason zaroori hai. Naya item add ya qty zyada karne par reason nahi chahiye."
-        confirmLabel={editingOrder?.kind === "held-bill" ? "Update hold" : "Update order"}
-        loading={createOrderMutation.isPending || updateHeldBillMutation.isPending}
-        onClose={() => setLineChangeReasonOpen(false)}
+        title={
+          pendingQtyAdjust
+            ? pendingQtyAdjust.nextQty <= 0
+              ? "Reason for remove item"
+              : "Reason for qty change"
+            : "Reason for order change"
+        }
+        subtitle={
+          pendingQtyAdjust
+            ? `"${pendingQtyAdjust.lineLabel}" kitchen KOT grace window khatam — remove / qty kam par reason chahiye.`
+            : `Qty kam / remove par reason zaroori hai (KOT ke ${posSettings.kotChangeReasonGraceMinutes} min baad). Naya add ya qty+ par reason nahi.`
+        }
+        confirmLabel={
+          pendingQtyAdjust
+            ? pendingQtyAdjust.nextQty <= 0
+              ? "Remove item"
+              : "Apply qty"
+            : editingOrder?.kind === "held-bill"
+              ? "Update hold"
+              : "Update order"
+        }
+        loading={
+          !pendingQtyAdjust &&
+          (createOrderMutation.isPending || updateHeldBillMutation.isPending)
+        }
+        onClose={() => {
+          setLineChangeReasonOpen(false);
+          setPendingQtyAdjust(null);
+        }}
         onConfirm={confirmLineChangeReason}
       />
 

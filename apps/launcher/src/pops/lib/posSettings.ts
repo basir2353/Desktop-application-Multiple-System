@@ -65,6 +65,22 @@ export type PosSettings = {
    * Local UI preference (not synced to mobile tax API).
    */
   menuViewMode: "category" | "all";
+  /**
+   * When on, full-screen POS shows per-ticket TAX free / Service Charges free checkboxes.
+   * Local UI preference (not synced to mobile tax API).
+   */
+  showPosTaxServiceFreeToggles: boolean;
+  /**
+   * Minutes after a KOT / kitchen ticket before qty− / remove requires a reason.
+   * Within this grace window, cashier can fix qty without a reason popup.
+   * Local UI preference (not synced to mobile tax API).
+   */
+  kotChangeReasonGraceMinutes: number;
+  /**
+   * Full-screen POS ticket/cart column side.
+   * Local UI preference (not synced to mobile tax API).
+   */
+  fullScreenTicketPanelSide: "left" | "right";
   autoPrintOrderDineIn: boolean;
   autoPrintOrderTakeaway: boolean;
   autoPrintOrderDelivery: boolean;
@@ -99,6 +115,9 @@ export const DEFAULT_POS_SETTINGS: PosSettings = {
   fullScreenMenuEnabled: true,
   showLatestOrdersPanel: true,
   menuViewMode: "category",
+  showPosTaxServiceFreeToggles: false,
+  kotChangeReasonGraceMinutes: 2,
+  fullScreenTicketPanelSide: "right",
   autoPrintOrderDineIn: false,
   autoPrintOrderTakeaway: false,
   autoPrintOrderDelivery: false,
@@ -143,6 +162,14 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     fullScreenMenuEnabled: input.fullScreenMenuEnabled ?? DEFAULT_POS_SETTINGS.fullScreenMenuEnabled,
     showLatestOrdersPanel: input.showLatestOrdersPanel ?? DEFAULT_POS_SETTINGS.showLatestOrdersPanel,
     menuViewMode: input.menuViewMode === "all" ? "all" : "category",
+    showPosTaxServiceFreeToggles:
+      input.showPosTaxServiceFreeToggles ?? DEFAULT_POS_SETTINGS.showPosTaxServiceFreeToggles,
+    kotChangeReasonGraceMinutes: clampPct(
+      input.kotChangeReasonGraceMinutes ?? DEFAULT_POS_SETTINGS.kotChangeReasonGraceMinutes,
+      120,
+    ),
+    fullScreenTicketPanelSide:
+      input.fullScreenTicketPanelSide === "left" ? "left" : "right",
     autoPrintOrderDineIn: input.autoPrintOrderDineIn ?? DEFAULT_POS_SETTINGS.autoPrintOrderDineIn,
     autoPrintOrderTakeaway: input.autoPrintOrderTakeaway ?? DEFAULT_POS_SETTINGS.autoPrintOrderTakeaway,
     autoPrintOrderDelivery: input.autoPrintOrderDelivery ?? DEFAULT_POS_SETTINGS.autoPrintOrderDelivery,
@@ -254,6 +281,7 @@ export function posSettingsFromTaxApi(
   tax: TaxSettings,
   /** Preserve local-only UI flags across cloud sync. */
   localUi?: Partial<Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "showLatestOrdersPanel" | "menuViewMode" |
+    "showPosTaxServiceFreeToggles" | "kotChangeReasonGraceMinutes" | "fullScreenTicketPanelSide" |
     "autoPrintOrderDineIn" | "autoPrintOrderTakeaway" | "autoPrintOrderDelivery" |
     "autoPrintFinalDineIn" | "autoPrintFinalTakeaway" | "autoPrintFinalDelivery">>,
 ): PosSettings {
@@ -267,6 +295,9 @@ export function posSettingsFromTaxApi(
       fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
       showLatestOrdersPanel: localUi?.showLatestOrdersPanel,
       menuViewMode: localUi?.menuViewMode,
+      showPosTaxServiceFreeToggles: localUi?.showPosTaxServiceFreeToggles,
+      kotChangeReasonGraceMinutes: localUi?.kotChangeReasonGraceMinutes,
+      fullScreenTicketPanelSide: localUi?.fullScreenTicketPanelSide,
       autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
       autoPrintOrderDelivery: localUi?.autoPrintOrderDelivery,
@@ -285,6 +316,9 @@ export function posSettingsFromTaxApi(
     fullScreenMenuEnabled: localUi?.fullScreenMenuEnabled,
     showLatestOrdersPanel: localUi?.showLatestOrdersPanel,
     menuViewMode: localUi?.menuViewMode,
+    showPosTaxServiceFreeToggles: localUi?.showPosTaxServiceFreeToggles,
+    kotChangeReasonGraceMinutes: localUi?.kotChangeReasonGraceMinutes,
+    fullScreenTicketPanelSide: localUi?.fullScreenTicketPanelSide,
     autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
     autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
     autoPrintOrderDelivery: localUi?.autoPrintOrderDelivery,

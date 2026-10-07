@@ -19,11 +19,12 @@ const HR_DELETE_TABLES: readonly string[] = [
   "pops_employees",
 ];
 
-/** Restaurant POS / kitchen / cash / inventory ops. */
+/**
+ * Restaurant POS / kitchen / cash / inventory ops.
+ * Child-only tables (no organization_id) are wiped in wipeChildRows first.
+ */
 const RESTAURANT_DELETE_TABLES: readonly string[] = [
-  "pops_vendor_payments",
   "pops_vendor_bills",
-  "pops_customer_payments",
   "pops_customer_invoices",
   "pops_cash_movements",
   "pops_cash_sessions",
@@ -42,12 +43,12 @@ const RESTAURANT_DELETE_TABLES: readonly string[] = [
   "pops_inventory_audit_logs",
   "pops_branch_transfers",
 
+  "pops_kitchen_line_cancellations",
+  "pops_kitchen_tickets",
   "pops_bills",
   "pops_sales",
   "pops_daily_sales",
   "pops_active_orders",
-  "pops_kitchen_tickets",
-  "pops_kitchen_line_cancellations",
   "pops_alerts",
   "pops_security_events",
   "pops_notification_log",
@@ -135,10 +136,47 @@ async function wipeChildRows(
   let deleted = 0;
 
   if (scope === "all" || scope === "restaurant") {
+    // Payments have no organization_id — delete via parent bills/invoices first.
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM pops_vendor_payments WHERE vendor_bill_id IN (
+        SELECT id FROM pops_vendor_bills WHERE organization_id = ${organizationId}
+      )`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM pops_customer_payments WHERE invoice_id IN (
+        SELECT id FROM pops_customer_invoices WHERE organization_id = ${organizationId}
+      )`,
+    );
     deleted += await execOptional(
       db,
       sql`DELETE FROM pops_journal_lines WHERE entry_id IN (
         SELECT id FROM pops_journal_entries WHERE organization_id = ${organizationId}
+      )`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM pops_purchase_order_lines WHERE purchase_order_id IN (
+        SELECT id FROM pops_purchase_orders WHERE organization_id = ${organizationId}
+      )`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM pops_goods_receipt_lines WHERE goods_receipt_id IN (
+        SELECT id FROM pops_goods_receipts WHERE organization_id = ${organizationId}
+      )`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM pops_stock_count_lines WHERE stock_count_id IN (
+        SELECT id FROM pops_stock_counts WHERE organization_id = ${organizationId}
+      )`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM pops_production_batch_lines WHERE batch_id IN (
+        SELECT id FROM pops_production_batches WHERE organization_id = ${organizationId}
       )`,
     );
   }
@@ -170,6 +208,14 @@ async function wipeChildRows(
       sql`DELETE FROM pharmacy_medicine_batches WHERE medicine_id IN (
         SELECT id FROM pharmacy_medicines WHERE organization_id = ${organizationId}
       )`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM store_warehouse_stock WHERE organization_id = ${organizationId}`,
+    );
+    deleted += await execOptional(
+      db,
+      sql`DELETE FROM store_cooking_unit_stock WHERE organization_id = ${organizationId}`,
     );
   }
 

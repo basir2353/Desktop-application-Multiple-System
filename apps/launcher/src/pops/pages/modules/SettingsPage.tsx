@@ -1,6 +1,6 @@
 import { Button } from "@platform/ui";
 import type { DataResetScope } from "@platform/contracts";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
@@ -9,6 +9,7 @@ import {
   resetOrgData,
   updatePopsBranch,
 } from "../../api/operations";
+import { DayToDayDeleteSalesPanel } from "../../components/DayToDayDeleteSalesPanel";
 import {
   DEFAULT_POS_SETTINGS,
   loadPosSettings,
@@ -106,10 +107,34 @@ const DATA_RESET_OPTIONS: {
   },
 ];
 
+function clearTransactionalLocalCaches(): void {
+  try {
+    const keysToClear: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (
+        key.startsWith("pops-kitchen-completed") ||
+        key.startsWith("pops-offline-cash") ||
+        key.startsWith("pops-offline-payroll") ||
+        key.startsWith("pops-offline-bills") ||
+        key.startsWith("pops-offline-kots") ||
+        key.startsWith("pops-pos-dismissed-orders")
+      ) {
+        keysToClear.push(key);
+      }
+    }
+    for (const key of keysToClear) localStorage.removeItem(key);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 function DataResetPanel(props: {
   onNotice: (message: string) => void;
   onError: (message: string) => void;
 }): JSX.Element {
+  const queryClient = useQueryClient();
   const [scope, setScope] = useState<DataResetScope>("restaurant");
   const [confirmText, setConfirmText] = useState("");
   const profile = useQuery({
@@ -122,7 +147,11 @@ function DataResetPanel(props: {
     mutationFn: () => resetOrgData(scope, confirmText),
     onSuccess: (result) => {
       setConfirmText("");
-      props.onNotice(result.message);
+      clearTransactionalLocalCaches();
+      void queryClient.invalidateQueries();
+      props.onNotice(
+        `${result.message} Refresh POS / Dashboard if numbers still look old.`,
+      );
     },
     onError: (err) => {
       props.onError(err instanceof Error ? err.message : "Data reset failed");
@@ -271,6 +300,9 @@ export function SettingsPage(): JSX.Element {
       fullScreenMenuEnabled: local.fullScreenMenuEnabled,
       showLatestOrdersPanel: local.showLatestOrdersPanel,
       menuViewMode: local.menuViewMode,
+      showPosTaxServiceFreeToggles: local.showPosTaxServiceFreeToggles,
+      kotChangeReasonGraceMinutes: local.kotChangeReasonGraceMinutes,
+      fullScreenTicketPanelSide: local.fullScreenTicketPanelSide,
       autoPrintOrderDineIn: local.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
       autoPrintOrderDelivery: local.autoPrintOrderDelivery,
@@ -431,16 +463,19 @@ export function SettingsPage(): JSX.Element {
         )}
 
         {canResetData ? (
-          <DataResetPanel
-            onNotice={(m) => {
-              setTaxError(null);
-              setNotice(m);
-            }}
-            onError={(m) => {
-              setNotice(null);
-              setTaxError(m);
-            }}
-          />
+          <>
+            <DayToDayDeleteSalesPanel />
+            <DataResetPanel
+              onNotice={(m) => {
+                setTaxError(null);
+                setNotice(m);
+              }}
+              onError={(m) => {
+                setNotice(null);
+                setTaxError(m);
+              }}
+            />
+          </>
         ) : null}
         {canManageTaxFeatures ? (
           <BranchSettingsBackupPanel
@@ -675,6 +710,88 @@ export function SettingsPage(): JSX.Element {
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
             Category wise: categories on top, items below. All items: every dish in one list.
+          </p>
+          <div className="mt-3 text-xs font-semibold text-slate-300">Ticket panel side (full screen)</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!draft.fullScreenMenuEnabled}
+              onClick={() =>
+                setDraft((prev) => ({ ...prev, fullScreenTicketPanelSide: "right" }))
+              }
+              className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                draft.fullScreenTicketPanelSide === "right"
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-slate-800 text-slate-300 ring-1 ring-slate-700 disabled:opacity-40"
+              }`}
+            >
+              Right
+            </button>
+            <button
+              type="button"
+              disabled={!draft.fullScreenMenuEnabled}
+              onClick={() =>
+                setDraft((prev) => ({ ...prev, fullScreenTicketPanelSide: "left" }))
+              }
+              className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                draft.fullScreenTicketPanelSide === "left"
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-slate-800 text-slate-300 ring-1 ring-slate-700 disabled:opacity-40"
+              }`}
+            >
+              Left
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Move the order summary / cart column to the left or right on full-screen POS.
+          </p>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-700/80 bg-slate-950/40 p-3">
+          <div className="text-xs font-semibold text-slate-300">POS · Tax / Service free toggles</div>
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={draft.showPosTaxServiceFreeToggles}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  showPosTaxServiceFreeToggles: e.target.checked,
+                }))
+              }
+            />
+            Show TAX free / Service Charges free on full-screen POS
+          </label>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Off (default): those checkboxes stay hidden. On: cashiers can waive tax / service per
+            ticket on the full-screen POS.
+          </p>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-700/80 bg-slate-950/40 p-3">
+          <div className="text-xs font-semibold text-slate-300">POS · KOT change reason</div>
+          <label className="mt-2 block text-xs text-slate-400">
+            Grace minutes before reason is required
+            <input
+              type="number"
+              min={0}
+              max={120}
+              step={1}
+              value={draft.kotChangeReasonGraceMinutes}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  kotChangeReasonGraceMinutes: Number(e.target.value) || 0,
+                }))
+              }
+              className="mt-1.5 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/50"
+            />
+          </label>
+          <p className="mt-1 text-[10px] text-slate-500">
+            After Place Order / KOT, cashiers can fix qty (e.g. 5→4) for this many minutes without a
+            reason. After the grace window, qty− / remove asks for a reason. Use 0 to always require
+            a reason once the item is on a KOT.
           </p>
         </div>
 
@@ -1155,16 +1272,19 @@ export function SettingsPage(): JSX.Element {
       ) : null}
 
       {canResetData ? (
-        <DataResetPanel
-          onNotice={(m) => {
-            setTaxError(null);
-            setNotice(m);
-          }}
-          onError={(m) => {
-            setNotice(null);
-            setTaxError(m);
-          }}
-        />
+        <>
+          <DayToDayDeleteSalesPanel />
+          <DataResetPanel
+            onNotice={(m) => {
+              setTaxError(null);
+              setNotice(m);
+            }}
+            onError={(m) => {
+              setNotice(null);
+              setTaxError(m);
+            }}
+          />
+        </>
       ) : null}
     </div>
   );
