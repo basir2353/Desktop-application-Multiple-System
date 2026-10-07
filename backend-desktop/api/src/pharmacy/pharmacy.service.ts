@@ -42,6 +42,7 @@ import {
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
+import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
 import { mapMedicineRow, parseJsonArray, parsePaymentsJson, stringifyJsonArray } from "./pharmacy-mappers";
 
 const MEDICINE_SEEDS = [
@@ -191,8 +192,6 @@ export class PharmacyService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(organizationId: string, branchId: string): Promise<void> {
-    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
-
     const [existing] = await this.db
       .select({ id: pharmacyMedicines.id })
       .from(pharmacyMedicines)

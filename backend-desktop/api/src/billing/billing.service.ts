@@ -29,6 +29,7 @@ import { InventoryDeductionService } from "../inventory/inventory-deduction.serv
 import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
 import { assertDineInTableAvailable } from "../tables/table-booking";
 import { findLiveLoginUserByEmail, findLiveLoginUserByEmailExcluding } from "../lib/login-email";
+import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
 
 type BillTotals = {
   subtotal: number;
@@ -79,7 +80,6 @@ export class BillingService implements OnApplicationBootstrap {
   }
 
   private async seedSampleBillsIfEmpty(): Promise<void> {
-    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
     const branches = await this.db.select().from(popsBranches);
     for (const branch of branches) {
       const existing = await this.db

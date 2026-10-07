@@ -74,6 +74,7 @@ import {
 import { StoreGroceryService } from "./store-grocery.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { TaxAuthorityService } from "../tax-authority/tax-authority.service";
+import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
 
 const PRODUCT_SEEDS = [
   { sku: "SKU-001", name: "Premium Basmati Rice 5kg", category: "Groceries", subcategory: "Rice & Pulses", brand: "Guard", unit: "Bag", barcode: "8901001001001", purchase: 850, selling: 1100, stock: 120, reorder: 30 },
@@ -391,8 +392,6 @@ export class StoreService implements OnModuleInit {
   }
 
   private async seedBranchIfEmptyUnsafe(organizationId: string, branchId: string): Promise<void> {
-    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
-
     const [existing] = await this.db
       .select({ id: storeProducts.id })
       .from(storeProducts)

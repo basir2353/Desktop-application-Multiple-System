@@ -36,6 +36,7 @@ import {
 } from "@platform/database-pg";
 import { AccountingService, resolvePayrollPaidAt } from "../accounting/accounting.service";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
 
 const DEDUCTION_RATE = 0.0727;
 
@@ -1485,8 +1486,6 @@ export class HrService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(branch: typeof popsBranches.$inferSelect): Promise<void> {
-    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
-
     const existing = await this.db
       .select({ id: popsEmployees.id })
       .from(popsEmployees)

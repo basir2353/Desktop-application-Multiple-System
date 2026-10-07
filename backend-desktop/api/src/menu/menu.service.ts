@@ -22,6 +22,7 @@ import {
   type PlatformPgDb,
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
+import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
 
 import type { MenuPortion } from "@platform/contracts";
 
@@ -93,8 +94,6 @@ export class MenuService implements OnModuleInit {
   }
 
   private async seedBranchMenuIfEmpty(branch: typeof popsBranches.$inferSelect): Promise<void> {
-    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
-
     const existing = await this.db
       .select({ id: popsMenuCategories.id })
       .from(popsMenuCategories)

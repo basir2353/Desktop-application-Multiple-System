@@ -72,6 +72,7 @@ import {
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { AccountingHooksService } from "../accounting/accounting-hooks.service";
+import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
 
 const DEFAULT_CATEGORIES = [
   { name: "Meat", description: "Poultry, beef, mutton" },
@@ -161,8 +162,6 @@ export class InventoryService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(branch: typeof popsBranches.$inferSelect): Promise<void> {
-    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
-
     const existing = await this.db
       .select({ id: popsIngredients.id })
       .from(popsIngredients)
@@ -1052,7 +1051,6 @@ export class InventoryService implements OnModuleInit {
       .where(eq(popsIngredients.branchId, ing.branchId))
       .limit(1);
     if (remaining.length === 0) {
-      const { markDemoSeedDone } = await import("../lib/demo-seed-flag");
       await markDemoSeedDone(this.db, organizationId, ing.branchId, "inventory");
     }
     return { ok: true };
