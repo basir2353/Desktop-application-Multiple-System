@@ -79,11 +79,22 @@ export class BillingService implements OnApplicationBootstrap {
   }
 
   private async seedSampleBillsIfEmpty(): Promise<void> {
-    const existing = await this.db.select({ id: popsBills.id }).from(popsBills).limit(1);
-    if (existing.length > 0) return;
-
+    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
     const branches = await this.db.select().from(popsBranches);
     for (const branch of branches) {
+      const existing = await this.db
+        .select({ id: popsBills.id })
+        .from(popsBills)
+        .where(eq(popsBills.branchId, branch.id))
+        .limit(1);
+      if (existing.length > 0) {
+        void markDemoSeedDone(this.db, branch.organizationId, branch.id, "billing").catch(
+          () => undefined,
+        );
+        continue;
+      }
+      if (await hasDemoSeedFlag(this.db, branch.id, "billing")) continue;
+
       const sampleLines = [
         { label: "Chicken Karahi (Full)", qty: 1, unitPrice: 2890 },
         { label: "Raita", qty: 2, unitPrice: 80 },
@@ -114,6 +125,7 @@ export class BillingService implements OnApplicationBootstrap {
         status: "completed",
         createdAt: new Date(Date.now() - 45 * 60_000),
       });
+      await markDemoSeedDone(this.db, branch.organizationId, branch.id, "billing");
     }
   }
 

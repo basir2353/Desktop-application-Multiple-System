@@ -93,12 +93,18 @@ export class MenuService implements OnModuleInit {
   }
 
   private async seedBranchMenuIfEmpty(branch: typeof popsBranches.$inferSelect): Promise<void> {
+    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
+
     const existing = await this.db
       .select({ id: popsMenuCategories.id })
       .from(popsMenuCategories)
       .where(eq(popsMenuCategories.branchId, branch.id))
       .limit(1);
-    if (existing.length > 0) return;
+    if (existing.length > 0) {
+      void markDemoSeedDone(this.db, branch.organizationId, branch.id, "menu").catch(() => undefined);
+      return;
+    }
+    if (await hasDemoSeedFlag(this.db, branch.id, "menu")) return;
 
     let sort = 0;
     for (const block of DEFAULT_MENU) {
@@ -138,6 +144,7 @@ export class MenuService implements OnModuleInit {
         }
       }
     }
+    await markDemoSeedDone(this.db, branch.organizationId, branch.id, "menu");
   }
 
   async getBranchMenu(organizationId: string, branchCode: string) {

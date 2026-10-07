@@ -60,6 +60,9 @@ const RESTAURANT_DELETE_TABLES: readonly string[] = [
   "print_jobs_cloud",
   "print_alerts",
   "org_alerts",
+
+  /** Clears "already seeded" markers so a full reset can offer demo stock again. */
+  "pops_demo_seed_flags",
 ];
 
 /** Store / pharmacy transactional (included in "all"). */

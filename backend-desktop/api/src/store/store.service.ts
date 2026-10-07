@@ -391,12 +391,19 @@ export class StoreService implements OnModuleInit {
   }
 
   private async seedBranchIfEmptyUnsafe(organizationId: string, branchId: string): Promise<void> {
+    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
+
     const [existing] = await this.db
       .select({ id: storeProducts.id })
       .from(storeProducts)
       .where(and(eq(storeProducts.organizationId, organizationId), eq(storeProducts.branchId, branchId)))
       .limit(1);
     if (existing) {
+      await this.ensureRestaurantWarehouses(organizationId, branchId);
+      void markDemoSeedDone(this.db, organizationId, branchId, "store").catch(() => undefined);
+      return;
+    }
+    if (await hasDemoSeedFlag(this.db, branchId, "store")) {
       await this.ensureRestaurantWarehouses(organizationId, branchId);
       return;
     }
@@ -498,6 +505,7 @@ export class StoreService implements OnModuleInit {
     }
 
     await this.ensureRestaurantWarehouses(organizationId, branchId);
+    await markDemoSeedDone(this.db, organizationId, branchId, "store");
   }
 
   async getDashboard(organizationId: string, branchCode: string) {

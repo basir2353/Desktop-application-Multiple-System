@@ -191,12 +191,18 @@ export class PharmacyService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(organizationId: string, branchId: string): Promise<void> {
+    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
+
     const [existing] = await this.db
       .select({ id: pharmacyMedicines.id })
       .from(pharmacyMedicines)
       .where(and(eq(pharmacyMedicines.organizationId, organizationId), eq(pharmacyMedicines.branchId, branchId)))
       .limit(1);
-    if (existing) return;
+    if (existing) {
+      void markDemoSeedDone(this.db, organizationId, branchId, "pharmacy").catch(() => undefined);
+      return;
+    }
+    if (await hasDemoSeedFlag(this.db, branchId, "pharmacy")) return;
 
     for (const seed of MEDICINE_SEEDS) {
       const seedExtras = seed as {
@@ -296,6 +302,7 @@ export class PharmacyService implements OnModuleInit {
         phone: "+92 51 8765432",
       },
     ]);
+    await markDemoSeedDone(this.db, organizationId, branchId, "pharmacy");
   }
 
   async getDashboard(organizationId: string, branchCode: string) {

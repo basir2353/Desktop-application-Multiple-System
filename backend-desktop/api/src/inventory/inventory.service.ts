@@ -161,15 +161,48 @@ export class InventoryService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(branch: typeof popsBranches.$inferSelect): Promise<void> {
+    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
+
     const existing = await this.db
       .select({ id: popsIngredients.id })
       .from(popsIngredients)
       .where(eq(popsIngredients.branchId, branch.id))
       .limit(1);
-    if (existing.length > 0) return;
+    if (existing.length > 0) {
+      // Remember this branch already had stock so a later full wipe does not re-demo.
+      void markDemoSeedDone(this.db, branch.organizationId, branch.id, "inventory").catch(() => undefined);
+      return;
+    }
 
+    // User deleted every ingredient — do not resurrect demo stock on next load.
+    if (await hasDemoSeedFlag(this.db, branch.id, "inventory")) return;
+
+    const priorAudit = await this.db
+      .select({ id: popsInventoryAuditLogs.id })
+      .from(popsInventoryAuditLogs)
+      .where(
+        and(
+          eq(popsInventoryAuditLogs.branchId, branch.id),
+          eq(popsInventoryAuditLogs.action, "Seed completed"),
+        ),
+      )
+      .limit(1);
+    if (priorAudit.length > 0) {
+      await markDemoSeedDone(this.db, branch.organizationId, branch.id, "inventory");
+      return;
+    }
+
+    const existingCats = await this.db
+      .select()
+      .from(popsInventoryCategories)
+      .where(eq(popsInventoryCategories.branchId, branch.id));
     const catMap = new Map<string, string>();
+    for (const row of existingCats) {
+      catMap.set(row.name.trim().toLowerCase(), row.id);
+    }
     for (const cat of DEFAULT_CATEGORIES) {
+      const key = cat.name.trim().toLowerCase();
+      if (catMap.has(key)) continue;
       const [row] = await this.db
         .insert(popsInventoryCategories)
         .values({
@@ -179,17 +212,25 @@ export class InventoryService implements OnModuleInit {
           description: cat.description,
         })
         .returning();
-      if (row) catMap.set(cat.name, row.id);
+      if (row) catMap.set(key, row.id);
     }
 
-    const ingredientIds = new Map<string, string>();
+    const existingSkus = new Set(
+      (
+        await this.db
+          .select({ sku: popsIngredients.sku })
+          .from(popsIngredients)
+          .where(eq(popsIngredients.branchId, branch.id))
+      ).map((r) => r.sku.trim().toLowerCase()),
+    );
     for (const ing of DEFAULT_INGREDIENTS) {
+      if (existingSkus.has(ing.sku.trim().toLowerCase())) continue;
       const [row] = await this.db
         .insert(popsIngredients)
         .values({
           organizationId: branch.organizationId,
           branchId: branch.id,
-          categoryId: catMap.get(ing.category) ?? null,
+          categoryId: catMap.get(ing.category.trim().toLowerCase()) ?? null,
           sku: ing.sku,
           name: ing.name,
           unit: ing.unit,
@@ -200,23 +241,29 @@ export class InventoryService implements OnModuleInit {
           unitCostPkr: ing.unitCost,
         })
         .returning();
-      if (row) {
-        ingredientIds.set(ing.sku, row.id);
-        if (ing.currentStock > 0) {
-          await this.db.insert(popsStockBatches).values({
-            organizationId: branch.organizationId,
-            branchId: branch.id,
-            ingredientId: row.id,
-            qty: ing.currentStock,
-            batchNumber: `B-SEED-${ing.sku}`,
-            location: ing.unit === "Kg" && ing.category === "Meat" ? "Cold store" : "Dry store",
-            unitCostPkr: ing.unitCost,
-          });
-        }
+      if (row && ing.currentStock > 0) {
+        await this.db.insert(popsStockBatches).values({
+          organizationId: branch.organizationId,
+          branchId: branch.id,
+          ingredientId: row.id,
+          qty: ing.currentStock,
+          batchNumber: `B-SEED-${ing.sku}`,
+          location: ing.unit === "Kg" && ing.category === "Meat" ? "Cold store" : "Dry store",
+          unitCostPkr: ing.unitCost,
+        });
       }
     }
 
+    const existingSupplierNames = new Set(
+      (
+        await this.db
+          .select({ name: popsSuppliers.name })
+          .from(popsSuppliers)
+          .where(eq(popsSuppliers.branchId, branch.id))
+      ).map((r) => r.name.trim().toLowerCase()),
+    );
     for (const sup of DEFAULT_SUPPLIERS) {
+      if (existingSupplierNames.has(sup.name.trim().toLowerCase())) continue;
       await this.db.insert(popsSuppliers).values({
         organizationId: branch.organizationId,
         branchId: branch.id,
@@ -231,6 +278,7 @@ export class InventoryService implements OnModuleInit {
     }
 
     await this.audit(branch.organizationId, branch.id, "system", "Seed completed", "Inventory", "Default categories, ingredients, suppliers");
+    await markDemoSeedDone(this.db, branch.organizationId, branch.id, "inventory");
   }
 
   async getDashboard(organizationId: string, branchCode: string) {

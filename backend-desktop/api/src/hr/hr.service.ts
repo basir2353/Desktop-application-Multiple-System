@@ -1485,12 +1485,18 @@ export class HrService implements OnModuleInit {
   }
 
   private async seedBranchIfEmpty(branch: typeof popsBranches.$inferSelect): Promise<void> {
+    const { hasDemoSeedFlag, markDemoSeedDone } = await import("../lib/demo-seed-flag");
+
     const existing = await this.db
       .select({ id: popsEmployees.id })
       .from(popsEmployees)
       .where(eq(popsEmployees.branchId, branch.id))
       .limit(1);
-    if (existing[0]) return;
+    if (existing[0]) {
+      void markDemoSeedDone(this.db, branch.organizationId, branch.id, "hr").catch(() => undefined);
+      return;
+    }
+    if (await hasDemoSeedFlag(this.db, branch.id, "hr")) return;
 
     for (const seed of EMPLOYEE_SEEDS) {
       const userRows = await this.db
@@ -1535,5 +1541,6 @@ export class HrService implements OnModuleInit {
         status: statuses[i] ?? "present",
       });
     }
+    await markDemoSeedDone(this.db, branch.organizationId, branch.id, "hr");
   }
 }
