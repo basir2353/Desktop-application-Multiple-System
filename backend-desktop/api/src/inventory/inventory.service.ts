@@ -365,6 +365,7 @@ export class InventoryService implements OnModuleInit {
   async getBranchInventory(organizationId: string, branchCode: string) {
     const branch = await this.resolveBranch(organizationId, branchCode);
     await this.seedBranchIfEmpty(branch);
+    await this.dedupeCategoriesForBranch(branch.id);
 
     const [
       categories,
@@ -801,12 +802,27 @@ export class InventoryService implements OnModuleInit {
 
   async createCategory(organizationId: string, userEmail: string, input: CreateInventoryCategory) {
     const branch = await this.resolveBranch(organizationId, input.branchCode);
+    const name = input.name.trim();
+    if (!name) throw new BadRequestException("Category name is required");
+    const dup = await this.db
+      .select({ id: popsInventoryCategories.id })
+      .from(popsInventoryCategories)
+      .where(
+        and(
+          eq(popsInventoryCategories.branchId, branch.id),
+          sql`lower(${popsInventoryCategories.name}) = ${name.toLowerCase()}`,
+        ),
+      )
+      .limit(1);
+    if (dup.length > 0) {
+      throw new BadRequestException(`Category “${name}” already exists`);
+    }
     const [row] = await this.db
       .insert(popsInventoryCategories)
       .values({
         organizationId,
         branchId: branch.id,
-        name: input.name.trim(),
+        name,
         description: input.description?.trim() || null,
       })
       .returning();
@@ -1979,6 +1995,54 @@ export class InventoryService implements OnModuleInit {
   }
 
   // ── Loaders & mappers ───────────────────────────────────────────────────
+
+  /**
+   * Merge same-name categories created by repeated demo seeds.
+   * Keep the row with the most ingredients (then oldest), re-point others, delete extras.
+   */
+  private async dedupeCategoriesForBranch(branchId: string): Promise<number> {
+    const rows = await this.db
+      .select()
+      .from(popsInventoryCategories)
+      .where(eq(popsInventoryCategories.branchId, branchId))
+      .orderBy(asc(popsInventoryCategories.createdAt));
+    if (rows.length < 2) return 0;
+
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const key = row.name.trim().toLowerCase();
+      const list = groups.get(key) ?? [];
+      list.push(row);
+      groups.set(key, list);
+    }
+
+    let removed = 0;
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const scored = await Promise.all(
+        group.map(async (row) => ({
+          row,
+          count: await this.countIngredientsInCategory(row.id),
+        })),
+      );
+      scored.sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count;
+        return a.row.createdAt.getTime() - b.row.createdAt.getTime();
+      });
+      const keeper = scored[0]!.row;
+      for (const extra of scored.slice(1)) {
+        await this.db
+          .update(popsIngredients)
+          .set({ categoryId: keeper.id })
+          .where(eq(popsIngredients.categoryId, extra.row.id));
+        await this.db
+          .delete(popsInventoryCategories)
+          .where(eq(popsInventoryCategories.id, extra.row.id));
+        removed += 1;
+      }
+    }
+    return removed;
+  }
 
   private async loadCategories(branchId: string) {
     const rows = await this.db
