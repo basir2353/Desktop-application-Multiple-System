@@ -177,6 +177,7 @@ function ThemedStack() {
           <Stack.Screen name="admin-menu" options={{ headerShown: false }} />
           <Stack.Screen name="admin-tax" options={{ headerShown: false }} />
           <Stack.Screen name="admin-more" options={{ headerShown: false }} />
+          <Stack.Screen name="admin-settings" options={{ headerShown: false }} />
           <Stack.Screen name="admin-tables" options={{ headerShown: false }} />
           <Stack.Screen name="admin-kitchen" options={{ headerShown: false }} />
           <Stack.Screen name="admin-inventory" options={{ headerShown: false }} />

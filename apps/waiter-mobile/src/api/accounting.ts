@@ -189,3 +189,23 @@ export async function fetchTaxSettings(branchCode: string) {
   }
   return taxSettingsSchema.parse(await res.json());
 }
+
+export async function updateTaxSettings(input: {
+  branchCode: string;
+  serviceTaxPct?: number;
+  salesTaxPct?: number;
+  posCharges?: Record<string, unknown>;
+}) {
+  const { taxSettingsSchema, updateTaxSettingsSchema } = await import("@platform/contracts");
+  const body = updateTaxSettingsSchema.parse(input);
+  const res = await authFetch("/v1/accounting/tax", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(err?.message ?? `Update tax failed: ${res.status}`);
+  }
+  return taxSettingsSchema.parse(await res.json());
+}

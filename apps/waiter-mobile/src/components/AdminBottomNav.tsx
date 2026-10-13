@@ -16,6 +16,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: string; href: string }> =
 
 const MORE_ROUTES = [
   "/admin-more",
+  "/admin-settings",
   "/admin-sales",
   "/admin-reports",
   "/admin-payout",

@@ -8,6 +8,8 @@ export type PosTaxSettings = {
   cardTaxPct: number;
   onlineTaxPct: number;
   taxEnabled: boolean;
+  autoDiscountEnabled: boolean;
+  autoDiscountPct: number;
   serviceOnDineIn: boolean;
   /** Apply service charge on takeaway (default off). */
   serviceOnTakeaway: boolean;
@@ -32,6 +34,8 @@ export const DEFAULT_POS_TAX_SETTINGS: PosTaxSettings = {
   cardTaxPct: 8,
   onlineTaxPct: 8,
   taxEnabled: true,
+  autoDiscountEnabled: false,
+  autoDiscountPct: 10,
   serviceOnDineIn: true,
   serviceOnTakeaway: false,
   serviceOnDelivery: false,
@@ -55,6 +59,10 @@ export function normalizePosTaxSettings(input: Partial<PosTaxSettings>): PosTaxS
     cardTaxPct: Number.isFinite(input.cardTaxPct) ? Math.max(0, Number(input.cardTaxPct)) : DEFAULT_POS_TAX_SETTINGS.cardTaxPct,
     onlineTaxPct: Number.isFinite(input.onlineTaxPct) ? Math.max(0, Number(input.onlineTaxPct)) : DEFAULT_POS_TAX_SETTINGS.onlineTaxPct,
     taxEnabled: input.taxEnabled ?? DEFAULT_POS_TAX_SETTINGS.taxEnabled,
+    autoDiscountEnabled: input.autoDiscountEnabled ?? DEFAULT_POS_TAX_SETTINGS.autoDiscountEnabled,
+    autoDiscountPct: Number.isFinite(input.autoDiscountPct)
+      ? Math.max(0, Math.min(50, Number(input.autoDiscountPct)))
+      : DEFAULT_POS_TAX_SETTINGS.autoDiscountPct,
     serviceOnDineIn: input.serviceOnDineIn ?? DEFAULT_POS_TAX_SETTINGS.serviceOnDineIn,
     serviceOnTakeaway: input.serviceOnTakeaway ?? DEFAULT_POS_TAX_SETTINGS.serviceOnTakeaway,
     serviceOnDelivery: input.serviceOnDelivery ?? DEFAULT_POS_TAX_SETTINGS.serviceOnDelivery,
@@ -86,6 +94,8 @@ export function posTaxSettingsFromApi(tax: {
     // Prefer posCharges when present; otherwise legacy columns (never leave APK stuck on default 10).
     servicePct: serviceFromCharges ?? tax.serviceTaxPct,
     taxPct: taxFromCharges ?? tax.salesTaxPct,
+    autoDiscountEnabled: charges?.autoDiscountEnabled,
+    autoDiscountPct: charges?.autoDiscountPct,
     cashTaxPct:
       charges && Number.isFinite(Number(charges.cashTaxPct))
         ? Number(charges.cashTaxPct)

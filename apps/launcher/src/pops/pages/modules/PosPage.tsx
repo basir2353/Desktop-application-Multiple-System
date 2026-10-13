@@ -199,7 +199,9 @@ import { ensureOrderSeqAtLeast, nextOrderRef, parseOrderRefSeq, peekNextOrderRef
 import { ORDER_NUMBER_SETTINGS_CHANGED_EVENT } from "../../lib/orderNumberSettings";
 import { loadPrinterSections } from "../../lib/printerSections";
 import {
+  coalesceKotFanoutByPrinter,
   groupCartLinesBySection,
+  preferredKotTypeForSection,
   resolveKotPrinter,
   resolvePrintUserId,
   resolveReceiptPrinter,
@@ -1448,10 +1450,10 @@ export function PosPage(): JSX.Element {
   /** Customer + optional kitchen instruction (no Disc markers). */
   const notesWithKitchen = packOrderNotesWithKitchenNote(orderNotes, kitchenNote);
 
-  /** Kitchen notes include DiscPct/DiscRs so Edit restores DISC % / DISC RS. */
+  /** Kitchen notes include DiscPct/DiscRs so Edit / Latest orders / print restore discount (incl. auto). */
   const kitchenOrderNotes = packOrderNotesWithDiscount(
     notesWithKitchen,
-    !autoDiscountEnabled && (discountPctInput > 0 || discountAmountInput > 0)
+    discountPctInput > 0 || discountAmountInput > 0
       ? {
           editedAs: discountEditedAs,
           pct: discountPctInput,
@@ -2415,44 +2417,60 @@ export function PosPage(): JSX.Element {
     if (
       editingOrder?.kind === "ticket" &&
       kotBaselineRef.current &&
-      routed.every((p) => p.lines.length === 0)
+      routed.every((p) => p.payload.lines.length === 0)
     ) {
       return { errors: [], skippedNoChanges: true };
     }
 
-    const named = routed.filter((p) => Boolean(asPrinterName(p.systemPrinterName)));
-    const unassigned = routed.filter((p) => !asPrinterName(p.systemPrinterName));
+    // Option 40: same Windows printer → one slip; Kitchen vs Bar stay separate jobs.
+    type RoutedPart = (typeof routed)[number] & { lines: (typeof routed)[number]["payload"]["lines"] };
+    const parts: RoutedPart[] = routed.map((r) => ({
+      ...r,
+      lines: r.payload.lines,
+      systemPrinterName: r.payload.systemPrinterName,
+      printerKey: r.payload.printerName,
+      label: r.payload.printerName,
+    }));
+    const coalesced = coalesceKotFanoutByPrinter(parts);
 
-    for (const payload of named) {
-      if (payload.lines.length === 0) continue;
+    const named = coalesced.filter((p) => Boolean(asPrinterName(p.systemPrinterName)));
+    // Section-mapped lines without an OS-linked printer must NOT fall back to Kitchen
+    // (that mixed Drinks onto the food printer when Bar was added).
+    const sectionMissingPrinter = coalesced.filter(
+      (p) => p.sectionId && !asPrinterName(p.systemPrinterName) && p.lines.length > 0,
+    );
+    for (const missing of sectionMissingPrinter) {
+      errors.push(
+        `${missing.label ?? missing.sectionId}: no Windows printer linked — Printers → pick section → Use for…`,
+      );
+    }
+    const unassignedLines = coalesced
+      .filter((p) => !p.sectionId && !asPrinterName(p.systemPrinterName) && p.lines.length > 0)
+      .flatMap((p) => p.lines);
+
+    for (const part of named) {
+      if (part.lines.length === 0) continue;
+      const base = part.payload;
       const result = await printKotDetailed({
-        ...payload,
-        copies: Math.max(1, payload.copies ?? 1),
+        ...base,
+        lines: part.lines,
+        printerName: part.label ?? base.printerName,
+        copies: Math.max(1, base.copies ?? 1),
       });
-      const target = payload.systemPrinterName ?? payload.printerName ?? "Kitchen";
+      const target = base.systemPrinterName ?? base.printerName ?? "Kitchen";
       if (!result.ok) {
         errors.push(`${target}: ${result.error ?? "print failed"}`);
       }
     }
 
-    const unassignedLines = unassigned.flatMap((p) => p.lines);
-    const namedHadLines = named.some((p) => p.lines.length > 0);
-    // Dialog only when nothing is OS-linked, or leftover lines have no assignment.
-    // Never open dialog after silent success just because a named job failed (that became PDF).
-    if (!namedHadLines || unassignedLines.length > 0) {
+    // Only unmapped (null-section) leftovers may use kitchen default / dialog.
+    if (unassignedLines.length > 0) {
       const profile = resolveKotPrinter(branch?.code, null, sessionUserId, "kitchen");
-      const lines = !namedHadLines
-        ? buildKotPrintPayload(orderRefOverride).lines
-        : unassignedLines;
-      if (lines.length === 0) {
-        return { errors, skippedNoChanges: editingOrder?.kind === "ticket" };
-      }
       const linkedName = asPrinterName(profile?.systemPrinterName);
       const dialogPayload = {
         ...withPrinterProfile(buildKotPrintPayload(orderRefOverride), profile),
-        lines,
+        lines: unassignedLines,
         copies: 1 as const,
-        // Prefer linked OS name when profile has one; otherwise dialog (user picks).
         systemPrinterName: linkedName || undefined,
       };
       const result = await printKotDetailed(dialogPayload);
@@ -2470,7 +2488,9 @@ export function PosPage(): JSX.Element {
    * have a "Print to" assignment configured. Falls back to a single combined KOT — the
    * original behavior — when no routing is set up for anything in the cart.
    */
-  function buildRoutedKotPrintPayloads(orderRefOverride?: string): Omit<PrintTicketInput, "kind">[] {
+  function buildRoutedKotPrintPayloads(
+    orderRefOverride?: string,
+  ): { sectionId: string | null; payload: Omit<PrintTicketInput, "kind"> }[] {
     const basePayload = buildKotPrintPayload(orderRefOverride);
     const sessionUserId = useSessionStore.getState().claims?.sub;
     const enabledSections = loadPrinterSections(branch?.code).filter((s) => s.enabled);
@@ -2491,46 +2511,46 @@ export function PosPage(): JSX.Element {
     const cartForRouting = updateCart ?? printOrderedCart();
 
     if (enabledSections.length === 0) {
-      return [attachKotProfile(basePayload, null, "kitchen")];
+      return [{ sectionId: null, payload: attachKotProfile(basePayload, null, "kitchen") }];
     }
 
     const enabledSectionIds = new Set(enabledSections.map((s) => s.id));
     const groups = groupCartLinesBySection(branch?.code, cartForRouting, enabledSectionIds);
     if (groups.length <= 1 && groups[0]?.sectionId == null) {
-      return [attachKotProfile(basePayload, null, "kitchen")];
+      return [{ sectionId: null, payload: attachKotProfile(basePayload, null, "kitchen") }];
     }
 
     return groups.map(({ sectionId, lines }) => {
       const section = sectionId ? enabledSections.find((s) => s.id === sectionId) : null;
-      const preferredType =
-        section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
-          ? ("bar" as const)
-          : ("kitchen" as const);
+      const preferredType = preferredKotTypeForSection(section ?? null);
       const label = section ? `${section.icon} ${section.name}` : "Kitchen";
       const orderedLines = sortCartLinesOldestFirst(lines);
-      return attachKotProfile(
-        {
-          ...basePayload,
-          lines: orderedLines.map((line) => ({
-            // Update deltas already bake + ADD / ↑ EXTRA / etc into lineLabel.
-            label:
-              updateCart != null
-                ? line.lineLabel
-                : formatMenuItemPrintLabel({
-                    name: line.item.name,
-                    secondaryName: line.item.secondaryName,
-                    portion: line.item.portion,
-                    variantLabel: line.variant?.label ?? null,
-                    simplePrice: line.item.simplePrice,
-                  }),
-            qty: line.qty,
-            unitPrice: 0,
-          })),
-          printerName: label,
-        },
+      return {
         sectionId,
-        preferredType,
-      );
+        payload: attachKotProfile(
+          {
+            ...basePayload,
+            lines: orderedLines.map((line) => ({
+              // Update deltas already bake + ADD / ↑ EXTRA / etc into lineLabel.
+              label:
+                updateCart != null
+                  ? line.lineLabel
+                  : formatMenuItemPrintLabel({
+                      name: line.item.name,
+                      secondaryName: line.item.secondaryName,
+                      portion: line.item.portion,
+                      variantLabel: line.variant?.label ?? null,
+                      simplePrice: line.item.simplePrice,
+                    }),
+              qty: line.qty,
+              unitPrice: 0,
+            })),
+            printerName: label,
+          },
+          sectionId,
+          preferredType,
+        ),
+      };
     });
   }
 
@@ -3092,7 +3112,13 @@ export function PosPage(): JSX.Element {
           ticketServiceFree={ticketServiceFree}
           showTaxServiceFreeToggles={posSettings.showPosTaxServiceFreeToggles}
           orderMode={mode}
+          orderModesEnabled={{
+            dineIn: orderModeVisibility.dineInEnabled,
+            takeaway: orderModeVisibility.takeawayEnabled,
+            delivery: orderModeVisibility.deliveryEnabled,
+          }}
           tableSelected={Boolean(selectedTableId)}
+          tableLabel={seatingLabel}
           initialViewMode={posSettings.menuViewMode}
           ticketPanelSide={posSettings.fullScreenTicketPanelSide}
           openOrders={fullScreenOpenOrders}
@@ -3136,17 +3162,30 @@ export function PosPage(): JSX.Element {
             setSeatingModalOpen(true);
             markSeatingModalShown();
           }}
+          onTableTransfer={openTableTransfer}
+          onMergeSplit={openSplitBill}
           onTakeaway={() => {
             switchMode("takeaway");
             setModeConfirmed(true);
+            setSelectedFloorSectionId(null);
+            setSelectedTableId(null);
+            setSeatingModalOpen(false);
           }}
           onDineIn={() => {
             switchMode("dine-in");
             setModeConfirmed(true);
+            // Restaurant flow: dining needs a table — open picker if none chosen yet.
+            if (floorSections.length > 0 && !selectedTableId) {
+              setSeatingModalOpen(true);
+              markSeatingModalShown();
+            }
           }}
           onDelivery={() => {
             switchMode("delivery");
             setModeConfirmed(true);
+            setSelectedFloorSectionId(null);
+            setSelectedTableId(null);
+            setSeatingModalOpen(false);
           }}
           onTvDisplay={() => {
             // Kitchen / TV board — open in new tab so counter POS stays open.

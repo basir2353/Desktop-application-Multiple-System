@@ -227,14 +227,21 @@ export function packOrderNotesWithCashReceived(
 export function discountAmountFromTicketNotes(
   notes: string | null | undefined,
   subtotal: number,
+  /** When notes have no Disc marker, fall back to branch auto-discount settings. */
+  autoDiscount?: { enabled: boolean; pct: number } | null,
 ): number {
   const state = parseTicketDiscountFromNotes(notes);
-  if (!state || subtotal <= 0) return 0;
-  if (state.editedAs === "amount" && state.amount > 0) {
-    return Math.min(Math.round(state.amount), subtotal);
+  if (state && subtotal > 0) {
+    if (state.editedAs === "amount" && state.amount > 0) {
+      return Math.min(Math.round(state.amount), subtotal);
+    }
+    if (state.pct > 0) {
+      return Math.min(Math.round(subtotal * (state.pct / 100)), subtotal);
+    }
   }
-  if (state.pct > 0) {
-    return Math.min(Math.round(subtotal * (state.pct / 100)), subtotal);
+  if (autoDiscount?.enabled && autoDiscount.pct > 0 && subtotal > 0) {
+    const pct = Math.max(0, Math.min(50, autoDiscount.pct));
+    return Math.min(Math.round(subtotal * (pct / 100)), subtotal);
   }
   return 0;
 }

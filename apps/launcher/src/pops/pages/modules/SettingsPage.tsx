@@ -1,7 +1,7 @@
 import { Button } from "@platform/ui";
 import type { DataResetScope } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import {
@@ -12,8 +12,11 @@ import {
 import { DayToDayDeleteSalesPanel } from "../../components/DayToDayDeleteSalesPanel";
 import {
   DEFAULT_POS_SETTINGS,
+  hasPendingPosSettingsSync,
   loadPosSettings,
+  markPendingPosSettingsSync,
   normalizePosSettings,
+  posChargesFingerprint,
   posSettingsFromTaxApi,
   savePosSettings,
   savePosSettingsSynced,
@@ -241,6 +244,7 @@ function DataResetPanel(props: {
 export function SettingsPage(): JSX.Element {
   const systemId = useActiveSystemId();
   const isMaterialFlow = systemId === "tradeflow";
+  const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
   const setBranch = usePopsStore((s) => s.setBranch);
   const claims = useSessionStore((s) => s.claims);
@@ -255,6 +259,7 @@ export function SettingsPage(): JSX.Element {
   );
   const [notice, setNotice] = useState<string | null>(null);
   const [taxError, setTaxError] = useState<string | null>(null);
+  const [autoSaveState, setAutoSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [branchDraft, setBranchDraft] = useState({ name: "", city: "", code: "" });
   const terminalId = getOrCreateTerminalId();
   const taxFeatures = useTaxAuthorityFeatures();
@@ -277,12 +282,17 @@ export function SettingsPage(): JSX.Element {
     [branch?.code, notice],
   );
 
+  const settingsHydratedRef = useRef(false);
+  const autoSaveSkipRef = useRef(true);
+
   useEffect(() => {
     const loaded = loadPosSettings(branch?.code);
     setSaved(loaded);
     setDraft(loaded);
     setModeVisibilityDraft(loadPosOrderModeVisibility(branch?.code));
     setOrderNumDraft(loadOrderNumberSettings(branch?.code));
+    settingsHydratedRef.current = false;
+    autoSaveSkipRef.current = true;
   }, [branch?.code]);
 
   const cloudTaxQuery = useQuery({
@@ -310,14 +320,41 @@ export function SettingsPage(): JSX.Element {
       autoPrintFinalTakeaway: local.autoPrintFinalTakeaway,
       autoPrintFinalDelivery: local.autoPrintFinalDelivery,
     });
+
+    // Local edits that failed to sync must not be overwritten by stale cloud on refresh.
+    if (hasPendingPosSettingsSync(branch.code)) {
+      settingsHydratedRef.current = true;
+      autoSaveSkipRef.current = true;
+      setSaved(local);
+      setDraft(local);
+      void savePosSettingsSynced(branch.code, local)
+        .then((synced) => {
+          setSaved(synced);
+          setDraft(synced);
+        })
+        .catch(() => {
+          // Keep local; retry on next visit / Save.
+        });
+      return;
+    }
+
     // Prefer cloud when it has explicit posCharges; otherwise keep local custom rates
     // but push local → cloud once so mobile can see them.
     if (cloudTaxQuery.data.posCharges) {
+      const sameCharges =
+        posChargesFingerprint(local) === posChargesFingerprint(fromCloud);
+      if (!sameCharges && settingsHydratedRef.current) {
+        // User already changed settings this session — do not stomp with a refetch.
+        return;
+      }
+      autoSaveSkipRef.current = true;
       savePosSettings(branch.code, fromCloud);
       setSaved(fromCloud);
       setDraft(fromCloud);
+      settingsHydratedRef.current = true;
       return;
     }
+    settingsHydratedRef.current = true;
     void savePosSettingsSynced(branch.code, local).catch(() => {
       // Local still works if sync fails (permissions / offline).
     });
@@ -368,9 +405,11 @@ export function SettingsPage(): JSX.Element {
     return computeTicketTotals(sampleSubtotal, autoDisc, draft.servicePct, taxPct);
   }, [draft]);
 
-  async function apply(): Promise<void> {
+  async function apply(options?: { quiet?: boolean }): Promise<void> {
     if (!branch?.code) return;
+    const quiet = Boolean(options?.quiet);
     try {
+      if (quiet) setAutoSaveState("saving");
       const next = normalizePosSettings(draft);
       // If tax master toggle is off, force payment-method tax off too.
       if (!next.taxEnabled) {
@@ -381,9 +420,15 @@ export function SettingsPage(): JSX.Element {
       try {
         await savePosSettingsSynced(branch.code, next);
         syncedToCloud = true;
+        settingsHydratedRef.current = true;
+        void queryClient.invalidateQueries({
+          queryKey: ["accounting", "tax", "pos-charges", branch.code],
+        });
       } catch (err) {
         // Still save locally so desktop POS works even if cloud sync is denied.
         savePosSettings(branch.code, next);
+        markPendingPosSettingsSync(branch.code, next);
+        settingsHydratedRef.current = true;
         syncError = err instanceof Error ? err.message : "Cloud sync failed";
       }
       // Keep bill print template in sync: off means hide Tax line on next prints.
@@ -399,12 +444,18 @@ export function SettingsPage(): JSX.Element {
       setModeVisibilityDraft(nextVisibility);
       if (syncedToCloud) {
         setTaxError(null);
-        setNotice(
-          next.taxEnabled
-            ? `POS charges saved & synced for mobile (service ${next.servicePct}%). Tax is ON for new tickets.`
-            : `POS charges saved & synced for mobile (service ${next.servicePct}%). Tax is OFF — new bills will not add or show tax.`,
-        );
+        if (quiet) {
+          setAutoSaveState("saved");
+          setNotice("Settings saved automatically.");
+        } else {
+          setNotice(
+            next.taxEnabled
+              ? `POS charges saved & synced for mobile (service ${next.servicePct}%). Tax is ON for new tickets.`
+              : `POS charges saved & synced for mobile (service ${next.servicePct}%). Tax is OFF — new bills will not add or show tax.`,
+          );
+        }
       } else {
+        setAutoSaveState("error");
         setNotice(
           `Saved on this PC only (service ${next.servicePct}%). Mobile will keep the old rate until cloud sync works.`,
         );
@@ -413,10 +464,41 @@ export function SettingsPage(): JSX.Element {
         );
       }
     } catch (err) {
+      setAutoSaveState("error");
       setTaxError(err instanceof Error ? err.message : "Could not save POS settings (storage full?).");
       setNotice(null);
     }
   }
+
+  // Auto-save toggles / rates so refresh does not undo changes (user expectation).
+  useEffect(() => {
+    if (!branch?.code) return;
+    if (autoSaveSkipRef.current) {
+      autoSaveSkipRef.current = false;
+      return;
+    }
+    const draftNorm = normalizePosSettings(draft);
+    const visibilityNorm = normalizePosOrderModeVisibility(modeVisibilityDraft);
+    const savedVisibility = loadPosOrderModeVisibility(branch.code);
+    const chargesChanged =
+      posChargesFingerprint(draftNorm) !== posChargesFingerprint(saved) ||
+      draftNorm.showBillNotes !== saved.showBillNotes ||
+      draftNorm.fullScreenMenuEnabled !== saved.fullScreenMenuEnabled ||
+      draftNorm.showLatestOrdersPanel !== saved.showLatestOrdersPanel ||
+      draftNorm.menuViewMode !== saved.menuViewMode ||
+      draftNorm.showPosTaxServiceFreeToggles !== saved.showPosTaxServiceFreeToggles ||
+      draftNorm.kotChangeReasonGraceMinutes !== saved.kotChangeReasonGraceMinutes ||
+      draftNorm.fullScreenTicketPanelSide !== saved.fullScreenTicketPanelSide;
+    const visibilityChanged =
+      JSON.stringify(visibilityNorm) !== JSON.stringify(savedVisibility);
+    if (!chargesChanged && !visibilityChanged) return;
+
+    const timer = window.setTimeout(() => {
+      void apply({ quiet: true });
+    }, 600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce draft/visibility only
+  }, [branch?.code, draft, modeVisibilityDraft, saved]);
 
   function reset(): void {
     setDraft(DEFAULT_POS_SETTINGS);
@@ -1002,14 +1084,24 @@ export function SettingsPage(): JSX.Element {
           Rs {preview.total.toLocaleString()}.
         </p>
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button type="button" className="text-xs" onClick={() => apply()}>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button type="button" className="text-xs" onClick={() => void apply()}>
             Save POS settings
           </Button>
           <Button type="button" variant="ghost" className="text-xs" onClick={() => reset()}>
             Reset to defaults
           </Button>
+          {autoSaveState === "saving" ? (
+            <span className="text-[10px] text-slate-500">Saving…</span>
+          ) : autoSaveState === "saved" ? (
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Auto-saved</span>
+          ) : autoSaveState === "error" ? (
+            <span className="text-[10px] text-amber-600 dark:text-amber-400">Saved on this PC</span>
+          ) : null}
         </div>
+        <p className="mt-2 text-[10px] text-slate-500">
+          Changes save automatically after a moment. Use Save if cloud sync failed.
+        </p>
       </div>
 
       <div className="max-w-xl rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">

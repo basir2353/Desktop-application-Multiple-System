@@ -265,6 +265,72 @@ export function loadPosSettings(branchCode: string | undefined): PosSettings {
   }
 }
 
+/** Cloud-synced charge fields only (used to detect unsynced local edits). */
+export function posChargesFingerprint(settings: PosSettings): string {
+  const s = normalizePosSettings(settings);
+  return JSON.stringify({
+    servicePct: s.servicePct,
+    taxPct: s.taxPct,
+    taxByPaymentMethod: s.taxByPaymentMethod,
+    cashTaxPct: s.cashTaxPct,
+    cardTaxPct: s.cardTaxPct,
+    onlineTaxPct: s.onlineTaxPct,
+    taxEnabled: s.taxEnabled,
+    autoDiscountEnabled: s.autoDiscountEnabled,
+    autoDiscountPct: s.autoDiscountPct,
+    serviceOnDineIn: s.serviceOnDineIn,
+    serviceOnTakeaway: s.serviceOnTakeaway,
+    serviceOnDelivery: s.serviceOnDelivery,
+    serviceOnOnline: s.serviceOnOnline,
+    serviceOnFoodpanda: s.serviceOnFoodpanda,
+    serviceOnStaffFood: s.serviceOnStaffFood,
+    taxOnDineIn: s.taxOnDineIn,
+    taxOnTakeaway: s.taxOnTakeaway,
+    taxOnDelivery: s.taxOnDelivery,
+    taxOnOnline: s.taxOnOnline,
+    taxOnFoodpanda: s.taxOnFoodpanda,
+    taxOnStaffFood: s.taxOnStaffFood,
+    autoPrintOrderDineIn: s.autoPrintOrderDineIn,
+    autoPrintOrderTakeaway: s.autoPrintOrderTakeaway,
+    autoPrintOrderDelivery: s.autoPrintOrderDelivery,
+    autoPrintFinalDineIn: s.autoPrintFinalDineIn,
+    autoPrintFinalTakeaway: s.autoPrintFinalTakeaway,
+    autoPrintFinalDelivery: s.autoPrintFinalDelivery,
+  });
+}
+
+const PENDING_SYNC_KEY = "pops-pos-settings-pending-sync-v1";
+
+function pendingSyncKey(branchCode: string): string {
+  return `${PENDING_SYNC_KEY}:${branchCode}`;
+}
+
+/** True when local charge settings were saved but not yet confirmed on the API. */
+export function hasPendingPosSettingsSync(branchCode: string | undefined): boolean {
+  if (!branchCode) return false;
+  try {
+    return Boolean(localStorage.getItem(pendingSyncKey(branchCode)));
+  } catch {
+    return false;
+  }
+}
+
+export function markPendingPosSettingsSync(branchCode: string, settings: PosSettings): void {
+  try {
+    localStorage.setItem(pendingSyncKey(branchCode), posChargesFingerprint(settings));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearPendingPosSettingsSync(branchCode: string): void {
+  try {
+    localStorage.removeItem(pendingSyncKey(branchCode));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function savePosSettings(branchCode: string, settings: PosSettings): void {
   const next = normalizePosSettings(settings);
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -335,41 +401,48 @@ export async function savePosSettingsSynced(
 ): Promise<PosSettings> {
   const next = normalizePosSettings(settings);
   savePosSettings(branchCode, next);
+  markPendingPosSettingsSync(branchCode, next);
   const { updateTaxSettings } = await import("../api/accounting");
-  await updateTaxSettings({
-    branchCode,
-    serviceTaxPct: next.servicePct,
-    salesTaxPct: next.taxByPaymentMethod ? next.cashTaxPct : next.taxPct,
-    posCharges: {
-      servicePct: next.servicePct,
-      taxPct: next.taxPct,
-      taxByPaymentMethod: next.taxByPaymentMethod,
-      cashTaxPct: next.cashTaxPct,
-      cardTaxPct: next.cardTaxPct,
-      onlineTaxPct: next.onlineTaxPct,
-      taxEnabled: next.taxEnabled,
-      autoDiscountEnabled: next.autoDiscountEnabled,
-      autoDiscountPct: next.autoDiscountPct,
-      serviceOnDineIn: next.serviceOnDineIn,
-      serviceOnTakeaway: next.serviceOnTakeaway,
-      serviceOnDelivery: next.serviceOnDelivery,
-      serviceOnOnline: next.serviceOnOnline,
-      serviceOnFoodpanda: next.serviceOnFoodpanda,
-      serviceOnStaffFood: next.serviceOnStaffFood,
-      taxOnDineIn: next.taxOnDineIn,
-      taxOnTakeaway: next.taxOnTakeaway,
-      taxOnDelivery: next.taxOnDelivery,
-      taxOnOnline: next.taxOnOnline,
-      taxOnFoodpanda: next.taxOnFoodpanda,
-      taxOnStaffFood: next.taxOnStaffFood,
-      autoPrintOrderDineIn: next.autoPrintOrderDineIn,
-      autoPrintOrderTakeaway: next.autoPrintOrderTakeaway,
-      autoPrintOrderDelivery: next.autoPrintOrderDelivery,
-      autoPrintFinalDineIn: next.autoPrintFinalDineIn,
-      autoPrintFinalTakeaway: next.autoPrintFinalTakeaway,
-      autoPrintFinalDelivery: next.autoPrintFinalDelivery,
-    },
-  });
+  try {
+    await updateTaxSettings({
+      branchCode,
+      serviceTaxPct: next.servicePct,
+      salesTaxPct: next.taxByPaymentMethod ? next.cashTaxPct : next.taxPct,
+      posCharges: {
+        servicePct: next.servicePct,
+        taxPct: next.taxPct,
+        taxByPaymentMethod: next.taxByPaymentMethod,
+        cashTaxPct: next.cashTaxPct,
+        cardTaxPct: next.cardTaxPct,
+        onlineTaxPct: next.onlineTaxPct,
+        taxEnabled: next.taxEnabled,
+        autoDiscountEnabled: next.autoDiscountEnabled,
+        autoDiscountPct: next.autoDiscountPct,
+        serviceOnDineIn: next.serviceOnDineIn,
+        serviceOnTakeaway: next.serviceOnTakeaway,
+        serviceOnDelivery: next.serviceOnDelivery,
+        serviceOnOnline: next.serviceOnOnline,
+        serviceOnFoodpanda: next.serviceOnFoodpanda,
+        serviceOnStaffFood: next.serviceOnStaffFood,
+        taxOnDineIn: next.taxOnDineIn,
+        taxOnTakeaway: next.taxOnTakeaway,
+        taxOnDelivery: next.taxOnDelivery,
+        taxOnOnline: next.taxOnOnline,
+        taxOnFoodpanda: next.taxOnFoodpanda,
+        taxOnStaffFood: next.taxOnStaffFood,
+        autoPrintOrderDineIn: next.autoPrintOrderDineIn,
+        autoPrintOrderTakeaway: next.autoPrintOrderTakeaway,
+        autoPrintOrderDelivery: next.autoPrintOrderDelivery,
+        autoPrintFinalDineIn: next.autoPrintFinalDineIn,
+        autoPrintFinalTakeaway: next.autoPrintFinalTakeaway,
+        autoPrintFinalDelivery: next.autoPrintFinalDelivery,
+      },
+    });
+  } catch (err) {
+    // Keep pending flag so refresh does not overwrite local with stale cloud.
+    throw err;
+  }
+  clearPendingPosSettingsSync(branchCode);
   return next;
 }
 

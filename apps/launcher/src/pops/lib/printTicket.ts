@@ -3233,7 +3233,10 @@ export function posRecentOrderToReceiptPrint(
     resolveTicketDeliveryNotes(order.kitchenTicket ?? {}) ??
     order.kitchenTicket?.notes ??
     undefined;
-  const discountFromNotes = discountAmountFromTicketNotes(notes, subtotal);
+  const discountFromNotes = discountAmountFromTicketNotes(notes, subtotal, {
+    enabled: settings.autoDiscountEnabled,
+    pct: settings.autoDiscountPct,
+  });
   const servicePct = effectiveServicePctForMode(settings, mode);
   const totals = computeTicketTotals(
     subtotal,

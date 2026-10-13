@@ -72,3 +72,89 @@ describe("resolvePrimaryPrinterForSection — two printers", () => {
     expect(routing.loadPrinterRouting("Main").userPrinters["Waiter-ABC"]).toEqual([kitchen.id]);
   });
 });
+
+describe("Option 40: multi-section KOT fan-out", () => {
+  const store: Record<string, string> = {};
+
+  beforeEach(() => {
+    vi.resetModules();
+    for (const key of Object.keys(store)) delete store[key];
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+    });
+    vi.stubGlobal("window", {
+      dispatchEvent: () => true,
+    });
+  });
+
+  it("groups food and drinks onto separate sections", async () => {
+    const routing = await import("../printerRouting");
+    routing.setCategorySections("BR", "cat-food", ["kitchen"]);
+    routing.setCategorySections("BR", "cat-drinks", ["bar"]);
+
+    const groups = routing.groupCartLinesBySection(
+      "BR",
+      [
+        {
+          key: "1",
+          item: { id: "m1", categoryId: "cat-food", name: "Biryani" } as never,
+          variant: null,
+          qty: 1,
+          unitPrice: 500,
+          lineLabel: "Biryani",
+          sortOrder: 1,
+        },
+        {
+          key: "2",
+          item: { id: "m2", categoryId: "cat-drinks", name: "Coke" } as never,
+          variant: null,
+          qty: 2,
+          unitPrice: 100,
+          lineLabel: "Coke",
+          sortOrder: 2,
+        },
+      ],
+      new Set(["kitchen", "bar"]),
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.sectionId).sort()).toEqual(["bar", "kitchen"]);
+    expect(groups.find((g) => g.sectionId === "kitchen")?.lines).toHaveLength(1);
+    expect(groups.find((g) => g.sectionId === "bar")?.lines).toHaveLength(1);
+  });
+
+  it("coalesce keeps Kitchen and Bar as separate jobs", async () => {
+    const routing = await import("../printerRouting");
+    const parts = routing.coalesceKotFanoutByPrinter([
+      {
+        sectionId: "kitchen",
+        lines: ["Biryani"],
+        systemPrinterName: "EPSON Kitchen",
+        label: "Kitchen",
+      },
+      {
+        sectionId: "bar",
+        lines: ["Coke"],
+        systemPrinterName: "EPSON Bar",
+        label: "Bar",
+      },
+      {
+        sectionId: "grill",
+        lines: ["Tikka"],
+        systemPrinterName: "EPSON Kitchen",
+        label: "Grill",
+      },
+    ]);
+    expect(parts).toHaveLength(2);
+    const kitchenJob = parts.find((p) => p.systemPrinterName === "EPSON Kitchen");
+    expect(kitchenJob?.lines).toEqual(["Biryani", "Tikka"]);
+    expect(kitchenJob?.label).toContain("Kitchen");
+    expect(parts.find((p) => p.sectionId === "bar")?.lines).toEqual(["Coke"]);
+  });
+});

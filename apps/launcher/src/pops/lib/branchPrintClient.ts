@@ -618,10 +618,30 @@ export async function resolveSilentSystemPrinterName(input: {
     return n;
   };
 
-  if (userId && (isKot || kind === "receipt")) {
+  // Exact / fuzzy OS spooler name (when mobile / fan-out already resolved a real Windows name).
+  const hintLooksLikeSoftLabel =
+    Boolean(hint) &&
+    /billing\s*printer|kitchen\s*printer|cashier\s*\/|pick one|any assigned|expo|cashier\s*\/\s*billing|^billing$|^cashier$|^kitchen(\s*\d+)?$|^bar(\s*\d+)?$/i.test(
+      hint,
+    );
+
+  // Real Windows names only — never treat soft mobile labels as OS spooler names.
+  // For multi-section KOT fan-out this hint is the section's linked thermal — honour it first.
+  if (hint && !hintLooksLikeSoftLabel) {
+    const exactOs = osNames.find((n) => n.toLowerCase() === hint.toLowerCase());
+    if (exactOs) return exactOs;
+    const fuzzyOs = osNames.find((n) => namesRoughlyMatch(n, hint));
+    if (fuzzyOs) return fuzzyOs;
+    const pdfHint = acceptPdfFileTarget(hint);
+    if (pdfHint) return pdfHint;
+  }
+
+  // Personal receipt assignment — never used to steal a section-scoped KOT
+  // (Drinks→Bar must not land on the waiter's Kitchen printer).
+  if (userId && !isKot) {
     try {
       const { resolvePrinterForUser } = await import("./printerRouting");
-      const preferred = isKot ? (["kitchen", "bar"] as const) : (["receipt", "counter"] as const);
+      const preferred = ["receipt", "counter"] as const;
       const matchAssigned = (assigned: { systemPrinterName?: string; name?: string } | null) => {
         const linked =
           acceptPhysical(assigned?.systemPrinterName) ??
@@ -646,23 +666,6 @@ export async function resolveSilentSystemPrinterName(input: {
     }
   }
 
-  // Exact / fuzzy OS spooler name (when mobile sends a real Windows printer name).
-  const hintLooksLikeSoftLabel =
-    Boolean(hint) &&
-    /billing\s*printer|kitchen\s*printer|cashier\s*\/|pick one|any assigned|expo|cashier\s*\/\s*billing|^billing$|^cashier$|^kitchen(\s*\d+)?$|^bar(\s*\d+)?$/i.test(
-      hint,
-    );
-
-  // Real Windows names only — never treat soft mobile labels as OS spooler names.
-  if (hint && !hintLooksLikeSoftLabel) {
-    const exactOs = osNames.find((n) => n.toLowerCase() === hint.toLowerCase());
-    if (exactOs) return exactOs;
-    const fuzzyOs = osNames.find((n) => namesRoughlyMatch(n, hint));
-    if (fuzzyOs) return fuzzyOs;
-    const pdfHint = acceptPdfFileTarget(hint);
-    if (pdfHint) return pdfHint;
-  }
-
   try {
     const {
       resolveKotPrinter,
@@ -673,7 +676,20 @@ export async function resolveSilentSystemPrinterName(input: {
     const routing = loadPrinterRouting(branchCode);
 
       if (isKot) {
-      // User's assigned kitchen/bar printer wins, even when the section has none.
+      // Option 40: section-scoped KOT — ONLY that section's printers (Kitchen vs Bar vs Grill).
+      if (sectionId) {
+        const preferredType =
+          /bar/i.test(sectionId) ? ("bar" as const) : ("kitchen" as const);
+        const sectionKot = resolveKotPrinter(branchCode, sectionId, userId, preferredType);
+        const sectionName =
+          acceptPhysical(sectionKot?.systemPrinterName) ??
+          acceptPdfFileTarget(sectionKot?.systemPrinterName);
+        if (sectionName) return sectionName;
+        // Strict: do not fall through to another section's / user's kitchen printer.
+        return null;
+      }
+
+      // No section on the job — personal kitchen/bar assignment, then branch defaults.
       const assignedKitchen = resolvePrinterForUser(branchCode, userId, "kitchen");
       const assignedKitchenName =
         acceptPhysical(assignedKitchen?.systemPrinterName) ??
@@ -685,16 +701,6 @@ export async function resolveSilentSystemPrinterName(input: {
         acceptPdfFileTarget(assignedBar?.systemPrinterName);
       if (assignedBarName) return assignedBarName;
 
-      // Same as cashier: Assign Users / section first — never let "Kitchen 1" steal the route.
-      if (sectionId) {
-        const sectionKot = resolveKotPrinter(branchCode, sectionId, userId, "kitchen");
-        const sectionName =
-          acceptPhysical(sectionKot?.systemPrinterName) ??
-          acceptPdfFileTarget(sectionKot?.systemPrinterName);
-        if (sectionName) return sectionName;
-        // Strict: do not fall through to another section's printer.
-        return null;
-      }
       const kitchenKot = resolveKotPrinter(branchCode, null, userId, "kitchen");
       const kitchenName =
         acceptPhysical(kitchenKot?.systemPrinterName) ??
@@ -1052,6 +1058,8 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
         resolveKotPrinter,
         resolveReceiptPrinter,
         groupCartLinesBySection,
+        coalesceKotFanoutByPrinter,
+        preferredKotTypeForSection,
       } = await import("./printerRouting");
       const { loadPrinterSections } = await import("./printerSections");
       const { loadKotPrintSettings } = await import("./kotPrintSettings");
@@ -1107,6 +1115,8 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
           profile: ReturnType<typeof resolveKotPrinter>;
           preferredType: "kitchen" | "bar";
           label: string;
+          systemPrinterName?: string | null;
+          printerKey?: string | null;
         };
         const fanout: KotFanout[] = [];
         for (const group of printable) {
@@ -1114,10 +1124,7 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
           const section = group.sectionId
             ? enabledSections.find((s) => s.id === group.sectionId)
             : null;
-          const preferredType =
-            section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
-              ? ("bar" as const)
-              : ("kitchen" as const);
+          const preferredType = preferredKotTypeForSection(section ?? null);
           const profile = resolveKotPrinter(
             job.branchCode,
             group.sectionId,
@@ -1130,34 +1137,13 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
             profile,
             preferredType,
             label: section ? `${section.icon} ${section.name}` : "Kitchen",
+            systemPrinterName: profile?.systemPrinterName,
+            printerKey: profile?.id ?? group.sectionId,
           });
         }
 
-        // Same Windows printer → one slip (avoids N identical PDF dialogs). Different printers stay split.
-        const coalesced: KotFanout[] = [];
-        for (const jobPart of fanout) {
-          const key = (
-            jobPart.profile?.systemPrinterName?.trim() ||
-            jobPart.profile?.id ||
-            `section:${jobPart.sectionId ?? jobPart.preferredType}`
-          ).toLowerCase();
-          const existing = coalesced.find((m) => {
-            const mKey = (
-              m.profile?.systemPrinterName?.trim() ||
-              m.profile?.id ||
-              `section:${m.sectionId ?? m.preferredType}`
-            ).toLowerCase();
-            return mKey === key;
-          });
-          if (existing) {
-            existing.lines = [...existing.lines, ...jobPart.lines];
-            if (existing.label !== jobPart.label) {
-              existing.label = `${existing.label} + ${jobPart.label}`;
-            }
-          } else {
-            coalesced.push({ ...jobPart, lines: [...jobPart.lines] });
-          }
-        }
+        // Same Windows printer → one slip. Different printers (Kitchen vs Bar) stay split.
+        const coalesced = coalesceKotFanoutByPrinter(fanout);
 
         let lastPrinter: string | undefined;
         const errors: string[] = [];

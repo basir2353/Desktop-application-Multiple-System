@@ -55,7 +55,7 @@ import { fetchCompletedOrders, voidBill } from "../api/billing";
 import { useSessionStore } from "../../stores/sessionStore";
 import { POS_ORDER_MODES, formatPosStationDisplay, inferPosModeFromLabel } from "../lib/posOrderMode";
 import { usePopsStore } from "../../stores/popsStore";
-import { sessionCanManageFloor } from "../lib/roleAccess";
+import { hasAnyPermission, sessionCanManageFloor } from "../lib/roleAccess";
 import { autoPrintFinalForMode, loadPosSettings, POS_SETTINGS_CHANGED_EVENT } from "../lib/posSettings";
 import {
   isPosOrderModeVisible,
@@ -107,6 +107,8 @@ export function PosLatestOrdersPanel({
   const role = (claims?.role ?? displayRole ?? "").toLowerCase();
   /** Cashiers stay on POS — hide Orders “View all” shortcut. */
   const showViewAllOrders = role !== "cashier";
+  /** Cancel / void — cashiers denied by default (`pops.pos.void`). */
+  const canCancelOrders = hasAnyPermission(claims?.permissions, ["pops.pos.void"]);
   const [posSettingsTick, setPosSettingsTick] = useState(0);
   /** Bill ids that successfully uploaded to Real PRA this session — hide RPRA immediately. */
   const [rpraDoneBillIds, setRpraDoneBillIds] = useState<Set<string>>(() => new Set());
@@ -956,9 +958,10 @@ export function PosLatestOrdersPanel({
                   canManageTables && canChangePosRecentOrderTable(order) && Boolean(branch?.code);
                 const showEdit = Boolean(onEdit) && canEditPosRecentOrder(order);
                 const showCancel =
-                  (order.kind === "pending" && Boolean(order.pendingTicket)) ||
-                  order.bill?.status === "held" ||
-                  order.bill?.status === "open";
+                  canCancelOrders &&
+                  ((order.kind === "pending" && Boolean(order.pendingTicket)) ||
+                    order.bill?.status === "held" ||
+                    order.bill?.status === "open");
                 const showPay = Boolean(onPayOrder) && canPayPosRecentOrder(order);
                 const showRpra =
                   canShowRpraForBill({

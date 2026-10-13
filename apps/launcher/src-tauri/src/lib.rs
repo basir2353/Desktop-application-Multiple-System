@@ -539,11 +539,13 @@ fn print_image_to_printer_sync(
     let job_label = job_name.unwrap_or_else(|| "POPS Receipt".to_string());
     let paper_mm = paper_width_mm.unwrap_or(80).max(40);
 
+    // Unique per job — multi-printer KOT fan-out must not overwrite the same temp PNG.
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let temp_path = std::env::temp_dir().join(format!("pops-receipt-{stamp}.png"));
+    let nonce = std::process::id();
+    let temp_path = std::env::temp_dir().join(format!("pops-receipt-{stamp}-{nonce}.png"));
     fs::write(&temp_path, &png_bytes).map_err(|e| format!("Could not write temp PNG: {e}"))?;
     let path_str = temp_path
         .to_str()

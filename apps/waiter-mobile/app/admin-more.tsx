@@ -32,9 +32,9 @@ export default function AdminMoreScreen() {
       >
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <View style={{ flex: 1, paddingRight: 8 }}>
-            <Title>More</Title>
+            <Title>Restaurant admin</Title>
             <Subtitle>
-              Full admin tools{branch?.code ? ` · ${branch.code}` : ""}
+              Full control{branch?.code ? ` · ${branch.code}` : ""}
             </Subtitle>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -47,15 +47,39 @@ export default function AdminMoreScreen() {
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 8,
-                borderRadius: 8,
+                borderRadius: 10,
                 borderWidth: 1,
                 borderColor: colors.border,
+                backgroundColor: colors.card,
               }}
             >
               <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>Sign out</Text>
             </Pressable>
           </View>
         </View>
+
+        <Subtitle>POS & menu</Subtitle>
+        <ActionTile
+          icon="⚙"
+          title="POS settings"
+          subtitle="Discount · tax · service — syncs to desktop"
+          onPress={() => router.push("/admin-settings")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="☰"
+          title="Menu control"
+          subtitle="Add · delete · turn items on/off"
+          onPress={() => router.push("/admin-menu")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="🪑"
+          title="Tables"
+          subtitle="Sections · add / delete tables"
+          onPress={() => router.push("/admin-tables")}
+          variant="primary"
+        />
 
         <Subtitle>Money</Subtitle>
         <ActionTile
@@ -102,12 +126,6 @@ export default function AdminMoreScreen() {
         />
 
         <Subtitle>Floor & stock</Subtitle>
-        <ActionTile
-          icon="🪑"
-          title="Table Plan"
-          subtitle="Sections · search · add tables"
-          onPress={() => router.push("/admin-tables")}
-        />
         <ActionTile
           icon="👨‍🍳"
           title="Kitchen"

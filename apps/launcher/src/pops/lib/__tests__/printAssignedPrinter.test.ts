@@ -134,6 +134,62 @@ describe("resolveSilentSystemPrinterName — no invented PDF", () => {
     });
     expect(name).toBe("EPSON TM-T82");
   });
+
+  it("Option 40: section KOT uses section printer, not waiter's kitchen assignment", async () => {
+    vi.doMock("../systemPrinters", async () => {
+      const actual = await vi.importActual<typeof import("../systemPrinters")>("../systemPrinters");
+      return {
+        ...actual,
+        listSystemPrinters: async () => [
+          {
+            name: "EPSON Kitchen",
+            systemName: "EPSON Kitchen",
+            driverName: "epson",
+            portName: "USB001",
+            isDefault: false,
+            isShared: false,
+            state: "ready" as const,
+            connectionType: "USB" as const,
+            isVirtual: false,
+          },
+          {
+            name: "EPSON Bar",
+            systemName: "EPSON Bar",
+            driverName: "epson",
+            portName: "USB002",
+            isDefault: false,
+            isShared: false,
+            state: "ready" as const,
+            connectionType: "USB" as const,
+            isVirtual: false,
+          },
+        ],
+      };
+    });
+    vi.doMock("../printerRouting", () => ({
+      loadPrinterRouting: () => ({ printers: [] }),
+      resolveKotPrinter: (_b: string, sectionId: string | null) =>
+        sectionId === "bar"
+          ? { systemPrinterName: "EPSON Bar", name: "Bar" }
+          : { systemPrinterName: "EPSON Kitchen", name: "Kitchen" },
+      resolveDefaultPrinterByType: () => null,
+      resolvePrinterForUser: (_b: string, _u: string, type?: string) =>
+        type === "kitchen" || !type
+          ? { systemPrinterName: "EPSON Kitchen", name: "Kitchen" }
+          : null,
+      resolveReceiptPrinter: () => null,
+    }));
+
+    const { resolveSilentSystemPrinterName } = await import("../branchPrintClient");
+    const bar = await resolveSilentSystemPrinterName({
+      branchCode: "TEST",
+      kind: "kot",
+      userId: "waiter-1",
+      sectionId: "bar",
+      systemPrinterName: "EPSON Bar",
+    });
+    expect(bar).toBe("EPSON Bar");
+  });
 });
 
 describe("PosPage Order print regression", () => {

@@ -150,7 +150,7 @@ export default function AdminHomeScreen() {
       >
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <View style={{ flex: 1, paddingRight: 8 }}>
-            <Title>POPS Admin</Title>
+            <Title>Restaurant Admin</Title>
             <Subtitle>
               {waiterEmail ?? claims?.sub ?? "Incharge"} · {roleName}
             </Subtitle>
@@ -373,7 +373,21 @@ export default function AdminHomeScreen() {
           </Card>
         ) : null}
 
-        <Subtitle>Quick actions</Subtitle>
+        <Subtitle>Control center</Subtitle>
+        <ActionTile
+          icon="⚙"
+          title="POS settings"
+          subtitle="Discount · tax · service (desktop sync)"
+          onPress={() => router.push("/admin-settings")}
+          variant="primary"
+        />
+        <ActionTile
+          icon="☰"
+          title="Menu control"
+          subtitle="Add · delete · turn items on/off"
+          onPress={() => router.push("/admin-menu")}
+          variant="primary"
+        />
         <ActionTile
           icon="≡"
           title="Live orders"
@@ -389,38 +403,11 @@ export default function AdminHomeScreen() {
           variant="primary"
         />
         <ActionTile
-          icon="💸"
-          title="Pay Out"
-          subtitle="Supplier · Customer · Employee · Expense"
-          onPress={() => router.push("/admin-payout")}
-          variant="primary"
-        />
-        <ActionTile
-          icon="📒"
-          title="Ledgers"
-          subtitle="Vendor pay · Customer receive · invoices"
-          onPress={() => router.push("/admin-ledger")}
-          variant="primary"
-        />
-        <ActionTile
-          icon="📊"
-          title="Reports"
-          subtitle="Cash · Customer · party balances"
-          onPress={() => router.push("/admin-reports")}
-          variant="primary"
-        />
-        <ActionTile
           icon="₨"
           title="Tax & PRA"
           subtitle="FPRA / Real Active · today · reports"
           onPress={() => router.push("/admin-tax")}
           variant="primary"
-        />
-        <ActionTile
-          icon="☰"
-          title="Menu control"
-          subtitle="Turn items on or off for this branch"
-          onPress={() => router.push("/admin-menu")}
         />
         <ActionTile
           icon="···"

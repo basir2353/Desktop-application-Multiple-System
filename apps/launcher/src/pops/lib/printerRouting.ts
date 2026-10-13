@@ -1072,6 +1072,61 @@ export function groupCartLinesBySection(
   return [...groups.entries()].map(([sectionId, groupLines]) => ({ sectionId, lines: groupLines }));
 }
 
+export type KotFanoutPart<TLines> = {
+  sectionId: string | null;
+  lines: TLines;
+  systemPrinterName?: string | null;
+  printerKey?: string | null;
+  label?: string;
+};
+
+/**
+ * Option 40: merge fan-out parts that target the same Windows printer into one slip.
+ * Different printers (Kitchen vs Bar) stay separate jobs.
+ */
+export function coalesceKotFanoutByPrinter<T extends KotFanoutPart<unknown[]>>(
+  parts: T[],
+): T[] {
+  const coalesced: T[] = [];
+  for (const part of parts) {
+    if (!part.lines.length) continue;
+    const key = (
+      part.systemPrinterName?.trim() ||
+      part.printerKey?.trim() ||
+      `section:${part.sectionId ?? "default"}`
+    ).toLowerCase();
+    const existing = coalesced.find((m) => {
+      const mKey = (
+        m.systemPrinterName?.trim() ||
+        m.printerKey?.trim() ||
+        `section:${m.sectionId ?? "default"}`
+      ).toLowerCase();
+      return mKey === key;
+    });
+    if (existing) {
+      existing.lines = [...existing.lines, ...part.lines] as T["lines"];
+      if (part.label && existing.label && existing.label !== part.label) {
+        existing.label = `${existing.label} + ${part.label}`;
+      }
+    } else {
+      coalesced.push({ ...part, lines: [...part.lines] as T["lines"] });
+    }
+  }
+  return coalesced;
+}
+
+/** Infer kitchen vs bar preferred type from a printer section name/id. */
+export function preferredKotTypeForSection(section: {
+  id: string;
+  name: string;
+} | null): "kitchen" | "bar" {
+  if (!section) return "kitchen";
+  if (section.name.toLowerCase().includes("bar") || section.id.toLowerCase().includes("bar")) {
+    return "bar";
+  }
+  return "kitchen";
+}
+
 // --- Backup / restore ----------------------------------------------------
 
 export type PrinterConfigBackup = {

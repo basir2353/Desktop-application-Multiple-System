@@ -12,6 +12,18 @@ describe("Option 16: discount in cash/card net", () => {
     expect(discountAmountFromTicketNotes("DiscPct:20", 2613)).toBe(523);
   });
 
+  it("falls back to auto discount when notes have no Disc marker", () => {
+    expect(
+      discountAmountFromTicketNotes(undefined, 4273, { enabled: true, pct: 25 }),
+    ).toBe(1068);
+  });
+
+  it("prefers notes DiscPct over auto discount settings", () => {
+    expect(
+      discountAmountFromTicketNotes("DiscPct:10", 4273, { enabled: true, pct: 25 }),
+    ).toBe(427);
+  });
+
   it("net total after 20% discount matches receipt math", () => {
     const discount = discountAmountFromTicketNotes("DiscPct:20", 2613);
     const totals = computeTicketTotals(2613, discount, 8, 16, 0);
@@ -19,6 +31,14 @@ describe("Option 16: discount in cash/card net", () => {
     expect(totals.service).toBe(167);
     expect(totals.tax).toBe(334);
     expect(totals.total).toBe(2591);
+  });
+
+  it("auto discount + service matches POS summary (25% + 7%)", () => {
+    const discount = discountAmountFromTicketNotes(null, 4273, { enabled: true, pct: 25 });
+    const totals = computeTicketTotals(4273, discount, 7, 0, 0);
+    expect(totals.discount).toBe(1068);
+    expect(totals.service).toBe(224);
+    expect(totals.total).toBe(3429);
   });
 });
 

@@ -53,7 +53,15 @@ type Props = {
   showTaxServiceFreeToggles: boolean;
   /** Active order channel for top-bar highlight. */
   orderMode: "dine-in" | "takeaway" | "delivery" | "online" | "foodpanda" | "staff-food";
+  /** Which order types are enabled in Settings (defaults: all three). */
+  orderModesEnabled?: {
+    dineIn?: boolean;
+    takeaway?: boolean;
+    delivery?: boolean;
+  };
   tableSelected?: boolean;
+  /** Current seating label when dine-in (e.g. "Hall · Table 5"). */
+  tableLabel?: string | null;
   initialViewMode: "category" | "all";
   /** Ticket / cart column side (Settings). */
   ticketPanelSide?: "left" | "right";
@@ -81,6 +89,10 @@ type Props = {
   onPickOpenOrder: (order: PosRecentOrder) => void;
   onNewOrder: () => void;
   onSelectTables: () => void;
+  /** Move an open dine-in order to another table (merge if destination booked). */
+  onTableTransfer: () => void;
+  /** Split bill payments / merge guest checks. */
+  onMergeSplit: () => void;
   onTakeaway: () => void;
   onDineIn: () => void;
   onDelivery: () => void;
@@ -122,7 +134,9 @@ export function PosFullScreenMenuOverlay({
   ticketServiceFree,
   showTaxServiceFreeToggles,
   orderMode,
+  orderModesEnabled,
   tableSelected = false,
+  tableLabel = null,
   initialViewMode,
   ticketPanelSide = "right",
   openOrders = [],
@@ -145,6 +159,8 @@ export function PosFullScreenMenuOverlay({
   onPickOpenOrder,
   onNewOrder,
   onSelectTables,
+  onTableTransfer,
+  onMergeSplit,
   onTakeaway,
   onDineIn,
   onDelivery,
@@ -224,6 +240,55 @@ export function PosFullScreenMenuOverlay({
 
   const panelOnLeft = ticketPanelSide === "left";
 
+  const orderTypeSegBtn = (active: boolean) =>
+    `min-w-0 flex-1 rounded px-1 py-1 text-[9px] font-bold leading-tight transition ${
+      active
+        ? "bg-amber-400 text-slate-950 shadow-sm"
+        : "text-slate-300 hover:bg-slate-800 hover:text-white"
+    }`;
+
+  const orderTypeSwitcher = (
+    <div
+      className="inline-flex w-full rounded-md border border-amber-500/40 bg-slate-950/80 p-0.5"
+      role="group"
+      aria-label="Order type"
+    >
+      {orderModesEnabled?.dineIn !== false ? (
+        <button
+          type="button"
+          className={orderTypeSegBtn(orderMode === "dine-in")}
+          onClick={onDineIn}
+          title="Dine-in"
+          aria-pressed={orderMode === "dine-in"}
+        >
+          Dine-in
+        </button>
+      ) : null}
+      {orderModesEnabled?.takeaway !== false ? (
+        <button
+          type="button"
+          className={orderTypeSegBtn(orderMode === "takeaway")}
+          onClick={onTakeaway}
+          title="Takeaway"
+          aria-pressed={orderMode === "takeaway"}
+        >
+          Takeaway
+        </button>
+      ) : null}
+      {orderModesEnabled?.delivery !== false ? (
+        <button
+          type="button"
+          className={orderTypeSegBtn(orderMode === "delivery")}
+          onClick={onDelivery}
+          title="Delivery"
+          aria-pressed={orderMode === "delivery"}
+        >
+          Delivery
+        </button>
+      ) : null}
+    </div>
+  );
+
   const ticketAside = (
     <aside
       className={`flex min-h-[36vh] w-full shrink-0 flex-col bg-slate-900 lg:min-h-0 lg:w-[20rem] xl:w-[22rem] ${
@@ -238,16 +303,36 @@ export function PosFullScreenMenuOverlay({
             <div className="text-[9px] font-medium uppercase tracking-wider text-slate-500">
               {editingLabel ? "Editing" : "Current order"}
             </div>
-            <div className="truncate text-xs font-semibold text-white">
-              {editingLabel ?? modeLabel}
-            </div>
+            {editingLabel ? (
+              <div className="truncate text-xs font-semibold text-white">{editingLabel}</div>
+            ) : null}
           </div>
           <span className="rounded bg-amber-400/15 px-2 py-0.5 font-mono text-xs font-bold tracking-wide text-amber-300 ring-1 ring-amber-400/30">
             {orderRef}
           </span>
         </div>
+        {/* Always visible — switch Dine-in / Takeaway / Delivery without leaving fullscreen */}
+        <div className="mt-1.5">{orderTypeSwitcher}</div>
+        {orderMode === "dine-in" ? (
+          <button
+            type="button"
+            onClick={onSelectTables}
+            className={`mt-1 flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[10px] transition ${
+              tableSelected
+                ? "border-amber-400/50 bg-amber-400/10 text-amber-200"
+                : "border-slate-600 bg-slate-950/50 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+            }`}
+            title="Select or change dine-in table"
+          >
+            <span className="truncate">{tableLabel?.trim() || "Select table"}</span>
+            <span className="shrink-0 text-slate-500" aria-hidden>
+              ›
+            </span>
+          </button>
+        ) : null}
         <p className="mt-0.5 text-[9px] text-slate-500">
           {totalQty} item{totalQty === 1 ? "" : "s"}
+          {modeLabel ? ` · ${modeLabel}` : ""}
         </p>
       </div>
 
@@ -629,49 +714,107 @@ export function PosFullScreenMenuOverlay({
             Full screen POS
           </h2>
           <p className="text-[9px] text-slate-400">
-            Dine-in / Takeaway / Delivery · Place Order · Quick Bill closes cash
+            {orderMode === "dine-in" && tableSelected && tableLabel?.trim()
+              ? `${tableLabel.trim()} · same window: menu → Place Order → Pay`
+              : orderMode === "takeaway"
+                ? "Takeaway · same window: menu → Place Order → Pay"
+                : orderMode === "delivery"
+                  ? "Delivery · same window: menu → Place Order → Pay"
+                  : "Pick order type · run the full sale in this window"}
           </p>
+        </div>
+
+        <div
+          className="inline-flex shrink-0 rounded-md border border-amber-500/40 bg-slate-900 p-0.5 shadow-sm shadow-amber-500/10"
+          role="group"
+          aria-label="Order type"
+        >
+          {(orderModesEnabled?.dineIn !== false) ? (
+            <button
+              type="button"
+              className={`rounded px-2.5 py-1 text-[10px] font-bold transition ${
+                orderMode === "dine-in"
+                  ? "bg-amber-400 text-slate-950"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+              }`}
+              onClick={onDineIn}
+              title="Dine-in — select table, order, pay here"
+              aria-pressed={orderMode === "dine-in"}
+            >
+              Dine-in
+            </button>
+          ) : null}
+          {(orderModesEnabled?.takeaway !== false) ? (
+            <button
+              type="button"
+              className={`rounded px-2.5 py-1 text-[10px] font-bold transition ${
+                orderMode === "takeaway"
+                  ? "bg-amber-400 text-slate-950"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+              }`}
+              onClick={onTakeaway}
+              title="Takeaway — order and pay here"
+              aria-pressed={orderMode === "takeaway"}
+            >
+              Takeaway
+            </button>
+          ) : null}
+          {(orderModesEnabled?.delivery !== false) ? (
+            <button
+              type="button"
+              className={`rounded px-2.5 py-1 text-[10px] font-bold transition ${
+                orderMode === "delivery"
+                  ? "bg-amber-400 text-slate-950"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+              }`}
+              onClick={onDelivery}
+              title="Delivery — order and pay here"
+              aria-pressed={orderMode === "delivery"}
+            >
+              Delivery
+            </button>
+          ) : null}
         </div>
 
         <div
           className="flex flex-wrap items-center gap-1"
           role="toolbar"
-          aria-label="Order type shortcuts"
+          aria-label="POS shortcuts"
         >
           <button type="button" className={topQuickBtn(false)} onClick={onNewOrder} title="Start a new blank order">
-            New Orders
+            New Order
           </button>
+          {orderMode === "dine-in" ? (
+            <button
+              type="button"
+              className={topQuickBtn(tableSelected)}
+              onClick={onSelectTables}
+              title={
+                tableSelected && tableLabel?.trim()
+                  ? `Change table (${tableLabel.trim()})`
+                  : "Select dine-in table"
+              }
+            >
+              {tableSelected && tableLabel?.trim() ? tableLabel.trim() : "Select Table"}
+            </button>
+          ) : null}
+          {orderMode === "dine-in" ? (
+            <button
+              type="button"
+              className={topQuickBtn(false)}
+              onClick={onTableTransfer}
+              title="Move dine-in order to another table (merge if occupied)"
+            >
+              Table transfer
+            </button>
+          ) : null}
           <button
             type="button"
-            className={topQuickBtn(orderMode === "dine-in" && tableSelected)}
-            onClick={onSelectTables}
-            title="Select dine-in table"
+            className={topQuickBtn(false)}
+            onClick={onMergeSplit}
+            title="Split bill or merge guest checks"
           >
-            Select Tables
-          </button>
-          <button
-            type="button"
-            className={topQuickBtn(orderMode === "dine-in")}
-            onClick={onDineIn}
-            title="Switch to Dine-in"
-          >
-            Dining
-          </button>
-          <button
-            type="button"
-            className={topQuickBtn(orderMode === "takeaway")}
-            onClick={onTakeaway}
-            title="Switch to Takeaway"
-          >
-            Take Away
-          </button>
-          <button
-            type="button"
-            className={topQuickBtn(orderMode === "delivery")}
-            onClick={onDelivery}
-            title="Switch to Delivery"
-          >
-            Delivery
+            Merge / split
           </button>
           <button
             type="button"

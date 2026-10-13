@@ -1,9 +1,9 @@
 import type { Bill, KitchenTicket, KitchenTicketStatus } from "@platform/contracts";
 import { billChannelLabel, type OrderChannelLabel } from "./orderSales";
-import { computeTicketTotals, discountAmountFromPct } from "./posDiscount";
+import { computeTicketTotals } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
 import { DEFAULT_POS_SETTINGS, effectiveServicePctForMode, effectiveTaxPctForMode } from "./posSettings";
-import { parseTicketDiscountFromNotes, resolveTicketDeliveryNotes } from "./posLoadOrder";
+import { discountAmountFromTicketNotes, resolveTicketDeliveryNotes } from "./posLoadOrder";
 import { inferPosModeFromLabel, type PosOrderModeLabel } from "./posOrderMode";
 
 export type PosOrderLine = {
@@ -125,12 +125,10 @@ export function posRecentOrderTotal(
   const delivery = order.kitchenTicket?.deliveryChargePkr ?? 0;
   const mode = inferPosModeFromLabel(order.stationLabel ?? order.orderMode ?? "");
   const notes = resolveTicketDeliveryNotes(order.kitchenTicket ?? {}) ?? order.kitchenTicket?.notes;
-  const savedDisc = parseTicketDiscountFromNotes(notes);
-  const discAmount = savedDisc
-    ? savedDisc.editedAs === "pct"
-      ? discountAmountFromPct(savedDisc.pct, subtotal)
-      : savedDisc.amount
-    : 0;
+  const discAmount = discountAmountFromTicketNotes(notes, subtotal, {
+    enabled: settings.autoDiscountEnabled,
+    pct: settings.autoDiscountPct,
+  });
   return computeTicketTotals(
     subtotal,
     discAmount,
@@ -151,12 +149,10 @@ function mapTicket(t: KitchenTicket, settings: PosSettings): PosRecentOrder {
   const servicePct = effectiveServicePctForMode(settings, inferPosModeFromLabel(t.stationLabel));
   const mode = inferPosModeFromLabel(t.stationLabel);
   const notes = resolveTicketDeliveryNotes(t) ?? t.notes;
-  const savedDisc = parseTicketDiscountFromNotes(notes);
-  const discAmount = savedDisc
-    ? savedDisc.editedAs === "pct"
-      ? discountAmountFromPct(savedDisc.pct, subtotal)
-      : savedDisc.amount
-    : 0;
+  const discAmount = discountAmountFromTicketNotes(notes, subtotal, {
+    enabled: settings.autoDiscountEnabled,
+    pct: settings.autoDiscountPct,
+  });
   const total =
     subtotal > 0
       ? computeTicketTotals(

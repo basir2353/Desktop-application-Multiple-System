@@ -22,6 +22,7 @@ import {
   getPrintersForUser,
   groupCartLinesBySection,
   listPrintersByType,
+  preferredKotTypeForSection,
   PRINTER_ROUTING_CHANGED_EVENT,
   resolveKotPrinter,
   resolvePrintUserId,
@@ -491,10 +492,7 @@ export function WaiterPage(): JSX.Element {
         const section = group.sectionId
           ? enabledSections.find((s) => s.id === group.sectionId)
           : null;
-        const preferredType =
-          section?.name.toLowerCase().includes("bar") || section?.id.includes("bar")
-            ? ("bar" as const)
-            : ("kitchen" as const);
+        const preferredType = preferredKotTypeForSection(section ?? null);
         const profile = resolveKotPrinter(
           branchCode,
           group.sectionId,
