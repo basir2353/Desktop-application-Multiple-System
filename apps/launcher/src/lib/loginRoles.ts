@@ -12,6 +12,7 @@ export type LoginRoleOption = {
 const POPS_ROLES: readonly PopsRole[] = [
   "admin",
   "manager",
+  "store_manager",
   "cashier",
   "waiter",
   "kitchen",
@@ -26,6 +27,7 @@ function isPopsRole(value: string | undefined | null): value is PopsRole {
 
 const STAFF_DESCRIPTIONS: Record<Exclude<PopsRole, "admin">, string> = {
   manager: "Branch operations, inventory, and floor oversight",
+  store_manager: "Inventory and stores only — no POS, accounts, or other modules",
   cashier: "POS checkout, payments, and cash drawer",
   waiter: "Table service and kitchen tickets",
   kitchen: "Pending orders / KOT display",
@@ -64,7 +66,7 @@ function restaurantStaff(): LoginRoleOption[] {
     PopsRole,
     string
   >;
-  return (["manager", "cashier", "waiter", "kitchen", "accountant", "hr", "rider"] as const).map(
+  return (["manager", "store_manager", "cashier", "waiter", "kitchen", "accountant", "hr", "rider"] as const).map(
     (id) => ({
       id,
       label: id === "kitchen" ? "Pending orders" : (byId[id] ?? id),

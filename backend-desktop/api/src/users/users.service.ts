@@ -11,6 +11,7 @@ import { and, eq, isNull, ne } from "drizzle-orm";
 import {
   POPS_CAPABILITIES,
   POPS_ROLE_TEMPLATES,
+  ensureSignInPermission,
   permissionsForPopsRole,
   type AcceptInvite,
   type CreateOrgUser,
@@ -469,8 +470,7 @@ export class UsersService implements OnApplicationBootstrap {
       patch.permissions = permissionsForPopsRole(input.role);
     }
     if (input.permissions !== undefined) {
-      const cleaned = [...new Set(input.permissions.map((p) => p.trim()).filter(Boolean))];
-      patch.permissions = cleaned.length > 0 ? cleaned : ["pops.read"];
+      patch.permissions = ensureSignInPermission(input.permissions);
     }
     if (input.branchScope !== undefined) {
       patch.branchScope = input.branchScope.trim() === "All" ? "all" : input.branchScope.trim().toUpperCase();

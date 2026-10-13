@@ -43,6 +43,7 @@ import { PosLatestOrdersPanel } from "../../components/PosLatestOrdersPanel";
 import { PosOrderNotesModal } from "../../components/PosOrderNotesModal";
 import { PosOrderTypeModal } from "../../components/PosOrderTypeModal";
 import { PosFullScreenMenuOverlay } from "../../components/PosFullScreenMenuOverlay";
+import { PosCustomerDetailsPanel } from "../../components/PosCustomerDetailsPanel";
 import { PosSeatingModal } from "../../components/PosSeatingModal";
 import {
   POS_ORDER_MODES,
@@ -3124,6 +3125,62 @@ export function PosPage(): JSX.Element {
           openOrders={fullScreenOpenOrders}
           closedOrders={fullScreenClosedOrders}
           ordersLoading={kitchenQuery.isLoading || ordersQuery.isLoading}
+          showCustomerPanel={posModeShowsCustomerPanel(mode)}
+          customerPanel={{
+            open: deliveryDetailsOpen,
+            summary: deliveryDetailsSummary,
+            customer: deliveryCustomer,
+            phone: deliveryPhone,
+            address: deliveryAddress,
+            riderId: deliveryRiderId,
+            deliveryChargePkr,
+            customerPickerOpen: deliveryCustomerPickerOpen,
+            filteredCustomers: filteredDeliveryCustomers,
+            customersLoading: customerInvoicesQuery.isLoading,
+            customersError: customerInvoicesQuery.isError
+              ? (customerInvoicesQuery.error as Error).message
+              : null,
+            riders: activeRiders,
+            ridersLoading: ridersQuery.isLoading,
+            ridersError: ridersQuery.isError,
+            panelRef: customerPanelRef,
+            customerInputRef: deliveryCustomerInputRef,
+            phoneInputRef: deliveryPhoneInputRef,
+            customerFieldRef: deliveryCustomerFieldRef,
+            onToggle: () => {
+              setDeliveryDetailsOpen((open) => {
+                const next = !open;
+                if (next) {
+                  setDeliveryCustomerPickerOpen(true);
+                  setDeliveryCustomerSearch(deliveryCustomer.trim());
+                  window.setTimeout(() => {
+                    deliveryCustomerInputRef.current?.focus();
+                  }, 0);
+                } else {
+                  setDeliveryCustomerPickerOpen(false);
+                }
+                return next;
+              });
+            },
+            onCustomerChange: handleDeliveryCustomerChange,
+            onCustomerFocus: () => {
+              setDeliveryCustomerPickerOpen(true);
+              setDeliveryCustomerSearch(deliveryCustomer.trim());
+            },
+            onCloseCustomerPicker: () => setDeliveryCustomerPickerOpen(false),
+            onSelectCustomer: selectKnownDeliveryCustomer,
+            onPhoneChange: setDeliveryPhone,
+            onAddressChange: setDeliveryAddress,
+            onRiderChange: setDeliveryRiderId,
+            onChargeChange: setDeliveryChargePkr,
+            onApply: () => applyCustomerDetails(),
+            applyLabel:
+              mode === "takeaway"
+                ? "Apply"
+                : posModeAutoPrintsOnCustomer(mode) && cart.length > 0
+                  ? "Apply & print receipt"
+                  : "Apply customer",
+          }}
           priceLabel={(item) => {
             const original = menuItemDisplayPrice(item);
             if (happyHourActiveSlot?.percentOff) {
@@ -3155,6 +3212,10 @@ export function PosPage(): JSX.Element {
           onPickOpenOrder={(order) => {
             loadRecentOrderForEdit(order);
           }}
+          onPayOpenOrder={(order) => {
+            loadRecentOrderForPayment(order);
+          }}
+          onOpenCustomer={() => openCustomerShortcut()}
           onNewOrder={startNewManualOrder}
           onSelectTables={() => {
             if (mode !== "dine-in") switchMode("dine-in");
@@ -3170,6 +3231,8 @@ export function PosPage(): JSX.Element {
             setSelectedFloorSectionId(null);
             setSelectedTableId(null);
             setSeatingModalOpen(false);
+            // Full screen: show customer strip so takeaway can be completed in-window.
+            setDeliveryDetailsOpen(true);
           }}
           onDineIn={() => {
             switchMode("dine-in");
@@ -3186,6 +3249,8 @@ export function PosPage(): JSX.Element {
             setSelectedFloorSectionId(null);
             setSelectedTableId(null);
             setSeatingModalOpen(false);
+            // Full screen: open customer + rider fields (rider required before place order).
+            setDeliveryDetailsOpen(true);
           }}
           onTvDisplay={() => {
             // Kitchen / TV board — open in new tab so counter POS stays open.
@@ -3771,174 +3836,66 @@ export function PosPage(): JSX.Element {
             ) : null}
 
             {posModeShowsCustomerPanel(mode) ? (
-              <div className="mt-2" ref={customerPanelRef}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeliveryDetailsOpen((open) => {
-                      const next = !open;
-                      if (next) {
-                        setDeliveryCustomerPickerOpen(true);
-                        setDeliveryCustomerSearch(deliveryCustomer.trim());
-                        window.setTimeout(() => {
-                          deliveryCustomerInputRef.current?.focus();
-                        }, 0);
-                      } else {
-                        setDeliveryCustomerPickerOpen(false);
-                      }
-                      return next;
-                    });
-                  }}
-                  aria-expanded={deliveryDetailsOpen}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
-                    deliveryDetailsOpen
-                      ? "border-amber-400/60 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
-                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
-                  }`}
-                >
-                  <span className="min-w-0 truncate font-medium">{deliveryDetailsSummary}</span>
-                  <span
-                    className={`shrink-0 text-[10px] text-slate-400 transition-transform dark:text-slate-500 ${
-                      deliveryDetailsOpen ? "rotate-180" : ""
-                    }`}
-                    aria-hidden
-                  >
-                    ▼
-                  </span>
-                </button>
-                {deliveryDetailsOpen ? (
-                  <div className="mt-1.5 grid grid-cols-1 gap-1.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700/60 dark:bg-slate-950/40">
-                    <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-1.5">
-                      <div className="relative min-w-0" ref={deliveryCustomerFieldRef}>
-                        <input
-                          ref={deliveryCustomerInputRef}
-                          placeholder="Customer — type to search"
-                          value={deliveryCustomer}
-                          onChange={(e) => handleDeliveryCustomerChange(e.target.value)}
-                          onFocus={() => {
-                            setDeliveryCustomerPickerOpen(true);
-                            setDeliveryCustomerSearch(deliveryCustomer.trim());
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              deliveryPhoneInputRef.current?.focus();
-                            }
-                            if (e.key === "Escape") {
-                              setDeliveryCustomerPickerOpen(false);
-                            }
-                          }}
-                          className={`${TICKET_INPUT_CLASS} py-1.5`}
-                        />
-                        {deliveryCustomerPickerOpen ? (
-                          <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                            {customerInvoicesQuery.isLoading ? (
-                              <p className="px-2.5 py-2 text-xs text-slate-500">Loading customers…</p>
-                            ) : customerInvoicesQuery.isError ? (
-                              <p className="px-2.5 py-2 text-xs text-red-600 dark:text-red-400">
-                                Could not load accounts: {(customerInvoicesQuery.error as Error).message}
-                              </p>
-                            ) : filteredDeliveryCustomers.length === 0 ? (
-                              <p className="px-2.5 py-2 text-xs text-slate-500">
-                                No saved customers yet — type a name/phone, or add from Accounts.
-                              </p>
-                            ) : (
-                              filteredDeliveryCustomers.map((customer) => (
-                                <button
-                                  key={`${customer.name}-${customer.phone}`}
-                                  type="button"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => selectKnownDeliveryCustomer(customer)}
-                                  className="flex w-full flex-col items-start gap-0 px-2.5 py-1.5 text-left text-xs text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                                >
-                                  <span className="font-medium">{customer.name}</span>
-                                  {customer.phone ? (
-                                    <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                                      {customer.phone}
-                                    </span>
-                                  ) : null}
-                                </button>
-                              ))
-                            )}
-                          </div>
-                        ) : null}
-                      </div>
-                      <input
-                        ref={deliveryPhoneInputRef}
-                        placeholder="Phone"
-                        type="tel"
-                        value={deliveryPhone}
-                        onChange={(e) => setDeliveryPhone(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            applyCustomerDetails();
-                          }
-                        }}
-                        className={`${TICKET_INPUT_CLASS} py-1.5`}
-                        title="Customer phone"
-                      />
-                    </div>
-                    {mode === "delivery" ? (
-                      <>
-                        <input
-                          placeholder="Delivery address"
-                          value={deliveryAddress}
-                          onChange={(e) => setDeliveryAddress(e.target.value)}
-                          className={`${TICKET_INPUT_CLASS} py-1.5`}
-                        />
-                        <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-1.5">
-                          <select
-                            value={deliveryRiderId}
-                            onChange={(e) => setDeliveryRiderId(e.target.value)}
-                            required
-                            className={`${TICKET_INPUT_CLASS} py-1.5 ${
-                              !deliveryRiderId ? "border-amber-400 dark:border-amber-500/40" : ""
-                            }`}
-                          >
-                            <option value="">
-                              {ridersQuery.isLoading
-                                ? "Loading riders…"
-                                : ridersQuery.isError
-                                  ? "Could not load riders"
-                                  : activeRiders.length === 0
-                                    ? "No riders for this branch"
-                                    : "Rider *"}
-                            </option>
-                            {activeRiders.map((rider) => (
-                              <option key={rider.id} value={rider.id}>
-                                {rider.name}
-                                {rider.phone ? ` · ${rider.phone}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="number"
-                            min={0}
-                            max={50000}
-                            placeholder="Charge"
-                            title="Delivery charge"
-                            value={deliveryChargePkr}
-                            onChange={(e) => setDeliveryChargePkr(Math.max(0, Number(e.target.value) || 0))}
-                            className={`${TICKET_INPUT_CLASS} py-1.5 text-right tabular-nums`}
-                          />
-                        </div>
-                      </>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => applyCustomerDetails()}
-                      className="rounded-md border border-amber-500/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-500/25 dark:text-amber-100"
-                    >
-                      {mode === "takeaway"
-                        ? "Apply"
-                        : posModeAutoPrintsOnCustomer(mode) && cart.length > 0
-                          ? "Apply & print receipt"
-                          : "Apply customer"}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              <PosCustomerDetailsPanel
+                tone="ticket"
+                mode={mode}
+                open={deliveryDetailsOpen}
+                summary={deliveryDetailsSummary}
+                customer={deliveryCustomer}
+                phone={deliveryPhone}
+                address={deliveryAddress}
+                riderId={deliveryRiderId}
+                deliveryChargePkr={deliveryChargePkr}
+                customerPickerOpen={deliveryCustomerPickerOpen}
+                filteredCustomers={filteredDeliveryCustomers}
+                customersLoading={customerInvoicesQuery.isLoading}
+                customersError={
+                  customerInvoicesQuery.isError
+                    ? (customerInvoicesQuery.error as Error).message
+                    : null
+                }
+                riders={activeRiders}
+                ridersLoading={ridersQuery.isLoading}
+                ridersError={ridersQuery.isError}
+                panelRef={customerPanelRef}
+                customerInputRef={deliveryCustomerInputRef}
+                phoneInputRef={deliveryPhoneInputRef}
+                customerFieldRef={deliveryCustomerFieldRef}
+                onToggle={() => {
+                  setDeliveryDetailsOpen((open) => {
+                    const next = !open;
+                    if (next) {
+                      setDeliveryCustomerPickerOpen(true);
+                      setDeliveryCustomerSearch(deliveryCustomer.trim());
+                      window.setTimeout(() => {
+                        deliveryCustomerInputRef.current?.focus();
+                      }, 0);
+                    } else {
+                      setDeliveryCustomerPickerOpen(false);
+                    }
+                    return next;
+                  });
+                }}
+                onCustomerChange={handleDeliveryCustomerChange}
+                onCustomerFocus={() => {
+                  setDeliveryCustomerPickerOpen(true);
+                  setDeliveryCustomerSearch(deliveryCustomer.trim());
+                }}
+                onCloseCustomerPicker={() => setDeliveryCustomerPickerOpen(false)}
+                onSelectCustomer={selectKnownDeliveryCustomer}
+                onPhoneChange={setDeliveryPhone}
+                onAddressChange={setDeliveryAddress}
+                onRiderChange={setDeliveryRiderId}
+                onChargeChange={setDeliveryChargePkr}
+                onApply={() => applyCustomerDetails()}
+                applyLabel={
+                  mode === "takeaway"
+                    ? "Apply"
+                    : posModeAutoPrintsOnCustomer(mode) && cart.length > 0
+                      ? "Apply & print receipt"
+                      : "Apply customer"
+                }
+              />
             ) : null}
 
             <div className="mt-2 flex items-center justify-between gap-2">

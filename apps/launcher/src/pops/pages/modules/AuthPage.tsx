@@ -2,6 +2,7 @@ import { Button } from "@platform/ui";
 import {
   accessDefaultsForPopsRole,
   canManageOrgUsers,
+  ensureSignInPermission,
   hasModuleAccess,
   permissionsForPopsRole,
   POPS_MODULE_ACCESS,
@@ -518,7 +519,8 @@ function UserFormModal({
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Modules</div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {moduleCatalog.map((mod) => {
-                    const on = hasModuleAccess(form.permissions, mod.id);
+                    const requiredToSignIn = mod.id === "pops.read";
+                    const on = requiredToSignIn || hasModuleAccess(form.permissions, mod.id);
                     const lockAdminManage = isAdminAccount && mod.id === "pops.users.manage";
                     return (
                       <label
@@ -527,14 +529,18 @@ function UserFormModal({
                           on
                             ? "border-amber-500/40 bg-amber-500/10 text-slate-100"
                             : "border-slate-800 bg-slate-900/60 text-slate-400"
-                        } ${lockAdminManage ? "opacity-60" : ""}`}
-                        title={mod.description}
+                        } ${lockAdminManage || requiredToSignIn ? "opacity-60" : ""}`}
+                        title={
+                          requiredToSignIn
+                            ? "Required to sign in. Other modules can be turned off."
+                            : mod.description
+                        }
                       >
                         <input
                           type="checkbox"
                           className="mt-0.5 accent-amber-500"
                           checked={on}
-                          disabled={lockAdminManage}
+                          disabled={lockAdminManage || requiredToSignIn}
                           onChange={(e) =>
                             setForm((f) => ({
                               ...f,
@@ -544,7 +550,11 @@ function UserFormModal({
                         />
                         <span>
                           <span className="block font-medium">{mod.label}</span>
-                          <span className="mt-0.5 block text-[11px] text-slate-500">{mod.description}</span>
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            {requiredToSignIn
+                              ? "Required to sign in. Other modules can be turned off."
+                              : mod.description}
+                          </span>
                         </span>
                       </label>
                     );
@@ -1046,7 +1056,7 @@ export function AuthPage(): JSX.Element {
             void createOrgUser(input)
               .then(async (user) => {
                 await updateOrgUser(user.id, {
-                  permissions: values.permissions,
+                  permissions: ensureSignInPermission(values.permissions),
                   active: values.active,
                   navAllowlist: values.navAllowlist,
                 });
@@ -1104,7 +1114,7 @@ export function AuthPage(): JSX.Element {
               role: values.role,
               branchScope: values.branchScope,
               pinRequired: values.pinRequired,
-              permissions: values.permissions,
+              permissions: ensureSignInPermission(values.permissions),
               active: values.active,
               navAllowlist: values.navAllowlist,
             };

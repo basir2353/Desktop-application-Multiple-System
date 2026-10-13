@@ -36,6 +36,13 @@ type IngredientRow = {
   storeProductId: string;
 };
 
+/** Unit cost and stock levels are stored as whole numbers. Decimals are rounded. */
+function wholeNumber(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n));
+}
+
 function emptyRow(): IngredientRow {
   return {
     sku: "",
@@ -114,11 +121,11 @@ export function IngredientsPage(): JSX.Element {
           name: row.name.trim(),
           categoryId: row.categoryId || undefined,
           unit: row.unit,
-          currentStock: Number(row.currentStock),
-          minStock: Number(row.minStock),
-          reorderLevel: Number(row.reorderLevel),
-          maxStock: Number(row.maxStock),
-          unitCost: Number(row.unitCost),
+          currentStock: wholeNumber(row.currentStock),
+          minStock: wholeNumber(row.minStock),
+          reorderLevel: wholeNumber(row.reorderLevel),
+          maxStock: wholeNumber(row.maxStock),
+          unitCost: wholeNumber(row.unitCost),
           storeProductId: row.storeProductId || null,
         });
       }
@@ -139,11 +146,11 @@ export function IngredientsPage(): JSX.Element {
         name: editForm.name.trim(),
         categoryId: editForm.categoryId.trim() ? editForm.categoryId : null,
         unit: editForm.unit,
-        currentStock: Number(editForm.currentStock) || 0,
-        minStock: Number(editForm.minStock) || 0,
-        reorderLevel: Number(editForm.reorderLevel) || 0,
-        maxStock: Number(editForm.maxStock) || 0,
-        unitCost: Number(editForm.unitCost) || 0,
+        currentStock: wholeNumber(editForm.currentStock),
+        minStock: wholeNumber(editForm.minStock),
+        reorderLevel: wholeNumber(editForm.reorderLevel),
+        maxStock: wholeNumber(editForm.maxStock),
+        unitCost: wholeNumber(editForm.unitCost),
         storeProductId: editForm.storeProductId || null,
       });
     },
@@ -275,6 +282,8 @@ export function IngredientsPage(): JSX.Element {
               className={inputClass}
               placeholder="Unit cost (Rs)"
               type="number"
+              step="any"
+              min="0"
               value={editForm.unitCost}
               onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))}
             />
@@ -321,7 +330,7 @@ export function IngredientsPage(): JSX.Element {
                 <input className={inputClass} placeholder="Min stock" type="number" value={row.minStock} onChange={(e) => updateRow(index, { minStock: e.target.value })} />
                 <input className={inputClass} placeholder="Reorder level" type="number" value={row.reorderLevel} onChange={(e) => updateRow(index, { reorderLevel: e.target.value })} />
                 <div className="flex items-center gap-2">
-                  <input className={`flex-1 ${inputClass}`} placeholder="Unit cost (Rs)" type="number" value={row.unitCost} onChange={(e) => updateRow(index, { unitCost: e.target.value })} />
+                  <input className={`flex-1 ${inputClass}`} placeholder="Unit cost (Rs)" type="number" step="any" min="0" value={row.unitCost} onChange={(e) => updateRow(index, { unitCost: e.target.value })} />
                   <button
                     type="button"
                     className={`text-xs ${linkDangerClass} disabled:opacity-40`}

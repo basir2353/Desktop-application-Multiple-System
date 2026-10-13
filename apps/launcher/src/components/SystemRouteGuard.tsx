@@ -7,7 +7,7 @@ import {
 } from "../lib/businessSystems";
 import { getEffectiveSystemLock, recordDeviceInstall } from "../lib/deviceInstall";
 import { useActiveSystemId } from "../hooks/useActiveSystemId";
-import { erpEntryPathForRole } from "../pops/lib/roleAccess";
+import { canAccessNavPath, erpEntryPathForAccess } from "../pops/lib/roleAccess";
 import { usePopsStore } from "../stores/popsStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useSystemStore } from "../stores/systemStore";
@@ -38,8 +38,20 @@ export function SystemRouteGuard(): JSX.Element {
 
   function homePath(targetSystemId: typeof systemId): string {
     if (!hasBranch) return getErpEntryPath(targetSystemId, false);
-    return erpEntryPathForRole(targetSystemId, displayRole);
+    return erpEntryPathForAccess(
+      targetSystemId,
+      displayRole,
+      claims?.permissions,
+      claims?.navAllowlist,
+    );
   }
+
+  const relPath = pathname.replace(/^\/pops\/?/, "").replace(/\/$/, "");
+  const pageAllowed =
+    !relPath ||
+    relPath === "branches" ||
+    (canAccessNavPath(relPath, claims?.permissions ?? []) &&
+      (claims?.navAllowlist == null || claims.navAllowlist.includes(relPath)));
 
   if (effectiveLock) {
     const routeSystem = resolveBusinessSystemFromPath(pathname);
@@ -49,11 +61,20 @@ export function SystemRouteGuard(): JSX.Element {
     if (crossSystem || restaurantLeak) {
       return <Navigate to={homePath(effectiveLock)} replace />;
     }
+    if (claims && !pageAllowed) {
+      const home = homePath(effectiveLock);
+      if (pathname !== home) return <Navigate to={home} replace />;
+    }
     return <Outlet />;
   }
 
   if (systemId !== "restaurant" && isRestaurantExclusivePath(pathname)) {
     return <Navigate to={homePath(systemId)} replace />;
+  }
+
+  if (claims && !pageAllowed) {
+    const home = homePath(systemId);
+    if (pathname !== home) return <Navigate to={home} replace />;
   }
 
   return <Outlet />;

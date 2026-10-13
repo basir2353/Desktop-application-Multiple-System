@@ -192,7 +192,7 @@ export function PopsShell(): JSX.Element {
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-slate-900 dark:text-white">{branch?.name ?? "—"}</div>
                 <div className="text-xs text-slate-500">
-                  {branch?.city} · Role: <span className="text-slate-700 dark:text-slate-300">{displayRole}</span>
+                  {branch?.city} · Role: <span className="text-slate-700 dark:text-slate-300">{displayRole === "store_manager" ? "Store Manager" : displayRole}</span>
                 </div>
               </div>
             </div>

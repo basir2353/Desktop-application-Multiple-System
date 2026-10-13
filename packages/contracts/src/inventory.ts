@@ -556,17 +556,31 @@ export const updateInventoryCategorySchema = z.object({
   description: z.string().max(256).nullable().optional(),
 });
 
+/** Whole rupees. A decimal such as 12.5 is rounded so the save is not rejected. */
+const optionalWholePkr = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return value;
+  return Math.max(0, Math.round(n));
+}, z.number().int().min(0).optional());
+
+const requiredWholePkr = z.preprocess((value) => {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return value;
+  return Math.max(0, Math.round(n));
+}, z.number().int().min(0));
+
 export const createIngredientSchema = branchCodeSchema.extend({
   categoryId: z.string().uuid().optional(),
   storeProductId: z.string().uuid().nullable().optional(),
   sku: z.string().min(1).max(32),
   name: z.string().min(1).max(120),
   unit: ingredientUnitSchema,
-  currentStock: z.number().int().min(0).optional(),
-  minStock: z.number().int().min(0).optional(),
-  reorderLevel: z.number().int().min(0).optional(),
-  maxStock: z.number().int().min(0).optional(),
-  unitCost: z.number().int().min(0).optional(),
+  currentStock: optionalWholePkr,
+  minStock: optionalWholePkr,
+  reorderLevel: optionalWholePkr,
+  maxStock: optionalWholePkr,
+  unitCost: optionalWholePkr,
 });
 
 export const updateIngredientSchema = z.object({
@@ -575,11 +589,11 @@ export const updateIngredientSchema = z.object({
   sku: z.string().min(1).max(32).optional(),
   name: z.string().min(1).max(120).optional(),
   unit: ingredientUnitSchema.optional(),
-  currentStock: z.number().int().min(0).optional(),
-  minStock: z.number().int().min(0).optional(),
-  reorderLevel: z.number().int().min(0).optional(),
-  maxStock: z.number().int().min(0).optional(),
-  unitCost: z.number().int().min(0).optional(),
+  currentStock: optionalWholePkr,
+  minStock: optionalWholePkr,
+  reorderLevel: optionalWholePkr,
+  maxStock: optionalWholePkr,
+  unitCost: optionalWholePkr,
 });
 
 export const createSupplierSchema = branchCodeSchema.extend({
@@ -608,7 +622,7 @@ export const createPoLineSchema = z.object({
   ingredientId: z.string().uuid(),
   qty: z.number().int().positive(),
   unit: z.string().min(1),
-  unitCost: z.number().int().min(0),
+  unitCost: requiredWholePkr,
 });
 
 export const createPurchaseOrderSchema = branchCodeSchema.extend({
@@ -637,7 +651,7 @@ export const createGrnLineSchema = z.object({
   ingredientId: z.string().uuid(),
   qty: z.number().int().positive(),
   unit: z.string().min(1),
-  unitCost: z.number().int().min(0),
+  unitCost: requiredWholePkr,
   batchNumber: z.string().max(32).optional(),
   expiryDate: z.string().optional(),
 });

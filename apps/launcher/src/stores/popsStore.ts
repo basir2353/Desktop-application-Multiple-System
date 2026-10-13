@@ -14,6 +14,7 @@ export type PopsRole =
   | "waiter"
   | "kitchen"
   | "manager"
+  | "store_manager"
   | "accountant"
   | "hr"
   | "rider";

@@ -12,7 +12,7 @@ import { TRADEFLOW_ROLE_LABELS } from "../../tradeflow/spec/nav";
 import { fetchPopsBranches } from "../api/operations";
 import { isMonitoringBranch } from "../lib/branchScope";
 import {
-  erpEntryPathForRole,
+  erpEntryPathForAccess,
   filterBranchesByScope,
 } from "../lib/roleAccess";
 import { canEnterErpWithoutBranch } from "../components/BranchGate";
@@ -22,6 +22,7 @@ import { usePopsStore, type PopsBranch, type PopsRole } from "../../stores/popsS
 const restaurantRoles: { id: PopsRole; label: string }[] = [
   { id: "admin", label: "Admin" },
   { id: "manager", label: "Manager" },
+  { id: "store_manager", label: "Store Manager" },
   { id: "cashier", label: "Cashier" },
   { id: "waiter", label: "Waiter" },
   { id: "kitchen", label: "Pending orders" },
@@ -138,12 +139,18 @@ export function BranchSelectPage(): JSX.Element {
     const only = allBranches[0];
     if (!only || isMonitoringBranch(only.code)) return;
     if (persistedBranch?.code === only.code) {
-      navigate(erpEntryPathForRole(systemId, assignedRole), { replace: true });
+      navigate(
+        erpEntryPathForAccess(systemId, assignedRole, permissions, claims?.navAllowlist),
+        { replace: true },
+      );
       return;
     }
     setBranch(only);
     setDisplayRole(assignedRole);
-    navigate(erpEntryPathForRole(systemId, assignedRole), { replace: true });
+    navigate(
+      erpEntryPathForAccess(systemId, assignedRole, permissions, claims?.navAllowlist),
+      { replace: true },
+    );
   }, [
     branchesQuery.isSuccess,
     allBranches,
@@ -171,7 +178,7 @@ export function BranchSelectPage(): JSX.Element {
     if (!selected) return;
     setBranch(selected);
     setDisplayRole(assignedRole);
-    navigate(erpEntryPathForRole(systemId, assignedRole));
+    navigate(erpEntryPathForAccess(systemId, assignedRole, permissions, claims?.navAllowlist));
   }
 
   if (noBranchesYet && canSetupWithoutBranch) {

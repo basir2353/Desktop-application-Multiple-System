@@ -25,7 +25,7 @@ import {
   timeToMinutes,
 } from "../lib/orderSales";
 import { PageHeader } from "../ui/PageHeader";
-import { erpEntryPathForRole, sessionCanManageUsers } from "../lib/roleAccess";
+import { erpEntryPathForAccess, sessionCanManageUsers } from "../lib/roleAccess";
 import { format12Hour, TimeAmPmInput } from "../components/TimeAmPmInput";
 
 function formatPkr(amount: number): string {
@@ -69,9 +69,12 @@ export function PopsDashboardPage(): JSX.Element {
 
   useEffect(() => {
     if (!canViewDashboard) {
-      navigate(erpEntryPathForRole("restaurant", displayRole), { replace: true });
+      navigate(
+        erpEntryPathForAccess("restaurant", displayRole, claims?.permissions, claims?.navAllowlist),
+        { replace: true },
+      );
     }
-  }, [canViewDashboard, displayRole, navigate]);
+  }, [canViewDashboard, displayRole, claims?.permissions, claims?.navAllowlist, navigate]);
 
   const [businessDay, setBusinessDay] = useState<BusinessDaySettings>(() =>
     loadBusinessDaySettings(branch?.code),

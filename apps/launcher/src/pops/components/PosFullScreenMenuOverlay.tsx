@@ -1,5 +1,5 @@
 import { menuItemDisplayPrice, type MenuItem as ApiMenuItem } from "@platform/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import { resolveMenuImageUrl } from "../lib/menuImageUrl";
 import {
   cartLineNet,
@@ -9,15 +9,57 @@ import {
   type PosCartLine,
 } from "../lib/posCart";
 import {
+  canEditPosRecentOrder,
+  canPayPosRecentOrder,
+  filterPosRecentOrdersByMode,
   formatRecentOrderTime,
   posRecentOrderTotal,
   type PosRecentOrder,
+  type PosRecentOrderModeFilter,
 } from "../lib/recentOrders";
+import { formatPosStationDisplay, type PosOrderMode } from "../lib/posOrderMode";
 import { DEFAULT_POS_SETTINGS } from "../lib/posSettings";
+import {
+  PosCustomerDetailsPanel,
+  type PosKnownCustomer,
+  type PosRiderOption,
+} from "./PosCustomerDetailsPanel";
 
 type Category = { id: string; name: string; imageUrl?: string | null };
 
 type OrdersListMode = "open" | "closed";
+
+type CustomerPanelProps = {
+  open: boolean;
+  summary: string;
+  customer: string;
+  phone: string;
+  address: string;
+  riderId: string;
+  deliveryChargePkr: number;
+  customerPickerOpen: boolean;
+  filteredCustomers: PosKnownCustomer[];
+  customersLoading?: boolean;
+  customersError?: string | null;
+  riders: PosRiderOption[];
+  ridersLoading?: boolean;
+  ridersError?: boolean;
+  panelRef?: RefObject<HTMLDivElement>;
+  customerInputRef?: RefObject<HTMLInputElement>;
+  phoneInputRef?: RefObject<HTMLInputElement>;
+  customerFieldRef?: RefObject<HTMLDivElement>;
+  onToggle: () => void;
+  onCustomerChange: (value: string) => void;
+  onCustomerFocus: () => void;
+  onCloseCustomerPicker: () => void;
+  onSelectCustomer: (customer: PosKnownCustomer) => void;
+  onPhoneChange: (value: string) => void;
+  onAddressChange: (value: string) => void;
+  onRiderChange: (riderId: string) => void;
+  onChargeChange: (amount: number) => void;
+  onApply: () => void;
+  applyLabel: string;
+};
 
 type Props = {
   categories: Category[];
@@ -52,7 +94,7 @@ type Props = {
   ticketServiceFree: boolean;
   showTaxServiceFreeToggles: boolean;
   /** Active order channel for top-bar highlight. */
-  orderMode: "dine-in" | "takeaway" | "delivery" | "online" | "foodpanda" | "staff-food";
+  orderMode: PosOrderMode;
   /** Which order types are enabled in Settings (defaults: all three). */
   orderModesEnabled?: {
     dineIn?: boolean;
@@ -70,6 +112,9 @@ type Props = {
   /** Closed / paid orders for the Closed Orders drawer. */
   closedOrders?: PosRecentOrder[];
   ordersLoading?: boolean;
+  /** Customer / rider panel for takeaway & delivery (and dine-in). */
+  showCustomerPanel?: boolean;
+  customerPanel?: CustomerPanelProps;
   priceLabel?: (item: ApiMenuItem) => { display: number; original?: number };
   onSelectCartLine: (key: string) => void;
   onRequestSetQty: (lineKey: string, qty: number) => void;
@@ -87,6 +132,9 @@ type Props = {
   onCloseOrder: () => void;
   onReprintKot: () => void;
   onPickOpenOrder: (order: PosRecentOrder) => void;
+  /** Pay an open takeaway / delivery / dine-in order from the list. */
+  onPayOpenOrder?: (order: PosRecentOrder) => void;
+  onOpenCustomer?: () => void;
   onNewOrder: () => void;
   onSelectTables: () => void;
   /** Move an open dine-in order to another table (merge if destination booked). */
@@ -100,6 +148,23 @@ type Props = {
   onDone: () => void;
   onClose: () => void;
 };
+
+function modeToOrdersFilter(mode: PosOrderMode): PosRecentOrderModeFilter {
+  if (mode === "takeaway") return "Takeaway";
+  if (mode === "delivery") return "Delivery";
+  if (mode === "dine-in") return "Dine-in";
+  if (mode === "online") return "Online Orders";
+  if (mode === "foodpanda") return "Foodpanda Orders";
+  if (mode === "staff-food") return "Staff Food";
+  return "all";
+}
+
+function channelBadgeClass(channel: string): string {
+  if (channel === "Takeaway") return "bg-sky-500/20 text-sky-300 ring-sky-500/30";
+  if (channel === "Delivery") return "bg-violet-500/20 text-violet-300 ring-violet-500/30";
+  if (channel === "Dine-in") return "bg-amber-500/20 text-amber-300 ring-amber-500/30";
+  return "bg-slate-500/20 text-slate-300 ring-slate-500/30";
+}
 
 export function PosFullScreenMenuOverlay({
   categories,
@@ -142,6 +207,8 @@ export function PosFullScreenMenuOverlay({
   openOrders = [],
   closedOrders = [],
   ordersLoading = false,
+  showCustomerPanel = false,
+  customerPanel,
   priceLabel,
   onSelectCartLine,
   onRequestSetQty,
@@ -157,6 +224,8 @@ export function PosFullScreenMenuOverlay({
   onCloseOrder,
   onReprintKot,
   onPickOpenOrder,
+  onPayOpenOrder,
+  onOpenCustomer,
   onNewOrder,
   onSelectTables,
   onTableTransfer,
@@ -172,6 +241,7 @@ export function PosFullScreenMenuOverlay({
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
   const [search, setSearch] = useState("");
   const [ordersListMode, setOrdersListMode] = useState<OrdersListMode | null>(null);
+  const [ordersChannelFilter, setOrdersChannelFilter] = useState<PosRecentOrderModeFilter>("all");
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -203,6 +273,15 @@ export function PosFullScreenMenuOverlay({
     if (!categoryId && categories[0]?.id) setCategoryId(categories[0].id);
   }, [categories, categoryId]);
 
+  /** Prefer the active channel when opening Open Orders so takeaway/delivery are easy to find. */
+  useEffect(() => {
+    if (ordersListMode === "open") {
+      setOrdersChannelFilter(modeToOrdersFilter(orderMode));
+    } else if (ordersListMode === "closed") {
+      setOrdersChannelFilter("all");
+    }
+  }, [ordersListMode, orderMode]);
+
   const activeCategoryId = categoryId ?? categories[0]?.id ?? null;
   const q = search.trim().toLowerCase();
 
@@ -222,7 +301,23 @@ export function PosFullScreenMenuOverlay({
     return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }, [items, viewMode, activeCategoryId, q]);
 
-  const listOrders = ordersListMode === "closed" ? closedOrders : openOrders;
+  const listOrders = useMemo(() => {
+    const base = ordersListMode === "closed" ? closedOrders : openOrders;
+    if (ordersListMode === "closed") return base;
+    return filterPosRecentOrdersByMode(base, ordersChannelFilter);
+  }, [ordersListMode, closedOrders, openOrders, ordersChannelFilter]);
+
+  const openOrderCounts = useMemo(() => {
+    const all = openOrders.length;
+    const dineIn = filterPosRecentOrdersByMode(openOrders, "Dine-in").length;
+    const takeaway = filterPosRecentOrdersByMode(openOrders, "Takeaway").length;
+    const delivery = filterPosRecentOrdersByMode(openOrders, "Delivery").length;
+    return { all, dineIn, takeaway, delivery };
+  }, [openOrders]);
+
+  function openOrdersDrawer(next: OrdersListMode): void {
+    setOrdersListMode((m) => (m === next ? null : next));
+  }
 
   const actionBtn =
     "rounded px-1.5 py-1.5 text-[10px] font-semibold leading-tight transition disabled:cursor-not-allowed disabled:opacity-40";
@@ -329,6 +424,9 @@ export function PosFullScreenMenuOverlay({
               ›
             </span>
           </button>
+        ) : null}
+        {showCustomerPanel && customerPanel ? (
+          <PosCustomerDetailsPanel tone="fullscreen" mode={orderMode} {...customerPanel} />
         ) : null}
         <p className="mt-0.5 text-[9px] text-slate-500">
           {totalQty} item{totalQty === 1 ? "" : "s"}
@@ -574,14 +672,15 @@ export function PosFullScreenMenuOverlay({
           <button
             type="button"
             className={`${secondaryBtn} ${ordersListMode === "open" ? "ring-1 ring-amber-400" : ""}`}
-            onClick={() => setOrdersListMode((m) => (m === "open" ? null : "open"))}
+            onClick={() => openOrdersDrawer("open")}
+            title="Open dine-in, takeaway & delivery orders"
           >
-            Open Orders
+            Open Orders{openOrderCounts.all > 0 ? ` (${openOrderCounts.all})` : ""}
           </button>
           <button
             type="button"
             className={`${secondaryBtn} col-span-2 ${ordersListMode === "closed" ? "ring-1 ring-amber-400" : ""}`}
-            onClick={() => setOrdersListMode((m) => (m === "closed" ? null : "closed"))}
+            onClick={() => openOrdersDrawer("closed")}
           >
             Closed Orders
           </button>
@@ -717,10 +816,10 @@ export function PosFullScreenMenuOverlay({
             {orderMode === "dine-in" && tableSelected && tableLabel?.trim()
               ? `${tableLabel.trim()} · same window: menu → Place Order → Pay`
               : orderMode === "takeaway"
-                ? "Takeaway · same window: menu → Place Order → Pay"
+                ? "Takeaway · customer → menu → Place Order → Pay · Open Orders to manage"
                 : orderMode === "delivery"
-                  ? "Delivery · same window: menu → Place Order → Pay"
-                  : "Pick order type · run the full sale in this window"}
+                  ? "Delivery · customer/rider → menu → Place Order → Pay · Open Orders to manage"
+                  : "Pick order type · run dine-in, takeaway & delivery in this window"}
           </p>
         </div>
 
@@ -784,6 +883,22 @@ export function PosFullScreenMenuOverlay({
           <button type="button" className={topQuickBtn(false)} onClick={onNewOrder} title="Start a new blank order">
             New Order
           </button>
+          {showCustomerPanel && onOpenCustomer ? (
+            <button
+              type="button"
+              className={topQuickBtn(Boolean(customerPanel?.open))}
+              onClick={onOpenCustomer}
+              title={
+                orderMode === "delivery"
+                  ? "Customer, address & rider for this delivery"
+                  : orderMode === "takeaway"
+                    ? "Customer details for takeaway"
+                    : "Customer details"
+              }
+            >
+              Customer
+            </button>
+          ) : null}
           {orderMode === "dine-in" ? (
             <button
               type="button"
@@ -913,7 +1028,7 @@ export function PosFullScreenMenuOverlay({
                   </h3>
                   <p className="text-[10px] text-slate-500">
                     {ordersListMode === "open"
-                      ? "Not closed yet — tap to load into this window"
+                      ? "Dine-in, takeaway & delivery — edit or pay here"
                       : "Paid / closed bills"}
                   </p>
                 </div>
@@ -925,41 +1040,102 @@ export function PosFullScreenMenuOverlay({
                   Close
                 </button>
               </div>
+              {ordersListMode === "open" ? (
+                <div
+                  className="no-scrollbar flex shrink-0 gap-1 overflow-x-auto border-b border-slate-800 px-2 py-1.5"
+                  role="tablist"
+                  aria-label="Filter by order type"
+                >
+                  {(
+                    [
+                      { id: "all" as const, label: "All", count: openOrderCounts.all },
+                      ...(orderModesEnabled?.dineIn !== false
+                        ? [{ id: "Dine-in" as const, label: "Dine-in", count: openOrderCounts.dineIn }]
+                        : []),
+                      ...(orderModesEnabled?.takeaway !== false
+                        ? [
+                            {
+                              id: "Takeaway" as const,
+                              label: "Takeaway",
+                              count: openOrderCounts.takeaway,
+                            },
+                          ]
+                        : []),
+                      ...(orderModesEnabled?.delivery !== false
+                        ? [
+                            {
+                              id: "Delivery" as const,
+                              label: "Delivery",
+                              count: openOrderCounts.delivery,
+                            },
+                          ]
+                        : []),
+                    ] as { id: PosRecentOrderModeFilter; label: string; count: number }[]
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={ordersChannelFilter === tab.id}
+                      onClick={() => setOrdersChannelFilter(tab.id)}
+                      className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-semibold transition ${
+                        ordersChannelFilter === tab.id
+                          ? "bg-amber-400 text-slate-950"
+                          : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                      }`}
+                    >
+                      {tab.label}
+                      {tab.count > 0 ? ` (${tab.count})` : ""}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {ordersLoading ? (
                   <p className="px-2 py-6 text-center text-xs text-slate-500">Loading orders…</p>
                 ) : listOrders.length === 0 ? (
                   <p className="px-2 py-6 text-center text-xs text-slate-500">
-                    {ordersListMode === "open" ? "No open orders." : "No closed orders."}
+                    {ordersListMode === "open"
+                      ? ordersChannelFilter === "all"
+                        ? "No open orders."
+                        : `No open ${String(ordersChannelFilter).toLowerCase()} orders.`
+                      : "No closed orders."}
                   </p>
                 ) : (
                   <ul className="flex flex-col gap-1.5">
                     {listOrders.map((order) => {
                       const amount = posRecentOrderTotal(order, DEFAULT_POS_SETTINGS);
+                      const canEdit = ordersListMode === "open" && canEditPosRecentOrder(order);
+                      const canPay =
+                        ordersListMode === "open" &&
+                        Boolean(onPayOpenOrder) &&
+                        canPayPosRecentOrder(order);
+                      const station = formatPosStationDisplay(
+                        order.stationLabel || order.orderMode,
+                        order.orderMode,
+                      );
                       return (
                         <li key={order.id}>
-                          <button
-                            type="button"
-                            disabled={ordersListMode === "closed"}
-                            onClick={() => {
-                              if (ordersListMode !== "open") return;
-                              onPickOpenOrder(order);
-                              setOrdersListMode(null);
-                            }}
-                            className={`w-full rounded-md border px-2.5 py-2 text-left transition ${
+                          <div
+                            className={`rounded-md border px-2.5 py-2 ${
                               ordersListMode === "open"
-                                ? "border-slate-600 bg-slate-800 hover:border-amber-400/50 hover:bg-slate-700"
-                                : "cursor-default border-slate-700 bg-slate-950/60"
+                                ? "border-slate-600 bg-slate-800"
+                                : "border-slate-700 bg-slate-950/60"
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="truncate font-mono text-xs font-bold text-amber-300">
-                                  {order.ref}
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="truncate font-mono text-xs font-bold text-amber-300">
+                                    {order.ref}
+                                  </span>
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ring-1 ${channelBadgeClass(order.orderMode)}`}
+                                  >
+                                    {order.orderMode}
+                                  </span>
                                 </div>
-                                <div className="truncate text-[11px] text-slate-300">
-                                  {order.stationLabel || order.orderMode}
-                                </div>
+                                <div className="truncate text-[11px] text-slate-300">{station}</div>
                                 <div className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">
                                   {order.summary}
                                 </div>
@@ -978,7 +1154,35 @@ export function PosFullScreenMenuOverlay({
                                 </div>
                               </div>
                             </div>
-                          </button>
+                            {ordersListMode === "open" ? (
+                              <div className="mt-2 flex gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={!canEdit}
+                                  onClick={() => {
+                                    onPickOpenOrder(order);
+                                    setOrdersListMode(null);
+                                  }}
+                                  className="min-w-0 flex-1 rounded border border-slate-500 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white hover:border-amber-400/50 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Edit
+                                </button>
+                                {onPayOpenOrder ? (
+                                  <button
+                                    type="button"
+                                    disabled={!canPay || payBusy}
+                                    onClick={() => {
+                                      onPayOpenOrder(order);
+                                      setOrdersListMode(null);
+                                    }}
+                                    className="min-w-0 flex-1 rounded bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Pay
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </li>
                       );
                     })}

@@ -7,6 +7,7 @@ import type { PopsRole } from "../../stores/popsStore";
 const POPS_ROLES: readonly PopsRole[] = [
   "admin",
   "manager",
+  "store_manager",
   "cashier",
   "waiter",
   "kitchen",
@@ -174,11 +175,65 @@ export function erpEntryPathForRole(
       return "/pops/delivery";
     case "manager":
       return "/pops/multi-branch";
+    case "store_manager":
+      return "/pops/inventory";
     case "admin":
       return "/pops/dashboard";
     default:
       return "/pops/pos";
   }
+}
+
+const RESTAURANT_ENTRY_CANDIDATES = [
+  "inventory",
+  "inventory/stores",
+  "inventory/ingredients",
+  "purchase",
+  "pos",
+  "menu",
+  "orders",
+  "kitchen",
+  "waiter",
+  "accounting",
+  "hr",
+  "delivery",
+  "reports",
+  "settings",
+] as const;
+
+function pathOnAllowlist(path: string, navAllowlist?: string[] | null): boolean {
+  if (navAllowlist == null) return true;
+  return navAllowlist.includes(path);
+}
+
+/**
+ * First screen this login can actually open.
+ * A role default such as Manager → Multi-branch is skipped when those authorities were removed.
+ */
+export function erpEntryPathForAccess(
+  systemId: BusinessSystemId,
+  role: PopsRole | string | undefined,
+  permissions: readonly string[] | undefined,
+  navAllowlist?: string[] | null,
+): string {
+  const perms = permissions ?? [];
+  const preferred = erpEntryPathForRole(systemId, role);
+  const preferredPath = preferred.replace(/^\/pops\//, "");
+  if (
+    perms.length > 0 &&
+    canAccessNavPath(preferredPath, perms) &&
+    pathOnAllowlist(preferredPath, navAllowlist)
+  ) {
+    return preferred;
+  }
+  if (systemId === "restaurant") {
+    for (const path of RESTAURANT_ENTRY_CANDIDATES) {
+      if (canAccessNavPath(path, perms) && pathOnAllowlist(path, navAllowlist)) {
+        return `/pops/${path}`;
+      }
+    }
+  }
+  return preferred;
 }
 
 /** Whether JWT permissions cover (are a superset of) a role template — used for safe workspace preview. */

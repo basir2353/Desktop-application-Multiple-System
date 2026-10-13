@@ -25,6 +25,7 @@ import * as bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import {
   applyOrgModuleCeiling,
+  ensureSignInPermission,
   permissionsForPlatformRole,
   permissionsForPopsRole,
   systemTypeSchema,
@@ -864,9 +865,11 @@ function parseSystemType(value: string): SystemType {
 
 function normalizePermissions(value: unknown, role: string): string[] {
   if (Array.isArray(value)) {
-    return value.filter((entry): entry is string => typeof entry === "string");
+    return ensureSignInPermission(
+      value.filter((entry): entry is string => typeof entry === "string"),
+    );
   }
-  return permissionsForPopsRole(role);
+  return ensureSignInPermission(permissionsForPopsRole(role));
 }
 
 function sha256Hex(value: string): string {

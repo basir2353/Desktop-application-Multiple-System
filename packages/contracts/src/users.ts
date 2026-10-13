@@ -3,6 +3,7 @@ import { z } from "zod";
 export const popsRoleSchema = z.enum([
   "admin",
   "manager",
+  "store_manager",
   "cashier",
   "waiter",
   "kitchen",
@@ -210,6 +211,36 @@ export const POPS_ROLE_TEMPLATES: RoleTemplate[] = [
     },
   },
   {
+    id: "store_manager",
+    label: "Store Manager",
+    permissions: ["pops.read", "pops.inventory.manage"],
+    /** Inventory section only, including Stores. Other ERP menus stay hidden. */
+    navAllowlist: [
+      "inventory",
+      "inventory/ingredients",
+      "inventory/categories",
+      "inventory/suppliers",
+      "inventory/purchase-orders",
+      "inventory/goods-receiving",
+      "inventory/stock",
+      "inventory/stock-transfers",
+      "inventory/stores",
+      "inventory/cooking-units",
+      "inventory/recipes",
+      "inventory/adjustments",
+      "inventory/waste",
+      "inventory/stock-count",
+      "inventory/reports",
+      "inventory/audit-logs",
+    ],
+    capabilities: {
+      "pops.pos.void": "deny",
+      "pops.pos.discount": "deny",
+      "pops.closing.report": "deny",
+      "pops.kitchen.bump": "deny",
+    },
+  },
+  {
     id: "cashier",
     label: "Cashier",
     /** POS + add-only menu/tables. No reports, settings, void, discount, or closing by default. */
@@ -346,8 +377,18 @@ export function toggleModulePermission(
 ): string[] {
   const next = new Set(permissions.filter((p) => p !== "*"));
   if (enabled) next.add(moduleId);
-  else next.delete(moduleId);
-  if (!next.has("pops.read") && enabled) next.add("pops.read");
+  else if (moduleId !== "pops.read") next.delete(moduleId);
+  // Sign-in and branch open both require pops.read. Dropping it locks the user out.
+  if (!next.has("pops.read")) next.add("pops.read");
   return [...next];
+}
+
+/** Every staff login must keep basic ERP access, even when other modules are removed. */
+export function ensureSignInPermission(permissions: readonly string[]): string[] {
+  const cleaned = [...new Set(permissions.map((p) => p.trim()).filter(Boolean))];
+  if (cleaned.includes("*") || cleaned.includes("pops.read")) {
+    return cleaned.length > 0 ? cleaned : ["pops.read"];
+  }
+  return ["pops.read", ...cleaned];
 }
 

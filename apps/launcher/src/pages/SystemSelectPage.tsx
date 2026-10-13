@@ -13,7 +13,7 @@ import {
   getInstalledSystemId,
 } from "../lib/deviceInstall";
 import { mutedClass } from "../pops/lib/themeClasses";
-import { erpEntryPathForRole } from "../pops/lib/roleAccess";
+import { erpEntryPathForAccess } from "../pops/lib/roleAccess";
 import { roleSelectPath } from "../lib/loginRoles";
 import { isSuperAdminClaims } from "../lib/jwt";
 import { useSessionStore } from "../stores/sessionStore";
@@ -86,7 +86,7 @@ export function SystemSelectPage(): JSX.Element {
 
   function entryPath(id: BusinessSystemId): string {
     if (!branch) return getErpEntryPath(id, false);
-    return erpEntryPathForRole(id, displayRole);
+    return erpEntryPathForAccess(id, displayRole, claims?.permissions, claims?.navAllowlist);
   }
 
   // Authenticated Super Admin always lands on the control plane (suite only).
