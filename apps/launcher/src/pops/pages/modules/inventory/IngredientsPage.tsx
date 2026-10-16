@@ -93,6 +93,8 @@ export function IngredientsPage(): JSX.Element {
 
   function startEdit(ing: Ingredient): void {
     setEditingId(ing.id);
+    // Prefer warehouse on-hand (what the table shows) so edit/save does not fight the ledger.
+    const onHand = ing.onHandStock ?? ing.currentStock;
     setEditForm({
       sku: ing.sku,
       name: ing.name,
@@ -100,7 +102,7 @@ export function IngredientsPage(): JSX.Element {
       unit: (INGREDIENT_UNITS.includes(ing.unit as IngredientRow["unit"])
         ? ing.unit
         : "Kg") as IngredientRow["unit"],
-      currentStock: String(ing.currentStock),
+      currentStock: String(onHand),
       minStock: String(ing.minStock),
       reorderLevel: String(ing.reorderLevel),
       maxStock: String(ing.maxStock),
@@ -203,90 +205,120 @@ export function IngredientsPage(): JSX.Element {
           }
         >
           <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 sm:grid-cols-2 lg:grid-cols-4">
-            <input
-              className={inputClass}
-              placeholder="SKU"
-              value={editForm.sku}
-              onChange={(e) => setEditForm((f) => ({ ...f, sku: e.target.value }))}
-            />
-            <input
-              className={inputClass}
-              placeholder="Name"
-              value={editForm.name}
-              onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-            />
-            <select
-              className={selectClass}
-              value={editForm.categoryId}
-              onChange={(e) => setEditForm((f) => ({ ...f, categoryId: e.target.value }))}
-            >
-              <option value="">Category</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={selectClass}
-              value={editForm.unit}
-              onChange={(e) =>
-                setEditForm((f) => ({ ...f, unit: e.target.value as IngredientRow["unit"] }))
-              }
-            >
-              {INGREDIENT_UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-            <select
-              className={selectClass}
-              value={editForm.storeProductId}
-              onChange={(e) => setEditForm((f) => ({ ...f, storeProductId: e.target.value }))}
-            >
-              <option value="">Store product mapping</option>
-              {(productsQuery.data ?? []).map((product) => (
-                <option key={product.id} value={product.id}>{product.name}</option>
-              ))}
-            </select>
-            <input
-              className={inputClass}
-              placeholder="Current stock"
-              type="number"
-              value={editForm.currentStock}
-              onChange={(e) => setEditForm((f) => ({ ...f, currentStock: e.target.value }))}
-            />
-            <input
-              className={inputClass}
-              placeholder="Min stock"
-              type="number"
-              value={editForm.minStock}
-              onChange={(e) => setEditForm((f) => ({ ...f, minStock: e.target.value }))}
-            />
-            <input
-              className={inputClass}
-              placeholder="Reorder level"
-              type="number"
-              value={editForm.reorderLevel}
-              onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))}
-            />
-            <input
-              className={inputClass}
-              placeholder="Max stock"
-              type="number"
-              value={editForm.maxStock}
-              onChange={(e) => setEditForm((f) => ({ ...f, maxStock: e.target.value }))}
-            />
-            <input
-              className={inputClass}
-              placeholder="Unit cost (Rs)"
-              type="number"
-              step="any"
-              min="0"
-              value={editForm.unitCost}
-              onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))}
-            />
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>SKU</span>
+              <input
+                className={inputClass}
+                placeholder="SKU"
+                value={editForm.sku}
+                onChange={(e) => setEditForm((f) => ({ ...f, sku: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Name</span>
+              <input
+                className={inputClass}
+                placeholder="Name"
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Category</span>
+              <select
+                className={selectClass}
+                value={editForm.categoryId}
+                onChange={(e) => setEditForm((f) => ({ ...f, categoryId: e.target.value }))}
+              >
+                <option value="">Category</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Unit (label only — qty does not auto-convert)</span>
+              <select
+                className={selectClass}
+                value={editForm.unit}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, unit: e.target.value as IngredientRow["unit"] }))
+                }
+              >
+                {INGREDIENT_UNITS.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500 sm:col-span-2">
+              <span>Store product mapping</span>
+              <select
+                className={selectClass}
+                value={editForm.storeProductId}
+                onChange={(e) => setEditForm((f) => ({ ...f, storeProductId: e.target.value }))}
+              >
+                <option value="">Store product mapping</option>
+                {(productsQuery.data ?? []).map((product) => (
+                  <option key={product.id} value={product.id}>{product.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Current stock (on-hand)</span>
+              <input
+                className={inputClass}
+                placeholder="Current stock"
+                type="number"
+                value={editForm.currentStock}
+                onChange={(e) => setEditForm((f) => ({ ...f, currentStock: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Min stock</span>
+              <input
+                className={inputClass}
+                placeholder="Min stock"
+                type="number"
+                value={editForm.minStock}
+                onChange={(e) => setEditForm((f) => ({ ...f, minStock: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Reorder level</span>
+              <input
+                className={inputClass}
+                placeholder="Reorder level"
+                type="number"
+                value={editForm.reorderLevel}
+                onChange={(e) => setEditForm((f) => ({ ...f, reorderLevel: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Max stock (capacity — not on-hand)</span>
+              <input
+                className={inputClass}
+                placeholder="Max stock"
+                type="number"
+                value={editForm.maxStock}
+                onChange={(e) => setEditForm((f) => ({ ...f, maxStock: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-xs text-slate-500">
+              <span>Unit cost (Rs)</span>
+              <input
+                className={inputClass}
+                placeholder="Unit cost (Rs)"
+                type="number"
+                step="any"
+                min="0"
+                value={editForm.unitCost}
+                onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))}
+              />
+            </label>
             <button
               type="button"
               className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 sm:col-span-2 lg:col-span-3"

@@ -26,6 +26,8 @@ export async function pushUserPrinterAssignments(branchCode: string): Promise<vo
   const code = branchCode.trim();
   if (!code) return;
   const assignments = snapshotUserAssignments(code);
+  // Never wipe the branch cloud map with an empty PC (fresh install / 2nd terminal).
+  if (assignments.length === 0) return;
   const res = await authFetch("/v1/printing/user-assignments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -36,7 +38,10 @@ export async function pushUserPrinterAssignments(branchCode: string): Promise<vo
   }
 }
 
-/** Load backend assignments into local routing before a mobile job is printed. */
+/**
+ * Load backend user→profile map into local routing before a mobile job is printed.
+ * Does not overwrite this PC's Windows printer names (see applyRemoteUserAssignments).
+ */
 export async function pullUserPrinterAssignments(branchCode: string): Promise<void> {
   const code = branchCode.trim();
   if (!code) return;

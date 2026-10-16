@@ -238,9 +238,9 @@ const POS_KEYS_BTN =
 const POS_HEADER_TOGGLE_BTN =
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-600/80 bg-transparent text-slate-300 transition hover:bg-slate-800 hover:text-white";
 const POS_MODE_BAR =
-  "no-scrollbar flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
+  "no-scrollbar flex shrink-0 gap-0.5 overflow-x-auto rounded-md bg-slate-100 p-0.5 ring-1 ring-slate-200 dark:bg-slate-950/80 dark:ring-slate-800/80";
 const POS_MODE_BTN = (active: boolean) =>
-  `shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition ${
+  `shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-semibold transition ${
     active
       ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
       : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
@@ -405,6 +405,12 @@ export function PosPage(): JSX.Element {
   /** After Close → Pay succeeds, open Closed + PRA for this bill id. */
   const [closeAfterPayBillId, setCloseAfterPayBillId] = useState<string | null>(null);
   const pendingCloseAfterPayRef = useRef(false);
+  /**
+   * True from Order/Print-order mutate until KOT print + cart reset finish.
+   * TanStack marks isPending false before async onSuccess ends — without this,
+   * Pay can fire mid-print and allocate a second TW-* (kitchen TW-78 / bill TW-79).
+   */
+  const [orderFlowBusy, setOrderFlowBusy] = useState(false);
   /** Set before completed checkout; shown after pay (never blocks sale). */
   const pendingInventoryWarningsRef = useRef<string[]>([]);
   const autoPrintedOrderKeysRef = useRef<Set<string>>(new Set());
@@ -1891,7 +1897,35 @@ export function PosPage(): JSX.Element {
     return null;
   }
 
+  /** On-screen peeked # (TW-78) — consume without skipping to TW-79. */
+  function consumeReservedOrderRef(): string {
+    const reserved = orderRef.trim();
+    if (reserved) {
+      const seq = parseOrderRefSeq(reserved);
+      if (seq) ensureOrderSeqAtLeast(branch!.code, seq, mode);
+      return reserved;
+    }
+    return nextOrderRef(branch!.code, mode);
+  }
+
+  /** Open kitchen ticket already using this order # (Order before Pay). */
+  function findOpenKitchenTicketByOrderRef(ref: string | undefined | null) {
+    const want = (ref ?? "").trim().toLowerCase();
+    if (!want) return null;
+    return (
+      (kitchenQuery.data ?? []).find((row) => {
+        if (row.status === "done") return false;
+        const a = (row.orderRef ?? "").trim().toLowerCase();
+        const b = (row.ticketRef ?? "").trim().toLowerCase();
+        return a === want || b === want;
+      }) ?? null
+    );
+  }
+
   const createOrderMutation = useMutation({
+    onMutate: () => {
+      setOrderFlowBusy(true);
+    },
     mutationFn: async () => {
       const err = validateKitchenOrder();
       if (err) throw new Error(err);
@@ -1917,7 +1951,7 @@ export function PosPage(): JSX.Element {
           if (!isKitchenTicketMissingError(updateErr)) throw updateErr;
           return createKitchenTicket({
             branchCode: branch!.code,
-            orderRef: orderRef || nextOrderRef(branch!.code, mode),
+            orderRef: consumeReservedOrderRef(),
             stationLabel,
             lines: kitchenLines(),
             notes: kitchenOrderNotes,
@@ -1929,15 +1963,7 @@ export function PosPage(): JSX.Element {
         branchCode: branch!.code,
         // Use the reserved on-screen order # (already peeked). Do not call nextOrderRef
         // again — that skipped the displayed ref and caused paid/new ORD mix-ups.
-        orderRef: (() => {
-          const reserved = orderRef.trim();
-          if (reserved) {
-            const seq = parseOrderRefSeq(reserved);
-            if (seq) ensureOrderSeqAtLeast(branch!.code, seq, mode);
-            return reserved;
-          }
-          return nextOrderRef(branch!.code, mode);
-        })(),
+        orderRef: consumeReservedOrderRef(),
         stationLabel,
         lines: kitchenLines(),
         notes: kitchenOrderNotes,
@@ -1945,54 +1971,65 @@ export function PosPage(): JSX.Element {
       });
     },
     onSuccess: async (ticket) => {
-      const wasTicketEdit = editingOrder?.kind === "ticket";
-      // Always silent-print to assigned OS printers (never force Windows dialog / PDF).
-      const printed = await printKitchenKotsOnPay(ticket.orderRef ?? orderRef);
-      const kotOk = printed.errors.length === 0;
-      const printErrors = printed.errors;
-      if (!wasTicketEdit && autoPrintOrderForMode(posSettings, mode)) {
-        const printKey = `${ticket.id}:order-receipt`;
-        if (!autoPrintedOrderKeysRef.current.has(printKey)) {
-          autoPrintedOrderKeysRef.current.add(printKey);
-          const printUserId = resolvePrintUserId(useSessionStore.getState().claims?.sub, shiftWaiterId || null);
-          const profile = resolveReceiptPrinter(branch?.code, printUserId);
-          const invoiceResult = await printReceiptDetailed({
-            ...withPrinterProfile(buildPrintPayload(), profile),
-          });
-          if (!invoiceResult.ok) {
-            printErrors.push(`Invoice: ${invoiceResult.error ?? "print failed"}`);
+      try {
+        const wasTicketEdit = editingOrder?.kind === "ticket";
+        // Always silent-print to assigned OS printers (never force Windows dialog / PDF).
+        const printed = await printKitchenKotsOnPay(ticket.orderRef ?? orderRef);
+        const kotOk = printed.errors.length === 0;
+        const printErrors = printed.errors;
+        if (!wasTicketEdit && autoPrintOrderForMode(posSettings, mode)) {
+          const printKey = `${ticket.id}:order-receipt`;
+          if (!autoPrintedOrderKeysRef.current.has(printKey)) {
+            autoPrintedOrderKeysRef.current.add(printKey);
+            const printUserId = resolvePrintUserId(useSessionStore.getState().claims?.sub, shiftWaiterId || null);
+            const profile = resolveReceiptPrinter(branch?.code, printUserId);
+            // Prefer ticket.orderRef so invoice never drifts from the kitchen slip.
+            const invoiceResult = await printReceiptDetailed({
+              ...withPrinterProfile(
+                { ...buildPrintPayload(), orderRef: ticket.orderRef ?? orderRef },
+                profile,
+              ),
+            });
+            if (!invoiceResult.ok) {
+              printErrors.push(`Invoice: ${invoiceResult.error ?? "print failed"}`);
+            }
           }
         }
-      }
-      if (!wasTicketEdit) {
-        await persistStaffFoodRecord();
-      }
-      invalidateOrderFeeds();
-      // Always clear the ticket panel after Order / Update / Print order.
-      setEditingOrder(null);
-      resetAfterKitchenOrder();
-      if (printed.skippedNoChanges) {
-        setPrintNotice({
-          tone: "success",
-          message: `${modeLabel} order updated (no item changes — kitchen not reprinted).`,
-        });
-      } else if (kotOk) {
-        setPrintNotice(
-          noticeFromPrintResult(
-            true,
-            wasTicketEdit
-              ? `${modeLabel} order updated — kitchen got UPDATE REVISED (changed items only).`
-              : `${modeLabel} order saved and sent to kitchen.`,
-          ),
-        );
-      } else {
-        setPrintNotice({
-          tone: "error",
-          message: `Order ${wasTicketEdit ? "updated" : "saved"}, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers, or Printer → All Printers / Printer by Section, and link a real OS printer.`,
-        });
+        if (!wasTicketEdit) {
+          await persistStaffFoodRecord();
+        }
+        invalidateOrderFeeds();
+        // Always clear the ticket panel after Order / Update / Print order.
+        setEditingOrder(null);
+        resetAfterKitchenOrder();
+        if (printed.skippedNoChanges) {
+          setPrintNotice({
+            tone: "success",
+            message: `${modeLabel} order updated (no item changes — kitchen not reprinted).`,
+          });
+        } else if (kotOk) {
+          setPrintNotice(
+            noticeFromPrintResult(
+              true,
+              wasTicketEdit
+                ? `${modeLabel} order updated — kitchen got UPDATE REVISED (changed items only).`
+                : `${modeLabel} order saved and sent to kitchen.`,
+            ),
+          );
+        } else {
+          setPrintNotice({
+            tone: "error",
+            message: `Order ${wasTicketEdit ? "updated" : "saved"}, but KOT print failed — ${printErrors.join("; ")}. Open POS → My printers, or Printer → All Printers / Printer by Section, and link a real OS printer.`,
+          });
+        }
+      } finally {
+        setOrderFlowBusy(false);
       }
     },
-    onError: (err: Error) => setPrintNotice({ message: err.message, tone: "error" }),
+    onError: (err: Error) => {
+      setOrderFlowBusy(false);
+      setPrintNotice({ message: err.message, tone: "error" });
+    },
   });
 
   const updateHeldBillMutation = useMutation({
@@ -2071,6 +2108,7 @@ export function PosPage(): JSX.Element {
        * Direct Pay / Invoice (no prior "Order"): create + print KOT first so kitchen
        * still gets the ticket. Leave it open (do not mark done) — kitchen needs it.
        * If cart already came from an open kitchen ticket, skip create (mark done after pay).
+       * If Order already printed this on-screen #, reuse that ref — never nextOrderRef again.
        */
       const needsKotOnPay =
         status === "completed" && editingOrder?.kind !== "ticket" && cart.length > 0;
@@ -2083,37 +2121,56 @@ export function PosPage(): JSX.Element {
       let kotSent = false;
 
       if (needsKotOnPay) {
-        sharedOrderRef = sharedOrderRef || nextOrderRef(branch!.code, mode);
+        const reservedOrExisting =
+          sharedOrderRef ||
+          (orderRef.trim() ? orderRef.trim() : undefined);
+        const existingTicket = findOpenKitchenTicketByOrderRef(reservedOrExisting);
+        if (existingTicket) {
+          // Order/Print-order already created + printed this # — bill must match kitchen.
+          sharedOrderRef =
+            existingTicket.orderRef?.trim() ||
+            existingTicket.ticketRef?.trim() ||
+            reservedOrExisting;
+          kotSent = false;
+        } else {
+          sharedOrderRef = reservedOrExisting
+            ? (() => {
+                const seq = parseOrderRefSeq(reservedOrExisting);
+                if (seq) ensureOrderSeqAtLeast(branch!.code, seq, mode);
+                return reservedOrExisting;
+              })()
+            : nextOrderRef(branch!.code, mode);
 
-        try {
-          await createKitchenTicket({
-            branchCode: branch!.code,
-            orderRef: sharedOrderRef,
-            stationLabel,
-            lines: kitchenLines(),
-            notes: kitchenOrderNotes,
-            ...deliveryExtras(),
-          });
-          kotSent = true;
-        } catch (kotErr) {
-          const kotMsg = kotErr instanceof Error ? kotErr.message : String(kotErr);
-          const bookedMatch = kotMsg.match(/booked by order\s+([A-Za-z0-9._-]+)/i);
-          if (bookedMatch?.[1]) {
-            // Table already has a kitchen ticket — settle that order instead of blocking Pay.
-            sharedOrderRef = bookedMatch[1];
-            kotSent = false;
-          } else if (/is booked/i.test(kotMsg)) {
-            // Booked without parsable ref — still allow bill close; kitchen KOT already exists.
-            kotSent = false;
-          } else {
-            throw kotErr instanceof Error ? kotErr : new Error(kotMsg);
+          try {
+            await createKitchenTicket({
+              branchCode: branch!.code,
+              orderRef: sharedOrderRef,
+              stationLabel,
+              lines: kitchenLines(),
+              notes: kitchenOrderNotes,
+              ...deliveryExtras(),
+            });
+            kotSent = true;
+          } catch (kotErr) {
+            const kotMsg = kotErr instanceof Error ? kotErr.message : String(kotErr);
+            const bookedMatch = kotMsg.match(/booked by order\s+([A-Za-z0-9._-]+)/i);
+            if (bookedMatch?.[1]) {
+              // Table already has a kitchen ticket — settle that order instead of blocking Pay.
+              sharedOrderRef = bookedMatch[1];
+              kotSent = false;
+            } else if (/is booked/i.test(kotMsg)) {
+              // Booked without parsable ref — still allow bill close; kitchen KOT already exists.
+              kotSent = false;
+            } else {
+              throw kotErr instanceof Error ? kotErr : new Error(kotMsg);
+            }
           }
-        }
 
-        // Close → Pay must emit only the final/PRA slip — never a second kitchen KOT print.
-        if (kotSent && !pendingCloseAfterPayRef.current) {
-          const printed = await printKitchenKotsOnPay(sharedOrderRef);
-          kotPrintErrors.push(...printed.errors);
+          // Close → Pay must emit only the final/PRA slip — never a second kitchen KOT print.
+          if (kotSent && !pendingCloseAfterPayRef.current) {
+            const printed = await printKitchenKotsOnPay(sharedOrderRef);
+            kotPrintErrors.push(...printed.errors);
+          }
         }
       }
 
@@ -2560,7 +2617,7 @@ export function PosPage(): JSX.Element {
   }
 
   function requestCreateOrUpdateOrder(): void {
-    if (createOrderMutation.isPending) return;
+    if (createOrderMutation.isPending || orderFlowBusy) return;
     if (editingOrder?.kind === "ticket" && kotBaselineRef.current) {
       const deltas = diffKotLines(kotBaselineRef.current, printOrderedCart());
       const graceOver = kotChangeReasonGraceExpired(
@@ -2631,7 +2688,8 @@ export function PosPage(): JSX.Element {
       setPrintNotice({ message: err, tone: "error" });
       return;
     }
-    if (cart.length === 0 || checkoutMutation.isPending) return;
+    if (cart.length === 0 || checkoutMutation.isPending || orderFlowBusy || createOrderMutation.isPending)
+      return;
     pendingCloseAfterPayRef.current = true;
     checkoutMutation.mutate({
       intent: "pay",
@@ -2727,7 +2785,13 @@ export function PosPage(): JSX.Element {
       });
     }
 
-    if (posModeAutoPrintsOnCustomer(mode) && cart.length > 0 && !checkoutMutation.isPending) {
+    if (
+      posModeAutoPrintsOnCustomer(mode) &&
+      cart.length > 0 &&
+      !checkoutMutation.isPending &&
+      !orderFlowBusy &&
+      !createOrderMutation.isPending
+    ) {
       runPrintInvoice();
     } else if (
       deliveryCustomer.trim() ||
@@ -2811,7 +2875,13 @@ export function PosPage(): JSX.Element {
       requestCreateOrUpdateOrder();
     },
     pay: () => {
-      if (cart.length === 0 || checkoutMutation.isPending) return;
+      if (
+        cart.length === 0 ||
+        checkoutMutation.isPending ||
+        orderFlowBusy ||
+        createOrderMutation.isPending
+      )
+        return;
       onPay();
     },
     cashierIn: () => setCashierModal("in"),
@@ -2820,7 +2890,13 @@ export function PosPage(): JSX.Element {
       setCashierModal("out");
     },
     printBill: () => {
-      if (cart.length === 0 || checkoutMutation.isPending) return;
+      if (
+        cart.length === 0 ||
+        checkoutMutation.isPending ||
+        orderFlowBusy ||
+        createOrderMutation.isPending
+      )
+        return;
       runPrintInvoice();
     },
     payOut: () => setPayOutModalOpen(true),
@@ -3100,8 +3176,10 @@ export function PosPage(): JSX.Element {
                 : "Modify hold"
               : null
           }
-          orderBusy={createOrderMutation.isPending || updateHeldBillMutation.isPending}
-          payBusy={checkoutMutation.isPending}
+          orderBusy={
+            createOrderMutation.isPending || updateHeldBillMutation.isPending || orderFlowBusy
+          }
+          payBusy={checkoutMutation.isPending || orderFlowBusy || createOrderMutation.isPending}
           showTicketDiscount={showTicketDiscount}
           autoDiscountEnabled={autoDiscountEnabled}
           autoDiscountPct={autoDiscountPct}
@@ -3658,24 +3736,24 @@ export function PosPage(): JSX.Element {
         <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60 lg:h-full dark:border-slate-700/50 dark:bg-gradient-to-b dark:from-slate-900/95 dark:to-slate-950 dark:shadow-xl dark:shadow-black/25 dark:ring-1 dark:ring-white/5">
           <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800/80 dark:bg-slate-900/40 dark:backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <div className="text-[9px] font-medium uppercase tracking-wider text-slate-500">
                     {editingOrder ? "Editing" : "Current ticket"}
                   </div>
-                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-400">
+                  <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-semibold text-amber-700 ring-1 ring-amber-500/25 dark:text-amber-400">
                     {posOrderModeLabel(mode)}
                   </span>
                 </div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-white">
+                <div className="mt-0.5 truncate text-[11px] font-semibold text-slate-900 dark:text-white">
                   {editingOrder ? "Modify order" : mode === "staff-food" ? "Staff food" : "New order"}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {editingOrder ? (
                   <button
                     type="button"
-                    className="rounded-lg px-2 py-1 text-[10px] font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="rounded-md px-1.5 py-0.5 text-[9px] font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
                     onClick={cancelEditing}
                   >
                     Cancel
@@ -3686,11 +3764,11 @@ export function PosPage(): JSX.Element {
                   onClick={startNewManualOrder}
                   title="Start a new blank order"
                   aria-label="New order"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-lg font-bold leading-none text-slate-950 shadow-sm transition hover:bg-amber-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-amber-500 text-sm font-bold leading-none text-slate-950 shadow-sm transition hover:bg-amber-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
                 >
                   +
                 </button>
-                <span className="rounded-lg bg-amber-100 px-2.5 py-1 font-mono text-sm font-bold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
+                <span className="rounded-md bg-amber-100 px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
                   {orderRef}
                 </span>
               </div>
@@ -4383,10 +4461,15 @@ export function PosPage(): JSX.Element {
                   type="button"
                   className={POS_PRIMARY_ORDER_BTN}
                   title={`${POS_SHORTCUTS.quickOrder.label} (${POS_SHORTCUTS.quickOrder.key})`}
-                  disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
+                  disabled={
+                    cart.length === 0 ||
+                    createOrderMutation.isPending ||
+                    orderFlowBusy ||
+                    !branch?.code
+                  }
                   onClick={() => requestCreateOrUpdateOrder()}
                 >
-                  {createOrderMutation.isPending
+                  {createOrderMutation.isPending || orderFlowBusy
                     ? "…"
                     : editingOrder?.kind === "ticket"
                       ? "Update order"
@@ -4397,27 +4480,42 @@ export function PosPage(): JSX.Element {
                 type="button"
                 className={`${POS_PRIMARY_PAY_BTN}${editingOrder?.kind === "held-bill" ? " col-span-2" : ""}`}
                 title={`${POS_SHORTCUTS.pay.label} (${POS_SHORTCUTS.pay.key})`}
-                disabled={cart.length === 0 || checkoutMutation.isPending}
+                disabled={
+                  cart.length === 0 ||
+                  checkoutMutation.isPending ||
+                  orderFlowBusy ||
+                  createOrderMutation.isPending
+                }
                 onClick={() => onPay()}
               >
-                {checkoutMutation.isPending ? "…" : "Pay"}
+                {checkoutMutation.isPending || orderFlowBusy ? "…" : "Pay"}
               </button>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 type="button"
                 className={POS_SECONDARY_BTN}
-                disabled={cart.length === 0 || createOrderMutation.isPending || !branch?.code}
+                disabled={
+                  cart.length === 0 ||
+                  createOrderMutation.isPending ||
+                  orderFlowBusy ||
+                  !branch?.code
+                }
                 onClick={() => runPrintOrder()}
                 title="Print kitchen order ticket — order stays editable"
               >
-                {createOrderMutation.isPending ? "…" : "Print order"}
+                {createOrderMutation.isPending || orderFlowBusy ? "…" : "Print order"}
               </button>
               <button
                 type="button"
                 className={POS_SECONDARY_BTN}
                 title={`${POS_SHORTCUTS.printBill.label} (${POS_SHORTCUTS.printBill.key}) — final bill`}
-                disabled={cart.length === 0 || checkoutMutation.isPending}
+                disabled={
+                  cart.length === 0 ||
+                  checkoutMutation.isPending ||
+                  orderFlowBusy ||
+                  createOrderMutation.isPending
+                }
                 onClick={() => runPrintInvoice()}
               >
                 Print invoice

@@ -989,8 +989,21 @@ export class InventoryService implements OnModuleInit {
       .where(eq(popsIngredients.id, ingredientId))
       .returning();
     if (!row) throw new NotFoundException("Ingredient not found");
+
+    // List UI reads warehouse on-hand when linked — keep ledger in sync with Current stock edits.
+    if (input.currentStock !== undefined || input.unitCost !== undefined || input.storeProductId !== undefined) {
+      await this.syncIngredientWarehouseOnHand(
+        organizationId,
+        existing.branchId,
+        ingredientId,
+        input.currentStock !== undefined ? Math.max(0, input.currentStock) : undefined,
+        input.unitCost,
+      );
+    }
+
     await this.audit(organizationId, existing.branchId, userEmail, "Ingredient updated", "Ingredients", row.name);
-    return this.mapIngredient(row);
+    const refreshed = await this.getIngredient(organizationId, ingredientId);
+    return this.mapIngredient(refreshed);
   }
 
   async deleteIngredient(organizationId: string, userEmail: string, ingredientId: string) {
@@ -1613,10 +1626,19 @@ export class InventoryService implements OnModuleInit {
     if (input.status === "Approved") {
       const ing = await this.getIngredient(organizationId, adj.ingredientId);
       if (adj.type === "Add") {
+        const nextQty = Math.max(0, ing.currentStock + adj.qty);
         await this.db
           .update(popsIngredients)
-          .set({ currentStock: ing.currentStock + adj.qty })
+          .set({ currentStock: nextQty })
           .where(eq(popsIngredients.id, adj.ingredientId));
+        // Mirror Add into warehouse ledger (same source the Ingredients table displays).
+        await this.syncIngredientWarehouseOnHand(
+          organizationId,
+          adj.branchId,
+          adj.ingredientId,
+          nextQty,
+          ing.unitCostPkr,
+        );
         const costImpact = Math.round(adj.qty * ing.unitCostPkr);
         try {
           await this.accountingHooks.recordStockAdjustment(
@@ -2858,9 +2880,118 @@ export class InventoryService implements OnModuleInit {
         .from(popsIngredients)
         .where(eq(popsIngredients.id, line.ingredientId))
         .limit(1);
-      if (ing[0]) total += Math.round((line.qty / Math.max(ing[0].currentStock || 1, 1)) * ing[0].unitCostPkr);
+      // Cost = recipe qty × unit cost (not qty/stock × cost).
+      if (ing[0]) total += Math.round(line.qty * ing[0].unitCostPkr);
     }
     return total;
+  }
+
+  /**
+   * Align store warehouse + product availableStock with Ingredients "Current stock".
+   * Without this, edit/save updates pops_ingredients only and the table keeps old warehouse qty.
+   */
+  private async syncIngredientWarehouseOnHand(
+    organizationId: string,
+    branchId: string,
+    ingredientId: string,
+    absoluteQty: number | undefined,
+    unitCostPkr?: number,
+  ): Promise<void> {
+    const ing = await this.getIngredient(organizationId, ingredientId);
+    const cost = unitCostPkr ?? ing.unitCostPkr;
+    const product = await this.ensureIngredientStoreProduct(organizationId, branchId, ing, cost);
+    if (ing.storeProductId !== product.id) {
+      await this.db
+        .update(popsIngredients)
+        .set({ storeProductId: product.id })
+        .where(eq(popsIngredients.id, ingredientId));
+    }
+
+    if (absoluteQty === undefined) {
+      if (unitCostPkr !== undefined) {
+        await this.db
+          .update(storeWarehouseStock)
+          .set({ unitCostPkr: cost, updatedAt: new Date() })
+          .where(eq(storeWarehouseStock.productId, product.id));
+        await this.db
+          .update(storeProducts)
+          .set({ purchasePricePkr: cost })
+          .where(eq(storeProducts.id, product.id));
+      }
+      return;
+    }
+
+    const qty = Math.max(0, absoluteQty);
+    const { simpleStore: mainWh } = await this.ensureRestaurantWarehouses(organizationId, branchId);
+    if (!mainWh) {
+      await this.db
+        .update(popsIngredients)
+        .set({ currentStock: qty, ...(unitCostPkr !== undefined ? { unitCostPkr: cost } : {}) })
+        .where(eq(popsIngredients.id, ingredientId));
+      return;
+    }
+
+    const balances = await this.db
+      .select({
+        id: storeWarehouseStock.id,
+        warehouseId: storeWarehouseStock.warehouseId,
+        quantity: storeWarehouseStock.quantity,
+      })
+      .from(storeWarehouseStock)
+      .where(eq(storeWarehouseStock.productId, product.id));
+    const onHand = balances.reduce((sum, r) => sum + r.quantity, 0);
+    const delta = qty - onHand;
+
+    if (delta > 0) {
+      const mainRow = balances.find((r) => r.warehouseId === mainWh.id);
+      if (mainRow) {
+        await this.db
+          .update(storeWarehouseStock)
+          .set({
+            quantity: mainRow.quantity + delta,
+            unitCostPkr: cost,
+            updatedAt: new Date(),
+          })
+          .where(eq(storeWarehouseStock.id, mainRow.id));
+      } else {
+        await this.db.insert(storeWarehouseStock).values({
+          organizationId,
+          branchId,
+          warehouseId: mainWh.id,
+          productId: product.id,
+          quantity: delta,
+          unitCostPkr: cost,
+        });
+      }
+    } else if (delta < 0) {
+      await this.deductIngredientOnHand(organizationId, branchId, ingredientId, -delta);
+    } else if (unitCostPkr !== undefined) {
+      await this.db
+        .update(storeWarehouseStock)
+        .set({ unitCostPkr: cost, updatedAt: new Date() })
+        .where(eq(storeWarehouseStock.productId, product.id));
+    }
+
+    const refreshed = await this.db
+      .select({ quantity: storeWarehouseStock.quantity })
+      .from(storeWarehouseStock)
+      .where(eq(storeWarehouseStock.productId, product.id));
+    const finalOnHand = refreshed.reduce((sum, r) => sum + r.quantity, 0);
+    await this.db
+      .update(popsIngredients)
+      .set({
+        currentStock: finalOnHand,
+        storeProductId: product.id,
+        ...(unitCostPkr !== undefined ? { unitCostPkr: cost } : {}),
+      })
+      .where(eq(popsIngredients.id, ingredientId));
+    await this.db
+      .update(storeProducts)
+      .set({
+        availableStock: finalOnHand,
+        purchasePricePkr: cost,
+      })
+      .where(eq(storeProducts.id, product.id));
   }
 
   private looksLikeUserId(value: string): boolean {

@@ -16,8 +16,10 @@ try {
 }
 
 const wasmSrc = join(sqlJsDir, "sql-wasm.wasm");
+const browserWasmSrc = join(sqlJsDir, "sql-wasm-browser.wasm");
 const wasmDestDir = join(__dirname, "..", "public");
 const wasmDest = join(wasmDestDir, "sql-wasm.wasm");
+const browserWasmDest = join(wasmDestDir, "sql-wasm-browser.wasm");
 
 if (!existsSync(wasmSrc)) {
   console.warn("[copy-sql-wasm] sql-wasm.wasm not found at", wasmSrc);
@@ -27,3 +29,7 @@ if (!existsSync(wasmSrc)) {
 mkdirSync(wasmDestDir, { recursive: true });
 copyFileSync(wasmSrc, wasmDest);
 console.log("[copy-sql-wasm] copied to", wasmDest);
+// Browser entry of sql.js requests this filename; same binary as sql-wasm.wasm.
+const browserSrc = existsSync(browserWasmSrc) ? browserWasmSrc : wasmSrc;
+copyFileSync(browserSrc, browserWasmDest);
+console.log("[copy-sql-wasm] copied to", browserWasmDest);

@@ -418,18 +418,25 @@ export type RemoteUserPrinterAssignment = {
   windowsPrinterName?: string | null;
 };
 
-/** Replace this branch's user→printer map with the backend copy (no re-upload). */
+/**
+ * Merge cloud user→logical profile map into this PC.
+ * Never copies Windows spooler names — those stay machine-local so PC2 login
+ * cannot blank or remap PC1 printers.
+ */
 export function applyRemoteUserAssignments(
   branchCode: string,
   rows: RemoteUserPrinterAssignment[],
 ): void {
   const state = loadPrinterRouting(branchCode);
   const printers = [...state.printers];
-  const userPrinters: Record<string, string[]> = {};
+  // Start from local assignments; overlay remote user→profile links only.
+  const userPrinters: Record<string, string[]> = { ...state.userPrinters };
+  const remoteUsers = new Set<string>();
   for (const row of rows) {
     const userId = row.userId.trim();
     const profileId = row.profileId.trim();
     if (!userId || !profileId) continue;
+    remoteUsers.add(userId);
     if (!printers.some((p) => p.id === profileId)) {
       const type = (ALL_PRINTER_TYPES.has(row.printerType) ? row.printerType : "kitchen") as PrinterType;
       printers.push({
@@ -441,16 +448,19 @@ export function applyRemoteUserAssignments(
         textScale: "M",
         autoCut: true,
         status: "online",
-        systemPrinterName: row.windowsPrinterName?.trim() || undefined,
+        // Intentionally omit systemPrinterName — bind on this PC only.
       });
-    } else if (row.windowsPrinterName?.trim()) {
-      const idx = printers.findIndex((p) => p.id === profileId);
-      if (idx >= 0 && !printers[idx].systemPrinterName?.trim()) {
-        printers[idx] = { ...printers[idx], systemPrinterName: row.windowsPrinterName.trim() };
-      }
     }
     const current = userPrinters[userId] ?? [];
     if (!current.includes(profileId)) userPrinters[userId] = [...current, profileId];
+  }
+  // For users present in cloud, prefer the cloud set (logical profiles only).
+  for (const userId of remoteUsers) {
+    const fromRemote = rows
+      .filter((r) => r.userId.trim() === userId)
+      .map((r) => r.profileId.trim())
+      .filter(Boolean);
+    if (fromRemote.length > 0) userPrinters[userId] = [...new Set(fromRemote)];
   }
   saveState(branchCode, { ...state, printers, userPrinters });
 }
@@ -467,7 +477,8 @@ export function snapshotUserAssignments(branchCode: string): RemoteUserPrinterAs
         profileId,
         printerType: profile.printerType,
         printerName: profile.name,
-        windowsPrinterName: profile.systemPrinterName ?? null,
+        // Never sync OS printer names across PCs — each machine binds locally.
+        windowsPrinterName: null,
       });
     }
   }

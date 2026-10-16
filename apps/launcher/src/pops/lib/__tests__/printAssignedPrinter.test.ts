@@ -204,4 +204,18 @@ describe("PosPage Order print regression", () => {
     expect(src).toMatch(/printKitchenKotsOnPay\(ticket\.orderRef \?\? orderRef\)/);
     expect(src).not.toMatch(/printKitchenKotsOnPay\([^)]*forceDialog:\s*true/);
   });
+
+  it("blocks Pay while Order KOT print finishes and reuses open ticket orderRef", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(
+      join(__dirname, "../../pages/modules/PosPage.tsx"),
+      "utf8",
+    );
+    // Race fix: Pay must stay disabled through async onSuccess (not only isPending).
+    expect(src).toMatch(/orderFlowBusy/);
+    expect(src).toMatch(/payBusy=\{checkoutMutation\.isPending \|\| orderFlowBusy/);
+    expect(src).toMatch(/findOpenKitchenTicketByOrderRef/);
+    expect(src).toMatch(/consumeReservedOrderRef/);
+  });
 });

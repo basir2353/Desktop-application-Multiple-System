@@ -2,6 +2,7 @@ import { Button } from "@platform/ui";
 import {
   DEFAULT_RECIPE_PORTION_FACTORS,
   RECIPE_PORTION_PRESETS,
+  type Recipe,
 } from "@platform/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
@@ -20,6 +21,7 @@ import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
 import { SearchableSelect } from "../../../ui/SearchableSelect";
 import { SimpleTable } from "../../../ui/SimpleTable";
+import { InventoryFlowBanner } from "./InventoryFlowBanner";
 import { InventoryError, InventoryFormPanel, InventoryLoading } from "./InventoryUi";
 
 type IngredientLineRow = {
@@ -37,6 +39,7 @@ export function RecipeManagementPage(): JSX.Element {
   const [pickerOpen, setPickerOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [previewPortion, setPreviewPortion] = useState("Full");
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     menuItemId: "",
@@ -45,6 +48,19 @@ export function RecipeManagementPage(): JSX.Element {
     version: "v1.0",
     lines: [] as IngredientLineRow[],
   });
+
+  function resetRecipeForm(): void {
+    setEditingRecipeId(null);
+    setForm({
+      name: "",
+      menuItemId: "",
+      portionSize: "Full",
+      portionFactors: { ...DEFAULT_RECIPE_PORTION_FACTORS },
+      version: "v1.0",
+      lines: [],
+    });
+    setPreviewPortion("Full");
+  }
 
   const query = useQuery({
     queryKey: ["inventory", branch?.code],
@@ -61,6 +77,42 @@ export function RecipeManagementPage(): JSX.Element {
   const ingredients = query.data?.ingredients ?? [];
   const recipes = query.data?.recipes ?? [];
   const menuItems = menuQuery.data?.items ?? [];
+
+  function loadRecipeIntoForm(recipe: Recipe): void {
+    const dish = menuItems.find((m) => m.id === (recipe.menuItemId ?? ""));
+    const variantLabels = (dish?.variants ?? [])
+      .filter((variant) => variant.isActive !== false)
+      .map((variant) => variant.label?.trim())
+      .filter((label): label is string => Boolean(label));
+    const labels =
+      variantLabels.length > 0
+        ? [...new Set(variantLabels)]
+        : Object.keys(recipe.portionFactors ?? DEFAULT_RECIPE_PORTION_FACTORS);
+    const base = recipe.portionSize?.trim() || "Full";
+    const factors = {
+      ...DEFAULT_RECIPE_PORTION_FACTORS,
+      ...(recipe.portionFactors ?? {}),
+    };
+    for (const label of labels) {
+      if (factors[label] == null) factors[label] = /half/i.test(label) ? 0.5 : 1;
+    }
+    setEditingRecipeId(recipe.id);
+    setForm({
+      name: recipe.name,
+      menuItemId: recipe.menuItemId ?? "",
+      portionSize: base,
+      portionFactors: factors,
+      version: recipe.version || "v1.0",
+      lines: recipe.ingredients.map((line) => ({
+        ingredientId: line.ingredientId,
+        qty: String(line.qty),
+        unit: line.unit,
+      })),
+    });
+    setPreviewPortion(base);
+    setError(null);
+    setTransferNotice(`Editing “${recipe.name}”. Save to update.`);
+  }
 
   const ingredientById = useMemo(
     () => new Map(ingredients.map((i) => [i.id, i])),
@@ -102,33 +154,40 @@ export function RecipeManagementPage(): JSX.Element {
     form.menuItemId.length > 0 &&
     validLines.length > 0;
 
-  const createMutation = useMutation({
-    mutationFn: () => {
+  const saveMutation = useMutation({
+    mutationFn: async () => {
       if (validLines.length === 0) {
         throw new Error("Add at least one ingredient with a quantity.");
       }
-      return createRecipe({
-        branchCode: branch!.code,
-        name: form.name.trim(),
-        menuItemId: form.menuItemId,
-        version: form.version,
-        portionSize: form.portionSize,
-        portionFactors: form.portionFactors,
-        lines: validLines,
-      });
+      const wasEdit = Boolean(editingRecipeId);
+      if (editingRecipeId) {
+        await updateRecipe(editingRecipeId, {
+          name: form.name.trim(),
+          menuItemId: form.menuItemId,
+          version: form.version,
+          portionSize: form.portionSize,
+          portionFactors: form.portionFactors,
+          active: true,
+          lines: validLines,
+        });
+      } else {
+        await createRecipe({
+          branchCode: branch!.code,
+          name: form.name.trim(),
+          menuItemId: form.menuItemId,
+          version: form.version,
+          portionSize: form.portionSize,
+          portionFactors: form.portionFactors,
+          lines: validLines,
+        });
+      }
+      return { wasEdit };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
-      setForm({
-        name: "",
-        menuItemId: "",
-        portionSize: "Full",
-        portionFactors: { ...DEFAULT_RECIPE_PORTION_FACTORS },
-        version: "v1.0",
-        lines: [],
-      });
-      setPreviewPortion("Full");
+      resetRecipeForm();
       setError(null);
+      setTransferNotice(result.wasEdit ? "Recipe updated." : "Recipe saved.");
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -256,6 +315,7 @@ export function RecipeManagementPage(): JSX.Element {
             menuItemId: input.menuItemId,
             version: input.version,
             portionSize: input.portionSize,
+            portionFactors: input.portionFactors,
             active: input.active,
             lines: input.lines,
           }),
@@ -265,6 +325,7 @@ export function RecipeManagementPage(): JSX.Element {
             menuItemId: input.menuItemId,
             version: input.version,
             portionSize: input.portionSize,
+            portionFactors: input.portionFactors,
             active: input.active,
             lines: input.lines,
           }),
@@ -335,6 +396,8 @@ export function RecipeManagementPage(): JSX.Element {
         }
       />
 
+      <InventoryFlowBanner activeStep="Recipe Deduction" />
+
       {transferNotice ? <p className={noticeSuccessClass}>{transferNotice}</p> : null}
       {error ? <InventoryError message={error} /> : null}
 
@@ -342,14 +405,23 @@ export function RecipeManagementPage(): JSX.Element {
         Select a menu dish, then pick <span className="text-slate-200">Full</span> or{" "}
         <span className="text-slate-200">Half</span> (same sizes as POS). Ingredient quantities you enter
         are for that size; POS scales the other size automatically.
+        {editingRecipeId ? (
+          <span className="mt-1 block text-amber-200/90">
+            Editing existing recipe — use Update recipe, or{" "}
+            <button type="button" className={linkWarningClass} onClick={() => resetRecipeForm()}>
+              cancel edit
+            </button>
+            .
+          </span>
+        ) : null}
       </div>
 
       {canManage ? (
         <InventoryFormPanel
-          title="Create recipe"
-          submitLabel="Save recipe"
-          onSubmit={() => createMutation.mutate()}
-          disabled={!canSubmit || createMutation.isPending}
+          title={editingRecipeId ? "Edit recipe" : "Create recipe"}
+          submitLabel={editingRecipeId ? "Update recipe" : "Save recipe"}
+          onSubmit={() => saveMutation.mutate()}
+          disabled={!canSubmit || saveMutation.isPending}
         >
           <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -606,13 +678,25 @@ export function RecipeManagementPage(): JSX.Element {
               </div>
             </div>
             {canManage ? (
-              <button
-                type="button"
-                className={`text-xs ${linkDangerClass}`}
-                onClick={() => deleteMutation.mutate(recipe.id)}
-              >
-                Delete
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className={`text-xs ${linkWarningClass}`}
+                  onClick={() => loadRecipeIntoForm(recipe)}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className={`text-xs ${linkDangerClass}`}
+                  onClick={() => {
+                    if (editingRecipeId === recipe.id) resetRecipeForm();
+                    deleteMutation.mutate(recipe.id);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
             ) : null}
           </div>
           <div className="mt-3">

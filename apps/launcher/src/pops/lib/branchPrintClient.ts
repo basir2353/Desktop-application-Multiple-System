@@ -10,6 +10,7 @@ import {
 import { printImageToSystemPrinter, isDesktopAppRuntime, listSystemPrinters, isVirtualSystemPrinter, isXpsSystemPrinter, preferPdfOverXpsPrinter } from "./systemPrinters";
 import { classifyPrintSource, logPrintEvent } from "./printHistory";
 import type { PosCartLine } from "./posCart";
+import { getOrCreateTerminalId } from "./terminalAuth";
 
 const SETTINGS_KEY = "pops-branch-print-server-v1";
 const PREFERRED_SERVER_KEY = "pops-preferred-branch-print-server-v1";
@@ -93,10 +94,15 @@ function newId(): string {
   return `job_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function machinePrintServerId(branchCode: string): string {
+  const term = getOrCreateTerminalId().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "local";
+  return `bps_${branchCode || "local"}_${term}`;
+}
+
 export function defaultBranchPrintSettings(branchCode: string, branchName: string): BranchPrintServerSettings {
   return {
     enabled: true,
-    serverId: `bps_${branchCode || "local"}`,
+    serverId: machinePrintServerId(branchCode),
     branchCode: branchCode || "MAIN",
     branchName: branchName || branchCode || "Branch",
     serverName: `Print Server · ${branchName || branchCode || "Branch"}`,
@@ -110,8 +116,21 @@ export function defaultBranchPrintSettings(branchCode: string, branchName: strin
 export function loadBranchPrintSettings(branchCode: string): BranchPrintServerSettings {
   try {
     const raw = localStorage.getItem(`${SETTINGS_KEY}.${branchCode}`);
-    if (!raw) return defaultBranchPrintSettings(branchCode, branchCode);
-    return { ...defaultBranchPrintSettings(branchCode, branchCode), ...(JSON.parse(raw) as Partial<BranchPrintServerSettings>) };
+    const defaults = defaultBranchPrintSettings(branchCode, branchCode);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<BranchPrintServerSettings>;
+    const merged = { ...defaults, ...parsed };
+    // Migrate legacy branch-only serverId so two PCs do not collide on claim/heartbeat.
+    const legacyId = `bps_${branchCode || "local"}`;
+    if (!parsed.serverId || parsed.serverId === legacyId) {
+      merged.serverId = defaults.serverId;
+      try {
+        localStorage.setItem(`${SETTINGS_KEY}.${branchCode}`, JSON.stringify(merged));
+      } catch {
+        /* ignore */
+      }
+    }
+    return merged;
   } catch {
     return defaultBranchPrintSettings(branchCode, branchCode);
   }
@@ -1408,16 +1427,8 @@ export function ensureCloudPrintPoller(branchCode: string): void {
       // Live claim always runs while this EXE is open for the branch (cloudHeartbeat can disable).
       if (settings.cloudHeartbeat === false) return;
 
-      try {
-        const { pullUserPrinterAssignments, pushUserPrinterAssignments } = await import(
-          "./printerAssignmentSync"
-        );
-        const branch = settings.branchCode || code;
-        await pushUserPrinterAssignments(branch);
-        await pullUserPrinterAssignments(branch);
-      } catch {
-        // local assignment still applies if the API is briefly unreachable
-      }
+      // Do NOT push/pull printer assignments on every poll — that let PC2 overwrite PC1.
+      // Pull only when a cloud job arrives (below), and only logical user→profile links.
 
       const { authFetch } = await import("../../lib/authFetch");
       const res = await authFetch(`/v1/printing/jobs/claim`, {
@@ -1446,6 +1457,13 @@ export function ensureCloudPrintPoller(branchCode: string): void {
         payload?: PrintJobPayload;
       };
       if (!row?.id) return;
+
+      try {
+        const { pullUserPrinterAssignments } = await import("./printerAssignmentSync");
+        await pullUserPrinterAssignments(settings.branchCode || code);
+      } catch {
+        // local assignment still applies if the API is briefly unreachable
+      }
 
       const payload = (row.payload ?? row.payloadJson ?? {}) as PrintJobPayload;
       const metaSource =

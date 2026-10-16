@@ -50,6 +50,7 @@ export function buildUnifiedOrders(bills: Bill[], tickets: KitchenTicket[]): Uni
 /** All open kitchen tickets for the Kitchen screen (includes KOTs already billed on Pay/Invoice). */
 export function kitchenActiveOrders(tickets: KitchenTicket[]): UnifiedOrder[] {
   return tickets
+    .filter((ticket) => ticket.status !== "done")
     .map((ticket) => ({
       source: "kitchen" as const,
       id: ticket.id,

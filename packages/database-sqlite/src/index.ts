@@ -30,11 +30,13 @@ export type CreateSqlJsOptions = {
 function resolveWasmFileUrl(_wasmBaseUrl: string, file: string): string {
   // Always load from site origin root. Relative paths under /pos (etc.) return SPA HTML
   // and crash WebAssembly (magic bytes 3c 21 64 6f = "<!do").
-  const name = (file.split(/[/\\]/).pop() || "sql-wasm.wasm").trim() || "sql-wasm.wasm";
+  // Browser sql.js asks for "sql-wasm-browser.wasm"; Node build asks for "sql-wasm.wasm".
+  // We ship one public file (`/sql-wasm.wasm`) that works for both.
+  void file;
   if (typeof window !== "undefined" && window.location?.origin) {
-    return `${window.location.origin}/${name}`;
+    return `${window.location.origin}/sql-wasm.wasm`;
   }
-  return `/${name}`;
+  return "/sql-wasm.wasm";
 }
 
 export async function createSqlJsDb(opts: CreateSqlJsOptions = {}): Promise<{

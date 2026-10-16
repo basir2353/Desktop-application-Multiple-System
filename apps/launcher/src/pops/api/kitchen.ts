@@ -39,6 +39,51 @@ async function createKitchenTicketRemote(input: CreateKitchenTicket): Promise<Ki
   return kitchenTicketSchema.parse(await res.json());
 }
 
+function softParseKitchenTickets(json: unknown): KitchenTicket[] {
+  const listParsed = kitchenTicketListSchema.safeParse(json);
+  if (listParsed.success) return listParsed.data.tickets;
+  if (json && typeof json === "object" && Array.isArray((json as { tickets?: unknown }).tickets)) {
+    const out: KitchenTicket[] = [];
+    for (const row of (json as { tickets: unknown[] }).tickets) {
+      const one = kitchenTicketSchema.safeParse(row);
+      if (one.success) out.push(one.data);
+    }
+    return out;
+  }
+  throw new Error("Kitchen tickets response invalid");
+}
+
+function softParseKitchenTicket(json: unknown): KitchenTicket {
+  const parsed = kitchenTicketSchema.safeParse(json);
+  if (parsed.success) return parsed.data;
+  if (json && typeof json === "object") {
+    const obj = json as Record<string, unknown>;
+    // Last-resort: keep Complete/Accept working even if one nested field drifts.
+    const fallback = kitchenTicketSchema.safeParse({
+      ...obj,
+      lines: Array.isArray(obj.lines)
+        ? (obj.lines as unknown[]).map((line) => {
+            if (!line || typeof line !== "object") return line;
+            const l = line as Record<string, unknown>;
+            return {
+              ...l,
+              qty: Math.max(1, Math.round(Number(l.qty) || 1)),
+              unitPrice: Number(l.unitPrice) || 0,
+              menuItemId:
+                typeof l.menuItemId === "string" && l.menuItemId.trim()
+                  ? l.menuItemId.trim()
+                  : undefined,
+            };
+          })
+        : undefined,
+      mins: Math.max(0, Math.floor(Number(obj.mins) || 0)),
+      deliveryChargePkr: Number(obj.deliveryChargePkr) || 0,
+    });
+    if (fallback.success) return fallback.data;
+  }
+  throw new Error("Kitchen ticket response invalid");
+}
+
 export async function fetchKitchenTickets(
   branchCode: string,
   opts?: { scope?: "active" | "done" | "all" },
@@ -53,27 +98,25 @@ export async function fetchKitchenTickets(
       throw new Error(err?.message ?? `Kitchen tickets failed: ${res.status}`);
     }
     const json: unknown = await res.json();
-    const listParsed = kitchenTicketListSchema.safeParse(json);
-    let remote: KitchenTicket[] = [];
-    if (listParsed.success) {
-      remote = listParsed.data.tickets;
-    } else if (json && typeof json === "object" && Array.isArray((json as { tickets?: unknown }).tickets)) {
-      // Soft-parse: keep valid tickets even if one legacy row fails schema.
-      for (const row of (json as { tickets: unknown[] }).tickets) {
-        const one = kitchenTicketSchema.safeParse(row);
-        if (one.success) remote.push(one.data);
-      }
-    } else {
-      throw new Error("Kitchen tickets response invalid");
-    }
+    let remote = softParseKitchenTickets(json);
     if (opts?.scope === "done") {
       return remote.filter((t) => t.status === "done");
     }
+    if (opts?.scope !== "all") {
+      remote = remote.filter((t) => t.status !== "done");
+    }
     const remoteIds = new Set(remote.map((t) => t.id));
-    return [...offline.filter((t) => !remoteIds.has(t.id)), ...remote];
-  } catch {
+    // Offline KOTs that were already completed on the server must not stick on Active.
+    const offlineOpen = offline.filter(
+      (t) => t.status !== "done" && !remoteIds.has(t.id),
+    );
+    return [...offlineOpen, ...remote];
+  } catch (err) {
     if (opts?.scope === "done") return [];
-    return offline;
+    // Offline-only fallback when the device is offline; otherwise surface the error
+    // so the kitchen board does not look "alive" on a stale local list.
+    if (!isOnline()) return offline.filter((t) => t.status !== "done");
+    throw err instanceof Error ? err : new Error("Kitchen tickets failed");
   }
 }
 
@@ -168,7 +211,8 @@ export async function updateKitchenTicket(
     }
     throw new Error(message);
   }
-  return kitchenTicketSchema.parse(await res.json());
+  // Soft-parse so Complete/Accept still moves the ticket if one nested field is odd.
+  return softParseKitchenTicket(await res.json());
 }
 
 /** True when update/create should recreate because the ticket no longer exists on the server. */

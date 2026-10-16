@@ -159,48 +159,77 @@ export async function buildClientRestaurantReport(
       }),
     ]);
 
-    const transferByUnit = new Map<string, { label: string; stockIssue: number }>();
+    /** Canonical join key so stock-issue and sales land on the same kitchen row. */
+    const unitKeyOf = (cookingUnitIdRaw: unknown, labelRaw: unknown): string => {
+      const id = typeof cookingUnitIdRaw === "string" ? cookingUnitIdRaw.trim() : "";
+      if (id) return id.toLowerCase();
+      const label = String(labelRaw ?? "").trim().toLowerCase();
+      if (!label || label === "kitchen" || label.includes("unassigned")) return "unassigned";
+      return `label:${label}`;
+    };
+
+    const transferByUnit = new Map<string, { label: string; stockIssue: number; cookingUnitId?: string }>();
     const transferRows = Array.isArray(transfer.data) ? transfer.data : [];
     for (const row of transferRows) {
       if (!row || typeof row !== "object") continue;
       const r = row as Record<string, unknown>;
-      const label = String(r.kitchenSection ?? r.label ?? "Kitchen").trim() || "Kitchen";
-      const unitKey = String(r.cookingUnitId ?? label);
+      const label =
+        String(r.kitchenSection ?? r.label ?? "Kitchen / Unassigned").trim() || "Kitchen / Unassigned";
+      const rawId = typeof r.cookingUnitId === "string" ? r.cookingUnitId.trim() : "";
+      const unitKey = unitKeyOf(rawId || null, label);
       const stockIssue = Number(r.valueIn ?? r.totalValue) || 0;
-      const cur = transferByUnit.get(unitKey) ?? { label, stockIssue: 0 };
+      const cur = transferByUnit.get(unitKey) ?? {
+        label,
+        stockIssue: 0,
+        cookingUnitId: rawId || undefined,
+      };
       cur.stockIssue += stockIssue;
+      if (!cur.cookingUnitId && rawId) cur.cookingUnitId = rawId;
+      if (label && cur.label === "Kitchen / Unassigned") cur.label = label;
       transferByUnit.set(unitKey, cur);
     }
 
-    const saleByUnit = new Map<string, { label: string; sale: number }>();
+    const saleByUnit = new Map<string, { label: string; sale: number; cookingUnitId?: string }>();
     for (const row of salesReport.rows) {
-      const label = String(row.label ?? "Kitchen");
-      const unitKey = String((row as { cookingUnitId?: string }).cookingUnitId ?? label);
+      const label = String(row.label ?? "Kitchen / Unassigned").trim() || "Kitchen / Unassigned";
+      const rawId =
+        typeof (row as { cookingUnitId?: string }).cookingUnitId === "string"
+          ? String((row as { cookingUnitId?: string }).cookingUnitId).trim()
+          : "";
+      const unitKey = unitKeyOf(rawId || null, label);
       const sale = Number(row.revenue ?? row.amount ?? 0);
-      const cur = saleByUnit.get(unitKey) ?? { label, sale: 0 };
+      const cur = saleByUnit.get(unitKey) ?? {
+        label,
+        sale: 0,
+        cookingUnitId: rawId || undefined,
+      };
       cur.sale += sale;
+      if (!cur.cookingUnitId && rawId) cur.cookingUnitId = rawId;
       saleByUnit.set(unitKey, cur);
     }
 
     const keys = new Set([...transferByUnit.keys(), ...saleByUnit.keys()]);
-    const rows = [...keys].map((key) => {
-      const t = transferByUnit.get(key);
-      const s = saleByUnit.get(key);
-      const label = s?.label ?? t?.label ?? "Kitchen";
-      const stockIssue = t?.stockIssue ?? 0;
-      const sale = s?.sale ?? 0;
-      const profit = sale - stockIssue;
-      return {
-        label,
-        cookingUnitId: key.startsWith("unassigned") ? undefined : key,
-        stockIssue,
-        sale,
-        profit,
-        amount: profit,
-        qty: 1,
-        meta: `Issue ${stockIssue} · Sale ${sale}`,
-      };
-    }).sort((a, b) => b.profit - a.profit);
+    const rows = [...keys]
+      .map((key) => {
+        const t = transferByUnit.get(key);
+        const s = saleByUnit.get(key);
+        const label = s?.label ?? t?.label ?? "Kitchen / Unassigned";
+        const stockIssue = t?.stockIssue ?? 0;
+        const sale = s?.sale ?? 0;
+        const profit = sale - stockIssue;
+        const id = s?.cookingUnitId ?? t?.cookingUnitId;
+        return {
+          label,
+          cookingUnitId: key === "unassigned" ? undefined : id,
+          stockIssue,
+          sale,
+          profit,
+          amount: profit,
+          qty: 1,
+          meta: `Issue ${stockIssue} · Sale ${sale}`,
+        };
+      })
+      .sort((a, b) => b.profit - a.profit);
 
     const stockIssueTotal = rows.reduce((sum, r) => sum + r.stockIssue, 0);
     const saleTotal = rows.reduce((sum, r) => sum + r.sale, 0);
@@ -210,8 +239,8 @@ export async function buildClientRestaurantReport(
       ...meta,
       title: "Kitchen P&L (stock vs sale)",
       description: cookingUnitId
-        ? "Selected kitchen: stock issue vs sale → profit"
-        : "Per kitchen: Total stock issue, Total sale, Profit (Sale − Issue)",
+        ? "Selected kitchen: stock transferred in vs sale → profit (Sale − Issue)"
+        : "Per kitchen: stock transferred in, sale, profit (Sale − Issue). Map menu categories to cooking units for accurate rows.",
       rows,
       totals: {
         stockIssue: stockIssueTotal,
@@ -1138,7 +1167,7 @@ export async function buildClientRestaurantReport(
         const qty = Number(line.qty ?? 0);
         const revenue = qty * Number(line.unitPrice ?? 0);
         if (qty <= 0 && revenue <= 0) continue;
-        const key = unitId ?? "unassigned";
+        const key = (unitId ?? "unassigned").toLowerCase();
         const existing = rowsMap.get(key) ?? {
           label: menu?.cookingUnitName ?? "Kitchen / Unassigned",
           cookingUnitId: unitId ?? undefined,

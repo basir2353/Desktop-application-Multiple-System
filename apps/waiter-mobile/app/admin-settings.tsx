@@ -179,9 +179,13 @@ export default function AdminSettingsScreen() {
         <Title>POS control</Title>
         <Subtitle>
           {branchCode
-            ? `Discount · tax · service for ${branchCode} (syncs to desktop)`
+            ? `Discount · tax · service · order notes for ${branchCode} (syncs to desktop)`
             : "Pick a branch on Home first"}
         </Subtitle>
+        <Notice tone="success">
+          Admin can control charges here. Menu add/delete is under Menu. Tables add/delete under
+          More → Tables. Users under More → Users.
+        </Notice>
 
         {!branchCode ? <Notice>Select a branch on Home first.</Notice> : null}
         {notice ? <Notice tone="success">{notice}</Notice> : null}

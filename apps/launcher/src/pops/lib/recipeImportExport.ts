@@ -146,7 +146,7 @@ export function downloadRecipeImportTemplateExcel(branchCode?: string): void {
             "Recipe Name": "Chicken Karahi",
             "Menu Dish": "Chicken Karahi",
             Version: "v1.0",
-            "Portion Size": "1 portion",
+            "Portion Size": "Full",
             Active: "Yes",
             "Total Cost": 0,
             "Ingredient Count": 2,
@@ -160,7 +160,7 @@ export function downloadRecipeImportTemplateExcel(branchCode?: string): void {
             "Recipe Name": "Chicken Karahi",
             "Menu Dish": "Chicken Karahi",
             Version: "v1.0",
-            "Portion Size": "1 portion",
+            "Portion Size": "Full",
             Active: "Yes",
             Ingredient: "Chicken",
             Qty: 500,
@@ -170,7 +170,7 @@ export function downloadRecipeImportTemplateExcel(branchCode?: string): void {
             "Recipe Name": "Chicken Karahi",
             "Menu Dish": "Chicken Karahi",
             Version: "v1.0",
-            "Portion Size": "1 portion",
+            "Portion Size": "Full",
             Active: "Yes",
             Ingredient: "Tomato",
             Qty: 200,
@@ -221,7 +221,7 @@ export function parseRecipeImportFile(
       recipeName,
       menuDish,
       version: cellString(row, "Version", "version") || "v1.0",
-      portionSize: cellString(row, "Portion Size", "portion size", "portion") || "1 portion",
+      portionSize: cellString(row, "Portion Size", "portion size", "portion") || "Full",
       active: yesNo(cellString(row, "Active", "active"), true),
       ingredient,
       qty,
@@ -273,6 +273,7 @@ export type RecipeImportDeps = {
     menuItemId: string;
     version: string;
     portionSize: string;
+    portionFactors?: Record<string, number>;
     active: boolean;
     lines: { ingredientId: string; qty: number; unit: string }[];
   }) => Promise<Recipe>;
@@ -283,6 +284,7 @@ export type RecipeImportDeps = {
       menuItemId: string;
       version: string;
       portionSize: string;
+      portionFactors?: Record<string, number>;
       active: boolean;
       lines: { ingredientId: string; qty: number; unit: string }[];
     },
@@ -352,11 +354,28 @@ export async function importRecipeRows(
       );
     }
 
+    const portionRaw = first.portionSize.trim() || "Full";
+    const portionSize = /portion/i.test(portionRaw) && !/full|half/i.test(portionRaw) ? "Full" : portionRaw;
+    const variantLabels = (menuItem.variants ?? [])
+      .filter((variant) => variant.isActive !== false)
+      .map((variant) => variant.label?.trim())
+      .filter((label): label is string => Boolean(label));
+    const labels =
+      variantLabels.length > 0 ? [...new Set(variantLabels)] : ["Full", "Half"];
+    const portionFactors: Record<string, number> = { Full: 1, Half: 0.5 };
+    for (const label of labels) {
+      if (portionFactors[label] == null) {
+        portionFactors[label] = /half/i.test(label) ? 0.5 : 1;
+      }
+    }
+    portionFactors[portionSize] = 1;
+
     const payload = {
       name: first.recipeName.trim(),
       menuItemId: menuItem.id,
       version: first.version.trim() || "v1.0",
-      portionSize: first.portionSize.trim() || "1 portion",
+      portionSize,
+      portionFactors,
       active: first.active,
       lines,
     };

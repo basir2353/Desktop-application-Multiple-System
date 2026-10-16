@@ -336,10 +336,10 @@ export function PosFullScreenMenuOverlay({
   const panelOnLeft = ticketPanelSide === "left";
 
   const orderTypeSegBtn = (active: boolean) =>
-    `min-w-0 flex-1 rounded px-1 py-1 text-[9px] font-bold leading-tight transition ${
+    `min-w-0 flex-1 rounded px-1.5 py-1.5 text-xs font-extrabold uppercase tracking-wide leading-tight transition ${
       active
         ? "bg-amber-400 text-slate-950 shadow-sm"
-        : "text-slate-300 hover:bg-slate-800 hover:text-white"
+        : "text-slate-200 hover:bg-slate-800 hover:text-white"
     }`;
 
   const orderTypeSwitcher = (
@@ -402,7 +402,7 @@ export function PosFullScreenMenuOverlay({
               <div className="truncate text-xs font-semibold text-white">{editingLabel}</div>
             ) : null}
           </div>
-          <span className="rounded bg-amber-400/15 px-2 py-0.5 font-mono text-xs font-bold tracking-wide text-amber-300 ring-1 ring-amber-400/30">
+          <span className="rounded bg-amber-400/15 px-1.5 py-px font-mono text-[10px] font-bold tracking-wide text-amber-300 ring-1 ring-amber-400/30">
             {orderRef}
           </span>
         </div>
@@ -831,10 +831,10 @@ export function PosFullScreenMenuOverlay({
           {(orderModesEnabled?.dineIn !== false) ? (
             <button
               type="button"
-              className={`rounded px-2.5 py-1 text-[10px] font-bold transition ${
+              className={`rounded px-3.5 py-1.5 text-sm font-extrabold uppercase tracking-wide transition ${
                 orderMode === "dine-in"
                   ? "bg-amber-400 text-slate-950"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                  : "text-slate-100 hover:bg-slate-800 hover:text-white"
               }`}
               onClick={onDineIn}
               title="Dine-in — select table, order, pay here"
@@ -846,10 +846,10 @@ export function PosFullScreenMenuOverlay({
           {(orderModesEnabled?.takeaway !== false) ? (
             <button
               type="button"
-              className={`rounded px-2.5 py-1 text-[10px] font-bold transition ${
+              className={`rounded px-3.5 py-1.5 text-sm font-extrabold uppercase tracking-wide transition ${
                 orderMode === "takeaway"
                   ? "bg-amber-400 text-slate-950"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                  : "text-slate-100 hover:bg-slate-800 hover:text-white"
               }`}
               onClick={onTakeaway}
               title="Takeaway — order and pay here"
@@ -861,10 +861,10 @@ export function PosFullScreenMenuOverlay({
           {(orderModesEnabled?.delivery !== false) ? (
             <button
               type="button"
-              className={`rounded px-2.5 py-1 text-[10px] font-bold transition ${
+              className={`rounded px-3.5 py-1.5 text-sm font-extrabold uppercase tracking-wide transition ${
                 orderMode === "delivery"
                   ? "bg-amber-400 text-slate-950"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                  : "text-slate-100 hover:bg-slate-800 hover:text-white"
               }`}
               onClick={onDelivery}
               title="Delivery — order and pay here"
@@ -968,12 +968,26 @@ export function PosFullScreenMenuOverlay({
             All items
           </button>
         </div>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search item…"
-          className="w-32 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-[11px] text-white placeholder:text-slate-400 outline-none focus:border-amber-400 sm:w-40"
-        />
+        <label className="relative flex min-w-[12rem] flex-1 items-center sm:max-w-xs lg:max-w-sm">
+          <span className="sr-only">Search menu item</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search item by name or barcode…"
+            autoComplete="off"
+            className="w-full rounded-md border border-amber-500/40 bg-slate-900 px-3 py-1.5 text-sm font-medium text-white placeholder:text-slate-400 outline-none ring-amber-400/20 focus:border-amber-400 focus:ring-2"
+          />
+          {search.trim() ? (
+            <button
+              type="button"
+              className="absolute right-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
+              onClick={() => setSearch("")}
+              title="Clear search"
+            >
+              Clear
+            </button>
+          ) : null}
+        </label>
         <button
           type="button"
           onClick={onDone}
