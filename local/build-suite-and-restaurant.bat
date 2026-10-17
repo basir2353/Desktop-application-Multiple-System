@@ -49,25 +49,25 @@ cd /d "%~dp0\..\apps\launcher"
 echo.
 echo === BUILD 1/2: Universal (suite) + updater sig ===
 set "PLATFORM_EDITION=suite"
-call %PNPM% exec node .\scripts\build-edition.mjs suite
+call "%PNPM%" exec node .\scripts\build-edition.mjs suite
 if errorlevel 1 (
   echo BUILD FAILED: suite
   exit /b 1
 )
 call :COPY_INSTALLERS SUITE
-call %PNPM% exec node .\scripts\write-update-manifest.mjs suite
+call "%PNPM%" exec node .\scripts\write-update-manifest.mjs suite
 if errorlevel 1 exit /b 1
 
 echo.
 echo === BUILD 2/2: Restaurant + updater sig ===
 set "PLATFORM_EDITION=restaurant"
-call %PNPM% exec node .\scripts\build-edition.mjs restaurant
+call "%PNPM%" exec node .\scripts\build-edition.mjs restaurant
 if errorlevel 1 (
   echo BUILD FAILED: restaurant
   exit /b 1
 )
 call :COPY_INSTALLERS RESTAURANT
-call %PNPM% exec node .\scripts\write-update-manifest.mjs restaurant
+call "%PNPM%" exec node .\scripts\write-update-manifest.mjs restaurant
 if errorlevel 1 exit /b 1
 
 echo.
