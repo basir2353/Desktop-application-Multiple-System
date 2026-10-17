@@ -43,13 +43,6 @@ async function resolveManualInstallerUrl(): Promise<string | null> {
 }
 
 async function openExternal(url: string): Promise<void> {
-  try {
-    const { open } = await import("@tauri-apps/plugin-shell");
-    await open(url);
-    return;
-  } catch {
-    /* fall through */
-  }
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
