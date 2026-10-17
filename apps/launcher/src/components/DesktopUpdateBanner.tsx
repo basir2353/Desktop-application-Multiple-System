@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { PLATFORM_EDITION } from "../lib/edition";
 
 type BannerState =
   | { kind: "hidden" }
   | { kind: "available"; version: string; notes: string }
   | { kind: "downloading"; version: string; percent: number | null }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; manualUrl?: string | null };
 
 function isTauriShell(): boolean {
   const w = window as Window & {
@@ -18,6 +19,38 @@ function isTauriShell(): boolean {
 function errMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err || "Update failed.");
+}
+
+function isSignatureMismatch(message: string): boolean {
+  return /signature|different key|pubkey|minisign|invalid key/i.test(message);
+}
+
+/** Resolve the installer URL from the public update feed (edition-aware). */
+async function resolveManualInstallerUrl(): Promise<string | null> {
+  const manifest =
+    PLATFORM_EDITION === "restaurant" ? "latest-restaurant.json" : "latest-suite.json";
+  const feedUrl = `https://github.com/basir2353/pops-desktop-updates/releases/latest/download/${manifest}`;
+  try {
+    const res = await fetch(feedUrl, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      platforms?: Record<string, { url?: string }>;
+    };
+    return data.platforms?.["windows-x86_64"]?.url?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function openExternal(url: string): Promise<void> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+    return;
+  } catch {
+    /* fall through */
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /**
@@ -39,8 +72,13 @@ export function DesktopUpdateBanner(): JSX.Element | null {
         const update = await check();
         if (cancelled) return;
         if (!update) {
-          // Already latest — keep quiet unless we were showing an error.
-          setState((prev) => (prev.kind === "error" ? { kind: "hidden" } : prev.kind === "available" || prev.kind === "downloading" ? prev : { kind: "hidden" }));
+          setState((prev) =>
+            prev.kind === "error"
+              ? { kind: "hidden" }
+              : prev.kind === "available" || prev.kind === "downloading"
+                ? prev
+                : { kind: "hidden" },
+          );
           return;
         }
         setState({
@@ -51,9 +89,12 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       } catch (err) {
         if (cancelled) return;
         const message = errMessage(err);
-        // Surface real failures (404 / network) so users aren't stuck silent.
-        if (/404|Not Found|failed|network|timed out|download/i.test(message)) {
-          setState({ kind: "error", message });
+        if (/404|Not Found|failed|network|timed out|download|signature|key/i.test(message)) {
+          const manualUrl = isSignatureMismatch(message)
+            ? await resolveManualInstallerUrl()
+            : null;
+          if (cancelled) return;
+          setState({ kind: "error", message, manualUrl });
         } else {
           console.debug("[updater] check skipped", err);
         }
@@ -98,7 +139,13 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       });
       await relaunch();
     } catch (err) {
-      setState({ kind: "error", message: errMessage(err) });
+      const message = errMessage(err);
+      const manualUrl = isSignatureMismatch(message)
+        ? await resolveManualInstallerUrl()
+        : state.kind === "error"
+          ? state.manualUrl
+          : null;
+      setState({ kind: "error", message, manualUrl });
     }
   }
 
@@ -121,19 +168,34 @@ export function DesktopUpdateBanner(): JSX.Element | null {
   }
 
   if (state.kind === "error") {
+    const signatureIssue = isSignatureMismatch(state.message);
     return (
       <div
         role="alert"
         className="flex flex-wrap items-center justify-center gap-3 border-b border-rose-500/40 bg-rose-500/15 px-4 py-2 text-center text-xs font-medium text-rose-950 dark:text-rose-50"
       >
-        <span>Update failed: {state.message}</span>
-        <button
-          type="button"
-          className="rounded bg-rose-700 px-2.5 py-1 text-white hover:bg-rose-800"
-          onClick={() => void installUpdate()}
-        >
-          Retry
-        </button>
+        <span>
+          {signatureIssue
+            ? "Auto-update needs a one-time installer (signing key changed)."
+            : `Update failed: ${state.message}`}
+        </span>
+        {state.manualUrl ? (
+          <button
+            type="button"
+            className="rounded bg-rose-700 px-2.5 py-1 text-white hover:bg-rose-800"
+            onClick={() => void openExternal(state.manualUrl!)}
+          >
+            Download installer
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="rounded bg-rose-700 px-2.5 py-1 text-white hover:bg-rose-800"
+            onClick={() => void installUpdate()}
+          >
+            Retry
+          </button>
+        )}
         <button
           type="button"
           className="underline opacity-80"
