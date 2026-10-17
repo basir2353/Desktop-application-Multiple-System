@@ -690,9 +690,11 @@ export function PosPage(): JSX.Element {
   });
 
   const kitchenQuery = useQuery({
-    queryKey: ["kitchen", branch?.code],
+    // Dedicated key + scope=all so kitchen-confirmed ("done") tickets stay on Latest
+    // orders until payment — without polluting Kitchen Active (active-only) caches.
+    queryKey: ["kitchen", "pos-latest", branch?.code],
     enabled: Boolean(branch?.code),
-    queryFn: () => fetchKitchenTickets(branch!.code),
+    queryFn: () => fetchKitchenTickets(branch!.code, { scope: "all" }),
     refetchInterval: 20_000,
   });
 

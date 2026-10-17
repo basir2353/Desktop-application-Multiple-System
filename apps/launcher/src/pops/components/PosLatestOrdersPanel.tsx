@@ -246,6 +246,7 @@ export function PosLatestOrdersPanel({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["kitchen", branch?.code] });
+      void queryClient.invalidateQueries({ queryKey: ["kitchen", "pos-latest", branch?.code] });
       void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
       void queryClient.invalidateQueries({ queryKey: ["tables", branch?.code] });
       setDismissedRevision((n) => n + 1);
@@ -282,6 +283,7 @@ export function PosLatestOrdersPanel({
     },
     onSuccess: (_data, { order }) => {
       void queryClient.invalidateQueries({ queryKey: ["kitchen", branch?.code] });
+      void queryClient.invalidateQueries({ queryKey: ["kitchen", "pos-latest", branch?.code] });
       void queryClient.invalidateQueries({ queryKey: ["kitchen", "cancellations"] });
       void queryClient.invalidateQueries({ queryKey: ["orders", branch?.code] });
       void queryClient.invalidateQueries({ queryKey: ["tables", branch?.code] });

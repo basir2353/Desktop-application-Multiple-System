@@ -91,7 +91,8 @@ function ticketStatus(status: KitchenTicketStatus): { label: string; tone: PosRe
   if (status === "new") return { label: "New", tone: "warning" };
   if (status === "cooking") return { label: "Cooking", tone: "info" };
   if (status === "ready") return { label: "Ready", tone: "success" };
-  return { label: "Done", tone: "neutral" };
+  // Kitchen completed — still unpaid on POS until bill is held/completed.
+  return { label: "Kitchen done", tone: "info" };
 }
 
 export function parseItemsSummary(summary: string): PosOrderLine[] {
@@ -257,8 +258,9 @@ export function buildPosRecentOrders(
     if (prev == null || at > prev) settledByRef.set(ref, at);
   }
 
+  // Keep kitchen-confirmed ("done") tickets on POS Latest orders until a held/completed
+  // bill settles that ORD-#. Kitchen Active board still hides done tickets separately.
   const pending = tickets
-    .filter((t) => t.status !== "done")
     .filter((t) => {
       const ref = (t.orderRef ?? "").trim().toLowerCase();
       if (!ref) return true;
