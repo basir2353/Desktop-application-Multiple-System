@@ -20,7 +20,13 @@ set "PLATFORM_EDITION=restaurant"
 set "TAURI_SIGNING_PRIVATE_KEY_PATH=%USERPROFILE%\.tauri\pops-updater.key"
 set "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
 
-if exist "%APPDATA%\npm\pnpm.cmd" (set "PNPM=%APPDATA%\npm\pnpm.cmd") else (set "PNPM=pnpm")
+if exist "%APPDATA%\npm\pnpm.cmd" (
+  set "PNPM=%APPDATA%\npm\pnpm.cmd"
+) else if exist "%LOCALAPPDATA%\pnpm\pnpm.exe" (
+  set "PNPM=%LOCALAPPDATA%\pnpm\pnpm.exe"
+) else (
+  set "PNPM=pnpm"
+)
 
 set "OUT_DIR=%~dp0..\dist-installers"
 mkdir "%CARGO_TARGET_DIR%" 2>nul
@@ -28,7 +34,7 @@ mkdir "%OUT_DIR%" 2>nul
 
 cd /d "%~dp0\..\apps\launcher"
 echo === BUILD Restaurant ===
-call %PNPM% exec node .\scripts\build-edition.mjs restaurant
+call "%PNPM%" exec node .\scripts\build-edition.mjs restaurant
 if errorlevel 1 exit /b 1
 
 for %%F in ("%CARGO_TARGET_DIR%\release\bundle\nsis\*Restaurant*-setup.exe") do (
@@ -39,7 +45,7 @@ for %%F in ("%CARGO_TARGET_DIR%\release\bundle\nsis\*Restaurant*-setup.exe") do 
   echo DONE: %%~nxF
 )
 
-call %PNPM% exec node .\scripts\write-update-manifest.mjs restaurant
+call "%PNPM%" exec node .\scripts\write-update-manifest.mjs restaurant
 if errorlevel 1 exit /b 1
 echo RESTAURANT_BUILD_OK
 exit /b 0
