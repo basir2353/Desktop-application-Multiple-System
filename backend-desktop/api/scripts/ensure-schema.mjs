@@ -13,6 +13,10 @@ import { resolveWorkspaceRoot } from "./resolve-workspace.mjs";
 const FRACTIONAL_QTY_STATEMENTS = [
   `ALTER TABLE pops_recipe_lines ALTER COLUMN qty TYPE double precision USING qty::double precision`,
   `ALTER TABLE pops_ingredients ALTER COLUMN current_stock TYPE double precision USING current_stock::double precision`,
+  `ALTER TABLE pops_ingredients ALTER COLUMN unit_cost_pkr TYPE double precision USING unit_cost_pkr::double precision`,
+  `ALTER TABLE store_products ADD COLUMN IF NOT EXISTS supplier_id uuid`,
+  `ALTER TABLE store_products ALTER COLUMN purchase_price_pkr TYPE double precision USING purchase_price_pkr::double precision`,
+  `ALTER TABLE store_warehouse_stock ALTER COLUMN unit_cost_pkr TYPE double precision USING unit_cost_pkr::double precision`,
   `ALTER TABLE store_warehouse_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
   `ALTER TABLE store_cooking_unit_stock ALTER COLUMN quantity TYPE double precision USING quantity::double precision`,
   `ALTER TABLE store_products ALTER COLUMN available_stock TYPE double precision USING available_stock::double precision`,

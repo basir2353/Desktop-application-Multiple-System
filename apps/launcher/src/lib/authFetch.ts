@@ -17,13 +17,14 @@ export class SessionExpiredError extends Error {
   }
 }
 
-async function refreshAccessToken(): Promise<string> {
+async function refreshAccessToken(opts?: { clearOnFailure?: boolean }): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
+  const clearOnFailure = opts?.clearOnFailure !== false;
 
   refreshInFlight = (async () => {
     const { refreshToken, setTokens, clear } = useSessionStore.getState();
     if (!refreshToken) {
-      clear();
+      if (clearOnFailure) clear();
       throw new SessionExpiredError();
     }
 
@@ -34,7 +35,10 @@ async function refreshAccessToken(): Promise<string> {
       setTokens(tokens.accessToken, tokens.refreshToken, claims);
       return tokens.accessToken;
     } catch {
-      clear();
+      // Soft refresh must not wipe a still-valid access token (hosted APIs may
+      // reject refresh while the session JWT is fine — that was bouncing Admin
+      // back to the role select screen right after sign-in).
+      if (clearOnFailure) clear();
       throw new SessionExpiredError();
     }
   })().finally(() => {
@@ -49,10 +53,11 @@ async function refreshAccessToken(): Promise<string> {
  * without forcing the user through a full sign-out / sign-in.
  */
 export async function refreshSessionPermissions(): Promise<boolean> {
-  const { refreshToken } = useSessionStore.getState();
+  const { refreshToken, accessToken } = useSessionStore.getState();
   if (!refreshToken) return false;
+  const accessStillValid = Boolean(accessToken && !isAccessTokenExpired(accessToken));
   try {
-    await refreshAccessToken();
+    await refreshAccessToken({ clearOnFailure: !accessStillValid });
     return true;
   } catch {
     return false;

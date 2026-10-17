@@ -2,6 +2,7 @@ import { orgModuleAccessSchema, type OrgModuleAccess } from "@platform/contracts
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { authFetch, refreshSessionPermissions } from "../../lib/authFetch";
+import { isAccessTokenExpired } from "../../lib/jwt";
 import { useSessionStore } from "../../stores/sessionStore";
 
 type ModuleAccessResult =
@@ -34,22 +35,25 @@ export function useOrgModuleCeiling(): {
   const accessToken = useSessionStore((s) => s.accessToken);
   const refreshed = useRef(false);
 
-  // Keep JWT permissions in sync with Super Admin module changes (auth refresh
-  // re-applies org.enabledModules). Once on mount + throttled on window focus.
+  // Soft-refresh JWT when the access token is near expiry / on focus so Super
+  // Admin module ceilings stay current. Do not refresh immediately on every
+  // fresh login — a failed refresh must not kick Admin back to role select.
   useEffect(() => {
     if (!accessToken) return;
     let last = 0;
-    const run = () => {
+    const run = (force = false) => {
       const now = Date.now();
-      if (now - last < 30_000 && refreshed.current) return;
+      if (!force && now - last < 30_000 && refreshed.current) return;
       last = now;
       void refreshSessionPermissions().then((ok) => {
         if (ok) refreshed.current = true;
       });
     };
-    run();
-    window.addEventListener("focus", run);
-    return () => window.removeEventListener("focus", run);
+    // Only proactive-refresh when access token is within ~2 minutes of expiry.
+    if (isAccessTokenExpired(accessToken, 120)) run(true);
+    const onFocus = () => run(false);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [accessToken]);
 
   const query = useQuery({

@@ -143,13 +143,23 @@ export async function deleteMenuCategory(categoryId: string): Promise<void> {
   if (!res.ok) throw new Error(`Delete category failed: ${res.status}`);
 }
 
+async function readApiErrorMessage(res: Response, fallback: string): Promise<string> {
+  const err = (await res.json().catch(() => null)) as { message?: string | string[] } | null;
+  const msg = err?.message;
+  if (Array.isArray(msg)) return msg.filter(Boolean).join("; ") || fallback;
+  if (typeof msg === "string" && msg.trim()) return msg.trim();
+  return fallback;
+}
+
 async function postMenuItem(body: unknown): Promise<MenuItem> {
   const res = await authFetch("/v1/menu/items", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Create item failed: ${res.status}`);
+  if (!res.ok) {
+    throw new Error(await readApiErrorMessage(res, `Create item failed: ${res.status}`));
+  }
   return menuItemSchema.parse(await res.json());
 }
 
@@ -159,7 +169,9 @@ async function patchMenuItem(itemId: string, body: unknown): Promise<MenuItem> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Update item failed: ${res.status}`);
+  if (!res.ok) {
+    throw new Error(await readApiErrorMessage(res, `Update item failed: ${res.status}`));
+  }
   return menuItemSchema.parse(await res.json());
 }
 
@@ -191,6 +203,21 @@ function persistLocalOptions(
   saveMenuItemOptions(branchCode, itemId, options);
 }
 
+function isOptionCompatibilityError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  // Only fall back when the API/schema likely lacks newer option columns/fields.
+  // Do not swallow real validation errors (e.g. price / name / category).
+  return (
+    msg.includes("unrecognized") ||
+    msg.includes("unknown key") ||
+    msg.includes("column") ||
+    msg.includes("does not exist") ||
+    (msg.includes("secondaryname") && msg.includes("invalid")) ||
+    (msg.includes("simpleprice") && msg.includes("invalid")) ||
+    (msg.includes("defaultdiscount") && msg.includes("invalid"))
+  );
+}
+
 async function createWithFallback(
   rest: Omit<CreateMenuItem, OptionKey>,
   options: Partial<MenuItemOptions>,
@@ -206,13 +233,15 @@ async function createWithFallback(
     const item = await postMenuItem({ ...rest, ...full });
     apiSupportsItemOptions = true;
     return item;
-  } catch {
+  } catch (err) {
+    if (!isOptionCompatibilityError(err)) throw err;
     // API may have flags but not secondary_name / default_discount_pct yet.
     try {
       const item = await postMenuItem({ ...rest, ...flagsOnly });
       apiSupportsItemOptions = true;
       return item;
-    } catch {
+    } catch (err2) {
+      if (!isOptionCompatibilityError(err2)) throw err2;
       apiSupportsItemOptions = false;
       return postMenuItem(rest);
     }
@@ -235,12 +264,14 @@ async function updateWithFallback(
     const item = await patchMenuItem(itemId, { ...rest, ...full });
     apiSupportsItemOptions = true;
     return item;
-  } catch {
+  } catch (err) {
+    if (!isOptionCompatibilityError(err)) throw err;
     try {
       const item = await patchMenuItem(itemId, { ...rest, ...flagsOnly });
       apiSupportsItemOptions = true;
       return item;
-    } catch {
+    } catch (err2) {
+      if (!isOptionCompatibilityError(err2)) throw err2;
       apiSupportsItemOptions = false;
       return patchMenuItem(itemId, rest);
     }

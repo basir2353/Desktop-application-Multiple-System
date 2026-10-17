@@ -566,6 +566,14 @@ const requiredWholePkr = z.preprocess((value) => {
   return Math.max(0, Math.round(n));
 }, z.number().int().min(0));
 
+/** Per-unit cost may be fractional (e.g. Rs 1.3 / Gram). Up to 4 decimal places. */
+const optionalMoneyPkr = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return value;
+  return Math.max(0, Math.round(n * 10000) / 10000);
+}, z.number().min(0).optional());
+
 export const createIngredientSchema = branchCodeSchema.extend({
   categoryId: z.string().uuid().optional(),
   storeProductId: z.string().uuid().nullable().optional(),
@@ -576,7 +584,7 @@ export const createIngredientSchema = branchCodeSchema.extend({
   minStock: optionalWholePkr,
   reorderLevel: optionalWholePkr,
   maxStock: optionalWholePkr,
-  unitCost: optionalWholePkr,
+  unitCost: optionalMoneyPkr,
 });
 
 export const updateIngredientSchema = z.object({
@@ -589,7 +597,7 @@ export const updateIngredientSchema = z.object({
   minStock: optionalWholePkr,
   reorderLevel: optionalWholePkr,
   maxStock: optionalWholePkr,
-  unitCost: optionalWholePkr,
+  unitCost: optionalMoneyPkr,
 });
 
 export const createSupplierSchema = branchCodeSchema.extend({

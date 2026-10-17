@@ -24,7 +24,8 @@ export function useInvalidateInventory() {
 }
 
 export function formatPkr(amount: number): string {
-  return `Rs ${amount.toLocaleString("en-PK")}`;
+  const n = Number(amount) || 0;
+  return `Rs ${n.toLocaleString("en-PK", { maximumFractionDigits: 4, minimumFractionDigits: 0 })}`;
 }
 
 export const inputClass = fieldInputClass;

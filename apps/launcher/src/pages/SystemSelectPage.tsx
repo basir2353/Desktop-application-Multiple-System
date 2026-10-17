@@ -71,10 +71,12 @@ function SystemCard({
 export function SystemSelectPage(): JSX.Element {
   const [params] = useSearchParams();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const windowUnlocked = useSessionStore((s) => s.windowUnlocked);
   const claims = useSessionStore((s) => s.claims);
   const branch = usePopsStore((s) => s.branch);
   const displayRole = usePopsStore((s) => s.displayRole);
   const setSystem = useSystemStore((s) => s.setSystem);
+  const sessionActive = Boolean(accessToken && windowUnlocked);
 
   // Support/re-provisioning hatch: `/?reset-install=1` unbinds this machine.
   if (params.get("reset-install") === "1" && getInstalledSystemId()) {
@@ -90,7 +92,7 @@ export function SystemSelectPage(): JSX.Element {
   }
 
   // Authenticated Super Admin always lands on the control plane (suite only).
-  if (accessToken && isSuperAdminClaims(claims)) {
+  if (sessionActive && isSuperAdminClaims(claims)) {
     if (isSingleSystemEdition()) {
       return <Navigate to={roleSelectPath(lockedSystemId ?? "restaurant")} replace />;
     }
@@ -99,7 +101,7 @@ export function SystemSelectPage(): JSX.Element {
 
   // System admins are permanently locked to their assigned system — no picker.
   const assignedSystemId = businessSystemIdFromSystemType(claims?.systemType);
-  if (accessToken && assignedSystemId) {
+  if (sessionActive && assignedSystemId) {
     return <Navigate to={entryPath(assignedSystemId)} replace />;
   }
 
@@ -108,7 +110,7 @@ export function SystemSelectPage(): JSX.Element {
   if (lockedSystemId) {
     return (
       <Navigate
-        to={accessToken ? entryPath(lockedSystemId) : roleSelectPath(lockedSystemId)}
+        to={sessionActive ? entryPath(lockedSystemId) : roleSelectPath(lockedSystemId)}
         replace
       />
     );
@@ -116,7 +118,7 @@ export function SystemSelectPage(): JSX.Element {
 
   function onSelect(id: BusinessSystemId): void {
     setSystem(id);
-    const next = accessToken ? entryPath(id) : roleSelectPath(id);
+    const next = sessionActive ? entryPath(id) : roleSelectPath(id);
     window.location.assign(next);
   }
 

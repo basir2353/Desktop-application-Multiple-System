@@ -8,7 +8,7 @@ import {
   updateIngredient,
 } from "../../../api/inventory";
 import { fetchStoreProducts } from "../../../../store/api/store";
-import { inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
+import { formatPkr, inputClass, selectClass, useInventoryAccess, useInvalidateInventory } from "../../../hooks/useInventory";
 import { accentValueClass, linkActionClass, linkDangerClass } from "../../../lib/themeClasses";
 import { Badge } from "../../../ui/Badge";
 import { PageHeader } from "../../../ui/PageHeader";
@@ -36,11 +36,22 @@ type IngredientRow = {
   storeProductId: string;
 };
 
-/** Unit cost and stock levels are stored as whole numbers. Decimals are rounded. */
+/** Stock level fields stay whole units (Gram/ml counts). */
 function wholeNumber(value: string): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.round(n));
+}
+
+/** Per-unit PKR — keep decimals (e.g. 1.3 / Gram). Up to 4 dp. */
+function moneyNumber(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n * 10000) / 10000;
+}
+
+function stockValue(qty: number, unitCost: number): number {
+  return (Number(qty) || 0) * (Number(unitCost) || 0);
 }
 
 function emptyRow(): IngredientRow {
@@ -127,7 +138,7 @@ export function IngredientsPage(): JSX.Element {
           minStock: wholeNumber(row.minStock),
           reorderLevel: wholeNumber(row.reorderLevel),
           maxStock: wholeNumber(row.maxStock),
-          unitCost: wholeNumber(row.unitCost),
+          unitCost: moneyNumber(row.unitCost),
           storeProductId: row.storeProductId || null,
         });
       }
@@ -152,7 +163,7 @@ export function IngredientsPage(): JSX.Element {
         minStock: wholeNumber(editForm.minStock),
         reorderLevel: wholeNumber(editForm.reorderLevel),
         maxStock: wholeNumber(editForm.maxStock),
-        unitCost: wholeNumber(editForm.unitCost),
+        unitCost: moneyNumber(editForm.unitCost),
         storeProductId: editForm.storeProductId || null,
       });
     },
@@ -308,10 +319,10 @@ export function IngredientsPage(): JSX.Element {
               />
             </label>
             <label className="block space-y-1 text-xs text-slate-500">
-              <span>Unit cost (Rs)</span>
+              <span>Unit cost (Rs / {editForm.unit})</span>
               <input
                 className={inputClass}
-                placeholder="Unit cost (Rs)"
+                placeholder="e.g. 1.3"
                 type="number"
                 step="any"
                 min="0"
@@ -319,16 +330,25 @@ export function IngredientsPage(): JSX.Element {
                 onChange={(e) => setEditForm((f) => ({ ...f, unitCost: e.target.value }))}
               />
             </label>
-            <button
-              type="button"
-              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 sm:col-span-2 lg:col-span-3"
-              onClick={() => {
-                setEditingId(null);
-                setEditForm(emptyRow());
-              }}
-            >
-              Cancel edit
-            </button>
+            <div className="flex flex-col justify-end space-y-1 text-xs text-slate-500 sm:col-span-2 lg:col-span-3">
+              <span>Stock value (qty × unit cost)</span>
+              <div className={`rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold tabular-nums dark:border-slate-700 dark:bg-slate-900 ${accentValueClass}`}>
+                {formatPkr(stockValue(wholeNumber(editForm.currentStock), moneyNumber(editForm.unitCost)))}
+                <span className="ml-2 text-[11px] font-normal text-slate-400">
+                  {wholeNumber(editForm.currentStock)} {editForm.unit} × {formatPkr(moneyNumber(editForm.unitCost))}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="self-start text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                onClick={() => {
+                  setEditingId(null);
+                  setEditForm(emptyRow());
+                }}
+              >
+                Cancel edit
+              </button>
+            </div>
           </div>
         </InventoryFormPanel>
       ) : null}
@@ -452,7 +472,24 @@ export function IngredientsPage(): JSX.Element {
             },
           },
           { key: "reorderLevel", header: "Reorder at" },
-          { key: "unitCost", header: "Unit cost", render: (r) => `Rs ${r.unitCost.toLocaleString()}` },
+          {
+            key: "unitCost",
+            header: "Unit cost",
+            render: (r) => formatPkr(r.unitCost),
+          },
+          {
+            id: "stockValue",
+            key: "unitCost",
+            header: "Stock value",
+            render: (r) => {
+              const qty = r.onHandStock ?? r.currentStock;
+              return (
+                <span className={accentValueClass}>
+                  {formatPkr(stockValue(qty, r.unitCost))}
+                </span>
+              );
+            },
+          },
           { id: "status", key: "id", header: "Status", render: (r) => { const s = stockStatus(r); return <Badge tone={s.tone}>{s.label}</Badge>; } },
           ...(canManage
             ? [

@@ -46,6 +46,7 @@ import { SuperAdminBroadcastPage } from "./super-admin/SuperAdminBroadcastPage";
 function Protected({ children }: { children: JSX.Element }): JSX.Element {
   const sessionReady = useSessionReady();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const windowUnlocked = useSessionStore((s) => s.windowUnlocked);
   const claims = useSessionStore((s) => s.claims);
 
   useEffect(() => {
@@ -55,7 +56,9 @@ function Protected({ children }: { children: JSX.Element }): JSX.Element {
   if (!sessionReady) {
     return <div className={screenCenterClass}>Restoring session…</div>;
   }
-  if (!accessToken) return <Navigate to="/role" replace />;
+  // Tokens may exist from another window (shared localStorage) — this window
+  // still requires a fresh sign-in before ERP access.
+  if (!accessToken || !windowUnlocked) return <Navigate to="/role" replace />;
   // Locked client EXEs must not redirect into Super Admin even if such a token exists.
   if (isSuperAdminClaims(claims)) {
     if (isSingleSystemEdition()) return <Navigate to="/role" replace />;
@@ -67,6 +70,7 @@ function Protected({ children }: { children: JSX.Element }): JSX.Element {
 function SuperAdminOnly({ children }: { children: JSX.Element }): JSX.Element {
   const sessionReady = useSessionReady();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const windowUnlocked = useSessionStore((s) => s.windowUnlocked);
   const claims = useSessionStore((s) => s.claims);
 
   useEffect(() => {
@@ -78,7 +82,7 @@ function SuperAdminOnly({ children }: { children: JSX.Element }): JSX.Element {
   }
   // Restaurant / Store / Pharmacy EXEs never expose Super Admin.
   if (isSingleSystemEdition()) return <Navigate to="/" replace />;
-  if (!accessToken) return <Navigate to="/login?role=super_admin" replace />;
+  if (!accessToken || !windowUnlocked) return <Navigate to="/login?role=super_admin" replace />;
   if (!isSuperAdminClaims(claims)) return <Navigate to="/" replace />;
   return children;
 }

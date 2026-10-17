@@ -237,10 +237,10 @@ export function parseMenuImportFile(
       }
       continue;
     }
-    if (price <= 0) {
+    if (price < 0) {
       skipped += 1;
       if (skipReasons.length < 8) {
-        skipReasons.push(`Row ${line} (${itemName}): Price must be greater than 0`);
+        skipReasons.push(`Row ${line} (${itemName}): Price must be 0 or greater (0 = complimentary)`);
       }
       continue;
     }
@@ -324,7 +324,7 @@ export type MenuImportDeps = {
 };
 
 function toApiPrice(price: number): number {
-  return Math.max(1, Math.round(moneyNumber(price)));
+  return Math.max(0, Math.round(moneyNumber(price)));
 }
 
 export async function importMenuRows(rows: MenuImportRow[], deps: MenuImportDeps): Promise<MenuImportSummary> {

@@ -15,6 +15,7 @@ export function RoleSelectPage(): JSX.Element {
   const [params] = useSearchParams();
   const systemReady = useSystemReady();
   const accessToken = useSessionStore((s) => s.accessToken);
+  const windowUnlocked = useSessionStore((s) => s.windowUnlocked);
   const setSystem = useSystemStore((s) => s.setSystem);
   const persistedSystemId = useSystemStore((s) => s.systemId);
   const querySystem = params.get("system");
@@ -31,7 +32,8 @@ export function RoleSelectPage(): JSX.Element {
     }
   }, [querySystem, persistedSystemId, setSystem]);
 
-  if (accessToken) {
+  // Only skip role/login when THIS window has signed in (not just hydrated tokens).
+  if (accessToken && windowUnlocked) {
     return <Navigate to="/pops" replace />;
   }
 
@@ -50,9 +52,9 @@ export function RoleSelectPage(): JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-10 dark:bg-slate-950">
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-6 flex items-center justify-between gap-3">
+    <div className="min-h-screen bg-slate-50 px-4 py-6 dark:bg-slate-950 sm:px-6 sm:py-8">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => {
@@ -72,45 +74,45 @@ export function RoleSelectPage(): JSX.Element {
           <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${system.accentClass}`}>
             {system.shortName}
           </p>
-          <h1 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Choose how you sign in</h1>
-          <p className={`mt-2 text-sm ${mutedClass}`}>
-            Select your role first. You will sign in on a login screen for that role and only receive its modules.
+          <h1 className="mt-1.5 text-2xl font-semibold text-slate-900 dark:text-white">Choose how you sign in</h1>
+          <p className={`mt-1.5 text-sm ${mutedClass}`}>
+            Select your role, then sign in. Each login opens only that role&apos;s modules.
           </p>
         </header>
 
-        <section className="mt-10">
+        <section className="mt-6">
           <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Administration</h2>
           <button
             type="button"
             onClick={() => choose(admin.id)}
-            className="mt-3 flex w-full items-start gap-4 rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/15 to-slate-900/5 p-5 text-left transition hover:border-amber-400/70 dark:from-amber-500/20 dark:to-slate-900/40"
+            className="mt-2 flex w-full items-start gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/15 to-slate-900/5 p-4 text-left transition hover:border-amber-400/70 dark:from-amber-500/20 dark:to-slate-900/40"
           >
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-lg font-bold text-slate-950">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-lg font-bold text-slate-950">
               A
             </span>
             <span className="min-w-0">
-              <span className="block text-lg font-semibold text-slate-900 dark:text-white">{admin.label}</span>
-              <span className={`mt-1 block text-sm ${mutedClass}`}>{admin.description}</span>
-              <span className="mt-3 inline-flex text-xs font-medium text-amber-700 dark:text-amber-300">
-                Continue to Admin login →
+              <span className="block text-base font-semibold text-slate-900 dark:text-white">{admin.label}</span>
+              <span className={`mt-0.5 block text-sm ${mutedClass}`}>{admin.description}</span>
+              <span className="mt-2 inline-flex text-xs font-medium text-amber-700 dark:text-amber-300">
+                Continue to {admin.label} login →
               </span>
             </span>
           </button>
         </section>
 
-        <section className="mt-10">
+        <section className="mt-6">
           <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Staff &amp; operations</h2>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="mt-2 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
             {staff.map((role) => (
               <button
                 key={role.id}
                 type="button"
                 onClick={() => choose(role.id)}
-                className="rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900/50 dark:hover:border-slate-700"
+                className="rounded-xl border border-slate-200 bg-white p-3.5 text-left transition hover:border-slate-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900/50 dark:hover:border-slate-700"
               >
                 <span className="block text-sm font-semibold text-slate-900 dark:text-white">{role.label}</span>
-                <span className={`mt-1 block text-xs ${mutedClass}`}>{role.description}</span>
-                <span className="mt-3 inline-flex text-xs font-medium text-sky-700 dark:text-sky-300">
+                <span className={`mt-1 block text-xs leading-snug ${mutedClass}`}>{role.description}</span>
+                <span className="mt-2.5 inline-flex text-xs font-medium text-sky-700 dark:text-sky-300">
                   Continue to {role.label} login →
                 </span>
               </button>

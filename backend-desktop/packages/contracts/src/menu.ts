@@ -95,7 +95,8 @@ export const menuItemVariantSchema = z.object({
 
 export const createMenuItemVariantSchema = z.object({
   label: z.string().min(1).max(32),
-  price: z.number().int().positive(),
+  /** 0 = complimentary / free item (docket still prints; bill charge is zero). */
+  price: z.number().int().nonnegative(),
   barcode: z.string().max(32).optional(),
   happyHour: z.boolean().optional(),
 });
@@ -180,7 +181,8 @@ export const createMenuItemSchema = z.object({
   secondaryName: z.string().max(120).nullable().optional(),
   imageUrl: z.string().max(512).optional(),
   portion: menuPortionSchema.optional(),
-  price: z.number().int().positive().optional(),
+  /** 0 = complimentary / free item. */
+  price: z.number().int().nonnegative().optional(),
   barcode: z.string().max(32).optional(),
   happyHour: z.boolean().optional(),
   featured: z.boolean().optional(),
@@ -205,7 +207,8 @@ export const updateMenuItemSchema = z.object({
   secondaryName: z.string().max(120).nullable().optional(),
   imageUrl: z.string().max(512).nullable().optional(),
   portion: menuPortionSchema.nullable().optional(),
-  price: z.number().int().positive().optional(),
+  /** 0 = complimentary / free item. */
+  price: z.number().int().nonnegative().optional(),
   barcode: z.string().max(32).nullable().optional(),
   happyHour: z.boolean().optional(),
   featured: z.boolean().optional(),

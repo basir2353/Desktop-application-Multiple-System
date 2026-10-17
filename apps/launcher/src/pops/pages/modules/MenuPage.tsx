@@ -71,20 +71,26 @@ function emptyVariantRow(): VariantRow {
 function variantsPayloadFromForm(form: ItemFormState): { label: string; price: number; barcode?: string }[] {
   if (form.simplePrice) {
     const price = Number(form.simplePriceValue);
-    if (!Number.isFinite(price) || price < 1) {
-      throw new Error("Enter a valid Simple Price (PKR).");
+    if (!Number.isFinite(price) || price < 0) {
+      throw new Error("Enter a valid Simple Price (PKR). Use 0 for complimentary / free items.");
     }
     return [{ label: "Standard", price: Math.round(price) }];
   }
   const variants = form.variants
-    .filter((v) => v.price.trim())
+    .filter((v) => v.price.trim() || v.price === "0")
     .map((v) => ({
       label: v.label.trim() || "Standard",
       price: Number(v.price),
       barcode: v.barcode.trim() || undefined,
     }));
   if (variants.length === 0) {
-    throw new Error("Add at least one sub-category with a price.");
+    throw new Error("Add at least one sub-category with a price (0 allowed for complimentary).");
+  }
+  for (const v of variants) {
+    if (!Number.isFinite(v.price) || v.price < 0) {
+      throw new Error(`Invalid price for "${v.label}". Use 0 or more (PKR).`);
+    }
+    v.price = Math.round(v.price);
   }
   return variants;
 }
@@ -104,6 +110,8 @@ type ItemFormState = {
   simplePrice: boolean;
   /** Used when simplePrice is on (single PKR field). */
   simplePriceValue: string;
+  /** Free item (price 0) — still prints kitchen/bar docket; no charge on bill. */
+  complimentary: boolean;
   variants: VariantRow[];
 };
 
@@ -114,8 +122,10 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
       !item.variants[0].label.trim() ||
       /^(standard|regular|default|normal)$/i.test(item.variants[0].label.trim()));
   const simplePrice = Boolean(item.simplePrice) || onlySilent;
-  const price =
-    item.variants[0]?.price != null ? String(item.variants[0].price) : String(item.price ?? "");
+  const priceNum =
+    item.variants[0]?.price != null ? item.variants[0].price : (item.price ?? 0);
+  const price = String(priceNum);
+  const complimentary = priceNum === 0;
   return {
     name: item.name,
     secondaryName: item.secondaryName ?? "",
@@ -129,6 +139,7 @@ function menuItemToEditForm(item: MenuItem): ItemFormState {
     defaultDiscountPct: String(item.defaultDiscountPct ?? 0),
     simplePrice,
     simplePriceValue: price,
+    complimentary,
     variants:
       item.variants.length > 0
         ? item.variants.map((v) => ({
@@ -272,13 +283,54 @@ function MenuItemVariantFields({
         <input
           type="checkbox"
           className="mt-0.5 accent-amber-500"
-          checked={form.simplePrice}
+          checked={form.complimentary}
           onChange={(e) => {
             const on = e.target.checked;
-            const priceFromVariants = form.variants.find((v) => v.price.trim())?.price ?? form.simplePriceValue;
+            if (on) {
+              onChange({
+                ...form,
+                complimentary: true,
+                simplePrice: true,
+                simplePriceValue: "0",
+                askForPrice: false,
+                nonTaxable: true,
+                discountable: false,
+                nonDiscountable: true,
+                allowManualDiscount: false,
+                variants: [{ label: "Standard", price: "0", barcode: "" }],
+              });
+              return;
+            }
+            onChange({
+              ...form,
+              complimentary: false,
+              simplePriceValue: "",
+              variants: [{ label: "Standard", price: "", barcode: "" }],
+            });
+          }}
+        />
+        <span>
+          <span className="font-medium text-slate-200">Complimentary (free item)</span>
+          <span className="mt-0.5 block text-[10px] text-slate-500">
+            Price stays Rs 0 — kitchen / bar docket still prints so staff can prepare; customer bill has no
+            charge.
+          </span>
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 text-xs text-slate-300">
+        <input
+          type="checkbox"
+          className="mt-0.5 accent-amber-500"
+          checked={form.simplePrice}
+          disabled={form.complimentary}
+          onChange={(e) => {
+            const on = e.target.checked;
+            const priceFromVariants = form.variants.find((v) => v.price.trim() || v.price === "0")?.price ?? form.simplePriceValue;
             onChange({
               ...form,
               simplePrice: on,
+              complimentary: false,
               simplePriceValue: on ? priceFromVariants || form.simplePriceValue : form.simplePriceValue,
               variants: on
                 ? [{ label: "Standard", price: priceFromVariants || form.simplePriceValue, barcode: "" }]
@@ -299,21 +351,25 @@ function MenuItemVariantFields({
 
       {form.simplePrice ? (
         <label className="block text-xs text-slate-400">
-          Price (PKR)
+          Price (PKR){form.complimentary ? " — complimentary" : ""}
           <input
             type="number"
-            min={1}
+            min={0}
             required
-            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            disabled={form.complimentary}
+            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white disabled:opacity-70"
             value={form.simplePriceValue}
-            onChange={(e) =>
+            onChange={(e) => {
+              const value = e.target.value;
+              const num = Number(value);
               onChange({
                 ...form,
-                simplePriceValue: e.target.value,
-                variants: [{ label: "Standard", price: e.target.value, barcode: "" }],
-              })
-            }
-            placeholder="e.g. 120"
+                simplePriceValue: value,
+                complimentary: value !== "" && Number.isFinite(num) && num === 0,
+                variants: [{ label: "Standard", price: value, barcode: "" }],
+              });
+            }}
+            placeholder="e.g. 120 (or 0 for free)"
           />
         </label>
       ) : (
@@ -367,17 +423,19 @@ function MenuItemVariantFields({
                   Price (PKR)
                   <input
                     type="number"
-                    min={1}
+                    min={0}
                     className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
                     value={row.price}
                     onChange={(e) =>
                       onChange({
                         ...form,
+                        complimentary: false,
                         variants: form.variants.map((v, i) =>
                           i === index ? { ...v, price: e.target.value } : v,
                         ),
                       })
                     }
+                    placeholder="0 = free"
                   />
                 </label>
                 <label className="block text-[10px] text-slate-500 sm:col-span-3">
@@ -615,6 +673,7 @@ export function MenuPage(): JSX.Element {
     defaultDiscountPct: "0",
     simplePrice: false,
     simplePriceValue: "",
+    complimentary: false,
     variants: [emptyVariantRow()],
   });
   const [newItemImage, setNewItemImage] = useState<File | null>(null);
@@ -876,6 +935,7 @@ export function MenuPage(): JSX.Element {
         defaultDiscountPct: "0",
         simplePrice: false,
         simplePriceValue: "",
+        complimentary: false,
         variants: [emptyVariantRow()],
       });
       setNewItemImage(null);
@@ -1655,11 +1715,13 @@ export function MenuPage(): JSX.Element {
                               const prices = r.variants.map((v) => v.price);
                               const min = Math.min(...prices);
                               const max = Math.max(...prices);
+                              if (min === 0 && max === 0) return "Complimentary";
                               return min === max
                                 ? `Rs ${min.toLocaleString()}`
                                 : `Rs ${min.toLocaleString()} – ${max.toLocaleString()}`;
                             }
-                            return `Rs ${menuItemDisplayPrice(r).toLocaleString()}`;
+                            const display = menuItemDisplayPrice(r);
+                            return display === 0 ? "Complimentary" : `Rs ${display.toLocaleString()}`;
                           },
                         },
                         {
@@ -1668,6 +1730,9 @@ export function MenuPage(): JSX.Element {
                           id: "tags",
                           render: (r: MenuItem) => (
                             <span className="flex flex-wrap gap-1">
+                              {menuItemDisplayPrice(r) === 0 ? (
+                                <Badge tone="success">Complimentary</Badge>
+                              ) : null}
                               {r.featured ? <Badge tone="warning">Featured</Badge> : null}
                               {giftItemIds.has(r.id) ? (
                                 <Badge tone="warning">HH gift</Badge>

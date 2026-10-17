@@ -895,70 +895,76 @@ export class InventoryService implements OnModuleInit {
       .returning();
     if (!row) throw new BadRequestException("Failed to create ingredient");
 
-    // Always link a store product + seed warehouse so Current Stock / waste deduct share one ledger.
-    const product = await this.ensureIngredientStoreProduct(
-      organizationId,
-      branch.id,
-      row,
-      row.unitCostPkr,
-    );
     const qty = Math.max(0, row.currentStock);
-    await this.db
-      .update(popsIngredients)
-      .set({
-        storeProductId: product.id,
-        currentStock: qty,
-      })
-      .where(eq(popsIngredients.id, row.id));
+    // Link store product + seed warehouse so Current Stock / waste deduct share one ledger.
+    // Soft-fail: ingredient row (incl. decimal unit cost) must still save if store schema drifts.
+    try {
+      const product = await this.ensureIngredientStoreProduct(
+        organizationId,
+        branch.id,
+        row,
+        row.unitCostPkr,
+      );
+      await this.db
+        .update(popsIngredients)
+        .set({
+          storeProductId: product.id,
+          currentStock: qty,
+        })
+        .where(eq(popsIngredients.id, row.id));
 
-    if (mainWh && qty > 0) {
-      const [existing] = await this.db
-        .select()
-        .from(storeWarehouseStock)
-        .where(and(
-          eq(storeWarehouseStock.warehouseId, mainWh.id),
-          eq(storeWarehouseStock.productId, product.id),
-        ))
-        .limit(1);
-      if (existing) {
-        await this.db
-          .update(storeWarehouseStock)
-          .set({
-            quantity: existing.quantity + qty,
+      if (mainWh && qty > 0) {
+        const [existing] = await this.db
+          .select()
+          .from(storeWarehouseStock)
+          .where(and(
+            eq(storeWarehouseStock.warehouseId, mainWh.id),
+            eq(storeWarehouseStock.productId, product.id),
+          ))
+          .limit(1);
+        if (existing) {
+          await this.db
+            .update(storeWarehouseStock)
+            .set({
+              quantity: existing.quantity + qty,
+              unitCostPkr: row.unitCostPkr,
+              updatedAt: new Date(),
+            })
+            .where(eq(storeWarehouseStock.id, existing.id));
+        } else {
+          await this.db.insert(storeWarehouseStock).values({
+            organizationId,
+            branchId: branch.id,
+            warehouseId: mainWh.id,
+            productId: product.id,
+            quantity: qty,
             unitCostPkr: row.unitCostPkr,
-            updatedAt: new Date(),
-          })
-          .where(eq(storeWarehouseStock.id, existing.id));
-      } else {
-        await this.db.insert(storeWarehouseStock).values({
+          });
+        }
+        const balances = await this.db
+          .select({ quantity: storeWarehouseStock.quantity })
+          .from(storeWarehouseStock)
+          .where(eq(storeWarehouseStock.productId, product.id));
+        const onHand = balances.reduce((sum, r) => sum + r.quantity, 0);
+        await this.db
+          .update(storeProducts)
+          .set({ availableStock: onHand, purchasePricePkr: row.unitCostPkr })
+          .where(eq(storeProducts.id, product.id));
+      }
+
+      if (qty > 0) {
+        await this.db.insert(popsStockBatches).values({
           organizationId,
           branchId: branch.id,
-          warehouseId: mainWh.id,
-          productId: product.id,
-          quantity: qty,
+          ingredientId: row.id,
+          qty,
+          location: mainWh?.name ?? "Main store",
           unitCostPkr: row.unitCostPkr,
         });
       }
-      const balances = await this.db
-        .select({ quantity: storeWarehouseStock.quantity })
-        .from(storeWarehouseStock)
-        .where(eq(storeWarehouseStock.productId, product.id));
-      const onHand = balances.reduce((sum, r) => sum + r.quantity, 0);
-      await this.db
-        .update(storeProducts)
-        .set({ availableStock: onHand, purchasePricePkr: row.unitCostPkr })
-        .where(eq(storeProducts.id, product.id));
-    }
-
-    if (qty > 0) {
-      await this.db.insert(popsStockBatches).values({
-        organizationId,
-        branchId: branch.id,
-        ingredientId: row.id,
-        qty,
-        location: mainWh?.name ?? "Main store",
-        unitCostPkr: row.unitCostPkr,
-      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[inventory] create warehouse bootstrap skipped for ${row.id}: ${msg}`);
     }
     await this.audit(organizationId, branch.id, userEmail, "Ingredient created", "Ingredients", `${row.sku} ${row.name}`);
     const refreshed = await this.getIngredient(organizationId, row.id);
@@ -991,14 +997,20 @@ export class InventoryService implements OnModuleInit {
     if (!row) throw new NotFoundException("Ingredient not found");
 
     // List UI reads warehouse on-hand when linked — keep ledger in sync with Current stock edits.
+    // Soft-fail: ingredient row is already saved; store-product drift must not block unit cost / qty edits.
     if (input.currentStock !== undefined || input.unitCost !== undefined || input.storeProductId !== undefined) {
-      await this.syncIngredientWarehouseOnHand(
-        organizationId,
-        existing.branchId,
-        ingredientId,
-        input.currentStock !== undefined ? Math.max(0, input.currentStock) : undefined,
-        input.unitCost,
-      );
+      try {
+        await this.syncIngredientWarehouseOnHand(
+          organizationId,
+          existing.branchId,
+          ingredientId,
+          input.currentStock !== undefined ? Math.max(0, input.currentStock) : undefined,
+          input.unitCost,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[inventory] warehouse sync skipped for ${ingredientId}: ${msg}`);
+      }
     }
 
     await this.audit(organizationId, existing.branchId, userEmail, "Ingredient updated", "Ingredients", row.name);

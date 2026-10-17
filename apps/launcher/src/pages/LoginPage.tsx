@@ -44,6 +44,7 @@ export function LoginPage(): JSX.Element {
   const isSuperAdminLogin = params.get("role") === "super_admin";
   const selectedRole = parseLoginRoleParam(params.get("role"));
   const setTokens = useSessionStore((s) => s.setTokens);
+  const unlockWindow = useSessionStore((s) => s.unlockWindow);
   const clearSession = useSessionStore((s) => s.clear);
   const branch = usePopsStore((s) => s.branch);
   const setDisplayRole = usePopsStore((s) => s.setDisplayRole);
@@ -81,22 +82,15 @@ export function LoginPage(): JSX.Element {
 
   useEffect(() => {
     if (!roleMeta) return;
-    // Client EXEs (Restaurant / Store / Pharmacy): empty fields — user types given credentials.
-    // Suite keeps demo autofill for platform testing only.
-    if (isSingleSystemEdition()) {
-      setEmail("");
-      setPinEmail("");
-      setPassword("");
+    // Prefill demo credentials so sign-in is one click (suite + single-system).
+    setEmail(roleMeta.demoEmail ?? "");
+    setPinEmail(roleMeta.demoEmail ?? "");
+    if (isSuperAdminLogin) {
+      setPassword(DEMO_SUPER_ADMIN_PASSWORD);
+    } else if (roleMeta.kind === "admin") {
+      setPassword(DEMO_OWNER_PASSWORD);
     } else {
-      setEmail(roleMeta.demoEmail ?? "");
-      setPinEmail(roleMeta.demoEmail ?? "");
-      if (isSuperAdminLogin) {
-        setPassword(DEMO_SUPER_ADMIN_PASSWORD);
-      } else if (roleMeta.kind === "admin") {
-        setPassword(DEMO_OWNER_PASSWORD);
-      } else {
-        setPassword(DEMO_STAFF_PASSWORD);
-      }
+      setPassword(DEMO_STAFF_PASSWORD);
     }
     setMode("password");
     setError(null);
@@ -132,6 +126,7 @@ export function LoginPage(): JSX.Element {
         throw new Error("This account is not a Super Admin.");
       }
       setTokens(accessToken, refreshToken, claims, loginEmail);
+      unlockWindow();
       navigate("/super-admin", { replace: true });
       return;
     }
@@ -166,6 +161,7 @@ export function LoginPage(): JSX.Element {
     recordDeviceInstall(claims.systemType ?? lockedId);
     setSystem(lockedId);
     setTokens(accessToken, refreshToken, claims, loginEmail);
+    unlockWindow();
     const display = normalizeMembershipRole(claims.role) ?? selectedRole!;
     if (isPopsRole(claims.role) || claims.role === "owner") {
       setDisplayRole(display);

@@ -35,7 +35,8 @@ export const popsIngredients = pgTable("pops_ingredients", {
   minStock: integer("min_stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(0),
   maxStock: integer("max_stock").notNull().default(0),
-  unitCostPkr: integer("unit_cost_pkr").notNull().default(0),
+  /** Per selected unit (Gram/ml/Kg/…) — fractional PKR allowed (e.g. 1.3 / Gram). */
+  unitCostPkr: doublePrecision("unit_cost_pkr").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
