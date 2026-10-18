@@ -23,11 +23,13 @@ export function SafeMenuImage({ imageUrl, fallback, alt = "", ...imgProps }: Saf
     return <>{fallback}</>;
   }
 
+  const { className, ...rest } = imgProps;
   return (
     <img
-      {...imgProps}
+      {...rest}
       src={resolved}
       alt={alt}
+      className={["block", className].filter(Boolean).join(" ")}
       onError={() => setFailed(true)}
     />
   );

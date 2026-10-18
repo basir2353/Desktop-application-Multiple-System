@@ -124,7 +124,13 @@ function PopsNavGroupMobile({ group }: { group: PopsNavGroup }): JSX.Element {
       </button>
       {open
         ? group.children.map((child) => (
-            <NavLink key={child.path} to={`/pops/${child.path}`} end className={mobilePillClass}>
+            <NavLink
+              key={child.path}
+              to={`/pops/${child.path}`}
+              end
+              replace={pathname.includes("/pos/cash-drawer") && child.path === "pos"}
+              className={mobilePillClass}
+            >
               {child.label}
             </NavLink>
           ))

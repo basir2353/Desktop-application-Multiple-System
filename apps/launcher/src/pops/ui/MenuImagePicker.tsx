@@ -35,7 +35,12 @@ export function MenuImagePicker({
   }, [previewFile]);
 
   const previewSrc = objectUrl ?? resolveMenuImageUrl(value);
-  const sizeClass = compact ? "h-12 w-12" : "h-28 w-28";
+  const sizeClass = compact ? "h-14 w-14" : "h-36 w-36";
+  const emptyLabel = (
+    <span className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-500">
+      {compact ? "+" : "Add photo"}
+    </span>
+  );
 
   return (
     <div className={compact ? "flex items-center gap-2" : "block"}>
@@ -45,26 +50,24 @@ export function MenuImagePicker({
           type="button"
           disabled={disabled}
           onClick={() => inputRef.current?.click()}
-          className={`${sizeClass} shrink-0 overflow-hidden rounded-md border border-dashed border-slate-600 bg-slate-950 transition hover:border-amber-500/50 disabled:opacity-50`}
+          className={`${sizeClass} relative shrink-0 overflow-hidden rounded-md border border-dashed border-slate-600 bg-slate-950 p-0 transition hover:border-amber-500/50 disabled:opacity-50`}
           title={previewSrc ? "Change photo" : "Add photo"}
         >
           {objectUrl ? (
-            <img src={objectUrl} alt="" className="h-full w-full object-cover" />
+            <img
+              src={objectUrl}
+              alt=""
+              className="absolute inset-0 block h-full w-full object-cover object-center"
+            />
           ) : previewSrc ? (
             <SafeMenuImage
               imageUrl={value}
               alt=""
-              className="h-full w-full object-cover"
-              fallback={
-                <span className="flex h-full w-full items-center justify-center text-[10px] text-slate-500">
-                  {compact ? "+" : "Add photo"}
-                </span>
-              }
+              className="absolute inset-0 block h-full w-full object-cover object-center"
+              fallback={emptyLabel}
             />
           ) : (
-            <span className="flex h-full w-full items-center justify-center text-[10px] text-slate-500">
-              {compact ? "+" : "Add photo"}
-            </span>
+            emptyLabel
           )}
         </button>
         <div className="min-w-0">
@@ -104,7 +107,7 @@ export function MenuImagePicker({
           ) : null}
           {!compact ? (
             <p className="mt-1 text-[10px] text-slate-500">
-              JPEG, PNG, WebP, or GIF · auto-compressed · saved with the dish
+              JPEG, PNG, WebP, or GIF · fills the preview box · saved with the dish
             </p>
           ) : null}
         </div>
@@ -121,18 +124,20 @@ type MenuImageThumbProps = {
 export function MenuImageThumb({ imageUrl, alt }: MenuImageThumbProps): JSX.Element {
   const empty = (
     <span
-      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-800 text-[10px] text-slate-500"
+      className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-[10px] text-slate-500"
       aria-hidden
     >
       —
     </span>
   );
   return (
-    <SafeMenuImage
-      imageUrl={imageUrl}
-      alt={alt}
-      className="h-12 w-12 shrink-0 rounded-lg object-cover"
-      fallback={empty}
-    />
+    <span className="relative inline-block h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-800">
+      <SafeMenuImage
+        imageUrl={imageUrl}
+        alt={alt}
+        className="absolute inset-0 block h-full w-full object-cover object-center"
+        fallback={empty}
+      />
+    </span>
   );
 }

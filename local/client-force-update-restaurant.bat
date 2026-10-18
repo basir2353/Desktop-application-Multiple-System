@@ -5,8 +5,8 @@ REM IN-PLACE UPDATE (same EXE / same folder) — does NOT install a second app.
 REM Downloads the signed installer from pops-desktop-updates and runs it.
 REM =============================================================================
 
-set "TAG=desktop-v0.3.107"
-set "EXE=Restaurant-Management-System_0.3.107_x64-setup.exe"
+set "TAG=desktop-v0.3.109"
+set "EXE=Restaurant-Management-System_0.3.109_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 

@@ -737,7 +737,7 @@ export function PosFullScreenMenuOverlay({
                   <SafeMenuImage
                     imageUrl={c.imageUrl}
                     alt=""
-                    className="absolute inset-0 h-full w-full object-cover"
+                    className="absolute inset-0 h-full w-full object-cover object-center"
                     fallback={letterFallback}
                   />
                   <span className="relative z-[1] mt-auto w-full bg-slate-950/75 px-1 py-1.5 text-[11px] font-bold leading-tight text-white">
@@ -772,12 +772,21 @@ export function PosFullScreenMenuOverlay({
             return (
               <div
                 key={item.id}
-                className="group relative aspect-square overflow-hidden rounded-lg border border-slate-600 bg-slate-800 transition hover:border-amber-400/70 hover:ring-1 hover:ring-amber-400/40"
+                role="button"
+                tabIndex={0}
+                onClick={() => onAddItem(item)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onAddItem(item);
+                  }
+                }}
+                className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-slate-600 bg-slate-800 transition hover:border-amber-400/70 hover:ring-1 hover:ring-amber-400/40"
               >
                 <SafeMenuImage
                   imageUrl={item.imageUrl}
                   alt=""
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className="absolute inset-0 h-full w-full object-cover object-center"
                   fallback={itemFallback}
                 />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent px-1.5 pb-1.5 pt-8 opacity-0 transition group-hover:opacity-100">
@@ -798,7 +807,10 @@ export function PosFullScreenMenuOverlay({
                     <button
                       type="button"
                       disabled={qty <= 0}
-                      onClick={() => onDecrementItem(item)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDecrementItem(item);
+                      }}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-500 bg-slate-900 text-base font-bold text-white transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-30"
                       aria-label={`Remove one ${item.name}`}
                     >
@@ -809,7 +821,10 @@ export function PosFullScreenMenuOverlay({
                     </span>
                     <button
                       type="button"
-                      onClick={() => onAddItem(item)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddItem(item);
+                      }}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-amber-400/60 bg-amber-400 text-base font-bold text-slate-950 transition hover:bg-amber-300"
                       aria-label={`Add one ${item.name}`}
                     >

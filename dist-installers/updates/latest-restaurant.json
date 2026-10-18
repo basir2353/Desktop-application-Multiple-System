@@ -1,11 +1,11 @@
 {
-  "version": "0.3.99",
-  "notes": "Desktop restaurant update 0.3.99",
-  "pub_date": "2026-10-18T04:31:48.185Z",
+  "version": "0.3.109",
+  "notes": "Desktop restaurant update 0.3.109",
+  "pub_date": "2026-10-18T14:57:46.892Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRYzA0SUNlc3FEYWFSOUYvb1oyL3FBQUlaU1pZU2NrOTBzSk1ncVlEZ0JCRXdIWVZtek1tYW0xTjZBMHdONXBpU3YzWEpJVXFDaWNyQWJjM09penU2WS9HU0w2MEg4WFFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjk3OTA3CWZpbGU6UmVzdGF1cmFudCBNYW5hZ2VtZW50IFN5c3RlbV8wLjMuOTlfeDY0LXNldHVwLmV4ZQppTkVNQWpGSFhObWVMTkQvcloxZmNndVlSV1RMd3NyRUNDOXlXOUxVSGkrMEpGZmFYRmpIdTkwV00xdmxZSFFNbkNZaWhyU1BNZU8rMzFsdWJkYUxCQT09Cg==",
-      "url": "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-v0.3.99/Restaurant-Management-System_0.3.99_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRYzA0SUNlc3FEYVhYK0tjMWZIVDlrSHg2L01TQ1lNaytJblh3ZklTc0Y2em4vNjJzdlg1NnRDOUlaNHAycUNLZElBT3NXVGlnK0RNemNOd3pneDQ0TmFzT01lZURLdHdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzM1NDYzCWZpbGU6UmVzdGF1cmFudCBNYW5hZ2VtZW50IFN5c3RlbV8wLjMuMTA5X3g2NC1zZXR1cC5leGUKN3VjZVJOa2M4VmdhQ1BzampXWWNmMDlTWktTQkUrVkJMVENydm1FbFV6MGN4QW1WUEk2WXlvMGs2djdhcFluazBVdWtiR3ZhdDdqVXRBMHdHb2xUQkE9PQo=",
+      "url": "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-v0.3.109/Restaurant-Management-System_0.3.109_x64-setup.exe"
     }
   }
 }

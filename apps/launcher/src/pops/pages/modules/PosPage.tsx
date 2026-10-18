@@ -188,6 +188,8 @@ import {
 } from "../../lib/posShortcuts";
 import {
   loadPosHeaderVisible,
+  POS_CONSUME_BACK_EVENT,
+  setPosFullscreenOpenFlag,
   setPosHeaderVisible,
 } from "../../lib/posTopExperience";
 import {
@@ -870,30 +872,28 @@ export function PosPage(): JSX.Element {
     });
   }, [recentOrders, branch?.code]);
 
-  /** Full-screen Back (browser) closes overlay instead of leaving POS → cash drawer. */
+  /** Immersive POS (full-screen menu or hidden top bar) owns HistoryNavBar Back. */
   useEffect(() => {
-    if (!fullScreenMenuOpen) return;
-    window.history.pushState({ posFullscreen: true }, "");
-    const onPop = () => {
-      setFullScreenMenuOpen(false);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [fullScreenMenuOpen]);
+    setPosFullscreenOpenFlag(fullScreenMenuOpen || !headerVisible);
+    return () => setPosFullscreenOpenFlag(false);
+  }, [fullScreenMenuOpen, headerVisible]);
 
-  /** If history Back lands on cash-drawer from POS, bounce back to POS. */
   useEffect(() => {
-    if (!location.pathname.includes("/pos")) return;
-    const onPop = () => {
-      window.setTimeout(() => {
-        if (window.location.pathname.includes("/pos/cash-drawer")) {
-          navigate("/pops/pos", { replace: true });
-        }
-      }, 0);
+    const onConsumeBack = (event: Event) => {
+      if (fullScreenMenuOpen) {
+        event.preventDefault();
+        setFullScreenMenuOpen(false);
+        return;
+      }
+      if (!headerVisible) {
+        event.preventDefault();
+        setHeaderVisible(true);
+        setPosHeaderVisible(true);
+      }
     };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [location.pathname, navigate]);
+    window.addEventListener(POS_CONSUME_BACK_EVENT, onConsumeBack);
+    return () => window.removeEventListener(POS_CONSUME_BACK_EVENT, onConsumeBack);
+  }, [fullScreenMenuOpen, headerVisible]);
 
   const transferableOrders = useMemo(
     () => recentOrders.filter(canChangePosRecentOrderTable),
@@ -3709,7 +3709,7 @@ export function PosPage(): JSX.Element {
                     const initial = (c.name.trim().charAt(0) || "?").toUpperCase();
                     const initialFallback = (
                       <span
-                        className={`flex h-14 w-14 items-center justify-center rounded-lg text-base font-bold ${
+                        className={`absolute inset-0 flex items-center justify-center text-base font-bold ${
                           active
                             ? "bg-slate-950/15"
                             : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
@@ -3733,12 +3733,14 @@ export function PosPage(): JSX.Element {
                             : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
                         }`}
                       >
-                        <SafeMenuImage
-                          imageUrl={c.imageUrl}
-                          alt=""
-                          className="h-14 w-14 rounded-lg object-cover ring-1 ring-black/5"
-                          fallback={initialFallback}
-                        />
+                        <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/5">
+                          <SafeMenuImage
+                            imageUrl={c.imageUrl}
+                            alt=""
+                            className="absolute inset-0 h-full w-full object-cover object-center"
+                            fallback={initialFallback}
+                          />
+                        </span>
                         <span className="line-clamp-2 w-full text-xs font-bold leading-tight">
                           {c.name}
                         </span>
@@ -3808,18 +3810,30 @@ export function PosPage(): JSX.Element {
                   return (
                     <div
                       key={item.id}
-                      className="group relative aspect-square overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900/40 transition hover:border-amber-500/40 hover:ring-1 hover:ring-amber-500/30"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onDishClick(item)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onDishClick(item);
+                        }
+                      }}
+                      className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900/40 transition hover:border-amber-500/40 hover:ring-1 hover:ring-amber-500/30"
                     >
                       <SafeMenuImage
                         imageUrl={item.imageUrl}
                         alt=""
-                        className="absolute inset-0 h-full w-full object-cover"
+                        className="absolute inset-0 h-full w-full object-cover object-center"
                         fallback={itemFallback}
                       />
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/85 to-transparent px-2 pb-2 pt-10 opacity-0 transition group-hover:opacity-100">
                         <button
                           type="button"
-                          onClick={() => onDishClick(item)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDishClick(item);
+                          }}
                           className="w-full text-left"
                         >
                           <span className="line-clamp-2 text-sm font-bold leading-snug text-white">
@@ -3844,7 +3858,10 @@ export function PosPage(): JSX.Element {
                           <button
                             type="button"
                             disabled={qty <= 0}
-                            onClick={() => decrementItemFromCart(item)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              decrementItemFromCart(item);
+                            }}
                             className="flex h-8 w-8 items-center justify-center rounded border border-slate-500 bg-slate-900 text-base font-bold text-white disabled:opacity-30"
                             aria-label={`Remove one ${item.name}`}
                           >
@@ -3853,7 +3870,10 @@ export function PosPage(): JSX.Element {
                           <span className="min-w-[1.5rem] text-center text-sm font-bold text-white">{qty}</span>
                           <button
                             type="button"
-                            onClick={() => onDishClick(item)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDishClick(item);
+                            }}
                             className="flex h-8 w-8 items-center justify-center rounded bg-amber-400 text-base font-bold text-slate-950"
                             aria-label={`Add one ${item.name}`}
                           >

@@ -26,7 +26,9 @@ export class KitchenController {
     @Query("scope") scope?: string,
   ) {
     const parsed =
-      scope === "done" || scope === "all" || scope === "active" ? scope : "active";
+      scope === "done" || scope === "all" || scope === "active" || scope === "pos-open"
+        ? scope
+        : "active";
     return this.kitchen.listTickets(user.organizationId, branchCode?.trim() ?? "", parsed);
   }
 
