@@ -278,10 +278,18 @@ export function buildPosRecentOrders(
     if (prev == null || at > prev) settledByRef.set(ref, at);
   }
 
-  // Keep kitchen-confirmed ("done") tickets on POS Latest orders until a held/completed
-  // bill settles that ORD-#. Kitchen Active board still hides done tickets separately.
+  // Keep kitchen-confirmed ("done") tickets on POS Latest until Pay settles that ORD-#.
+  // Drop done tickets older than 48h (paid/abandoned ghosts from before pos-open scope).
+  const DONE_OPEN_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+  const now = Date.now();
   const pending = tickets
     .filter((t) => {
+      if (t.status === "done") {
+        const ticketAt = new Date(t.createdAt).getTime();
+        if (!Number.isFinite(ticketAt) || now - ticketAt > DONE_OPEN_MAX_AGE_MS) {
+          return false;
+        }
+      }
       const ref = (t.orderRef ?? "").trim().toLowerCase();
       if (!ref) return true;
       const settledAt = settledByRef.get(ref);

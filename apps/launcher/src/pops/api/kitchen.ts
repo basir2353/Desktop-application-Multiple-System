@@ -84,9 +84,11 @@ function softParseKitchenTicket(json: unknown): KitchenTicket {
   throw new Error("Kitchen ticket response invalid");
 }
 
+export type KitchenTicketScope = "active" | "done" | "all" | "pos-open";
+
 export async function fetchKitchenTickets(
   branchCode: string,
-  opts?: { scope?: "active" | "done" | "all" },
+  opts?: { scope?: KitchenTicketScope },
 ): Promise<KitchenTicket[]> {
   const offline = loadOfflineKots();
   try {
@@ -102,7 +104,8 @@ export async function fetchKitchenTickets(
     if (opts?.scope === "done") {
       return remote.filter((t) => t.status === "done");
     }
-    if (opts?.scope !== "all") {
+    // active (default): hide done. all / pos-open: keep done tickets from the API.
+    if (opts?.scope !== "all" && opts?.scope !== "pos-open") {
       remote = remote.filter((t) => t.status !== "done");
     }
     const remoteIds = new Set(remote.map((t) => t.id));

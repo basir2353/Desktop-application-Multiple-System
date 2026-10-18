@@ -84,4 +84,59 @@ describe("bill list status", () => {
     expect(canEditPosRecentOrder(orders[0]!)).toBe(true);
     expect(isPaidPosRecentOrder(orders[0]!)).toBe(false);
   });
+
+  it("hides kitchen-done tickets older than 48h from open Latest", () => {
+    const old = {
+      id: "55555555-5555-4555-8555-555555555555",
+      ticketRef: "KOT-OLD",
+      orderRef: "DI-4418",
+      status: "done",
+      stationLabel: "Dine-in",
+      itemsSummary: "Biryani x1",
+      lines: [{ label: "Biryani", qty: 1, unitPrice: 500 }],
+      createdAt: new Date(Date.now() - 50 * 60 * 60 * 1000).toISOString(),
+      priority: "normal",
+      mins: 0,
+      startedAt: null,
+      notes: null,
+      createdByName: "Baqir",
+      updatedByName: null,
+      deliveryChargePkr: 0,
+      riderId: null,
+    } as unknown as KitchenTicket;
+    const orders = buildPosRecentOrders([old], []);
+    expect(orders).toHaveLength(0);
+  });
+
+  it("hides kitchen-done when a completed bill already settled that ORD", () => {
+    const ticketAt = Date.now() - 2 * 60 * 60 * 1000;
+    const ticket = {
+      id: "66666666-6666-4666-8666-666666666666",
+      ticketRef: "KOT-2",
+      orderRef: "DI-4417",
+      status: "done",
+      stationLabel: "Dine-in",
+      itemsSummary: "Karahi x1",
+      lines: [{ label: "Karahi", qty: 1, unitPrice: 1000 }],
+      createdAt: new Date(ticketAt).toISOString(),
+      priority: "normal",
+      mins: 0,
+      startedAt: null,
+      notes: null,
+      createdByName: "Baqir",
+      updatedByName: null,
+      deliveryChargePkr: 0,
+      riderId: null,
+    } as unknown as KitchenTicket;
+    const paid = bill({
+      id: "77777777-7777-4777-8777-777777777777",
+      status: "completed",
+      orderRef: "DI-4417",
+      // Bill after ticket → ticket is settled / hidden from open list.
+      createdAt: new Date(ticketAt + 30 * 60 * 1000).toISOString(),
+    });
+    const orders = buildPosRecentOrders([ticket], [paid]);
+    expect(orders.filter((o) => o.kind === "pending")).toHaveLength(0);
+    expect(orders.some((o) => o.statusLabel === "Paid")).toBe(true);
+  });
 });

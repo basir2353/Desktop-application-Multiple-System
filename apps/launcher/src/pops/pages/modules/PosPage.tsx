@@ -693,8 +693,9 @@ export function PosPage(): JSX.Element {
   });
 
   const kitchenQuery = useQuery({
-    // Dedicated key + scope=all so kitchen-confirmed ("done") tickets stay on Latest
-    // orders until payment — without polluting Kitchen Active (active-only) caches.
+    // scope=all keeps same-day kitchen-done on POS until Pay. Ghosts from older
+    // paid tickets are stripped in buildPosRecentOrders (48h + bill settlement).
+    // Backend also supports scope=pos-open for a lighter unpaid-only feed.
     queryKey: ["kitchen", "pos-latest", branch?.code],
     enabled: Boolean(branch?.code),
     queryFn: () => fetchKitchenTickets(branch!.code, { scope: "all" }),
@@ -704,6 +705,7 @@ export function PosPage(): JSX.Element {
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code],
     enabled: Boolean(branch?.code),
+    // held/open always + completed in last 7d (settlement hide for kitchen-done).
     queryFn: () => fetchCompletedOrders(branch!.code, { scope: "active" }),
     refetchInterval: 20_000,
   });
