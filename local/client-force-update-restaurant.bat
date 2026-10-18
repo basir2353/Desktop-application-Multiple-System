@@ -5,8 +5,8 @@ REM IN-PLACE UPDATE (same EXE / same folder) — does NOT install a second app.
 REM Downloads the signed installer from pops-desktop-updates and runs it.
 REM =============================================================================
 
-set "TAG=desktop-v0.3.106"
-set "EXE=Restaurant-Management-System_0.3.106_x64-setup.exe"
+set "TAG=desktop-v0.3.107"
+set "EXE=Restaurant-Management-System_0.3.107_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 
@@ -55,7 +55,7 @@ set "EC=%ERRORLEVEL%"
 echo [4/4] Done.
 echo.
 if "%EC%"=="0" (
-  echo OK — Restaurant EXE updated to 0.3.106 in the SAME place.
+  echo OK — Restaurant EXE updated to 0.3.107 in the SAME place.
   echo Ab shortcut se "Restaurant Management System" kholo.
   echo Agar purana "Update failed" banner dikhe to Dismiss dabao — ignore karo.
 ) else (

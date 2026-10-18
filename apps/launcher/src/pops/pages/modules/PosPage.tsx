@@ -109,7 +109,7 @@ import {
 import { noticeFromPrintResult } from "../../lib/printNotify";
 import { isTerminalAuthorized } from "../../lib/terminalAuth";
 import { loadWhatsAppShareSettings, shareBillViaWhatsApp, phoneFromBillNotes } from "../../lib/whatsappShare";
-import { resolveMenuImageUrl } from "../../lib/menuImageUrl";
+import { SafeMenuImage } from "../../ui/SafeMenuImage";
 import {
   buildPosRecentOrders,
   canChangePosRecentOrderTable,
@@ -3706,8 +3706,18 @@ export function PosPage(): JSX.Element {
                   </button>
                   {categories.map((c) => {
                     const active = menuView === "category" && activeCategoryId === c.id;
-                    const img = resolveMenuImageUrl(c.imageUrl);
                     const initial = (c.name.trim().charAt(0) || "?").toUpperCase();
+                    const initialFallback = (
+                      <span
+                        className={`flex h-14 w-14 items-center justify-center rounded-lg text-base font-bold ${
+                          active
+                            ? "bg-slate-950/15"
+                            : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
+                        }`}
+                      >
+                        {initial}
+                      </span>
+                    );
                     return (
                       <button
                         key={c.id}
@@ -3723,23 +3733,12 @@ export function PosPage(): JSX.Element {
                             : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
                         }`}
                       >
-                        {img ? (
-                          <img
-                            src={img}
-                            alt=""
-                            className="h-14 w-14 rounded-lg object-cover ring-1 ring-black/5"
-                          />
-                        ) : (
-                          <span
-                            className={`flex h-14 w-14 items-center justify-center rounded-lg text-base font-bold ${
-                              active
-                                ? "bg-slate-950/15"
-                                : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
-                            }`}
-                          >
-                            {initial}
-                          </span>
-                        )}
+                        <SafeMenuImage
+                          imageUrl={c.imageUrl}
+                          alt=""
+                          className="h-14 w-14 rounded-lg object-cover ring-1 ring-black/5"
+                          fallback={initialFallback}
+                        />
                         <span className="line-clamp-2 w-full text-xs font-bold leading-tight">
                           {c.name}
                         </span>
@@ -3789,7 +3788,6 @@ export function PosPage(): JSX.Element {
             ) : (
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4">
                 {filteredMenu.map((item) => {
-                  const img = resolveMenuImageUrl(item.imageUrl);
                   const variants = resolvePosSellableVariants(item);
                   const displayPrice = happyHourActiveSlot?.percentOff
                     ? applyHappyHourDiscountPrice(menuItemDisplayPrice(item), happyHourActiveSlot.percentOff)
@@ -3800,20 +3798,24 @@ export function PosPage(): JSX.Element {
                     displayPrice !== menuItemDisplayPrice(item);
                   const hasPicker = variants.length > 1;
                   const qty = itemQtyInCart(item.id, displayCart);
+                  const itemFallback = (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/60 text-sm font-bold text-slate-500">
+                      {isSearching || showFeaturedOnly || showAllItems
+                        ? categoryById.get(item.categoryId)
+                        : item.name.slice(0, 2).toUpperCase()}
+                    </div>
+                  );
                   return (
                     <div
                       key={item.id}
                       className="group relative aspect-square overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900/40 transition hover:border-amber-500/40 hover:ring-1 hover:ring-amber-500/30"
                     >
-                      {img ? (
-                        <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/60 text-sm font-bold text-slate-500">
-                          {isSearching || showFeaturedOnly || showAllItems
-                            ? categoryById.get(item.categoryId)
-                            : item.name.slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
+                      <SafeMenuImage
+                        imageUrl={item.imageUrl}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-cover"
+                        fallback={itemFallback}
+                      />
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/85 to-transparent px-2 pb-2 pt-10 opacity-0 transition group-hover:opacity-100">
                         <button
                           type="button"

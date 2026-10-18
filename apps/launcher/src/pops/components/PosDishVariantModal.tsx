@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MenuItem, MenuItemVariant } from "@platform/contracts";
 import { menuItemDisplayPrice } from "@platform/contracts";
-import { resolveMenuImageUrl } from "../lib/menuImageUrl";
+import { SafeMenuImage } from "../ui/SafeMenuImage";
 import { POS_SHORTCUTS } from "../lib/posShortcuts";
 
 export type PosVariantSelection = {
@@ -124,9 +124,13 @@ export function PosDishVariantModal({ item, variants, onConfirm, onClose }: Prop
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose, focusedIndex, variants, qtyById, selections]);
 
-  const img = resolveMenuImageUrl(item.imageUrl);
   const fromPrice = menuItemDisplayPrice(item);
   const totalSelectedQty = selections.reduce((sum, row) => sum + row.qty, 0);
+  const thumbFallback = (
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs text-slate-400 dark:bg-slate-950 dark:text-slate-600">
+      —
+    </div>
+  );
 
   return (
     <div
@@ -143,13 +147,12 @@ export function PosDishVariantModal({ item, variants, onConfirm, onClose }: Prop
       >
         <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
           <div className="flex items-start gap-3">
-            {img ? (
-              <img src={img} alt="" className="h-14 w-14 shrink-0 rounded-md object-cover" />
-            ) : (
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs text-slate-400 dark:bg-slate-950 dark:text-slate-600">
-                —
-              </div>
-            )}
+            <SafeMenuImage
+              imageUrl={item.imageUrl}
+              alt=""
+              className="h-14 w-14 shrink-0 rounded-md object-cover"
+              fallback={thumbFallback}
+            />
             <div className="min-w-0 flex-1">
               <h2
                 id="pos-variant-title"

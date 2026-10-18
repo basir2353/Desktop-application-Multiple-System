@@ -12,7 +12,7 @@ export const popsMenuCategories = pgTable("pops_menu_categories", {
     .notNull()
     .references(() => popsBranches.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  /** Public URL path served by the API, e.g. /uploads/menu/... */
+  /** Embedded `data:image/...` (preferred — survives redeploy) or legacy `/uploads/...` path. */
   imageUrl: text("image_url"),
   cookingUnitId: uuid("cooking_unit_id").references(() => storeCookingUnits.id, { onDelete: "set null" }),
   sortOrder: integer("sort_order").notNull().default(0),
@@ -34,7 +34,7 @@ export const popsMenuItems = pgTable("pops_menu_items", {
   name: text("name").notNull(),
   /** Secondary / Urdu name for kitchen tickets and bills. */
   secondaryName: text("secondary_name"),
-  /** Public URL path served by the API, e.g. /uploads/menu/... */
+  /** Embedded `data:image/...` (preferred — survives redeploy) or legacy `/uploads/...` path. */
   imageUrl: text("image_url"),
   /** Serving size: full, half, plate, etc. */
   portion: text("portion"),

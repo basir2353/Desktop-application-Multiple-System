@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { resolveMenuImageUrl } from "../lib/menuImageUrl";
+import { SafeMenuImage } from "./SafeMenuImage";
 
 type MenuImagePickerProps = {
   label?: string;
@@ -47,8 +48,19 @@ export function MenuImagePicker({
           className={`${sizeClass} shrink-0 overflow-hidden rounded-md border border-dashed border-slate-600 bg-slate-950 transition hover:border-amber-500/50 disabled:opacity-50`}
           title={previewSrc ? "Change photo" : "Add photo"}
         >
-          {previewSrc ? (
-            <img src={previewSrc} alt="" className="h-full w-full object-cover" />
+          {objectUrl ? (
+            <img src={objectUrl} alt="" className="h-full w-full object-cover" />
+          ) : previewSrc ? (
+            <SafeMenuImage
+              imageUrl={value}
+              alt=""
+              className="h-full w-full object-cover"
+              fallback={
+                <span className="flex h-full w-full items-center justify-center text-[10px] text-slate-500">
+                  {compact ? "+" : "Add photo"}
+                </span>
+              }
+            />
           ) : (
             <span className="flex h-full w-full items-center justify-center text-[10px] text-slate-500">
               {compact ? "+" : "Add photo"}
@@ -107,16 +119,20 @@ type MenuImageThumbProps = {
 };
 
 export function MenuImageThumb({ imageUrl, alt }: MenuImageThumbProps): JSX.Element {
-  const src = resolveMenuImageUrl(imageUrl);
-  if (!src) {
-    return (
-      <span
-        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-800 text-[10px] text-slate-500"
-        aria-hidden
-      >
-        —
-      </span>
-    );
-  }
-  return <img src={src} alt={alt} className="h-12 w-12 shrink-0 rounded-lg object-cover" />;
+  const empty = (
+    <span
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-800 text-[10px] text-slate-500"
+      aria-hidden
+    >
+      —
+    </span>
+  );
+  return (
+    <SafeMenuImage
+      imageUrl={imageUrl}
+      alt={alt}
+      className="h-12 w-12 shrink-0 rounded-lg object-cover"
+      fallback={empty}
+    />
+  );
 }

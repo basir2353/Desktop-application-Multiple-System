@@ -1,12 +1,13 @@
 import "reflect-metadata";
-import { join } from "node:path";
 import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import compression from "compression";
+import { json as expressJson, urlencoded as expressUrlencoded } from "express";
 import { AppModule } from "./app.module";
 import { ZodExceptionFilter } from "./http/zod-exception.filter";
 import { resolveScaleProfile, scaleDefaults } from "./infra/scaleProfile";
 import { createRequestConcurrencyMiddleware } from "./load/requestConcurrency";
+import { resolveUploadsRoot } from "./menu/menu-upload.paths";
 
 const compressionMiddleware =
   (compression as unknown as { default?: typeof compression }).default ?? compression;
@@ -42,7 +43,13 @@ async function bootstrap(): Promise<void> {
   const host = process.env.HOST ?? "0.0.0.0";
   console.log(`[api] Bootstrapping on ${host}:${port} (NODE_ENV=${process.env.NODE_ENV ?? "development"})`);
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: false });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: false,
+    bodyParser: false,
+  });
+  // Menu photos may be saved as compressed data-URLs on the item/category row.
+  app.use(expressJson({ limit: "2mb" }));
+  app.use(expressUrlencoded({ limit: "2mb", extended: true }));
   if (process.env.NODE_ENV === "production") {
     app.useLogger(["error", "warn", "log"]);
   }
@@ -60,7 +67,9 @@ async function bootstrap(): Promise<void> {
     origin: parseCorsOrigins(),
     credentials: true,
   });
-  app.useStaticAssets(join(process.cwd(), "data", "uploads"), { prefix: "/uploads/" });
+  const uploadsRoot = resolveUploadsRoot();
+  app.useStaticAssets(uploadsRoot, { prefix: "/uploads/" });
+  console.log(`[api] Serving legacy uploads from ${uploadsRoot}`);
   await app.listen(port, host);
   console.log(`[api] Listening on http://${host}:${port}`);
 }

@@ -1,6 +1,6 @@
 import { menuItemDisplayPrice, type MenuItem as ApiMenuItem } from "@platform/contracts";
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { resolveMenuImageUrl } from "../lib/menuImageUrl";
+import { SafeMenuImage } from "../ui/SafeMenuImage";
 import {
   cartLineNet,
   cartLinePrintLabel,
@@ -391,52 +391,56 @@ export function PosFullScreenMenuOverlay({
 
   const ticketAside = (
     <aside
-      className={`flex min-h-[36vh] w-full shrink-0 flex-col bg-slate-900 lg:min-h-0 lg:w-[15.5rem] xl:w-[16.5rem] ${
+      className={`flex min-h-[36vh] w-full shrink-0 flex-col overflow-hidden bg-slate-900 lg:min-h-0 lg:w-[15.5rem] xl:w-[16.5rem] ${
         panelOnLeft
           ? "border-b border-slate-800 lg:order-first lg:border-b-0 lg:border-r"
           : "border-t border-slate-800 lg:border-l lg:border-t-0"
       }`}
     >
-      <div className="shrink-0 border-b border-slate-800 px-2 py-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="text-[9px] font-medium uppercase tracking-wider text-slate-500">
-              {editingLabel ? "Editing" : "Current order"}
+      <div className="flex max-h-[42vh] shrink-0 flex-col border-b border-slate-800 lg:max-h-[38vh]">
+        <div className="shrink-0 px-2 pt-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[9px] font-medium uppercase tracking-wider text-slate-500">
+                {editingLabel ? "Editing" : "Current order"}
+              </div>
+              {editingLabel ? (
+                <div className="truncate text-xs font-semibold text-white">{editingLabel}</div>
+              ) : null}
             </div>
-            {editingLabel ? (
-              <div className="truncate text-xs font-semibold text-white">{editingLabel}</div>
-            ) : null}
-          </div>
-          <span className="max-w-[7.5rem] truncate rounded bg-amber-400/15 px-1 py-px font-mono text-[8px] font-semibold tracking-wide text-amber-300 ring-1 ring-amber-400/30" title={orderRef}>
-            {orderRef}
-          </span>
-        </div>
-        {/* Always visible — switch Dine-in / Takeaway / Delivery without leaving fullscreen */}
-        <div className="mt-1.5">{orderTypeSwitcher}</div>
-        {orderMode === "dine-in" ? (
-          <button
-            type="button"
-            onClick={onSelectTables}
-            className={`mt-1 flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[10px] transition ${
-              tableSelected
-                ? "border-amber-400/50 bg-amber-400/10 text-amber-200"
-                : "border-slate-600 bg-slate-950/50 text-slate-400 hover:border-slate-500 hover:text-slate-200"
-            }`}
-            title="Select or change dine-in table"
-          >
-            <span className="truncate">{tableLabel?.trim() || "Select table"}</span>
-            <span className="shrink-0 text-slate-500" aria-hidden>
-              ›
+            <span className="max-w-[7.5rem] truncate rounded bg-amber-400/15 px-1 py-px font-mono text-[8px] font-semibold tracking-wide text-amber-300 ring-1 ring-amber-400/30" title={orderRef}>
+              {orderRef}
             </span>
-          </button>
-        ) : null}
-        {showCustomerPanel && customerPanel ? (
-          <PosCustomerDetailsPanel tone="fullscreen" mode={orderMode} {...customerPanel} />
-        ) : null}
-        <p className="mt-0.5 text-[9px] text-slate-500">
-          {totalQty} item{totalQty === 1 ? "" : "s"}
-          {modeLabel ? ` · ${modeLabel}` : ""}
-        </p>
+          </div>
+          {/* Always visible — dine-in / takeaway / delivery stay on screen for every mode */}
+          <div className="mt-1.5">{orderTypeSwitcher}</div>
+          {orderMode === "dine-in" ? (
+            <button
+              type="button"
+              onClick={onSelectTables}
+              className={`mt-1 flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[10px] transition ${
+                tableSelected
+                  ? "border-amber-400/50 bg-amber-400/10 text-amber-200"
+                  : "border-slate-600 bg-slate-950/50 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+              }`}
+              title="Select or change dine-in table"
+            >
+              <span className="truncate">{tableLabel?.trim() || "Select table"}</span>
+              <span className="shrink-0 text-slate-500" aria-hidden>
+                ›
+              </span>
+            </button>
+          ) : null}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-1.5">
+          {showCustomerPanel && customerPanel ? (
+            <PosCustomerDetailsPanel tone="fullscreen" mode={orderMode} {...customerPanel} />
+          ) : null}
+          <p className="mt-0.5 text-[9px] text-slate-500">
+            {totalQty} item{totalQty === 1 ? "" : "s"}
+            {modeLabel ? ` · ${modeLabel}` : ""}
+          </p>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-1">
@@ -709,8 +713,16 @@ export function PosFullScreenMenuOverlay({
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8">
             {categories.map((c, index) => {
               const active = activeCategoryId === c.id;
-              const img = resolveMenuImageUrl(c.imageUrl);
               const count = items.filter((m) => m.isActive && m.categoryId === c.id).length;
+              const letterFallback = (
+                <span
+                  className={`absolute inset-0 flex items-center justify-center text-2xl font-bold ${
+                    active ? "bg-amber-400 text-slate-950" : "bg-slate-800 text-amber-300"
+                  }`}
+                >
+                  {(c.name.trim().charAt(0) || "?").toUpperCase()}
+                </span>
+              );
               return (
                 <button
                   key={c.id}
@@ -722,17 +734,12 @@ export function PosFullScreenMenuOverlay({
                       : "ring-1 ring-slate-600 hover:ring-amber-400/50"
                   }`}
                 >
-                  {img ? (
-                    <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                  ) : (
-                    <span
-                      className={`absolute inset-0 flex items-center justify-center text-2xl font-bold ${
-                        active ? "bg-amber-400 text-slate-950" : "bg-slate-800 text-amber-300"
-                      }`}
-                    >
-                      {(c.name.trim().charAt(0) || "?").toUpperCase()}
-                    </span>
-                  )}
+                  <SafeMenuImage
+                    imageUrl={c.imageUrl}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                    fallback={letterFallback}
+                  />
                   <span className="relative z-[1] mt-auto w-full bg-slate-950/75 px-1 py-1.5 text-[11px] font-bold leading-tight text-white">
                     {index + 1}. {c.name}
                     <span className="ml-1 text-[10px] font-semibold opacity-80">({count})</span>
@@ -752,24 +759,27 @@ export function PosFullScreenMenuOverlay({
         </p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {filtered.map((item) => {
-            const img = resolveMenuImageUrl(item.imageUrl);
             const hasPicker = resolvePosSellableVariants(item).length > 1;
             const priced = priceLabel?.(item);
             const display = priced?.display ?? menuItemDisplayPrice(item);
             const original = priced?.original;
             const qty = itemQtyInCart(item.id, cartLines);
+            const itemFallback = (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-700 text-lg font-bold text-slate-300">
+                {item.name.slice(0, 2).toUpperCase()}
+              </div>
+            );
             return (
               <div
                 key={item.id}
                 className="group relative aspect-square overflow-hidden rounded-lg border border-slate-600 bg-slate-800 transition hover:border-amber-400/70 hover:ring-1 hover:ring-amber-400/40"
               >
-                {img ? (
-                  <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-700 text-lg font-bold text-slate-300">
-                    {item.name.slice(0, 2).toUpperCase()}
-                  </div>
-                )}
+                <SafeMenuImage
+                  imageUrl={item.imageUrl}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  fallback={itemFallback}
+                />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent px-1.5 pb-1.5 pt-8 opacity-0 transition group-hover:opacity-100">
                   <span className="line-clamp-2 text-[12px] font-bold leading-tight text-white">
                     {item.featured ? <span className="mr-0.5 text-amber-400">★</span> : null}
@@ -1002,8 +1012,8 @@ export function PosFullScreenMenuOverlay({
         </button>
       </div>
 
-      {/* Always-visible search row — not squeezed off by toolbar chips */}
-      <div className="shrink-0 border-b border-slate-800 bg-slate-900 px-2.5 py-1.5">
+      {/* Always-visible search row — stays under the pinned order-type bar */}
+      <div className="z-20 shrink-0 border-b border-slate-800 bg-slate-900 px-2.5 py-1.5">
         <label className="relative flex w-full items-center">
           <span className="sr-only">Search menu item</span>
           <input

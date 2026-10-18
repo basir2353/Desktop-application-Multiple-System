@@ -77,7 +77,8 @@ export type PosSettings = {
    */
   kotChangeReasonGraceMinutes: number;
   /**
-   * Full-screen POS ticket/cart column side.
+   * Full-screen POS layout: which side holds the order/ticket column
+   * (menu/categories fill the other side). "right" = categories left, order right.
    * Local UI preference (not synced to mobile tax API).
    */
   fullScreenTicketPanelSide: "left" | "right";

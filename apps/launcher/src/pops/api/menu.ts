@@ -304,8 +304,9 @@ export async function deleteMenuItem(itemId: string): Promise<void> {
 }
 
 export async function uploadMenuImage(file: File): Promise<string> {
-  // Compress to a data-URL and store on the menu row. Railway disk /uploads is
-  // ephemeral, so path-based uploads disappear after deploy (broken/tiny POS photos).
+  // Always embed as data-URL on the menu row (Postgres). Never return a
+  // `/uploads/...` path — those files live on ephemeral API disk and vanish
+  // after Railway redeploy / app update.
   const { compressMenuImageToDataUrl } = await import("../lib/compressMenuImage");
   return compressMenuImageToDataUrl(file);
 }

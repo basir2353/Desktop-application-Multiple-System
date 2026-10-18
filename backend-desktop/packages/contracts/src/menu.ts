@@ -161,14 +161,15 @@ export const branchMenuSchema = z.object({
 export const createMenuCategorySchema = z.object({
   branchCode: z.string().min(1),
   name: z.string().min(1).max(64),
-  imageUrl: z.string().max(512).optional(),
+  /** Path (/uploads/...) or compressed data:image/... URL (persists on Railway). */
+  imageUrl: z.string().max(1_500_000).optional(),
   cookingUnitId: z.string().uuid().nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
 
 export const updateMenuCategorySchema = z.object({
   name: z.string().min(1).max(64).optional(),
-  imageUrl: z.string().max(512).nullable().optional(),
+  imageUrl: z.string().max(1_500_000).nullable().optional(),
   cookingUnitId: z.string().uuid().nullable().optional(),
   sortOrder: z.number().int().optional(),
   isActive: z.boolean().optional(),
@@ -179,7 +180,7 @@ export const createMenuItemSchema = z.object({
   categoryId: z.string().uuid(),
   name: z.string().min(1).max(120),
   secondaryName: z.string().max(120).nullable().optional(),
-  imageUrl: z.string().max(512).optional(),
+  imageUrl: z.string().max(1_500_000).optional(),
   portion: menuPortionSchema.optional(),
   /** 0 = complimentary / free item. */
   price: z.number().int().nonnegative().optional(),
@@ -205,7 +206,7 @@ export const updateMenuItemSchema = z.object({
   categoryId: z.string().uuid().optional(),
   name: z.string().min(1).max(120).optional(),
   secondaryName: z.string().max(120).nullable().optional(),
-  imageUrl: z.string().max(512).nullable().optional(),
+  imageUrl: z.string().max(1_500_000).nullable().optional(),
   portion: menuPortionSchema.nullable().optional(),
   /** 0 = complimentary / free item. */
   price: z.number().int().nonnegative().optional(),

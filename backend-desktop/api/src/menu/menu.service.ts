@@ -23,6 +23,7 @@ import {
 } from "@platform/database-pg";
 import { DRIZZLE } from "../drizzle/drizzle.tokens";
 import { hasDemoSeedFlag, markDemoSeedDone } from "../lib/demo-seed-flag";
+import { MenuUploadService } from "./menu-upload.service";
 
 import type { MenuPortion } from "@platform/contracts";
 
@@ -78,11 +79,18 @@ const DEFAULT_MENU: {
 
 @Injectable()
 export class MenuService implements OnModuleInit {
-  constructor(@Inject(DRIZZLE) private readonly db: PlatformPgDb) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PlatformPgDb,
+    private readonly uploads: MenuUploadService,
+  ) {}
 
   onModuleInit(): void {
     void this.seedDefaultMenus().catch(() => {
       /* schema may not be ready yet; the API must still become healthy */
+    });
+    // Rewrite surviving /uploads/... files into DB data-URLs before the next wipe.
+    void this.uploads.migrateEphemeralUploadPathsToDataUrls().catch(() => {
+      /* non-fatal — POS still boots if migrate fails */
     });
   }
 

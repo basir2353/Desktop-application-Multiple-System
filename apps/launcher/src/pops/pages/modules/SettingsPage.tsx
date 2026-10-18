@@ -795,7 +795,9 @@ export function SettingsPage(): JSX.Element {
           <p className="mt-1 text-[10px] text-slate-500">
             Category wise: categories on top, items below. All items: every dish in one list.
           </p>
-          <div className="mt-3 text-xs font-semibold text-slate-300">Ticket panel side (full screen)</div>
+          <div className="mt-3 text-xs font-semibold text-slate-300">
+            Category & order layout (full screen)
+          </div>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
@@ -809,7 +811,7 @@ export function SettingsPage(): JSX.Element {
                   : "bg-slate-800 text-slate-300 ring-1 ring-slate-700 disabled:opacity-40"
               }`}
             >
-              Right
+              Categories left · Order right
             </button>
             <button
               type="button"
@@ -823,11 +825,12 @@ export function SettingsPage(): JSX.Element {
                   : "bg-slate-800 text-slate-300 ring-1 ring-slate-700 disabled:opacity-40"
               }`}
             >
-              Left
+              Order left · Categories right
             </button>
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
-            Move the order summary / cart column to the left or right on full-screen POS.
+            Swap menu/categories and the current-order panel between left and right on full-screen
+            POS. Works the same for Dine-in, Takeaway, and Delivery.
           </p>
           <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
             <input
