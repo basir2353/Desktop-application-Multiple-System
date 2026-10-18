@@ -2829,8 +2829,8 @@ export function PosPage(): JSX.Element {
       if (!fullScreenMenuOpen) {
         customerPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
-      deliveryCustomerInputRef.current?.focus({ preventScroll: true });
-      deliveryCustomerInputRef.current?.select();
+      deliveryPhoneInputRef.current?.focus({ preventScroll: true });
+      deliveryPhoneInputRef.current?.select();
     }, 50);
   }
 
@@ -3344,7 +3344,7 @@ export function PosPage(): JSX.Element {
                   setDeliveryCustomerPickerOpen(true);
                   setDeliveryCustomerSearch(deliveryCustomer.trim());
                   window.setTimeout(() => {
-                    deliveryCustomerInputRef.current?.focus({ preventScroll: true });
+                    deliveryPhoneInputRef.current?.focus({ preventScroll: true });
                   }, 0);
                 } else {
                   setDeliveryCustomerPickerOpen(false);
@@ -4091,7 +4091,7 @@ export function PosPage(): JSX.Element {
                       setDeliveryCustomerPickerOpen(true);
                       setDeliveryCustomerSearch(deliveryCustomer.trim());
                       window.setTimeout(() => {
-                        deliveryCustomerInputRef.current?.focus({ preventScroll: true });
+                        deliveryPhoneInputRef.current?.focus({ preventScroll: true });
                       }, 0);
                     } else {
                       setDeliveryCustomerPickerOpen(false);
