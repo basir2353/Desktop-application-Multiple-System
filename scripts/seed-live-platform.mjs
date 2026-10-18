@@ -9,11 +9,12 @@
  *   DATABASE_URL="postgresql://..." node scripts/seed-live-platform.mjs
  */
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 
-const require = createRequire(join(tmpdir(), "seed-live-update", "package.json"));
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(join(__dirname, "..", "package.json"));
 const { Client } = require("pg");
 const bcrypt = require("bcryptjs");
 
@@ -89,6 +90,15 @@ const BUSINESSES = [
     adminName: "TradeFlow Owner",
     branchCode: "TF-HQ",
     branchName: "TradeFlow HQ",
+    city: "Islamabad",
+  },
+  {
+    systemType: "mobizone",
+    name: "MobiZone Demo",
+    adminEmail: "admin.mobizone@pops.demo",
+    adminName: "MobiZone Owner",
+    branchCode: "MZ-HQ",
+    branchName: "MobiZone HQ",
     city: "Islamabad",
   },
   {

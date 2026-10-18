@@ -1,0 +1,128 @@
+/* MobiZone — touch-friendly, phone-first helpers */
+
+.mz-app {
+  --mz-accent: #7c3aed;
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .mz-app {
+    padding-bottom: 1rem;
+  }
+}
+
+.mz-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-left: -1rem;
+  margin-right: -1rem;
+  margin-bottom: -1rem;
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, rgb(248 250 252) 70%, transparent);
+  border-top: 1px solid rgb(226 232 240);
+}
+
+.dark .mz-sticky-actions {
+  background: linear-gradient(to top, rgb(2 6 23) 70%, transparent);
+  border-top-color: rgb(30 41 59);
+}
+
+@media (min-width: 768px) {
+  .mz-sticky-actions {
+    position: static;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+  }
+}
+
+.mz-touch {
+  min-height: 2.75rem;
+}
+
+.mz-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .mz-quick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.mz-quick-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 4.5rem;
+  border-radius: 1rem;
+  border: 1px solid rgb(203 213 225);
+  background: rgb(255 255 255);
+  padding: 0.875rem 1rem;
+  text-decoration: none;
+  color: rgb(15 23 42);
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+
+.mz-quick-card:active {
+  transform: scale(0.98);
+}
+
+.mz-quick-card:hover {
+  border-color: rgb(167 139 250);
+  background: rgb(245 243 255);
+}
+
+.dark .mz-quick-card {
+  border-color: rgb(51 65 85);
+  background: rgb(30 41 59);
+  color: rgb(248 250 252);
+}
+
+.dark .mz-quick-card:hover {
+  border-color: rgb(139 92 246);
+  background: rgb(51 65 85);
+}
+
+.mz-quick-card--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #7c3aed, #c026d3);
+  color: rgb(255 255 255);
+}
+
+.mz-quick-card--primary:hover {
+  border-color: transparent;
+  background: linear-gradient(135deg, #8b5cf6, #d946ef);
+  color: rgb(255 255 255);
+}
+
+.dark .mz-quick-card--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #7c3aed, #c026d3);
+  color: rgb(255 255 255);
+}
+
+.mz-quick-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: inherit;
+}
+
+.mz-quick-note {
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  color: rgb(71 85 105);
+}
+
+.dark .mz-quick-note {
+  color: rgb(148 163 184);
+}
+
+.mz-quick-card--primary .mz-quick-note,
+.dark .mz-quick-card--primary .mz-quick-note {
+  color: rgb(237 233 254);
+}

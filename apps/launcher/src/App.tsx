@@ -14,11 +14,12 @@ import { BranchGate } from "./pops/components/BranchGate";
 import { PopsRootRedirect } from "./pops/components/PopsRootRedirect";
 import { PopsShell } from "./pops/layouts/PopsShell";
 import { BranchSelectPage } from "./pops/pages/BranchSelectPage";
-import { HAS_GENERAL_STORE, HAS_PHARMACY, HAS_RESTAURANT, HAS_TRADEFLOW, isSingleSystemEdition } from "./lib/edition";
+import { HAS_GENERAL_STORE, HAS_MOBIZONE, HAS_PHARMACY, HAS_RESTAURANT, HAS_TRADEFLOW, isSingleSystemEdition } from "./lib/edition";
 import { restaurantRoutes } from "./routes/restaurantRoutes";
 import { pharmacyRoutes } from "./routes/pharmacyRoutes";
 import { generalStoreRoutes } from "./routes/generalStoreRoutes";
 import { tradeflowRoutes } from "./routes/tradeflowRoutes";
+import { mobizoneRoutes } from "./routes/mobizoneRoutes";
 import { sharedRoutes } from "./routes/sharedRoutes";
 import { HistoryNavBar } from "./components/HistoryNavBar";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
@@ -173,6 +174,7 @@ export function App(): JSX.Element {
                 {HAS_PHARMACY ? pharmacyRoutes() : null}
                 {HAS_GENERAL_STORE ? generalStoreRoutes() : null}
                 {HAS_TRADEFLOW ? tradeflowRoutes() : null}
+                {HAS_MOBIZONE ? mobizoneRoutes() : null}
               </Route>
             </Route>
           </Route>

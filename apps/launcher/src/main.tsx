@@ -22,12 +22,29 @@ try {
     localStorage.removeItem("platform-system-v1");
     localStorage.removeItem("platform-session-v1");
   }
-  // Force Live Railway API (local Vite UI → hosted backend).
-  // Also honor ?api=live|railway. Default this session to Live when ?api=local is absent.
+  // API host: honor ?api=local|live|railway. In Vite DEV with a local VITE_API_BASE_URL,
+  // default to Local API so newly seeded systems (e.g. MobiZone) work without Railway deploy.
   // Must update both localStorage AND the zustand store — persist may have already
-  // hydrated "local" into memory before this block runs (import order).
+  // hydrated before this block runs (import order).
   const apiParam = params.get("api");
-  if (apiParam === "live" || apiParam === "railway" || apiParam !== "local") {
+  const bakedApi = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+  const preferLocalDev =
+    import.meta.env.DEV &&
+    (bakedApi.includes("127.0.0.1") || bakedApi.includes("localhost"));
+  if (apiParam === "local" || (preferLocalDev && apiParam !== "live" && apiParam !== "railway")) {
+    localStorage.setItem(
+      "platform-data-mode-v2",
+      JSON.stringify({
+        state: { dataMode: "local", apiPreset: "local", cloudApiUrl: "", lastSyncedAt: null },
+        version: 0,
+      }),
+    );
+    useDataModeStore.setState({
+      dataMode: "local",
+      apiPreset: "local",
+      cloudApiUrl: "",
+    });
+  } else if (apiParam === "live" || apiParam === "railway") {
     localStorage.setItem(
       "platform-data-mode-v2",
       JSON.stringify({

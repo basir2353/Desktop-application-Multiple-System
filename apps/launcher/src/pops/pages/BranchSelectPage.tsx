@@ -9,6 +9,7 @@ import { getBusinessSystem } from "../../lib/businessSystems";
 import { PHARMACY_ROLE_LABELS } from "../../pharmacy/spec/nav";
 import { STORE_ROLE_LABELS } from "../../store/spec/nav";
 import { TRADEFLOW_ROLE_LABELS } from "../../tradeflow/spec/nav";
+import { MOBIZONE_ROLE_LABELS } from "../../mobizone/spec/nav";
 import { fetchPopsBranches } from "../api/operations";
 import { isMonitoringBranch } from "../lib/branchScope";
 import {
@@ -54,6 +55,13 @@ const tradeflowRoles: { id: PopsRole; label: string }[] = [
   { id: "accountant", label: TRADEFLOW_ROLE_LABELS.accountant! },
 ];
 
+const mobizoneRoles: { id: PopsRole; label: string }[] = [
+  { id: "admin", label: MOBIZONE_ROLE_LABELS.admin! },
+  { id: "manager", label: MOBIZONE_ROLE_LABELS.manager! },
+  { id: "cashier", label: MOBIZONE_ROLE_LABELS.cashier! },
+  { id: "accountant", label: MOBIZONE_ROLE_LABELS.accountant! },
+];
+
 function toPopsBranch(row: { id: string; code: string; name: string; city: string }): PopsBranch {
   return { id: row.id, code: row.code, name: row.name, city: row.city };
 }
@@ -80,7 +88,9 @@ export function BranchSelectPage(): JSX.Element {
         ? storeRoles
         : systemId === "tradeflow"
           ? tradeflowRoles
-          : restaurantRoles;
+          : systemId === "mobizone"
+            ? mobizoneRoles
+            : restaurantRoles;
   const permissions = claims?.permissions ?? [];
   const canManageUsers = canManageOrgUsers(permissions);
   const canSetupWithoutBranch = canEnterErpWithoutBranch(permissions);

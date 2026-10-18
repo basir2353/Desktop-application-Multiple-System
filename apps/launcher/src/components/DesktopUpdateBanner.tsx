@@ -139,6 +139,11 @@ export function DesktopUpdateBanner(): JSX.Element | null {
           ? state.manualUrl
           : null;
       setState({ kind: "error", message, manualUrl });
+      // Signing key rotated: auto-update cannot verify. Open the full installer
+      // so the same install folder is overwritten in place (one-time bridge).
+      if (manualUrl && isSignatureMismatch(message)) {
+        void openExternal(manualUrl);
+      }
     }
   }
 
@@ -169,7 +174,7 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       >
         <span>
           {signatureIssue
-            ? "Auto-update needs a one-time installer (signing key changed)."
+            ? "Update needs one-time install (same folder). Run the installer, then auto-update works."
             : `Update failed: ${state.message}`}
         </span>
         {state.manualUrl ? (
@@ -178,7 +183,7 @@ export function DesktopUpdateBanner(): JSX.Element | null {
             className="rounded bg-rose-700 px-2.5 py-1 text-white hover:bg-rose-800"
             onClick={() => void openExternal(state.manualUrl!)}
           >
-            Download installer
+            Install update now
           </button>
         ) : (
           <button

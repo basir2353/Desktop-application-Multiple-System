@@ -7,9 +7,15 @@ import {
 import { pharmacyNavItems } from "../pharmacy/spec/nav";
 import { storeNavItems } from "../store/spec/nav";
 import { tradeflowNavItems } from "../tradeflow/spec/nav";
+import { mobizoneNavItems } from "../mobizone/spec/nav";
 import { frontendIdToSystemType, systemTypeToFrontendId, type SystemType } from "@platform/contracts";
 
-export type BusinessSystemId = "restaurant" | "pharmacy" | "general-store" | "tradeflow";
+export type BusinessSystemId =
+  | "restaurant"
+  | "pharmacy"
+  | "general-store"
+  | "tradeflow"
+  | "mobizone";
 
 export type BusinessSystem = {
   id: BusinessSystemId;
@@ -107,6 +113,29 @@ export const businessSystems: Record<BusinessSystemId, BusinessSystem> = {
       "content",
     ]),
   },
+  mobizone: {
+    id: "mobizone",
+    name: "MobiZone ERP",
+    shortName: "MobiZone",
+    tagline: "Mobile buy · sell · IMEI stock",
+    description:
+      "Buy/sell phones with CNIC photos, shopkeeper ledgers, bank accounts, IMEI search, WhatsApp statements, and printable P&L.",
+    accentClass: "text-violet-400",
+    iconLetter: "MZ",
+    gradientClass: "from-violet-500 to-fuchsia-600",
+    routePrefix: "/pops",
+    hiddenNavPaths: new Set([
+      "menu",
+      "tables",
+      "kitchen",
+      "waiter",
+      "delivery",
+      "inventory/recipes",
+      "inventory/ingredients",
+      "manufacturing",
+      "content",
+    ]),
+  },
 };
 
 export const businessSystemList: BusinessSystem[] = [
@@ -114,6 +143,7 @@ export const businessSystemList: BusinessSystem[] = [
   businessSystems.pharmacy,
   businessSystems["general-store"],
   businessSystems.tradeflow,
+  businessSystems.mobizone,
 ];
 
 export function isBusinessSystemId(value: string): value is BusinessSystemId {
@@ -121,7 +151,8 @@ export function isBusinessSystemId(value: string): value is BusinessSystemId {
     value === "restaurant" ||
     value === "pharmacy" ||
     value === "general-store" ||
-    value === "tradeflow"
+    value === "tradeflow" ||
+    value === "mobizone"
   );
 }
 
@@ -160,6 +191,9 @@ export function getErpEntryPath(systemId: BusinessSystemId, hasBranch: boolean):
   if (systemId === "tradeflow") {
     return "/pops/tradeflow/pos";
   }
+  if (systemId === "mobizone") {
+    return "/pops/mobizone/sell";
+  }
   // Restaurant dashboard is admin-only; callers with a role should use erpEntryPathForRole.
   return "/pops/pos";
 }
@@ -193,6 +227,9 @@ export function resolveBusinessSystemFromPath(pathname: string): BusinessSystemI
   if (pathname.startsWith("/pops/tradeflow/") || pathname === "/pops/tradeflow") {
     return "tradeflow";
   }
+  if (pathname.startsWith("/pops/mobizone/") || pathname === "/pops/mobizone") {
+    return "mobizone";
+  }
   return null;
 }
 
@@ -202,6 +239,7 @@ export function isRestaurantExclusivePath(pathname: string): boolean {
   if (sub.startsWith("pharmacy/") || sub === "pharmacy") return false;
   if (sub.startsWith("store/") || sub === "store") return false;
   if (sub.startsWith("tradeflow/") || sub === "tradeflow") return false;
+  if (sub.startsWith("mobizone/") || sub === "mobizone") return false;
   if (isSharedErpSubpath(sub)) return false;
   return true;
 }
@@ -230,6 +268,9 @@ export function getNavItemsForSystem(id: BusinessSystemId): PopsNavItem[] {
   }
   if (id === "tradeflow") {
     return tradeflowNavItems;
+  }
+  if (id === "mobizone") {
+    return mobizoneNavItems;
   }
   const hidden = businessSystems[id].hiddenNavPaths;
   const out: PopsNavItem[] = [];
