@@ -2597,14 +2597,17 @@ export async function renderTicketHtmlToPngBytes(
     idoc.close();
     await new Promise<void>((resolve) => {
       const done = () => resolve();
-      const t = window.setTimeout(done, 1200);
+      const t = window.setTimeout(done, 400);
       iframe.onload = () => {
         window.clearTimeout(t);
         requestAnimationFrame(() => requestAnimationFrame(done));
       };
     });
     try {
-      await idoc.fonts?.ready;
+      await Promise.race([
+        idoc.fonts?.ready ?? Promise.resolve(),
+        new Promise<void>((r) => window.setTimeout(r, 300)),
+      ]);
     } catch {
       /* ignore */
     }
@@ -2632,12 +2635,12 @@ export async function renderTicketHtmlToPngBytes(
               }),
           ),
         ),
-        new Promise<void>((resolve) => window.setTimeout(resolve, 2500)),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 700)),
       ]);
     } catch {
       /* ignore */
     }
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 16));
     const body = idoc.body;
     if (!body) return null;
 
@@ -2832,6 +2835,26 @@ export async function printTicketDetailed(input: PrintTicketInput): Promise<Prin
   }
 }
 
+/** Suppress double KOT for the same order+printer within a short window (double-click / dual path). */
+const recentKotPrintKeys = new Map<string, number>();
+const KOT_DEDUPE_MS = 12_000;
+
+function shouldSkipDuplicateKotPrint(input: PrintTicketInput, systemPrinterName: string | undefined): boolean {
+  if (input.kind !== "kot") return false;
+  const orderKey = (input.orderRef ?? input.billRef ?? "").trim().toLowerCase();
+  if (!orderKey) return false;
+  const printerKey = (systemPrinterName ?? input.printerName ?? "default").trim().toLowerCase();
+  const key = `${input.branchCode.trim().toUpperCase()}|${orderKey}|${printerKey}`;
+  const now = Date.now();
+  for (const [k, at] of recentKotPrintKeys) {
+    if (now - at > KOT_DEDUPE_MS * 3) recentKotPrintKeys.delete(k);
+  }
+  const prev = recentKotPrintKeys.get(key);
+  if (prev != null && now - prev < KOT_DEDUPE_MS) return true;
+  recentKotPrintKeys.set(key, now);
+  return false;
+}
+
 async function printTicketDetailedCore(input: PrintTicketInput): Promise<PrintJobResult> {
   const docTitle = input.printerName
     ? `${input.kind === "receipt" ? "Receipt" : "KOT"} · ${input.printerName}`
@@ -2839,7 +2862,11 @@ async function printTicketDetailedCore(input: PrintTicketInput): Promise<PrintJo
       ? "Receipt"
       : "KOT";
   const systemPrinterName = asPrinterName(input.systemPrinterName);
-  const copies = Math.max(1, input.copies ?? 1);
+  if (shouldSkipDuplicateKotPrint(input, systemPrinterName)) {
+    return { ok: true, usedNamedPrinter: Boolean(systemPrinterName) };
+  }
+  // Kitchen slips: one physical copy per job (profile "copies: 2" was causing double KOTs).
+  const copies = input.kind === "kot" ? 1 : Math.max(1, input.copies ?? 1);
   const thermal = resolveThermalSettings(input);
   const paper = resolvePaperSize(input, thermal);
   // Prefer data-URL logo so silent html-to-image is not blocked by remote CORS.
@@ -3206,7 +3233,7 @@ export function posRecentOrderToReceiptPrint(
   branchCode: string,
   order: PosRecentOrder,
 ): Omit<PrintTicketInput, "kind"> {
-  if (order.kind === "paid" && order.bill) {
+  if (order.bill) {
     return billToPrintInput(branchName, branchCode, order.bill);
   }
 

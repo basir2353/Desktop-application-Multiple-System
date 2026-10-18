@@ -1033,7 +1033,7 @@ function markSilentJobExecuted(jobId: string): boolean {
   return false;
 }
 
-/** Returns true when this mobile order+kind was already started/printed recently (skip). */
+/** Returns true when this order+kind was already started/printed recently (skip). */
 function markMobileOrderPrintStarted(branchCode: string, kind: string, orderId: string): boolean {
   const key = `${branchCode.trim().toUpperCase()}|${kind}|${orderId.trim()}`;
   const now = Date.now();
@@ -1062,7 +1062,12 @@ async function executeSilentQueuedJob(job: BranchQueueJob): Promise<{ ok: boolea
   const sectionId = payload.sectionId?.trim() || null;
   const fromMobile = String(payload.meta?.source ?? "").toLowerCase() === "waiter-mobile";
   const orderKey = (job.orderId?.trim() || payload.orderRef?.trim() || "").trim();
-  if (fromMobile && orderKey && markMobileOrderPrintStarted(job.branchCode, kind, orderKey)) {
+  // Dedupe: mobile any kind, plus all KOT jobs (POS direct + queue double-claim).
+  if (
+    orderKey &&
+    (fromMobile || kind === "kot") &&
+    markMobileOrderPrintStarted(job.branchCode, kind, orderKey)
+  ) {
     return { ok: true, printer: undefined };
   }
   /** One mobile tap → one slip (never fan out profile copies into N PDF windows). */

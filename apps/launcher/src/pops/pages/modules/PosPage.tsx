@@ -414,6 +414,8 @@ export function PosPage(): JSX.Element {
   /** Set before completed checkout; shown after pay (never blocks sale). */
   const pendingInventoryWarningsRef = useRef<string[]>([]);
   const autoPrintedOrderKeysRef = useRef<Set<string>>(new Set());
+  /** Last Order/Print-order KOT — Pay must reuse this ref and never create/print a second ticket. */
+  const lastPrintedKotRef = useRef<{ orderRef: string; ticketId: string; at: number } | null>(null);
   const latestOrdersQuickPrintRef = useRef<(() => boolean) | null>(null);
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
@@ -1730,7 +1732,7 @@ export function PosPage(): JSX.Element {
       applyTicketToPos(fresh);
       return;
     }
-    if (order.bill?.status === "held") {
+    if (order.bill?.status === "held" || order.bill?.status === "open") {
       if (menuItems.length === 0) {
         pendingEditRef.current = { editBillId: order.bill.id };
         setPrintNotice({ message: "Loading menu to open held bill for edit…", tone: "success" });
@@ -1769,7 +1771,7 @@ export function PosPage(): JSX.Element {
       setCheckoutModal("pay");
       return;
     }
-    if (order.bill?.status === "held") {
+    if (order.bill?.status === "held" || order.bill?.status === "open") {
       if (menuItems.length === 0) {
         pendingEditRef.current = { editBillId: order.bill.id };
         setCheckoutModal("pay");
@@ -1802,6 +1804,7 @@ export function PosPage(): JSX.Element {
       );
       if (!ok) return;
     }
+    pendingEditRef.current = null;
     resetAfterBill();
     setPrintNotice({ message: "New order ready — add items from the menu.", tone: "success" });
   }
@@ -1975,8 +1978,16 @@ export function PosPage(): JSX.Element {
     onSuccess: async (ticket) => {
       try {
         const wasTicketEdit = editingOrder?.kind === "ticket";
+        const ticketOrderRef = (ticket.orderRef ?? orderRef).trim();
+        if (ticketOrderRef) {
+          lastPrintedKotRef.current = {
+            orderRef: ticketOrderRef,
+            ticketId: ticket.id,
+            at: Date.now(),
+          };
+        }
         // Always silent-print to assigned OS printers (never force Windows dialog / PDF).
-        const printed = await printKitchenKotsOnPay(ticket.orderRef ?? orderRef);
+        const printed = await printKitchenKotsOnPay(ticketOrderRef || orderRef);
         const kotOk = printed.errors.length === 0;
         const printErrors = printed.errors;
         if (!wasTicketEdit && autoPrintOrderForMode(posSettings, mode)) {
@@ -2127,11 +2138,20 @@ export function PosPage(): JSX.Element {
           sharedOrderRef ||
           (orderRef.trim() ? orderRef.trim() : undefined);
         const existingTicket = findOpenKitchenTicketByOrderRef(reservedOrExisting);
-        if (existingTicket) {
+        const recentKot = lastPrintedKotRef.current;
+        const recentRef = (recentKot?.orderRef ?? "").trim().toLowerCase();
+        const wantRef = (reservedOrExisting ?? "").trim().toLowerCase();
+        const recentKotStillHot =
+          Boolean(recentKot) &&
+          Date.now() - recentKot!.at < 10 * 60_000 &&
+          Boolean(wantRef) &&
+          recentRef === wantRef;
+        if (existingTicket || recentKotStillHot) {
           // Order/Print-order already created + printed this # — bill must match kitchen.
           sharedOrderRef =
-            existingTicket.orderRef?.trim() ||
-            existingTicket.ticketRef?.trim() ||
+            existingTicket?.orderRef?.trim() ||
+            existingTicket?.ticketRef?.trim() ||
+            recentKot?.orderRef?.trim() ||
             reservedOrExisting;
           kotSent = false;
         } else {
@@ -2305,7 +2325,8 @@ export function PosPage(): JSX.Element {
       }
       pendingCloseAfterPayRef.current = false;
 
-      // Final customer invoice after Pay / Print invoice (PRA when Active, else simple slip).
+      // Final customer invoice after Pay / Print invoice.
+      // Print immediately (use PRA already on the bill). Never block 30s+ on live PRA issue.
       let invoiceHint = "";
       if (bill.status === "completed" && branch?.code) {
         try {
@@ -2315,14 +2336,18 @@ export function PosPage(): JSX.Element {
           );
           const profile = resolveReceiptPrinter(branch.code, printUserId);
           let payload = billToPrintInput(branch.name, branch.code, bill);
-          if (praFeatureActive) {
-            const resolved = await resolvePraFooterForPaidBill({
-              branchCode: branch.code,
-              bill,
-              issueIfMissing: true,
-            });
-            if (resolved.footer) {
-              payload = { ...payload, praFiscal: resolved.footer };
+          if (praFeatureActive && bill.praInvoiceNumber) {
+            try {
+              const resolved = await resolvePraFooterForPaidBill({
+                branchCode: branch.code,
+                bill,
+                issueIfMissing: false,
+              });
+              if (resolved.footer) {
+                payload = { ...payload, praFiscal: resolved.footer };
+              }
+            } catch {
+              /* print simple slip */
             }
           }
           const printed = await printReceiptDetailed(withPrinterProfile(payload, profile));
@@ -2332,6 +2357,14 @@ export function PosPage(): JSX.Element {
               : " Final invoice printed.";
           } else {
             invoiceHint = ` Final invoice print failed${printed.error ? `: ${printed.error}` : ""} — use Print on the order.`;
+          }
+          // Issue PRA in background for tax records (does not delay the slip).
+          if (praFeatureActive && !bill.praInvoiceNumber) {
+            void resolvePraFooterForPaidBill({
+              branchCode: branch.code,
+              bill,
+              issueIfMissing: true,
+            }).catch(() => undefined);
           }
         } catch (printErr) {
           invoiceHint = ` Final invoice print failed: ${
@@ -2515,7 +2548,7 @@ export function PosPage(): JSX.Element {
         ...base,
         lines: part.lines,
         printerName: part.label ?? base.printerName,
-        copies: Math.max(1, base.copies ?? 1),
+        copies: 1,
       });
       const target = base.systemPrinterName ?? base.printerName ?? "Kitchen";
       if (!result.ok) {
@@ -2681,7 +2714,7 @@ export function PosPage(): JSX.Element {
 
   /**
    * Full-screen Quick Bill / Close Order: settle as cash immediately.
-   * Does NOT open the payment-method modal.
+   * Does NOT open the payment-method modal — confirm first so bills are not marked Paid by accident.
    */
   function runSilentCashComplete(noticeLabel: string): void {
     setPrintNotice(null);
@@ -2692,6 +2725,10 @@ export function PosPage(): JSX.Element {
     }
     if (cart.length === 0 || checkoutMutation.isPending || orderFlowBusy || createOrderMutation.isPending)
       return;
+    const ok = window.confirm(
+      `${noticeLabel}: mark this bill Paid as cash (Rs ${total.toLocaleString()}) and close?`,
+    );
+    if (!ok) return;
     pendingCloseAfterPayRef.current = true;
     checkoutMutation.mutate({
       intent: "pay",

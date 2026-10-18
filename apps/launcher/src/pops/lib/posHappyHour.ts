@@ -2,9 +2,15 @@ import type { MenuItem } from "@platform/contracts";
 import { pickDefaultVariant, type PosCartLine, buildCartLine, nextCartSortOrder } from "./posCart";
 import type { HappyHourSettings, HappyHourTimeSlot } from "./happyHourSettings";
 
-function isHourInWindow(hour: number, startHour: number, endHour: number): boolean {
-  if (startHour === endHour) return true;
+/**
+ * Active when current hour is inside [start, end).
+ * start === end is treated as inactive (not 24h) so a misconfigured slot
+ * cannot keep injecting free gift items all day.
+ */
+export function isHourInWindow(hour: number, startHour: number, endHour: number): boolean {
+  if (startHour === endHour) return false;
   if (startHour < endHour) return hour >= startHour && hour < endHour;
+  // Overnight window, e.g. 22 → 2
   return hour >= startHour || hour < endHour;
 }
 
@@ -84,11 +90,20 @@ export function applyHappyHourBonus(
   now = new Date(),
 ): PosCartLine[] {
   const pricedCart = applyHappyHourCartPricing(paidCart, settings, now);
+  if (!settings.enabled) return pricedCart;
   const bonus = resolveHappyHourBonusItem(menuItems, settings, now);
   if (!bonus || pricedCart.length === 0) return pricedCart;
+  // Never auto-inject a gift that is the same catalog item the cashier just added.
+  const paidKeys = new Set(
+    pricedCart
+      .filter((l) => !l.isComplimentary && !l.key.startsWith("hh-bonus:"))
+      .map((l) => `${l.item.id}:${l.variant?.id ?? ""}`),
+  );
+  const bonusKey = `${bonus.item.id}:${bonus.variant?.id ?? ""}`;
+  if (paidKeys.has(bonusKey)) return pricedCart;
 
   const bonusLine = buildHappyHourBonusLine(bonus.item, bonus.variant);
-  const alreadyHasBonus = pricedCart.some((l) => l.key === bonusLine.key);
+  const alreadyHasBonus = pricedCart.some((l) => l.key === bonusLine.key || l.key.startsWith("hh-bonus:"));
   if (alreadyHasBonus) return pricedCart;
 
   const sortOrder = nextCartSortOrder(pricedCart);

@@ -73,7 +73,7 @@ export function canChangePosRecentOrderTable(order: PosRecentOrder): boolean {
 
 export function canPayPosRecentOrder(order: PosRecentOrder): boolean {
   if (order.kind === "pending" && order.kitchenTicket) return true;
-  if (order.bill?.status === "held") return true;
+  if (order.bill?.status === "held" || order.bill?.status === "open") return true;
   return false;
 }
 
@@ -81,7 +81,8 @@ export function canEditPosRecentOrder(order: PosRecentOrder): boolean {
   if (order.kind === "pending" && order.kitchenTicket && order.kitchenTicket.status !== "done") {
     return true;
   }
-  if (order.kind === "paid" && order.bill?.status === "held") {
+  // Held / open bills stay editable until payment completes (kind may be "pending").
+  if (order.bill?.status === "held" || order.bill?.status === "open") {
     return true;
   }
   return false;
@@ -198,13 +199,31 @@ function mapTicket(t: KitchenTicket, settings: PosSettings): PosRecentOrder {
   };
 }
 
+function billListStatus(status: Bill["status"]): {
+  kind: PosRecentOrder["kind"];
+  statusLabel: string;
+  statusTone: PosRecentOrder["statusTone"];
+} {
+  // Unpaid / unsettled must never show as Paid (open was previously mislabeled).
+  if (status === "held" || status === "open") {
+    return { kind: "pending", statusLabel: "Pending", statusTone: "warning" };
+  }
+  if (status === "void") {
+    return { kind: "paid", statusLabel: "Void", statusTone: "neutral" };
+  }
+  if (status === "completed") {
+    return { kind: "paid", statusLabel: "Paid", statusTone: "success" };
+  }
+  return { kind: "pending", statusLabel: "Pending", statusTone: "warning" };
+}
+
 function mapBill(b: Bill): PosRecentOrder {
   const lines: PosOrderLine[] = b.lines.map((l) => ({
     label: l.label,
     qty: l.qty,
     unitPrice: l.unitPrice,
   }));
-  const isHeld = b.status === "held";
+  const listStatus = billListStatus(b.status);
   return {
     id: `bill-${b.id}`,
     ref: b.orderRef ?? b.billRef,
@@ -212,9 +231,9 @@ function mapBill(b: Bill): PosRecentOrder {
     stationLabel: b.tableLabel,
     summary: lines.map((l) => `${l.label} x${l.qty}`).join(", "),
     total: b.total,
-    kind: "paid",
-    statusLabel: isHeld ? "On hold" : "Paid",
-    statusTone: isHeld ? "warning" : "success",
+    kind: listStatus.kind,
+    statusLabel: listStatus.statusLabel,
+    statusTone: listStatus.statusTone,
     createdAt: b.createdAt,
     orderTakerName: b.waiterName?.trim() || null,
     updatedByName: b.updatedByName?.trim() || null,
@@ -282,6 +301,7 @@ export type PosRecentOrderModeFilter = "all" | "Paid" | PosOrderModeLabel;
 
 /** Completed (cashed) bills only — shown under the Paid tab (incl. Closed). */
 export function isPaidPosRecentOrder(order: PosRecentOrder): boolean {
+  if (order.bill?.status === "held" || order.bill?.status === "open") return false;
   if (order.bill?.status === "completed") return true;
   return (
     order.kind === "paid" &&

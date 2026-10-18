@@ -667,9 +667,15 @@ export function PosLatestOrdersPanel({
       // Status first — Paid tab shows "Closed" even if PRA preview is blocked.
       markOrderClosed(order);
 
-      if (!praFakeEnabled && !praRealEnabled) {
-        const simple = await buildPaidReceiptInput(order, { embedPra: false });
-        if (simple && await autoPrintFinalBill(order, simple)) return;
+      // Fast path: print final bill immediately (no PRA network wait — was 30s+).
+      const simple = await buildPaidReceiptInput(order, {
+        embedPra: Boolean(order.bill?.praInvoiceNumber),
+        issueIfMissing: false,
+        skipBillRefresh: true,
+      });
+      if (simple) {
+        await autoPrintFinalBill(order, simple);
+      } else if (!praFakeEnabled && !praRealEnabled) {
         window.alert(
           "Order Closed.\n\nPRA invoice ke liye Settings → Tax mein FPRA ya Real PRA Active karein.\nSimple slip ke liye Print use karein.",
         );
@@ -677,51 +683,25 @@ export function PosLatestOrdersPanel({
         return;
       }
 
-      const built = await buildPaidReceiptInput(order, { embedPra: true });
-      if (!built) {
-        window.alert(
-          `Order ${order.ref} Closed, lekin bill load nahi hui. Paid tab se Print / Close dobara try karein.`,
-        );
+      if (!praFakeEnabled && !praRealEnabled) {
+        onNotice?.(`Order ${order.ref} Closed.`, "success");
         return;
       }
 
-      const fiscal = built.input.praFiscal;
-      const hasPra = Boolean(fiscal?.invoiceNumber);
-      const mode =
-        fiscal?.mode ??
-        (praRealEnabled ? "real" : praFakeEnabled ? "fake" : null);
-      const modeLabel = mode === "real" ? "Real PRA" : mode === "fake" ? "FPRA" : "PRA";
-
-      if (!hasPra) {
-        // buildPaidReceiptInput already alerts when it has a notice (e.g. not connected).
-        if (!built.notice) {
-          const missing =
-            mode === "real"
-              ? `Order ${order.ref} Closed.\n\nReal PRA invoice nahi bani (Invoice # / QR missing).\n\nSettings → Tax → Real PRA: Connect / Registered + Production token check karein, phir Close dobara try karein.`
-              : `Order ${order.ref} Closed.\n\nFPRA invoice nahi bani (Invoice # / QR missing).\n\nSettings → Tax → FPRA Active check karein. Simple slip ke liye Print use karein.`;
-          window.alert(missing);
-        }
-        onNotice?.(
-          built.notice ||
-            (mode === "real"
-              ? `Order ${order.ref} Closed — Real PRA Invoice # / QR missing.`
-              : `Order ${order.ref} Closed — FPRA Invoice # / QR missing.`),
-          "error",
-        );
-        return;
-      }
-
-      if (await autoPrintFinalBill(order, built)) return;
-
-      setPrintPreview({
-        input: built.input,
-        printerName: built.printerName,
-        systemPrinterName: built.systemPrinterName,
-        title: `${modeLabel} invoice · ${order.ref}`,
-        subtitle: `${modeLabel} Invoice # ${fiscal!.invoiceNumber} · QR + logo`,
-      });
-      if (built.notice) onNotice?.(built.notice, "success");
-      else onNotice?.(`Order ${order.ref} Closed — ${modeLabel} invoice ready.`, "success");
+      // Background: issue PRA for tax records only (do not hold or re-print the slip).
+      void buildPaidReceiptInput(order, {
+        embedPra: true,
+        issueIfMissing: true,
+        skipBillRefresh: true,
+      })
+        .then((built) => {
+          if (!built?.input.praFiscal?.invoiceNumber) return;
+          onNotice?.(
+            `Order ${order.ref} Closed — PRA #${built.input.praFiscal.invoiceNumber} saved (use RPRA to reprint).`,
+            "success",
+          );
+        })
+        .catch(() => undefined);
     })();
   }
 
