@@ -115,6 +115,7 @@ import {
   canPayPosRecentOrder,
   filterDismissedPosOrders,
   filterPosRecentOrdersByMode,
+  isPaidPosRecentOrder,
   withClosedPosOrderStatus,
   type PosRecentOrder,
 } from "../../lib/recentOrders";
@@ -1226,10 +1227,11 @@ export function PosPage(): JSX.Element {
   }
 
   function setQty(lineKey: string, qty: number): void {
+    const safeQty = Number.isFinite(qty) ? Math.max(0, Math.round(qty)) : 0;
     setCart((prev) => {
-      if (qty <= 0) return prev.filter((l) => l.key !== lineKey);
+      if (safeQty <= 0) return prev.filter((l) => l.key !== lineKey);
       // Keep cart position fixed — only +/- quantity, do not bump sortOrder.
-      return prev.map((l) => (l.key === lineKey ? { ...l, qty } : l));
+      return prev.map((l) => (l.key === lineKey ? { ...l, qty: safeQty } : l));
     });
   }
 
@@ -1237,31 +1239,58 @@ export function PosPage(): JSX.Element {
   function lineWasPrintedToKitchen(lineKey: string): boolean {
     const baseline = kotBaselineRef.current;
     if (!baseline || baseline.length === 0) return false;
-    return baseline.some((row) => row.key === lineKey && row.qty > 0);
+    if (baseline.some((row) => row.key === lineKey && row.qty > 0)) return true;
+    // Key drift after reload (note/variant) — still treat same catalog line as printed.
+    const line = cart.find((l) => l.key === lineKey);
+    if (!line || line.isComplimentary) return false;
+    return baseline.some(
+      (row) =>
+        row.qty > 0 &&
+        row.item.id === line.item.id &&
+        (row.variant?.id ?? null) === (line.variant?.id ?? null),
+    );
+  }
+
+  /** Push Update to kitchen / held bill after a qty edit (debounced for rapid − clicks). */
+  const qtyKitchenSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function scheduleKitchenSyncAfterQtyEdit(): void {
+    if (editingOrder?.kind !== "ticket" && editingOrder?.kind !== "held-bill") return;
+    if (qtyKitchenSyncTimerRef.current) clearTimeout(qtyKitchenSyncTimerRef.current);
+    const kind = editingOrder.kind;
+    qtyKitchenSyncTimerRef.current = setTimeout(() => {
+      qtyKitchenSyncTimerRef.current = null;
+      if (kind === "held-bill") updateHeldBillMutation.mutate();
+      else createOrderMutation.mutate();
+    }, 450);
   }
 
   /**
    * Qty − / remove: if the item was already printed on a KOT AND the grace window
    * has expired, ask for a reason immediately (per item). Increases never need a reason.
+   * Qty never goes below 0. While editing a sent order, decreases sync to kitchen.
    */
   function requestSetQty(lineKey: string, nextQty: number): void {
     const line = cart.find((l) => l.key === lineKey);
     if (!line) return;
+    const clamped = Number.isFinite(nextQty) ? Math.max(0, Math.round(nextQty)) : 0;
+    if (clamped === line.qty) return;
     setSelectedCartKey(lineKey);
+    const isDecrease = clamped < line.qty;
     const needsReason =
-      nextQty < line.qty &&
+      isDecrease &&
       lineWasPrintedToKitchen(lineKey) &&
       kotChangeReasonGraceExpired(
         kotBaselineAtRef.current,
         posSettings.kotChangeReasonGraceMinutes,
       );
     if (!needsReason) {
-      setQty(lineKey, nextQty);
+      setQty(lineKey, clamped);
+      if (isDecrease) scheduleKitchenSyncAfterQtyEdit();
       return;
     }
     setPendingQtyAdjust({
       lineKey,
-      nextQty,
+      nextQty: clamped,
       lineLabel: cartLinePrintLabel(line),
     });
     setLineChangeReasonOpen(true);
@@ -1714,9 +1743,10 @@ export function PosPage(): JSX.Element {
 
   function loadRecentOrderForEdit(order: PosRecentOrder): void {
     if (order.kind === "pending" && order.kitchenTicket) {
-      if (order.kitchenTicket.status === "done") {
+      // Kitchen "done" only means food is ready — still editable until payment.
+      if (isPaidPosRecentOrder(order)) {
         setPrintNotice({
-          message: "This order is finalized — editing is locked.",
+          message: "This order is already paid — editing is locked.",
           tone: "error",
         });
         return;
@@ -2696,6 +2726,8 @@ export function PosPage(): JSX.Element {
       setQty(pendingQtyAdjust.lineKey, pendingQtyAdjust.nextQty);
       setPendingQtyAdjust(null);
       setLineChangeReasonOpen(false);
+      // Reason accepted → push kitchen / hold update (was only changing cart before).
+      scheduleKitchenSyncAfterQtyEdit();
       return;
     }
     pendingLineChangeReasonRef.current = trimmed;
@@ -4116,7 +4148,8 @@ export function PosPage(): JSX.Element {
             </p>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="p-2">
             {displayCart.length === 0 ? (
               <div className="flex min-h-[5rem] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center dark:border-slate-700/60 dark:bg-slate-950/30">
                 <p className="text-xs font-medium text-slate-600 dark:text-slate-400">No items yet</p>
@@ -4353,9 +4386,9 @@ export function PosPage(): JSX.Element {
               </ul>
               </div>
             )}
-          </div>
+            </div>
 
-          <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-2 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
+          <div className="border-t border-slate-200 bg-slate-50 p-2 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] dark:border-slate-800/80 dark:bg-slate-950/95 dark:shadow-[0_-4px_12px_rgba(0,0,0,0.35)]">
             <div className="rounded-lg bg-white p-2.5 ring-1 ring-slate-200 dark:bg-slate-950/70 dark:ring-slate-800/80">
               {autoDiscountEnabled && autoDiscountAmount > 0 ? (
                 <div className="mb-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2">
@@ -4560,6 +4593,7 @@ export function PosPage(): JSX.Element {
                 Print invoice
               </button>
             </div>
+          </div>
           </div>
         </div>
 

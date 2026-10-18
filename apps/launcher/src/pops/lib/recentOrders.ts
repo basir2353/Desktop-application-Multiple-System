@@ -78,7 +78,8 @@ export function canPayPosRecentOrder(order: PosRecentOrder): boolean {
 }
 
 export function canEditPosRecentOrder(order: PosRecentOrder): boolean {
-  if (order.kind === "pending" && order.kitchenTicket && order.kitchenTicket.status !== "done") {
+  // Kitchen "done" is still unpaid on POS — cashier must be able to minus/edit until payment.
+  if (order.kind === "pending" && order.kitchenTicket) {
     return true;
   }
   // Held / open bills stay editable until payment completes (kind may be "pending").

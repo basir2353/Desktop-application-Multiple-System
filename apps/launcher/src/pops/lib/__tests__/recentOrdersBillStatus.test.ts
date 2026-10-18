@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Bill } from "@platform/contracts";
+import type { KitchenTicket } from "@platform/contracts";
 import {
   buildPosRecentOrders,
   canEditPosRecentOrder,
@@ -57,5 +58,30 @@ describe("bill list status", () => {
     );
     expect(orders[0]?.statusLabel).toBe("Paid");
     expect(isPaidPosRecentOrder(orders[0]!)).toBe(true);
+  });
+
+  it("allows edit on kitchen-done unpaid tickets", () => {
+    const ticket = {
+      id: "44444444-4444-4444-8444-444444444444",
+      ticketRef: "KOT-1",
+      orderRef: "ORD-99",
+      status: "done",
+      stationLabel: "Takeaway",
+      itemsSummary: "Roti x4",
+      lines: [{ label: "Roti", qty: 4, unitPrice: 20 }],
+      createdAt: new Date().toISOString(),
+      priority: "normal",
+      mins: 0,
+      startedAt: null,
+      notes: null,
+      createdByName: "Cashier",
+      updatedByName: null,
+      deliveryChargePkr: 0,
+      riderId: null,
+    } as unknown as KitchenTicket;
+    const orders = buildPosRecentOrders([ticket], []);
+    expect(orders[0]?.statusLabel).toBe("Kitchen done");
+    expect(canEditPosRecentOrder(orders[0]!)).toBe(true);
+    expect(isPaidPosRecentOrder(orders[0]!)).toBe(false);
   });
 });
