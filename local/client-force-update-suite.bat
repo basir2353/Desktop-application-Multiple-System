@@ -2,8 +2,8 @@
 setlocal EnableExtensions
 REM One-time in-place update for Suite clients stuck on "different key" at ~99%.
 
-set "TAG=desktop-v0.3.99"
-set "EXE=POPS-Universal-Management-System_0.3.99_x64-setup.exe"
+set "TAG=desktop-v0.3.100"
+set "EXE=POPS-Universal-Management-System_0.3.100_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 
@@ -32,7 +32,7 @@ start /wait "" "%OUT%" /S
 set "EC=%ERRORLEVEL%"
 echo.
 if "%EC%"=="0" (
-  echo Done. Start the app — version should be 0.3.99+.
+  echo Done. Start the app — version should be 0.3.100+.
 ) else (
   echo Installer exit code %EC%. Try running manually: %OUT%
 )

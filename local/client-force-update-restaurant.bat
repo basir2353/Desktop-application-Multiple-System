@@ -9,8 +9,8 @@ REM same installer, then rejects it. Running this applies that same installer
 REM into the EXISTING "Restaurant Management System" install path.
 REM =============================================================================
 
-set "TAG=desktop-v0.3.99"
-set "EXE=Restaurant-Management-System_0.3.99_x64-setup.exe"
+set "TAG=desktop-v0.3.100"
+set "EXE=Restaurant-Management-System_0.3.100_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 
@@ -46,7 +46,7 @@ start /wait "" "%OUT%" /S
 set "EC=%ERRORLEVEL%"
 echo.
 if "%EC%"=="0" (
-  echo OK — existing EXE updated to 0.3.99 in the same place.
+  echo OK — existing EXE updated to 0.3.100 in the same place.
   echo Start "Restaurant Management System" from the usual shortcut.
   echo Is ke baad app ke andar auto-update dubara chalega.
 ) else (
