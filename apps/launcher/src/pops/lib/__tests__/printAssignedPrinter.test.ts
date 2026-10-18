@@ -201,7 +201,8 @@ describe("PosPage Order print regression", () => {
       "utf8",
     );
     // createOrderMutation onSuccess must call printKitchenKotsOnPay without forceDialog.
-    expect(src).toMatch(/printKitchenKotsOnPay\(ticket\.orderRef \?\? orderRef\)/);
+    expect(src).toMatch(/printKitchenKotsOnPay\(ticketOrderRef \|\| orderRef\)/);
+    expect(src).toMatch(/lastPrintedKotRef/);
     expect(src).not.toMatch(/printKitchenKotsOnPay\([^)]*forceDialog:\s*true/);
   });
 
