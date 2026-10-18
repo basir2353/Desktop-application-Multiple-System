@@ -1,40 +1,44 @@
 @echo off
 setlocal EnableExtensions
-REM One-time in-place update for Suite clients stuck on "different key" at ~99%.
+REM IN-PLACE UPDATE for POPS Universal suite (same folder overwrite).
 
-set "TAG=desktop-v0.3.103"
-set "EXE=POPS-Universal-Management-System_0.3.103_x64-setup.exe"
+set "TAG=desktop-v0.3.104"
+set "EXE=POPS-Universal-Management-System_0.3.104_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 
 echo.
-echo [POPS] Downloading suite installer...
-echo     %URL%
+echo ============================================================
+echo  POPS Universal — Update EXISTING EXE (same folder)
+echo ============================================================
 echo.
+echo [1/4] Closing app if open...
+taskkill /IM "POPS Universal Management System.exe" /F >nul 2>&1
+timeout /t 2 /nobreak >nul
 
+echo [2/4] Downloading...
+echo      %URL%
 where curl >nul 2>&1
 if errorlevel 1 (
   powershell -NoProfile -Command "Invoke-WebRequest -Uri '%URL%' -OutFile '%OUT%' -UseBasicParsing"
 ) else (
-  curl -L --fail --retry 3 -o "%OUT%" "%URL%"
+  curl.exe -L --fail --retry 5 --retry-delay 2 -o "%OUT%" "%URL%"
 )
 if errorlevel 1 (
-  echo Download failed. Open this URL in the browser and run the setup:
-  echo %URL%
+  echo DOWNLOAD FAILED.
+  start "" "%URL%"
   pause
   exit /b 1
 )
 
-echo.
-echo [POPS] Installing in place. Close the app if it is open.
-echo.
-start /wait "" "%OUT%" /S
+echo [3/4] Opening installer — Finish dabao...
+start /wait "" "%OUT%"
 set "EC=%ERRORLEVEL%"
 echo.
 if "%EC%"=="0" (
-  echo Done. Start the app — version should be 0.3.103+.
+  echo Done. Start the app — version should be 0.3.104+.
 ) else (
-  echo Installer exit code %EC%. Try running manually: %OUT%
+  echo Manual: double-click %OUT%
 )
 echo.
 pause

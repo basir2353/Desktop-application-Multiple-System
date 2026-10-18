@@ -31,8 +31,23 @@ if errorlevel 1 (
   gh release edit "%TAG%" --repo "%REPO%" --latest
 )
 
+REM Floating feed (no /latest redirect) — Tauri primary endpoint
+if exist "%DIR%\latest-restaurant.json" (
+  gh release view "desktop-updater-feed" --repo "%REPO%" >nul 2>&1
+  if errorlevel 1 (
+    gh release create "desktop-updater-feed" --repo "%REPO%" --title "Desktop updater feed" --notes "Mutable feed JSON for Tauri updater." "%DIR%\latest-restaurant.json" "%DIR%\latest-suite.json"
+  ) else (
+    gh release upload "desktop-updater-feed" --repo "%REPO%" "%DIR%\latest-restaurant.json" "%DIR%\latest-suite.json" --clobber
+  )
+)
+
+REM Optional force-update bats if present in local\
+if exist "%CD%\local\client-force-update-restaurant.bat" (
+  gh release upload "%TAG%" --repo "%REPO%" "%CD%\local\client-force-update-restaurant.bat" "%CD%\local\client-force-update-suite.bat" --clobber
+)
+
 echo.
 echo Live update feeds:
-echo   https://github.com/basir2353/pops-desktop-updates/releases/latest/download/latest-suite.json
+echo   https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-updater-feed/latest-restaurant.json
 echo   https://github.com/basir2353/pops-desktop-updates/releases/latest/download/latest-restaurant.json
 exit /b 0

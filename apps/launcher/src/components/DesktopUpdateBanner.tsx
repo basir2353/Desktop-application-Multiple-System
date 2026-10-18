@@ -25,21 +25,36 @@ function isSignatureMismatch(message: string): boolean {
   return /signature|different key|pubkey|minisign|invalid key/i.test(message);
 }
 
+const FEED_BASE =
+  "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-updater-feed";
+const FEED_LATEST =
+  "https://github.com/basir2353/pops-desktop-updates/releases/latest/download";
+
+/** Hardcoded fallback if feed fetch fails (same asset name every release). */
+function fallbackInstallerUrl(): string {
+  return PLATFORM_EDITION === "restaurant"
+    ? "https://github.com/basir2353/pops-desktop-updates/releases/latest/download/client-force-update-restaurant.bat"
+    : "https://github.com/basir2353/pops-desktop-updates/releases/latest/download/client-force-update-suite.bat";
+}
+
 /** Resolve the installer URL from the public update feed (edition-aware). */
 async function resolveManualInstallerUrl(): Promise<string | null> {
   const manifest =
     PLATFORM_EDITION === "restaurant" ? "latest-restaurant.json" : "latest-suite.json";
-  const feedUrl = `https://github.com/basir2353/pops-desktop-updates/releases/latest/download/${manifest}`;
-  try {
-    const res = await fetch(feedUrl, { cache: "no-store" });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      platforms?: Record<string, { url?: string }>;
-    };
-    return data.platforms?.["windows-x86_64"]?.url?.trim() || null;
-  } catch {
-    return null;
+  for (const feedUrl of [`${FEED_BASE}/${manifest}`, `${FEED_LATEST}/${manifest}`]) {
+    try {
+      const res = await fetch(feedUrl, { cache: "no-store" });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        platforms?: Record<string, { url?: string }>;
+      };
+      const url = data.platforms?.["windows-x86_64"]?.url?.trim();
+      if (url) return url;
+    } catch {
+      /* try next feed */
+    }
   }
+  return fallbackInstallerUrl();
 }
 
 async function openExternal(url: string): Promise<void> {
@@ -82,10 +97,8 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       } catch (err) {
         if (cancelled) return;
         const message = errMessage(err);
-        if (/404|Not Found|failed|network|timed out|download|signature|key/i.test(message)) {
-          const manualUrl = isSignatureMismatch(message)
-            ? await resolveManualInstallerUrl()
-            : null;
+        if (/404|Not Found|failed|network|timed out|download|signature|key|sending request|error sending/i.test(message)) {
+          const manualUrl = await resolveManualInstallerUrl();
           if (cancelled) return;
           setState({ kind: "error", message, manualUrl });
         } else {
@@ -133,14 +146,11 @@ export function DesktopUpdateBanner(): JSX.Element | null {
       await relaunch();
     } catch (err) {
       const message = errMessage(err);
-      const manualUrl = isSignatureMismatch(message)
-        ? await resolveManualInstallerUrl()
-        : state.kind === "error"
-          ? state.manualUrl
-          : null;
+      const manualUrl =
+        (await resolveManualInstallerUrl()) ||
+        (state.kind === "error" ? state.manualUrl : null);
       setState({ kind: "error", message, manualUrl });
-      // Signing key rotated: auto-update cannot verify. Open the full installer
-      // so the same install folder is overwritten in place (one-time bridge).
+      // Open installer when signature/key mismatch blocks in-app update.
       if (manualUrl && isSignatureMismatch(message)) {
         void openExternal(manualUrl);
       }
@@ -167,6 +177,7 @@ export function DesktopUpdateBanner(): JSX.Element | null {
 
   if (state.kind === "error") {
     const signatureIssue = isSignatureMismatch(state.message);
+    const networkIssue = /sending request|network|timed out|failed/i.test(state.message);
     return (
       <div
         role="alert"
@@ -175,7 +186,9 @@ export function DesktopUpdateBanner(): JSX.Element | null {
         <span>
           {signatureIssue
             ? "Update needs one-time install (same folder). Run the installer, then auto-update works."
-            : `Update failed: ${state.message}`}
+            : networkIssue
+              ? "Auto-update blocked (network). Install update manually — same folder, no second app."
+              : `Update failed: ${state.message}`}
         </span>
         {state.manualUrl ? (
           <button

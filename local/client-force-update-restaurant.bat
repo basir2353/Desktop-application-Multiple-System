@@ -2,26 +2,26 @@
 setlocal EnableExtensions
 REM =============================================================================
 REM IN-PLACE UPDATE (same EXE / same folder) — does NOT install a second app.
-REM
-REM Why: Auto-update fails at ~99% with "different key" because the signing key
-REM was rotated and the OLD private key is lost. The Update button downloads the
-REM same installer, then rejects it. Running this applies that same installer
-REM into the EXISTING "Restaurant Management System" install path.
+REM Downloads the signed installer from pops-desktop-updates and runs it.
 REM =============================================================================
 
-set "TAG=desktop-v0.3.103"
-set "EXE=Restaurant-Management-System_0.3.103_x64-setup.exe"
+set "TAG=desktop-v0.3.104"
+set "EXE=Restaurant-Management-System_0.3.104_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 
 echo.
 echo ============================================================
-echo  POPS — Update EXISTING Restaurant EXE (same PC / same folder)
+echo  POPS — Update EXISTING Restaurant EXE (same folder)
 echo  Nayi alag app add nahi hogi. Purani install overwrite hogi.
 echo ============================================================
 echo.
-echo [1/3] Close Restaurant Management System if it is open.
-echo [2/3] Downloading update package...
+echo [1/4] Closing Restaurant Management System if it is open...
+taskkill /IM "Restaurant Management System.exe" /F >nul 2>&1
+taskkill /IM "restaurant-management-system.exe" /F >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+echo [2/4] Downloading update package...
 echo      %URL%
 echo.
 
@@ -29,30 +29,41 @@ where curl >nul 2>&1
 if errorlevel 1 (
   powershell -NoProfile -Command "Invoke-WebRequest -Uri '%URL%' -OutFile '%OUT%' -UseBasicParsing"
 ) else (
-  curl.exe -L --fail --retry 3 -o "%OUT%" "%URL%"
+  curl.exe -L --fail --retry 5 --retry-delay 2 -o "%OUT%" "%URL%"
 )
 if errorlevel 1 (
   echo DOWNLOAD FAILED.
-  echo Browser se ye file download karke double-click karo ^(same in-place update^):
+  echo Browser se ye file download karke double-click karo:
   echo %URL%
+  start "" "%URL%"
   pause
   exit /b 1
 )
 
-echo [3/3] Installing into the existing app folder...
+if not exist "%OUT%" (
+  echo DOWNLOAD FAILED — file missing: %OUT%
+  start "" "%URL%"
+  pause
+  exit /b 1
+)
+
+echo [3/4] Opening installer (Finish dabao — same folder update)...
 echo.
-REM /S = silent upgrade of current-user install (same product / same shortcuts)
-start /wait "" "%OUT%" /S
+start /wait "" "%OUT%"
 set "EC=%ERRORLEVEL%"
+
+echo [4/4] Done.
 echo.
 if "%EC%"=="0" (
-  echo OK — existing EXE updated to 0.3.103 in the same place.
-  echo Start "Restaurant Management System" from the usual shortcut.
-  echo Is ke baad app ke andar auto-update dubara chalega.
+  echo OK — Restaurant EXE updated to 0.3.104 in the SAME place.
+  echo Ab shortcut se "Restaurant Management System" kholo.
+  echo Agar purana "Update failed" banner dikhe to Dismiss dabao — ignore karo.
 ) else (
-  echo Silent install exit %EC%. Manual: double-click this file and Finish:
-  echo   %OUT%
-  echo Yeh bhi SAME existing install update karega — dusri copy nahi banegi.
+  echo Installer band ho gaya ^(exit %EC%^). Agar update nahi hua to:
+  echo   1^) Is file ko double-click karke Finish karo:
+  echo      %OUT%
+  echo   2^) Ya browser se download:
+  echo      %URL%
 )
 echo.
 pause
