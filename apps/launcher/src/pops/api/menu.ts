@@ -304,18 +304,8 @@ export async function deleteMenuItem(itemId: string): Promise<void> {
 }
 
 export async function uploadMenuImage(file: File): Promise<string> {
-  const form = new FormData();
-  form.append("image", file);
-  const res = await authFetch("/v1/menu/upload-image", {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string | string[] } | null;
-    const msg = err?.message;
-    throw new Error(Array.isArray(msg) ? msg.join(", ") : msg ?? `Upload failed: ${res.status}`);
-  }
-  const json = (await res.json()) as { imageUrl?: string };
-  if (!json.imageUrl) throw new Error("Upload failed: no image URL returned");
-  return json.imageUrl;
+  // Compress to a data-URL and store on the menu row. Railway disk /uploads is
+  // ephemeral, so path-based uploads disappear after deploy (broken/tiny POS photos).
+  const { compressMenuImageToDataUrl } = await import("../lib/compressMenuImage");
+  return compressMenuImageToDataUrl(file);
 }

@@ -50,7 +50,8 @@ function stockAlertsFromIngredients(
     .map((ing) => {
       const out = ing.currentStock <= 0;
       return {
-        id: `stock-${ing.id}-${ing.currentStock}-${ing.reorderLevel + limitExtra}`,
+        // Stable id (no stock qty) so the badge does not churn every poll.
+        id: `stock-${ing.id}`,
         kind: "low_stock" as const,
         tone: out ? ("danger" as const) : ("warning" as const),
         title: out ? "Out of stock" : "Low stock",

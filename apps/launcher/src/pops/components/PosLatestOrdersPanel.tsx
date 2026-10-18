@@ -262,14 +262,17 @@ export function PosLatestOrdersPanel({
     mutationFn: async ({ order, reason }: { order: PosRecentOrder; reason: string }) => {
       if (branch?.code) dismissPosOrder(branch.code, order.id);
 
-      if (order.kind === "pending" && order.pendingTicket) {
-        const ticketId = order.pendingTicket.id;
+      const kitchenTicketId =
+        order.kind === "pending"
+          ? (order.pendingTicket?.id ?? order.kitchenTicket?.id ?? null)
+          : null;
+      if (kitchenTicketId) {
         try {
-          removeOfflineKot(ticketId);
+          removeOfflineKot(kitchenTicketId);
         } catch {
           /* ignore */
         }
-        await updateKitchenTicket(ticketId, {
+        await updateKitchenTicket(kitchenTicketId, {
           status: "done",
           recordAsCancellation: true,
           cancellationReason: reason,
@@ -941,7 +944,8 @@ export function PosLatestOrdersPanel({
                 const showEdit = Boolean(onEdit) && canEditPosRecentOrder(order);
                 const showCancel =
                   canCancelOrders &&
-                  ((order.kind === "pending" && Boolean(order.pendingTicket)) ||
+                  ((order.kind === "pending" &&
+                    (Boolean(order.pendingTicket) || Boolean(order.kitchenTicket))) ||
                     order.bill?.status === "held" ||
                     order.bill?.status === "open");
                 const showPay = Boolean(onPayOrder) && canPayPosRecentOrder(order);

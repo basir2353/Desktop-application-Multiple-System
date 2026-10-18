@@ -710,7 +710,7 @@ export function PosFullScreenMenuOverlay({
                   }`}
                 >
                   {img ? (
-                    <img src={img} alt="" className="h-8 w-8 rounded object-cover" />
+                    <img src={img} alt="" className="h-11 w-11 rounded-lg object-cover" />
                   ) : (
                     <span
                       className={`flex h-8 w-8 items-center justify-center rounded text-xs font-bold ${
@@ -751,7 +751,7 @@ export function PosFullScreenMenuOverlay({
                 className="flex flex-col rounded-md border border-slate-600 bg-slate-800 p-1.5 transition hover:border-amber-400/60"
               >
                 {img ? (
-                  <img src={img} alt="" className="mb-1 h-12 w-full rounded object-cover" />
+                  <img src={img} alt="" className="mb-1.5 aspect-[4/3] h-auto w-full rounded-lg object-cover" />
                 ) : (
                   <div className="mb-1 flex h-12 items-center justify-center rounded bg-slate-700 text-[9px] font-semibold text-slate-300">
                     {item.name.slice(0, 2).toUpperCase()}

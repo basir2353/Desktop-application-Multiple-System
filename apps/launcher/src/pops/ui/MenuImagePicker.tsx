@@ -34,7 +34,7 @@ export function MenuImagePicker({
   }, [previewFile]);
 
   const previewSrc = objectUrl ?? resolveMenuImageUrl(value);
-  const sizeClass = compact ? "h-10 w-10" : "h-20 w-20";
+  const sizeClass = compact ? "h-12 w-12" : "h-28 w-28";
 
   return (
     <div className={compact ? "flex items-center gap-2" : "block"}>
@@ -91,7 +91,9 @@ export function MenuImagePicker({
             </div>
           ) : null}
           {!compact ? (
-            <p className="mt-1 text-[10px] text-slate-500">JPEG, PNG, WebP, or GIF · max 5 MB</p>
+            <p className="mt-1 text-[10px] text-slate-500">
+              JPEG, PNG, WebP, or GIF · auto-compressed · saved with the dish
+            </p>
           ) : null}
         </div>
       </div>
@@ -116,5 +118,5 @@ export function MenuImageThumb({ imageUrl, alt }: MenuImageThumbProps): JSX.Elem
       </span>
     );
   }
-  return <img src={src} alt={alt} className="h-9 w-9 shrink-0 rounded-md object-cover" />;
+  return <img src={src} alt={alt} className="h-12 w-12 shrink-0 rounded-lg object-cover" />;
 }

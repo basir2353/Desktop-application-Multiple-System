@@ -3673,11 +3673,11 @@ export function PosPage(): JSX.Element {
                           <img
                             src={img}
                             alt=""
-                            className="h-9 w-9 rounded-md object-cover ring-1 ring-black/5"
+                            className="h-12 w-12 rounded-lg object-cover ring-1 ring-black/5"
                           />
                         ) : (
                           <span
-                            className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-bold ${
+                            className={`flex h-12 w-12 items-center justify-center rounded-lg text-sm font-bold ${
                               active
                                 ? "bg-slate-950/15"
                                 : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
@@ -3756,10 +3756,10 @@ export function PosPage(): JSX.Element {
                         <img
                           src={img}
                           alt=""
-                          className="mb-1 h-14 w-full rounded-md object-cover"
+                          className="mb-1.5 aspect-[4/3] h-auto w-full rounded-lg object-cover"
                         />
                       ) : (
-                        <div className="mb-1 flex h-14 items-center justify-center rounded-md bg-slate-950/60 text-[10px] text-slate-600">
+                        <div className="mb-1.5 flex aspect-[4/3] items-center justify-center rounded-lg bg-slate-950/60 text-[10px] text-slate-600">
                           {isSearching || showFeaturedOnly || showAllItems
                             ? categoryById.get(item.categoryId)
                             : "—"}
