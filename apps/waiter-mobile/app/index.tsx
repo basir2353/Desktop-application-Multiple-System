@@ -57,13 +57,17 @@ const extra = Constants.expoConfig?.extra as
   | undefined;
 
 const appKind: AppKind = extra?.appKind ?? "staff";
+const isMobizoneApp = extra?.appVariant === "mobizone";
+/** Admin shell (email login, no role tabs). Mobizone reuses this shell. */
 const isAdminApp = appKind === "admin";
 const defaultRole: StaffRole =
   extra?.defaultRole === "rider" || extra?.defaultRole === "cashier" || extra?.defaultRole === "waiter"
     ? extra.defaultRole
     : "waiter";
 
-const appName = Constants.expoConfig?.name ?? (isAdminApp ? "POPS Admin" : "POPS Staff");
+const appName =
+  Constants.expoConfig?.name ??
+  (isMobizoneApp ? "MobiZone ERP" : isAdminApp ? "POPS Admin" : "POPS Staff");
 
 /** Staff APK shows Waiter | Rider. Locked APKs show one role. Admin has no role tabs. */
 const roleTabs: StaffRole[] =
@@ -84,9 +88,13 @@ export default function LoginScreen() {
   const [branchCode, setBranchCode] = useState("ISB-GT");
   const [pin, setPin] = useState("");
   const [email, setEmail] = useState(
-    isAdminApp ? "admin.restaurant@pops.demo" : ROLE_DEFAULTS[defaultRole].email,
+    isAdminApp || isMobizoneApp
+      ? "admin.restaurant@pops.demo"
+      : ROLE_DEFAULTS[defaultRole].email,
   );
-  const [password, setPassword] = useState(isAdminApp ? "Owner@12345" : "changeme-please-01");
+  const [password, setPassword] = useState(
+    isAdminApp || isMobizoneApp ? "Owner@12345" : "changeme-please-01",
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [postLoginNav, setPostLoginNav] = useState(false);
@@ -111,6 +119,9 @@ export default function LoginScreen() {
   }
 
   if (accessToken && !loading && !postLoginNav) {
+    if (isMobizoneApp) {
+      return <Redirect href={branch ? "/mobizone-home" : "/branch"} />;
+    }
     if (isAdminApp) {
       return <Redirect href="/admin-home" />;
     }
@@ -188,6 +199,15 @@ export default function LoginScreen() {
       const tokens = await passwordLogin(email.trim(), password);
       const decoded = decodeAccessToken(tokens.accessToken);
 
+      if (isMobizoneApp) {
+        setPostLoginNav(true);
+        clearBranch();
+        setTokens(tokens.accessToken, tokens.refreshToken, decoded, email.trim());
+        markOnline();
+        router.replace("/branch");
+        return;
+      }
+
       if (isAdminApp) {
         if (!isAdminOrIncharge(decoded)) {
           throw new Error("This Admin APK is for Incharge/Admin only. Waiters and riders must use the Staff app.");
@@ -222,7 +242,13 @@ export default function LoginScreen() {
     }
   }
 
-  const roleCopy = isAdminApp
+  const roleCopy = isMobizoneApp
+    ? {
+        title: "MobiZone ERP",
+        subtitle: "Buy · Sell · Stock · Udhaar — live shop login.",
+        demoPin: undefined as string | undefined,
+      }
+    : isAdminApp
     ? {
         title: "Admin / Incharge",
         subtitle: "Full dashboard — sales, users, activity, and PRA.",
@@ -238,9 +264,11 @@ export default function LoginScreen() {
             <View style={{ flex: 1 }}>
               <Title>{appName}</Title>
               <Subtitle>
-                {isAdminApp
-                  ? "Admin login — sales dashboard, users, activity, and PRA."
-                  : "One Staff APK · Waiter or Rider · then Email or PIN below."}
+                {isMobizoneApp
+                  ? "Live API login · classic phone-shop ERP (sale, purchase, stock, reports)."
+                  : isAdminApp
+                    ? "Admin login — sales dashboard, users, activity, and PRA."
+                    : "One Staff APK · Waiter or Rider · then Email or PIN below."}
               </Subtitle>
             </View>
             <ThemeToggle />

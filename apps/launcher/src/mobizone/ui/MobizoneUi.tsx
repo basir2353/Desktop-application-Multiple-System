@@ -26,7 +26,7 @@ export function MzSection({
 }): JSX.Element {
   return (
     <section className={`${cardClass} space-y-3 p-3 sm:p-4`}>
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-violet-600 sm:text-sm dark:text-violet-400">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-600 sm:text-sm dark:text-amber-400">
         {title}
       </h2>
       {children}
@@ -84,7 +84,7 @@ export function MzPrimaryButton(
     <button
       type="button"
       {...rest}
-      className={`mz-touch inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-violet-500 hover:to-fuchsia-500 disabled:opacity-50 sm:w-auto ${className ?? ""}`}
+      className={`mz-touch inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-sm transition hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 sm:w-auto ${className ?? ""}`}
     >
       {children}
     </button>

@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import { useQuery } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useMemo } from "react";
@@ -96,6 +97,12 @@ export default function HomeScreen() {
 
   if (!accessToken) {
     return <Redirect href="/" />;
+  }
+
+  if (
+    (Constants?.expoConfig?.extra as { appVariant?: string } | undefined)?.appVariant === "mobizone"
+  ) {
+    return <Redirect href="/mobizone-home" />;
   }
 
   if (claims?.systemType === "tradeflow") {

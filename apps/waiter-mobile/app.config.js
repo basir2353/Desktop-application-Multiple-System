@@ -64,6 +64,17 @@ const variants = {
     defaultRole: "rider",
     appKind: "staff-locked",
   },
+  /** MobiZone ERP — phone shop buy/sell APK (MobexPro-style UI). */
+  mobizone: {
+    name: "MobiZone ERP",
+    slug: "mobizone-erp",
+    scheme: "mobizone-erp",
+    androidPackage: "com.platform.mobizone.erp",
+    iosBundleId: "com.platform.mobizone.erp",
+    defaultRole: "admin",
+    /** Same login shell as admin (email/password); routes go to Mobizone home. */
+    appKind: "admin",
+  },
 };
 
 const selected = variants[variant] ?? variants.staff;

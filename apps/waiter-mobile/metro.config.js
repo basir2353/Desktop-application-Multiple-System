@@ -147,6 +147,20 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (withExt) return { type: "sourceFile", filePath: withExt };
   }
 
+  // TypeScript ESM imports often use ".js" for ".ts" sources — Metro needs a redirect.
+  if (
+    (moduleName.startsWith("./") || moduleName.startsWith("../")) &&
+    moduleName.endsWith(".js") &&
+    context.originModulePath
+  ) {
+    const dir = path.dirname(context.originModulePath);
+    const base = moduleName.slice(0, -3);
+    const hit = [".ts", ".tsx", ".js", ".jsx"]
+      .map((ext) => path.resolve(dir, base + ext))
+      .find((p) => fs.existsSync(p));
+    if (hit) return { type: "sourceFile", filePath: hit };
+  }
+
   if (defaultResolve) return defaultResolve(context, moduleName, platform);
   return context.resolveRequest(context, moduleName, platform);
 };

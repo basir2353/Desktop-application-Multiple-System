@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import { useQuery } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useMemo } from "react";
@@ -9,6 +10,9 @@ import { homeRouteForRole, resolveStaffRole } from "../src/lib/roles";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
+const isMobizoneApp =
+  (Constants.expoConfig?.extra as { appVariant?: string } | undefined)?.appVariant === "mobizone";
+
 export default function BranchScreen() {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
@@ -19,7 +23,7 @@ export default function BranchScreen() {
   const clearBranch = useBranchStore((s) => s.clear);
 
   const role = resolveStaffRole(claims);
-  const homeRoute = homeRouteForRole(role);
+  const homeRoute = isMobizoneApp ? "/mobizone-home" : homeRouteForRole(role);
 
   const branchesQuery = useQuery({
     queryKey: ["branches"],

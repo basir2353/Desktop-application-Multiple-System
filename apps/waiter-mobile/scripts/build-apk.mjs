@@ -8,6 +8,7 @@
  *   pnpm build:apk:win admin
  *   pnpm build:apk:win waiter     # legacy single-role
  *   pnpm build:apk:win rider      # legacy single-role
+ *   pnpm build:apk:win mobizone   # MobiZone ERP (phone shop)
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -48,6 +49,12 @@ const VARIANTS = {
     packageId: "com.platform.pops.rider",
     envVariant: "rider",
     displayName: "POPS Rider",
+  },
+  mobizone: {
+    apkName: "mobizone-erp-release.apk",
+    packageId: "com.platform.mobizone.erp",
+    envVariant: "mobizone",
+    displayName: "MobiZone ERP",
   },
 };
 
