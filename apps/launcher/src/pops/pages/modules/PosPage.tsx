@@ -693,12 +693,10 @@ export function PosPage(): JSX.Element {
   });
 
   const kitchenQuery = useQuery({
-    // scope=all keeps same-day kitchen-done on POS until Pay. Ghosts from older
-    // paid tickets are stripped in buildPosRecentOrders (48h + bill settlement).
-    // Backend also supports scope=pos-open for a lighter unpaid-only feed.
+    // pos-open: active KOTs + kitchen-done still unpaid (≤6h). Paid/old done excluded.
     queryKey: ["kitchen", "pos-latest", branch?.code],
     enabled: Boolean(branch?.code),
-    queryFn: () => fetchKitchenTickets(branch!.code, { scope: "all" }),
+    queryFn: () => fetchKitchenTickets(branch!.code, { scope: "pos-open" }),
     refetchInterval: 20_000,
   });
 

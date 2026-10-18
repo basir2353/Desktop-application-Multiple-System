@@ -85,7 +85,7 @@ describe("bill list status", () => {
     expect(isPaidPosRecentOrder(orders[0]!)).toBe(false);
   });
 
-  it("hides kitchen-done tickets older than 48h from open Latest", () => {
+  it("hides kitchen-done tickets older than 6h from open Latest", () => {
     const old = {
       id: "55555555-5555-4555-8555-555555555555",
       ticketRef: "KOT-OLD",
@@ -94,7 +94,7 @@ describe("bill list status", () => {
       stationLabel: "Dine-in",
       itemsSummary: "Biryani x1",
       lines: [{ label: "Biryani", qty: 1, unitPrice: 500 }],
-      createdAt: new Date(Date.now() - 50 * 60 * 60 * 1000).toISOString(),
+      createdAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
       priority: "normal",
       mins: 0,
       startedAt: null,
@@ -106,6 +106,30 @@ describe("bill list status", () => {
     } as unknown as KitchenTicket;
     const orders = buildPosRecentOrders([old], []);
     expect(orders).toHaveLength(0);
+  });
+
+  it("keeps kitchen-done under 6h when still unpaid", () => {
+    const recent = {
+      id: "55555555-5555-4555-8555-555555555556",
+      ticketRef: "KOT-RECENT",
+      orderRef: "ORD-5641",
+      status: "done",
+      stationLabel: "Dine-in Table F4",
+      itemsSummary: "Tea x1",
+      lines: [{ label: "Tea", qty: 1, unitPrice: 32 }],
+      createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+      priority: "normal",
+      mins: 0,
+      startedAt: null,
+      notes: null,
+      createdByName: "Kashif",
+      updatedByName: null,
+      deliveryChargePkr: 0,
+      riderId: null,
+    } as unknown as KitchenTicket;
+    const orders = buildPosRecentOrders([recent], []);
+    expect(orders).toHaveLength(1);
+    expect(orders[0]?.statusLabel).toBe("Kitchen done");
   });
 
   it("hides kitchen-done when a completed bill already settled that ORD", () => {

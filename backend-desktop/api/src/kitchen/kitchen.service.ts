@@ -77,8 +77,20 @@ export class KitchenService implements OnModuleInit {
     })();
   }
 
-  async listTickets(organizationId: string, branchCode: string, scope: "active" | "done" | "all" = "active") {
+  async listTickets(
+    organizationId: string,
+    branchCode: string,
+    scope: "active" | "done" | "all" | "pos-open" = "active",
+  ) {
     const branch = await this.resolveBranch(organizationId, branchCode);
+
+    if (scope === "pos-open") {
+      return {
+        branchCode: branch.code,
+        tickets: await this.listPosOpenTickets(branch.id),
+      };
+    }
+
     const statusFilter =
       scope === "done"
         ? eq(popsKitchenTickets.status, "done")
@@ -100,6 +112,130 @@ export class KitchenService implements OnModuleInit {
       branchCode: branch.code,
       tickets: await this.mapTicketsForResponse(rows),
     };
+  }
+
+  /**
+   * POS Latest "open" feed: active KOTs + recent kitchen-done tickets that are still unpaid.
+   * Excludes old done tickets (already paid / abandoned) that used to reappear after scope=all.
+   */
+  private async listPosOpenTickets(branchId: string) {
+    // Kitchen-done older than 6h leave open Latest (paid ghosts / abandoned).
+    // Unpaid done within 6h stay until Pay — same as desktop buildPosRecentOrders.
+    const cutoff = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    const rows = await this.db
+      .select()
+      .from(popsKitchenTickets)
+      .where(eq(popsKitchenTickets.branchId, branchId))
+      .orderBy(desc(popsKitchenTickets.priority), asc(popsKitchenTickets.createdAt));
+
+    const active = rows.filter((row) => row.status !== "done");
+    const recentDone = rows.filter(
+      (row) => row.status === "done" && row.createdAt != null && row.createdAt >= cutoff,
+    );
+    if (recentDone.length === 0) {
+      return this.mapTicketsForResponse(active);
+    }
+
+    const orderRefs = [
+      ...new Set(
+        recentDone
+          .map((row) => row.orderRef?.trim())
+          .filter((ref): ref is string => Boolean(ref)),
+      ),
+    ];
+    const billIds = [
+      ...new Set(recentDone.map((row) => row.billId).filter((id): id is string => Boolean(id))),
+    ];
+
+    const settledByRef = new Map<string, number>();
+    const settledBillIds = new Set<string>();
+
+    const remember = (ref: string | null | undefined, at: number, id?: string) => {
+      if (id) settledBillIds.add(id);
+      const key = ref?.trim().toLowerCase();
+      if (!key) return;
+      const prev = settledByRef.get(key);
+      if (prev == null || at > prev) settledByRef.set(key, at);
+    };
+
+    if (orderRefs.length > 0) {
+      const paidRows = await this.db
+        .select({
+          id: popsBills.id,
+          orderRef: popsBills.orderRef,
+          billRef: popsBills.billRef,
+          createdAt: popsBills.createdAt,
+        })
+        .from(popsBills)
+        .where(
+          and(
+            eq(popsBills.branchId, branchId),
+            inArray(popsBills.orderRef, orderRefs),
+            inArray(popsBills.status, ["completed", "held"]),
+          ),
+        );
+      for (const bill of paidRows) {
+        const at = bill.createdAt?.getTime() ?? 0;
+        remember(bill.orderRef, at, bill.id);
+        remember(bill.billRef, at, bill.id);
+      }
+    }
+
+    // Also settle by billRef when tickets reused display refs without orderRef match.
+    if (orderRefs.length > 0) {
+      const byBillRef = await this.db
+        .select({
+          id: popsBills.id,
+          orderRef: popsBills.orderRef,
+          billRef: popsBills.billRef,
+          createdAt: popsBills.createdAt,
+        })
+        .from(popsBills)
+        .where(
+          and(
+            eq(popsBills.branchId, branchId),
+            inArray(popsBills.billRef, orderRefs),
+            inArray(popsBills.status, ["completed", "held"]),
+          ),
+        );
+      for (const bill of byBillRef) {
+        const at = bill.createdAt?.getTime() ?? 0;
+        remember(bill.orderRef, at, bill.id);
+        remember(bill.billRef, at, bill.id);
+      }
+    }
+
+    if (billIds.length > 0) {
+      const linkedPaid = await this.db
+        .select({ id: popsBills.id })
+        .from(popsBills)
+        .where(
+          and(
+            eq(popsBills.branchId, branchId),
+            inArray(popsBills.id, billIds),
+            inArray(popsBills.status, ["completed", "held"]),
+          ),
+        );
+      for (const bill of linkedPaid) settledBillIds.add(bill.id);
+    }
+
+    const unsettledDone = recentDone.filter((row) => {
+      if (row.billId && settledBillIds.has(row.billId)) return false;
+      const refs = [row.orderRef, row.ticketRef]
+        .map((r) => r?.trim().toLowerCase())
+        .filter((r): r is string => Boolean(r));
+      if (refs.length === 0) return true;
+      let settledAt: number | undefined;
+      for (const ref of refs) {
+        const at = settledByRef.get(ref);
+        if (at != null && (settledAt == null || at > settledAt)) settledAt = at;
+      }
+      if (settledAt == null) return true;
+      const ticketAt = row.createdAt?.getTime() ?? 0;
+      return ticketAt > settledAt;
+    });
+
+    return this.mapTicketsForResponse([...active, ...unsettledDone]);
   }
 
   private async mapTicketsForResponse(rows: (typeof popsKitchenTickets.$inferSelect)[]) {

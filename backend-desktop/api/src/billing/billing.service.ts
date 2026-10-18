@@ -283,7 +283,9 @@ export class BillingService implements OnApplicationBootstrap {
 
     let dateFilter;
     if (scope === "active") {
-      const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      // 7d completed window so POS can match kitchen-done tickets after Pay and
+      // hide them from open Latest (48h was too short — "2 days ago" ghosts returned).
+      const since = new Date(Date.now() - 7 * 86_400_000);
       dateFilter = or(inArray(popsBills.status, ["held", "open"]), gte(popsBills.createdAt, since));
     } else if (scope === "dashboard") {
       const since = opts?.since ?? new Date(Date.now() - 2 * 86_400_000);
@@ -705,34 +707,39 @@ export class BillingService implements OnApplicationBootstrap {
     }
   }
 
-  /** Mark non-done kitchen tickets for this paid bill so waiter Active lists clear. */
+  /**
+   * Link kitchen tickets to this paid bill so POS open Latest can hide them.
+   * Includes already kitchen-done tickets (Pay-after-kitchen) — previously only
+   * non-done tickets were updated, leaving paid "Kitchen done" ghosts on POS.
+   */
   private async closeRelatedKitchenTickets(
     row: typeof popsBills.$inferSelect,
   ): Promise<void> {
     const orderRef = (row.orderRef ?? "").trim();
     if (!orderRef) return;
     try {
-      const openTickets = await this.db
+      const branchTickets = await this.db
         .select({
           id: popsKitchenTickets.id,
           orderRef: popsKitchenTickets.orderRef,
+          ticketRef: popsKitchenTickets.ticketRef,
           stationLabel: popsKitchenTickets.stationLabel,
+          status: popsKitchenTickets.status,
+          billId: popsKitchenTickets.billId,
         })
         .from(popsKitchenTickets)
-        .where(
-          and(
-            eq(popsKitchenTickets.branchId, row.branchId),
-            ne(popsKitchenTickets.status, "done"),
-          ),
-        );
+        .where(eq(popsKitchenTickets.branchId, row.branchId));
 
       const targetRef = orderRef.toLowerCase();
       const tableKey = tableKeyFromLabel(row.tableLabel);
-      const ids = openTickets
+      const ids = branchTickets
         .filter((ticket) => {
-          const ticketRef = (ticket.orderRef ?? "").trim().toLowerCase();
+          if (ticket.billId === row.id) return false;
+          const ticketOrder = (ticket.orderRef ?? "").trim().toLowerCase();
+          const ticketRef = (ticket.ticketRef ?? "").trim().toLowerCase();
+          if (ticketOrder && ticketOrder === targetRef) return true;
           if (ticketRef && ticketRef === targetRef) return true;
-          if (!ticketRef && tableKey) {
+          if (!ticketOrder && tableKey && ticket.status !== "done") {
             const ticketTable = tableKeyFromLabel(ticket.stationLabel);
             return Boolean(ticketTable && ticketTable === tableKey);
           }

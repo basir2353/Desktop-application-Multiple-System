@@ -2,8 +2,8 @@
 setlocal EnableExtensions
 REM IN-PLACE UPDATE for POPS Universal suite (same folder overwrite).
 
-set "TAG=desktop-v0.3.104"
-set "EXE=POPS-Universal-Management-System_0.3.104_x64-setup.exe"
+set "TAG=desktop-v0.3.105"
+set "EXE=POPS-Universal-Management-System_0.3.105_x64-setup.exe"
 set "URL=https://github.com/basir2353/pops-desktop-updates/releases/download/%TAG%/%EXE%"
 set "OUT=%TEMP%\%EXE%"
 
@@ -36,7 +36,7 @@ start /wait "" "%OUT%"
 set "EC=%ERRORLEVEL%"
 echo.
 if "%EC%"=="0" (
-  echo Done. Start the app — version should be 0.3.104+.
+  echo Done. Start the app — version should be 0.3.105+.
 ) else (
   echo Manual: double-click %OUT%
 )

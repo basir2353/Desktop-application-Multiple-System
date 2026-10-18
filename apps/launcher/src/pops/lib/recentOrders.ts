@@ -256,6 +256,20 @@ function mapBill(b: Bill): PosRecentOrder {
   };
 }
 
+/** Normalize order / bill refs so ORD-5638 matches ord-5638 / trailing junk. */
+function normalizeOrderRef(ref: string | null | undefined): string {
+  return (ref ?? "").trim().toLowerCase();
+}
+
+function rememberSettledRef(map: Map<string, number>, ref: string, at: number): void {
+  if (!ref) return;
+  const prev = map.get(ref);
+  if (prev == null || at > prev) map.set(ref, at);
+}
+
+/** Max age for kitchen-done on open Latest when not yet matched to a bill (6h). */
+export const DONE_OPEN_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
 export function buildPosRecentOrders(
   tickets: KitchenTicket[],
   bills: Bill[],
@@ -271,31 +285,33 @@ export function buildPosRecentOrders(
   const settledByRef = new Map<string, number>();
   for (const bill of paidBills) {
     if (bill.status !== "completed" && bill.status !== "held") continue;
-    const ref = (bill.orderRef ?? "").trim().toLowerCase();
-    if (!ref) continue;
     const at = new Date(bill.createdAt).getTime();
-    const prev = settledByRef.get(ref);
-    if (prev == null || at > prev) settledByRef.set(ref, at);
+    if (!Number.isFinite(at)) continue;
+    rememberSettledRef(settledByRef, normalizeOrderRef(bill.orderRef), at);
+    // Some paid bills only carry the display ref on billRef.
+    rememberSettledRef(settledByRef, normalizeOrderRef(bill.billRef), at);
   }
 
   // Keep kitchen-confirmed ("done") tickets on POS Latest until Pay settles that ORD-#.
-  // Drop done tickets older than 48h (paid/abandoned ghosts from before pos-open scope).
-  const DONE_OPEN_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+  // Drop done tickets older than 6h (paid ghosts that never linked billId / orderRef).
   const now = Date.now();
   const pending = tickets
     .filter((t) => {
+      const ticketAt = new Date(t.createdAt).getTime();
       if (t.status === "done") {
-        const ticketAt = new Date(t.createdAt).getTime();
         if (!Number.isFinite(ticketAt) || now - ticketAt > DONE_OPEN_MAX_AGE_MS) {
           return false;
         }
       }
-      const ref = (t.orderRef ?? "").trim().toLowerCase();
-      if (!ref) return true;
-      const settledAt = settledByRef.get(ref);
+      const refs = [normalizeOrderRef(t.orderRef), normalizeOrderRef(t.ticketRef)].filter(Boolean);
+      if (refs.length === 0) return true;
+      let settledAt: number | undefined;
+      for (const ref of refs) {
+        const at = settledByRef.get(ref);
+        if (at != null && (settledAt == null || at > settledAt)) settledAt = at;
+      }
       if (settledAt == null) return true;
-      const ticketAt = new Date(t.createdAt).getTime();
-      return ticketAt > settledAt;
+      return Number.isFinite(ticketAt) && ticketAt > settledAt;
     })
     .map((t) => mapTicket(t, settings));
 
