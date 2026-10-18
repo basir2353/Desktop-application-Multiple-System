@@ -1,5 +1,12 @@
 import { menuItemDisplayPrice, type MenuItem as ApiMenuItem } from "@platform/contracts";
-import { useEffect, useMemo, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { SafeMenuImage } from "../ui/SafeMenuImage";
 import {
   cartLineNet,
@@ -8,6 +15,7 @@ import {
   resolvePosSellableVariants,
   type PosCartLine,
 } from "../lib/posCart";
+import { POS_SHORTCUTS } from "../lib/posShortcuts";
 import {
   canEditPosRecentOrder,
   canPayPosRecentOrder,
@@ -117,6 +125,8 @@ type Props = {
   /** Customer / rider panel for takeaway & delivery (and dine-in). */
   showCustomerPanel?: boolean;
   customerPanel?: CustomerPanelProps;
+  /** Optional external ref so parent (F9) can focus this search field. */
+  searchInputRef?: RefObject<HTMLInputElement | null>;
   priceLabel?: (item: ApiMenuItem) => { display: number; original?: number };
   onSelectCartLine: (key: string) => void;
   onRequestSetQty: (lineKey: string, qty: number) => void;
@@ -213,6 +223,7 @@ export function PosFullScreenMenuOverlay({
   ordersLoading = false,
   showCustomerPanel = false,
   customerPanel,
+  searchInputRef: searchInputRefProp,
   priceLabel,
   onSelectCartLine,
   onRequestSetQty,
@@ -245,8 +256,31 @@ export function PosFullScreenMenuOverlay({
   const [viewMode, setViewMode] = useState<"category" | "all">(initialViewMode);
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
   const [search, setSearch] = useState("");
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
+  const [searchHighlight, setSearchHighlight] = useState(0);
   const [ordersListMode, setOrdersListMode] = useState<OrdersListMode | null>(null);
   const [ordersChannelFilter, setOrdersChannelFilter] = useState<PosRecentOrderModeFilter>("all");
+  const localSearchInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = searchInputRefProp ?? localSearchInputRef;
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  const categoryById = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories],
+  );
+
+  function focusSearch(): void {
+    const el = searchInputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }
+
+  function clearSearch(): void {
+    setSearch("");
+    setSearchDropdownOpen(false);
+    setSearchHighlight(0);
+  }
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -257,18 +291,38 @@ export function PosFullScreenMenuOverlay({
   }, []);
 
   useEffect(() => {
+    // Open ready to type / scan — same habit as main POS (F9).
+    const t = window.setTimeout(() => focusSearch(), 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only focus
+  }, []);
+
+  useEffect(() => {
+    /** Escape only — F2–F12 / P stay on PosPage so full-screen matches simple POS shortcuts. */
     function onKey(e: KeyboardEvent): void {
-      if (e.key === "Escape") {
-        if (ordersListMode) {
-          setOrdersListMode(null);
-          return;
-        }
-        onClose();
+      if (e.key !== "Escape") return;
+      if (ordersListMode) {
+        e.preventDefault();
+        setOrdersListMode(null);
+        return;
       }
+      if (searchDropdownOpen) {
+        e.preventDefault();
+        setSearchDropdownOpen(false);
+        return;
+      }
+      if (search.trim()) {
+        e.preventDefault();
+        clearSearch();
+        focusSearch();
+        return;
+      }
+      e.preventDefault();
+      onClose();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, ordersListMode]);
+  }, [onClose, ordersListMode, search, searchDropdownOpen, searchInputRef]);
 
   useEffect(() => {
     setViewMode(initialViewMode);
@@ -289,22 +343,82 @@ export function PosFullScreenMenuOverlay({
 
   const activeCategoryId = categoryId ?? categories[0]?.id ?? null;
   const q = search.trim().toLowerCase();
+  const isSearching = q.length > 0;
 
   const filtered = useMemo(() => {
     const list = items.filter((m) => {
       if (!m.isActive) return false;
       const catOk =
-        viewMode === "all" || Boolean(q) || !activeCategoryId || m.categoryId === activeCategoryId;
+        viewMode === "all" || isSearching || !activeCategoryId || m.categoryId === activeCategoryId;
       if (!catOk) return false;
-      if (!q) return true;
+      if (!isSearching) return true;
       return (
         m.name.toLowerCase().includes(q) ||
         (m.barcode?.toLowerCase().includes(q) ?? false) ||
-        m.variants.some((v) => v.label.toLowerCase().includes(q))
+        m.variants.some((v) => v.label.toLowerCase().includes(q)) ||
+        m.variants.some((v) => v.barcode?.toLowerCase().includes(q)) ||
+        (categoryById.get(m.categoryId)?.toLowerCase().includes(q) ?? false)
       );
     });
     return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  }, [items, viewMode, activeCategoryId, q]);
+  }, [items, viewMode, activeCategoryId, q, isSearching, categoryById]);
+
+  /** Same as simple POS: top matches under the search field. */
+  const searchDropdownItems = useMemo(() => filtered.slice(0, 8), [filtered]);
+
+  useEffect(() => {
+    setSearchHighlight(0);
+  }, [q]);
+
+  useEffect(() => {
+    if (!searchDropdownOpen) return;
+    function onClickOutside(e: MouseEvent): void {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSearchDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [searchDropdownOpen]);
+
+  function selectSearchDropdownItem(item: ApiMenuItem): void {
+    onAddItem(item);
+    clearSearch();
+    window.setTimeout(() => focusSearch(), 0);
+  }
+
+  function onSearchKeyDown(e: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (e.key === "Escape") {
+      if (searchDropdownOpen) {
+        e.preventDefault();
+        setSearchDropdownOpen(false);
+        return;
+      }
+      if (search.trim()) {
+        e.preventDefault();
+        clearSearch();
+      }
+      return;
+    }
+    if (!isSearching || searchDropdownItems.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSearchDropdownOpen(true);
+      setSearchHighlight((i) => Math.min(searchDropdownItems.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSearchDropdownOpen(true);
+      setSearchHighlight((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      if (!searchDropdownOpen) {
+        setSearchDropdownOpen(true);
+        return;
+      }
+      e.preventDefault();
+      const item = searchDropdownItems[searchHighlight];
+      if (item) selectSearchDropdownItem(item);
+    }
+  }
 
   const listOrders = useMemo(() => {
     const base = ordersListMode === "closed" ? closedOrders : openOrders;
@@ -397,7 +511,11 @@ export function PosFullScreenMenuOverlay({
           : "border-t border-slate-800 lg:border-l lg:border-t-0"
       }`}
     >
-      <div className="flex max-h-[42vh] shrink-0 flex-col border-b border-slate-800 lg:max-h-[38vh]">
+      <div
+        className={`flex shrink-0 flex-col border-b border-slate-800 ${
+          editingLabel ? "max-h-[28vh] lg:max-h-[24vh]" : "max-h-[42vh] lg:max-h-[38vh]"
+        }`}
+      >
         <div className="shrink-0 px-2 pt-1.5">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
@@ -710,14 +828,14 @@ export function PosFullScreenMenuOverlay({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {viewMode === "category" && categories.length > 0 ? (
         <div className="shrink-0 border-b border-slate-800 bg-slate-900 px-2 py-2">
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8">
+          <div className="flex flex-wrap gap-1.5">
             {categories.map((c, index) => {
               const active = activeCategoryId === c.id;
               const count = items.filter((m) => m.isActive && m.categoryId === c.id).length;
               const letterFallback = (
                 <span
-                  className={`absolute inset-0 flex items-center justify-center text-2xl font-bold ${
-                    active ? "bg-amber-400 text-slate-950" : "bg-slate-800 text-amber-300"
+                  className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${
+                    active ? "bg-amber-400 text-slate-950" : "bg-slate-700 text-amber-300"
                   }`}
                 >
                   {(c.name.trim().charAt(0) || "?").toUpperCase()}
@@ -728,7 +846,7 @@ export function PosFullScreenMenuOverlay({
                   key={c.id}
                   type="button"
                   onClick={() => setCategoryId(c.id)}
-                  className={`group relative flex min-h-[5.5rem] min-w-0 flex-col overflow-hidden rounded-lg text-center transition ${
+                  className={`group relative h-12 w-[4.75rem] shrink-0 overflow-hidden rounded-md text-center transition ${
                     active
                       ? "ring-2 ring-amber-400 shadow-sm shadow-amber-400/30"
                       : "ring-1 ring-slate-600 hover:ring-amber-400/50"
@@ -737,12 +855,12 @@ export function PosFullScreenMenuOverlay({
                   <SafeMenuImage
                     imageUrl={c.imageUrl}
                     alt=""
-                    className="absolute inset-0 h-full w-full object-cover object-center"
+                    fill
                     fallback={letterFallback}
                   />
-                  <span className="relative z-[1] mt-auto w-full bg-slate-950/75 px-1 py-1.5 text-[11px] font-bold leading-tight text-white">
+                  <span className="absolute inset-x-0 bottom-0 z-[1] w-full truncate bg-slate-950/85 px-0.5 py-0.5 text-[8px] font-bold leading-tight text-white">
                     {index + 1}. {c.name}
-                    <span className="ml-1 text-[10px] font-semibold opacity-80">({count})</span>
+                    <span className="ml-0.5 opacity-80">({count})</span>
                   </span>
                 </button>
               );
@@ -754,10 +872,14 @@ export function PosFullScreenMenuOverlay({
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         <p className="mb-1 text-[9px] text-slate-500">
           {filtered.length === 0
-            ? "No items to show."
-            : `${filtered.length} item${filtered.length === 1 ? "" : "s"}`}
+            ? isSearching
+              ? `No match for “${search.trim()}”.`
+              : "No items to show."
+            : isSearching
+              ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}`
+              : `${filtered.length} item${filtered.length === 1 ? "" : "s"}`}
         </p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+        <div className="flex flex-wrap content-start gap-1.5">
           {filtered.map((item) => {
             const hasPicker = resolvePosSellableVariants(item).length > 1;
             const priced = priceLabel?.(item);
@@ -765,7 +887,7 @@ export function PosFullScreenMenuOverlay({
             const original = priced?.original;
             const qty = itemQtyInCart(item.id, cartLines);
             const itemFallback = (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-700 text-lg font-bold text-slate-300">
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-sm font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">
                 {item.name.slice(0, 2).toUpperCase()}
               </div>
             );
@@ -781,59 +903,61 @@ export function PosFullScreenMenuOverlay({
                     onAddItem(item);
                   }
                 }}
-                className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-slate-600 bg-slate-800 transition hover:border-amber-400/70 hover:ring-1 hover:ring-amber-400/40"
+                className="group relative h-24 w-24 shrink-0 cursor-pointer overflow-hidden rounded-md border border-slate-200 bg-white transition hover:border-amber-500/50 hover:ring-1 hover:ring-amber-400/40 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-amber-400/70"
               >
                 <SafeMenuImage
                   imageUrl={item.imageUrl}
                   alt=""
-                  className="absolute inset-0 h-full w-full object-cover object-center"
+                  fill
                   fallback={itemFallback}
                 />
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent px-1.5 pb-1.5 pt-8 opacity-0 transition group-hover:opacity-100">
-                  <span className="line-clamp-2 text-[12px] font-bold leading-tight text-white">
-                    {item.featured ? <span className="mr-0.5 text-amber-400">★</span> : null}
+                {/* Hover-only qty controls — above fixed footer */}
+                <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[2] flex h-8 items-center justify-between gap-0.5 px-1 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
+                  <button
+                    type="button"
+                    disabled={qty <= 0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDecrementItem(item);
+                    }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-sm font-bold text-slate-800 shadow disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-500 dark:bg-slate-900 dark:text-white"
+                    aria-label={`Remove one ${item.name}`}
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[1.25rem] rounded bg-white/95 px-1 text-center text-[11px] font-bold tabular-nums text-slate-900 shadow dark:bg-slate-950/90 dark:text-white">
+                    {qty}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddItem(item);
+                    }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-amber-300 bg-amber-400 text-sm font-bold text-slate-950 shadow"
+                    aria-label={`Add one ${item.name}`}
+                  >
+                    +
+                  </button>
+                </div>
+                {/* Fixed-height footer — same on every card */}
+                <div className="absolute inset-x-0 bottom-0 z-[1] flex h-12 flex-col justify-end bg-white/95 px-1.5 pb-1 pt-0.5 dark:bg-slate-950/95">
+                  <span className="line-clamp-1 min-h-[1.1rem] text-[11px] font-bold leading-tight text-slate-900 dark:text-white">
+                    {item.featured ? <span className="mr-0.5 text-amber-600 dark:text-amber-300">★</span> : null}
                     {item.name}
                   </span>
-                  <span className="mt-0.5 block text-[12px] font-bold text-amber-300">
+                  <span className="mt-0.5 block min-h-[1.1rem] truncate text-[11px] font-bold text-orange-600 dark:text-orange-400">
                     {hasPicker ? "From " : ""}
                     {display.toLocaleString()}
                     {original != null && original !== display ? (
-                      <span className="ml-1 font-normal text-slate-400 line-through">
+                      <span className="ml-1 font-normal text-slate-400 line-through dark:text-slate-300">
                         {original.toLocaleString()}
                       </span>
                     ) : null}
                   </span>
-                  <div className="mt-1.5 flex items-center justify-between gap-1">
-                    <button
-                      type="button"
-                      disabled={qty <= 0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDecrementItem(item);
-                      }}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-500 bg-slate-900 text-base font-bold text-white transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-30"
-                      aria-label={`Remove one ${item.name}`}
-                    >
-                      −
-                    </button>
-                    <span className="min-w-[1.75rem] text-center text-sm font-bold tabular-nums text-white">
-                      {qty}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAddItem(item);
-                      }}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-amber-400/60 bg-amber-400 text-base font-bold text-slate-950 transition hover:bg-amber-300"
-                      aria-label={`Add one ${item.name}`}
-                    >
-                      +
-                    </button>
-                  </div>
                 </div>
                 {qty > 0 ? (
-                  <span className="absolute right-1 top-1 rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950 group-hover:opacity-0">
+                  <span className="absolute right-0.5 top-0.5 z-[1] rounded bg-amber-400 px-1 py-px text-[9px] font-bold text-slate-950 group-hover:opacity-0">
                     {qty}
                   </span>
                 ) : null}
@@ -1027,28 +1151,73 @@ export function PosFullScreenMenuOverlay({
         </button>
       </div>
 
-      {/* Always-visible search row — stays under the pinned order-type bar */}
-      <div className="z-20 shrink-0 border-b border-slate-800 bg-slate-900 px-2.5 py-1.5">
-        <label className="relative flex w-full items-center">
-          <span className="sr-only">Search menu item</span>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search item by name or barcode…"
-            autoComplete="off"
-            className="w-full rounded-md border border-amber-500/50 bg-slate-950 px-3 py-2 text-sm font-semibold text-white placeholder:text-slate-400 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
-          />
-          {search.trim() ? (
-            <button
-              type="button"
-              className="absolute right-2 rounded px-2 py-0.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
-              onClick={() => setSearch("")}
-              title="Clear search"
-            >
-              Clear
-            </button>
+      {/* Always-visible search row — dropdown matches simple POS */}
+      <div className="relative z-40 shrink-0 border-b border-slate-800 bg-slate-900 px-2.5 py-1.5">
+        <div ref={searchContainerRef} className="relative w-full max-w-2xl">
+          <label className="relative flex w-full items-center">
+            <span className="sr-only">Search menu item ({POS_SHORTCUTS.search.key})</span>
+            <input
+              ref={searchInputRef}
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setSearchDropdownOpen(true);
+              }}
+              onFocus={() => setSearchDropdownOpen(true)}
+              onKeyDown={onSearchKeyDown}
+              placeholder={`Search item by name or barcode… (${POS_SHORTCUTS.search.key})`}
+              autoComplete="off"
+              enterKeyHint="search"
+              className="w-full rounded-md border border-amber-500/50 bg-slate-950 px-3 py-2 pr-14 text-sm font-semibold text-white placeholder:text-slate-400 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
+            />
+            {search.trim() ? (
+              <button
+                type="button"
+                className="absolute right-2 rounded px-2 py-0.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
+                onClick={() => {
+                  clearSearch();
+                  focusSearch();
+                }}
+                title="Clear search"
+              >
+                Clear
+              </button>
+            ) : null}
+          </label>
+          {searchDropdownOpen && isSearching && searchDropdownItems.length > 0 ? (
+            <div className="absolute left-0 top-full z-50 mt-1 max-h-[min(22rem,50vh)] w-full overflow-y-auto rounded-md border border-slate-700 bg-slate-900 shadow-xl shadow-black/50">
+              {searchDropdownItems.map((item, index) => {
+                const priced = priceLabel?.(item);
+                const price = priced?.display ?? menuItemDisplayPrice(item);
+                const hasPicker = resolvePosSellableVariants(item).length > 1;
+                const highlighted = index === searchHighlight;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onMouseEnter={() => setSearchHighlight(index)}
+                    onClick={() => selectSearchDropdownItem(item)}
+                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition ${
+                      highlighted
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-200 hover:bg-slate-800"
+                    }`}
+                  >
+                    <span className="truncate font-medium">{item.name}</span>
+                    <span
+                      className={`shrink-0 font-semibold tabular-nums ${
+                        highlighted ? "" : "text-amber-300"
+                      }`}
+                    >
+                      {hasPicker ? "From " : ""}
+                      {price.toLocaleString()}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           ) : null}
-        </label>
+        </div>
       </div>
 
       <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">

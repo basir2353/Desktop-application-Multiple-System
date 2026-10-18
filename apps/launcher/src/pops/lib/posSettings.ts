@@ -153,7 +153,7 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     onlineTaxPct: clampPct(input.onlineTaxPct ?? DEFAULT_POS_SETTINGS.onlineTaxPct),
     taxEnabled: input.taxEnabled ?? DEFAULT_POS_SETTINGS.taxEnabled,
     autoDiscountEnabled: input.autoDiscountEnabled ?? DEFAULT_POS_SETTINGS.autoDiscountEnabled,
-    autoDiscountPct: clampPct(input.autoDiscountPct ?? DEFAULT_POS_SETTINGS.autoDiscountPct, 50),
+    autoDiscountPct: clampPct(input.autoDiscountPct ?? DEFAULT_POS_SETTINGS.autoDiscountPct, 100),
     serviceOnDineIn: input.serviceOnDineIn ?? DEFAULT_POS_SETTINGS.serviceOnDineIn,
     serviceOnTakeaway: input.serviceOnTakeaway ?? DEFAULT_POS_SETTINGS.serviceOnTakeaway,
     serviceOnDelivery: input.serviceOnDelivery ?? DEFAULT_POS_SETTINGS.serviceOnDelivery,

@@ -1,6 +1,5 @@
 import { Button } from "@platform/ui";
-import type { Bill, DeliveryStatus, KitchenTicket } from "@platform/contracts";
-import { DELIVERY_STATUS_LABELS, DELIVERY_STATUS_VALUES } from "@platform/contracts";
+import type { DeliveryStatus } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useAdaptiveRefetchInterval } from "../../../lib/useAdaptiveRefetchInterval";
@@ -8,12 +7,7 @@ import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
 import { sessionCanManageUsers } from "../../lib/roleAccess";
 import { fetchCompletedOrders } from "../../api/billing";
-import {
-  createRider,
-  fetchRiders,
-  updateDeliveryOrder,
-  updateRider,
-} from "../../api/delivery";
+import { createRider, fetchRiders, updateRider } from "../../api/delivery";
 import { fetchKitchenTickets, updateKitchenTicket } from "../../api/kitchen";
 import { fetchPopsBranches } from "../../api/operations";
 import { fetchOrgUsers } from "../../api/users";
@@ -26,6 +20,8 @@ import {
   deliveryOrderStatus,
   deliveryOrderStatusLabel,
   isActiveDeliveryOrder,
+  isZeroAmountDeliveryOrder,
+  summarizeDeliveryOrders,
 } from "../../lib/deliveryOrders";
 import {
   DEFAULT_DELIVERY_SETTINGS,
@@ -34,24 +30,11 @@ import {
   saveDeliverySettings,
   type DeliverySettings,
 } from "../../lib/deliverySettings";
-import {
-  unifiedOrderRef,
-  unifiedOrderTotal,
-  type UnifiedOrder,
-} from "../../lib/orderHistory";
-import {
-  formatSessionPrintName,
-  printKotDetailed,
-  printReceiptDetailed,
-  withPrinterProfile,
-  type PrintTicketInput,
-} from "../../lib/printTicket";
-import { resolveKotPrinter, resolveReceiptPrinter, resolvePrintUserId } from "../../lib/printerRouting";
+import { unifiedOrderRef, unifiedOrderTotal } from "../../lib/orderHistory";
 import {
   cardClass,
   emptyStateBoxClass,
   fieldInputClass,
-  linkActionClass,
   mutedClass,
   noticeWarningClass,
   panelTitleClass,
@@ -79,90 +62,39 @@ function formatWhen(iso: string): string {
   });
 }
 
-function parseItemsSummary(summary: string): { label: string; qty: number }[] {
-  return summary
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const match = part.match(/^(.+?)\s+x(\d+)$/i);
-      return match
-        ? { label: match[1].trim(), qty: Number(match[2]) }
-        : { label: part, qty: 1 };
-    });
-}
-
-function ticketToPrint(
-  ticket: KitchenTicket,
-  branchName: string,
-  branchCode: string,
-  printedByName?: string,
-): Omit<PrintTicketInput, "kind"> {
-  const items = deliveryOrderItemsSummary({
-    source: "kitchen",
-    id: ticket.id,
-    createdAt: ticket.createdAt,
-    ticket,
-  });
-  const lines = parseItemsSummary(items).map((line) => ({
-    label: line.label,
-    qty: line.qty,
-    unitPrice: 0,
-  }));
-  const by = printedByName?.trim() || ticket.createdByName?.trim() || undefined;
-
-  return {
-    branchName,
-    branchCode,
-    orderRef: ticket.orderRef ?? ticket.ticketRef,
-    modeLabel: "Delivery",
-    tableLabel: ticket.stationLabel,
-    waiterName: by,
-    lines: lines.length > 0 ? lines : [{ label: items || "Items", qty: 1, unitPrice: 0 }],
-    subtotal: 0,
-    discount: 0,
-    service: 0,
-    tax: 0,
-    deliveryCharge: ticket.deliveryChargePkr,
-    total: ticket.deliveryChargePkr,
-    servicePct: 0,
-    discountPct: 0,
-  };
-}
-
-function billToPrint(branchName: string, branchCode: string, bill: Bill): Omit<PrintTicketInput, "kind"> {
-  return {
-    branchName,
-    branchCode,
-    orderRef: bill.orderRef ?? bill.billRef,
-    billRef: bill.billRef,
-    modeLabel: "Delivery",
-    tableLabel: bill.tableLabel,
-    waiterName: bill.waiterName,
-    lines: bill.lines.map((line) => ({
-      label: line.label,
-      qty: line.qty,
-      unitPrice: line.unitPrice,
-    })),
-    subtotal: bill.subtotal,
-    discount: bill.discount,
-    service: bill.service,
-    tax: bill.tax,
-    deliveryCharge: bill.deliveryChargePkr,
-    total: bill.total,
-    servicePct: bill.servicePct,
-    taxPct: bill.taxPct,
-    discountPct: bill.subtotal > 0 ? Math.round((bill.discount / bill.subtotal) * 100) : 0,
-    notes: bill.notes ?? undefined,
-  };
-}
-
 function deliveryStatusTone(status: DeliveryStatus | null): "warning" | "info" | "success" | "neutral" {
   if (!status) return "neutral";
   if (status === "unassigned") return "warning";
   if (status === "assigned") return "info";
   if (status === "out_for_delivery") return "info";
   return "success";
+}
+
+function DeliverySummaryCard({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: boolean;
+}): JSX.Element {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800/70 dark:bg-slate-900/40">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div
+        className={[
+          "mt-1 text-2xl font-semibold",
+          accent ? "text-amber-700 dark:text-amber-300" : "text-slate-900 dark:text-white",
+        ].join(" ")}
+      >
+        {value}
+      </div>
+      {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
+    </div>
+  );
 }
 
 export function DeliveryPage(): JSX.Element {
@@ -177,7 +109,6 @@ export function DeliveryPage(): JSX.Element {
   /** Date filter for orders list + rider totals report (yyyy-mm-dd). */
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
-  const [selected, setSelected] = useState<UnifiedOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
 
@@ -201,10 +132,6 @@ export function DeliveryPage(): JSX.Element {
   const [savedCharges, setSavedCharges] = useState<DeliverySettings>(DEFAULT_DELIVERY_SETTINGS);
   const [draftCharges, setDraftCharges] = useState<DeliverySettings>(DEFAULT_DELIVERY_SETTINGS);
 
-  const [manageRiderId, setManageRiderId] = useState("");
-  const [manageCharge, setManageCharge] = useState(0);
-  const [manageStatus, setManageStatus] = useState<DeliveryStatus>("unassigned");
-
   useEffect(() => {
     const loaded = loadDeliverySettings(branch?.code);
     setSavedCharges(loaded);
@@ -216,13 +143,6 @@ export function DeliveryPage(): JSX.Element {
     setRiderBranchCode((prev) => prev || branch.code);
     setRidersBranchCode((prev) => prev || branch.code);
   }, [branch?.code]);
-
-  useEffect(() => {
-    if (!selected || selected.source !== "kitchen") return;
-    setManageRiderId(selected.ticket.riderId ?? "");
-    setManageCharge(selected.ticket.deliveryChargePkr);
-    setManageStatus(selected.ticket.deliveryStatus ?? "unassigned");
-  }, [selected]);
 
   const ordersQuery = useQuery({
     queryKey: ["orders", branch?.code],
@@ -316,6 +236,18 @@ export function DeliveryPage(): JSX.Element {
     });
   }, [allOrders, search, view, dateBounds]);
 
+  const deliverySummary = useMemo(() => summarizeDeliveryOrders(filtered), [filtered]);
+
+  const paidOrders = useMemo(
+    () => filtered.filter((o) => !isZeroAmountDeliveryOrder(o)),
+    [filtered],
+  );
+
+  const zeroAmountOrders = useMemo(
+    () => filtered.filter(isZeroAmountDeliveryOrder),
+    [filtered],
+  );
+
   /** Rider name → order count within the date filter (for Riders report). */
   const riderOrderTotals = useMemo(() => {
     const { fromMs, toMs } = dateBounds;
@@ -345,7 +277,6 @@ export function DeliveryPage(): JSX.Element {
     onSuccess: async () => {
       invalidate();
       await queryClient.refetchQueries({ queryKey: ["orders", branch?.code] });
-      setSelected(null);
       setCompletingId(null);
       setNotice("Delivery order completed and billed.");
     },
@@ -353,30 +284,6 @@ export function DeliveryPage(): JSX.Element {
       setCompletingId(null);
       setNotice(err.message);
     },
-  });
-
-  const updateOrderMutation = useMutation({
-    mutationFn: ({ ticketId, riderId, deliveryChargePkr, deliveryStatus }: {
-      ticketId: string;
-      riderId: string | null;
-      deliveryChargePkr: number;
-      deliveryStatus: DeliveryStatus;
-    }) =>
-      updateDeliveryOrder(ticketId, {
-        riderId,
-        deliveryChargePkr,
-        deliveryStatus,
-      }),
-    onSuccess: (ticket) => {
-      invalidate();
-      setSelected((prev) =>
-        prev?.source === "kitchen" && prev.ticket.id === ticket.id
-          ? { ...prev, ticket }
-          : prev,
-      );
-      setNotice("Delivery order updated.");
-    },
-    onError: (err: Error) => setNotice(err.message),
   });
 
   function resetRiderForm(): void {
@@ -905,6 +812,39 @@ export function DeliveryPage(): JSX.Element {
             <ModuleCountBadge shown={filtered.length} total={allOrders.length} />
           </ModuleFilterBar>
 
+          {!isLoading ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <DeliverySummaryCard
+                label="Grand total amount"
+                value={`Rs ${deliverySummary.grandTotal.toLocaleString()}`}
+                hint={
+                  deliverySummary.orderCount === 0
+                    ? "No orders in this view"
+                    : `${deliverySummary.orderCount - deliverySummary.zeroAmountCount} paid order${
+                        deliverySummary.orderCount - deliverySummary.zeroAmountCount === 1 ? "" : "s"
+                      } in filters`
+                }
+                accent
+              />
+              <DeliverySummaryCard
+                label="Delivery amounts total"
+                value={`Rs ${deliverySummary.deliveryChargesTotal.toLocaleString()}`}
+                hint="Sum of delivery charges for filtered orders"
+              />
+              <DeliverySummaryCard
+                label="Zero amount orders"
+                value={String(deliverySummary.zeroAmountCount)}
+                hint={
+                  deliverySummary.zeroAmountCount === 0
+                    ? "No zero-amount deliveries in this view"
+                    : `${deliverySummary.zeroAmountCount} order${
+                        deliverySummary.zeroAmountCount === 1 ? "" : "s"
+                      } with Rs 0 / — total`
+                }
+              />
+            </div>
+          ) : null}
+
           {isLoading ? <p className="text-xs text-slate-500">Loading…</p> : null}
           {isError ? (
             <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
@@ -918,10 +858,12 @@ export function DeliveryPage(): JSX.Element {
                 ? "No delivery orders yet. Create one from POS with Delivery mode."
                 : "No orders match your filters."}
             </p>
-          ) : (
+          ) : null}
+
+          {paidOrders.length > 0 ? (
             <SimpleTable
               rowKey={(r) => r.id}
-              rows={filtered}
+              rows={paidOrders}
               columns={[
                 {
                   key: "ref",
@@ -984,9 +926,95 @@ export function DeliveryPage(): JSX.Element {
                   key: "actions",
                   header: "",
                   id: "actions",
-                  render: (r) => (
-                    <span className="flex items-center gap-2">
-                      {r.source === "kitchen" && r.ticket.status !== "done" ? (
+                  render: (r) =>
+                    r.source === "kitchen" && r.ticket.status !== "done" ? (
+                      <Button
+                        type="button"
+                        className="h-7 border-0 bg-emerald-600 px-2 text-[11px] font-semibold text-white hover:bg-emerald-500"
+                        disabled={completeMutation.isPending}
+                        onClick={() => {
+                          setCompletingId(r.ticket.id);
+                          completeMutation.mutate(r.ticket.id);
+                        }}
+                      >
+                        {completeMutation.isPending && completingId === r.ticket.id ? "…" : "Complete"}
+                      </Button>
+                    ) : null,
+                },
+              ]}
+            />
+          ) : null}
+
+          {zeroAmountOrders.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className={panelTitleClass}>
+                  Zero amount orders ({zeroAmountOrders.length})
+                </h3>
+                <p className={`text-xs ${mutedClass}`}>
+                  Updates with rider search and date filters
+                </p>
+              </div>
+              <SimpleTable
+                rowKey={(r) => r.id}
+                rows={zeroAmountOrders}
+                columns={[
+                  {
+                    key: "ref",
+                    header: "Order",
+                    render: (r) => (
+                      <span className={tableOrderRefClass}>{unifiedOrderRef(r)}</span>
+                    ),
+                  },
+                  {
+                    key: "customer",
+                    header: "Customer",
+                    render: (r) => (
+                      <span className={tableCellPrimaryClass}>{deliveryOrderContact(r).customer}</span>
+                    ),
+                  },
+                  {
+                    key: "rider",
+                    header: "Rider",
+                    render: (r) => <span className={mutedClass}>{deliveryOrderRider(r)}</span>,
+                  },
+                  {
+                    key: "charge",
+                    header: "Delivery",
+                    render: (r) => {
+                      const charge = deliveryOrderCharge(r);
+                      return charge > 0 ? (
+                        <span className={`tabular-nums ${subtleClass}`}>Rs {charge.toLocaleString()}</span>
+                      ) : (
+                        "—"
+                      );
+                    },
+                  },
+                  {
+                    key: "total",
+                    header: "Total",
+                    render: () => <span className={tableCellAmountClass}>Rs 0</span>,
+                  },
+                  {
+                    key: "status",
+                    header: "Status",
+                    render: (r) => (
+                      <Badge tone={deliveryStatusTone(deliveryOrderStatus(r))}>
+                        {deliveryOrderStatusLabel(r)}
+                      </Badge>
+                    ),
+                  },
+                  {
+                    key: "when",
+                    header: "When",
+                    render: (r) => <span className={mutedClass}>{formatWhen(r.createdAt)}</span>,
+                  },
+                  {
+                    key: "actions",
+                    header: "",
+                    id: "actions",
+                    render: (r) =>
+                      r.source === "kitchen" && r.ticket.status !== "done" ? (
                         <Button
                           type="button"
                           className="h-7 border-0 bg-emerald-600 px-2 text-[11px] font-semibold text-white hover:bg-emerald-500"
@@ -998,182 +1026,10 @@ export function DeliveryPage(): JSX.Element {
                         >
                           {completeMutation.isPending && completingId === r.ticket.id ? "…" : "Complete"}
                         </Button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className={`text-[11px] ${linkActionClass}`}
-                        onClick={() => setSelected(selected?.id === r.id ? null : r)}
-                      >
-                        {selected?.id === r.id ? "Hide" : "Manage"}
-                      </button>
-                    </span>
-                  ),
-                },
-              ]}
-            />
-          )}
-
-          {selected ? (
-            <div className={`${cardClass} p-4`}>
-              {(() => {
-                const { customer, address } = deliveryOrderContact(selected);
-                const items = deliveryOrderItemsSummary(selected);
-                const total = unifiedOrderTotal(selected);
-                const charge = deliveryOrderCharge(selected);
-
-                return (
-                  <>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div className={tableOrderRefClass}>
-                          {unifiedOrderRef(selected)}
-                        </div>
-                        <p className={`mt-0.5 text-xs ${mutedClass}`}>
-                          {customer} · {address} · {formatWhen(selected.createdAt)}
-                        </p>
-                      </div>
-                      {selected.source === "bill" ? (
-                        <Button
-                          type="button"
-                          className="h-7 text-xs"
-                          onClick={() => {
-                            void (async () => {
-                              const sessionUserId = useSessionStore.getState().claims?.sub;
-                              const printUserId = resolvePrintUserId(
-                                sessionUserId,
-                                selected.bill.waiterId,
-                              );
-                              const profile = resolveReceiptPrinter(branch.code, printUserId);
-                              const result = await printReceiptDetailed(
-                                withPrinterProfile(
-                                  billToPrint(branch.name, branch.code, selected.bill),
-                                  profile,
-                                ),
-                              );
-                              setNotice(
-                                result.ok
-                                  ? `Receipt printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : profile?.name ? ` → ${profile.name}` : ""}.`
-                                  : `Reprint failed: ${result.error ?? "assign a receipt printer to this user in Printer settings"}.`,
-                              );
-                            })();
-                          }}
-                        >
-                          Reprint
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          className="h-7 text-xs"
-                          onClick={() => {
-                            void (async () => {
-                              const actorId = useSessionStore.getState().claims?.sub;
-                              const profile = resolveKotPrinter(branch.code, null, actorId, "kitchen");
-                              const result = await printKotDetailed(
-                                withPrinterProfile(
-                                  ticketToPrint(
-                                    selected.ticket,
-                                    branch.name,
-                                    branch.code,
-                                    formatSessionPrintName(actorId),
-                                  ),
-                                  profile,
-                                ),
-                              );
-                              setNotice(
-                                result.ok
-                                  ? `KOT printed${profile?.systemPrinterName ? ` → ${profile.systemPrinterName}` : profile?.name ? ` → ${profile.name}` : ""}.`
-                                  : `KOT print failed: ${result.error ?? "assign a kitchen printer to this user in Printer settings"}.`,
-                              );
-                            })();
-                          }}
-                        >
-                          Print KOT
-                        </Button>
-                      )}
-                    </div>
-                    <p className={`mt-3 text-sm ${subtleClass}`}>{items}</p>
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
-                      <Badge tone={deliveryStatusTone(deliveryOrderStatus(selected))}>
-                        {deliveryOrderStatusLabel(selected)}
-                      </Badge>
-                      {charge > 0 ? (
-                        <span className={`text-sm ${mutedClass}`}>
-                          Delivery Rs {charge.toLocaleString()}
-                        </span>
-                      ) : null}
-                      {total != null ? (
-                        <span className={`text-sm ${tableCellAmountClass}`}>
-                          Rs {total.toLocaleString()}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    {selected.source === "kitchen" && selected.ticket.status !== "done" ? (
-                      <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 dark:border-slate-800 sm:grid-cols-3">
-                        <label className={`block text-xs ${mutedClass}`}>
-                          Assign rider
-                          <select
-                            value={manageRiderId}
-                            onChange={(e) => setManageRiderId(e.target.value)}
-                            className={`mt-1 w-full ${fieldInputClass}`}
-                          >
-                            <option value="">Unassigned</option>
-                            {branchRiders
-                              .filter((r) => r.active)
-                              .map((rider) => (
-                                <option key={rider.id} value={rider.id}>
-                                  {rider.name}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-                        <label className={`block text-xs ${mutedClass}`}>
-                          Delivery charge
-                          <input
-                            type="number"
-                            min={0}
-                            max={50000}
-                            value={manageCharge}
-                            onChange={(e) => setManageCharge(Math.max(0, Number(e.target.value) || 0))}
-                            className={`mt-1 w-full ${fieldInputClass}`}
-                          />
-                        </label>
-                        <label className={`block text-xs ${mutedClass}`}>
-                          Delivery status
-                          <select
-                            value={manageStatus}
-                            onChange={(e) => setManageStatus(e.target.value as DeliveryStatus)}
-                            className={`mt-1 w-full ${fieldInputClass}`}
-                          >
-                            {DELIVERY_STATUS_VALUES.map((status) => (
-                              <option key={status} value={status}>
-                                {DELIVERY_STATUS_LABELS[status]}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="sm:col-span-3">
-                          <Button
-                            type="button"
-                            className="h-8 text-xs"
-                            disabled={updateOrderMutation.isPending}
-                            onClick={() =>
-                              updateOrderMutation.mutate({
-                                ticketId: selected.ticket.id,
-                                riderId: manageRiderId || null,
-                                deliveryChargePkr: manageCharge,
-                                deliveryStatus: manageStatus,
-                              })
-                            }
-                          >
-                            {updateOrderMutation.isPending ? "Saving…" : "Save changes"}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                );
-              })()}
+                      ) : null,
+                  },
+                ]}
+              />
             </div>
           ) : null}
         </>

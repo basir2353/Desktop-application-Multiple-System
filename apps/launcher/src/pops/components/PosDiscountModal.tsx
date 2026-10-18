@@ -121,7 +121,7 @@ export function PosDiscountModal({
         </label>
 
         <div className="mt-2 flex flex-wrap gap-1">
-          {(discountType === "percent" ? [5, 10, 15, 20] : [50, 100, 200, 500]).map((preset) => (
+          {(discountType === "percent" ? [5, 10, 15, 20, 50, 100] : [50, 100, 200, 500]).map((preset) => (
             <button
               key={preset}
               type="button"
@@ -131,6 +131,20 @@ export function PosDiscountModal({
               {discountType === "percent" ? `${preset}%` : `Rs ${preset}`}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() =>
+              setValue(
+                discountType === "percent"
+                  ? "100"
+                  : String(Math.max(0, Math.round(maxAmount))),
+              )
+            }
+            className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800 hover:bg-amber-500/30 dark:text-amber-200"
+            title="Apply maximum discount on discountable items"
+          >
+            Max
+          </button>
         </div>
 
         <div className="mt-4 flex flex-wrap justify-end gap-2">

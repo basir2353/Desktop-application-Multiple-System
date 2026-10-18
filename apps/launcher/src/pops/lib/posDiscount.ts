@@ -1,14 +1,17 @@
+/** Manual / modal discount may go up to 100% of the discountable subtotal. */
+export const MAX_POS_DISCOUNT_PCT = 100;
+
 export function clampDiscountPkr(amount: number, subtotal: number): number {
   return Math.max(0, Math.min(Math.round(amount), subtotal));
 }
 
 export function discountPctFromAmount(amount: number, subtotal: number): number {
   if (subtotal <= 0) return 0;
-  return Math.min(50, Math.round((amount / subtotal) * 100));
+  return Math.min(MAX_POS_DISCOUNT_PCT, Math.round((amount / subtotal) * 100));
 }
 
 export function discountAmountFromPct(pct: number, subtotal: number): number {
-  const clamped = Math.max(0, Math.min(50, pct));
+  const clamped = Math.max(0, Math.min(MAX_POS_DISCOUNT_PCT, pct));
   return Math.round(subtotal * (clamped / 100));
 }
 

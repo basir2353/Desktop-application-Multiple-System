@@ -57,15 +57,11 @@ export function MenuImagePicker({
             <img
               src={objectUrl}
               alt=""
-              className="absolute inset-0 block h-full w-full object-cover object-center"
+              className="pointer-events-none absolute inset-0 block h-full w-full object-cover object-center"
+              style={{ objectFit: "cover", width: "100%", height: "100%" }}
             />
           ) : previewSrc ? (
-            <SafeMenuImage
-              imageUrl={value}
-              alt=""
-              className="absolute inset-0 block h-full w-full object-cover object-center"
-              fallback={emptyLabel}
-            />
+            <SafeMenuImage imageUrl={value} alt="" fill fallback={emptyLabel} />
           ) : (
             emptyLabel
           )}
@@ -132,12 +128,7 @@ export function MenuImageThumb({ imageUrl, alt }: MenuImageThumbProps): JSX.Elem
   );
   return (
     <span className="relative inline-block h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-800">
-      <SafeMenuImage
-        imageUrl={imageUrl}
-        alt={alt}
-        className="absolute inset-0 block h-full w-full object-cover object-center"
-        fallback={empty}
-      />
+      <SafeMenuImage imageUrl={imageUrl} alt={alt} fill fallback={empty} />
     </span>
   );
 }

@@ -9,6 +9,7 @@ import {
   dismissPosOrder,
   filterDismissedPosOrders,
   filterPosRecentOrders,
+  filterPosRecentOrdersByMode,
   formatRecentOrderTime,
   isPaidPosRecentOrder,
   posRecentOrderTotal,
@@ -224,6 +225,26 @@ export function PosLatestOrdersPanel({
     if (modeFilter === "Paid") return withClosedPosOrderStatus(orders, branch.code);
     return filterDismissedPosOrders(orders, branch.code);
   }, [orders, branch?.code, dismissedRevision, modeFilter]);
+
+  /** Same count badges as full-screen Open Orders (All / Dine-in / Takeaway / Delivery). */
+  const openOrderCounts = useMemo(() => {
+    void dismissedRevision;
+    const base = branch?.code ? filterDismissedPosOrders(orders, branch.code) : orders;
+    const open = filterPosRecentOrdersByMode(base, "all");
+    return {
+      all: open.length,
+      byMode: Object.fromEntries(
+        visibleFilterModes.map(({ label }) => [
+          label,
+          filterPosRecentOrdersByMode(open, label as PosRecentOrderModeFilter).length,
+        ]),
+      ) as Record<string, number>,
+      paid: filterPosRecentOrdersByMode(
+        branch?.code ? withClosedPosOrderStatus(orders, branch.code) : orders,
+        "Paid",
+      ).length,
+    };
+  }, [orders, branch?.code, dismissedRevision, visibleFilterModes]);
 
   const isSearching = search.trim().length > 0;
   const isModeFiltered = modeFilter !== "all";
@@ -885,45 +906,59 @@ export function PosLatestOrdersPanel({
             ) : null}
           </div>
 
-          <div className="no-scrollbar mt-2 flex gap-1 overflow-x-auto rounded-md border border-slate-800 p-0.5">
+          <div
+            className="no-scrollbar mt-2 flex gap-1 overflow-x-auto rounded-md border border-slate-800 p-0.5"
+            role="tablist"
+            aria-label="Filter Latest orders by type"
+          >
             <button
               type="button"
+              role="tab"
+              aria-selected={modeFilter === "all"}
               onClick={(e) => {
                 setModeFilter("all");
                 e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
               }}
-              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
+              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-semibold transition ${
                 modeFilter === "all" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >
-              All
+              All{openOrderCounts.all > 0 ? ` (${openOrderCounts.all})` : ""}
             </button>
-            {visibleFilterModes.map(({ label }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={(e) => {
-                  setModeFilter(label);
-                  e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-                }}
-                className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
-                  modeFilter === label ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            {visibleFilterModes.map(({ label }) => {
+              const count = openOrderCounts.byMode[label] ?? 0;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  role="tab"
+                  aria-selected={modeFilter === label}
+                  onClick={(e) => {
+                    setModeFilter(label);
+                    e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+                  }}
+                  className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-semibold transition ${
+                    modeFilter === label ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {label}
+                  {count > 0 ? ` (${count})` : ""}
+                </button>
+              );
+            })}
             <button
               type="button"
+              role="tab"
+              aria-selected={modeFilter === "Paid"}
               onClick={(e) => {
                 setModeFilter("Paid");
                 e.currentTarget.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
               }}
-              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-medium transition ${
+              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-semibold transition ${
                 modeFilter === "Paid" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >
-              Paid
+              Paid{openOrderCounts.paid > 0 ? ` (${openOrderCounts.paid})` : ""}
             </button>
           </div>
         </div>

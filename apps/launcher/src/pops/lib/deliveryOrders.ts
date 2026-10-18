@@ -1,7 +1,14 @@
 import type { Bill, DeliveryStatus, KitchenTicket } from "@platform/contracts";
 import { DELIVERY_STATUS_LABELS } from "@platform/contracts";
 import { billChannelLabel } from "./orderSales";
-import { buildUnifiedOrders, type UnifiedOrder } from "./orderHistory";
+import { buildUnifiedOrders, unifiedOrderTotal, type UnifiedOrder } from "./orderHistory";
+
+export type DeliveryOrdersSummary = {
+  grandTotal: number;
+  deliveryChargesTotal: number;
+  zeroAmountCount: number;
+  orderCount: number;
+};
 
 export function isDeliveryOrder(order: UnifiedOrder): boolean {
   const label = order.source === "bill" ? order.bill.tableLabel : order.ticket.stationLabel;
@@ -101,4 +108,32 @@ export function deliveryOrderStatusLabel(order: UnifiedOrder): string {
     return order.source === "kitchen" ? "In kitchen" : "—";
   }
   return DELIVERY_STATUS_LABELS[status];
+}
+
+/** True when order total is missing or Rs 0. */
+export function isZeroAmountDeliveryOrder(order: UnifiedOrder): boolean {
+  const total = unifiedOrderTotal(order);
+  return total == null || total === 0;
+}
+
+/** Totals for the current Orders filters (rider search + dates + All/Active). */
+export function summarizeDeliveryOrders(orders: UnifiedOrder[]): DeliveryOrdersSummary {
+  let grandTotal = 0;
+  let deliveryChargesTotal = 0;
+  let zeroAmountCount = 0;
+  for (const order of orders) {
+    deliveryChargesTotal += deliveryOrderCharge(order);
+    const total = unifiedOrderTotal(order);
+    if (total == null || total === 0) {
+      zeroAmountCount += 1;
+    } else {
+      grandTotal += total;
+    }
+  }
+  return {
+    grandTotal,
+    deliveryChargesTotal,
+    zeroAmountCount,
+    orderCount: orders.length,
+  };
 }

@@ -423,15 +423,26 @@ export class KitchenService implements OnModuleInit {
     editor?: { userId: string; role: string },
   ) {
     const existing = await this.getTicket(organizationId, ticketId);
+    const isContentEdit =
+      input.lines !== undefined || input.notes !== undefined || input.stationLabel !== undefined;
+
+    // Kitchen "done" only means food was prepared — unpaid tickets stay editable on POS
+    // so cashiers can add items after kitchen complete. Paid (completed bill) stays locked.
+    let reopenKitchenDone = false;
     if (existing.status === "done" && (input.lines !== undefined || input.notes !== undefined)) {
-      throw new BadRequestException("Cannot edit items on a completed order");
+      const paidBill = await this.findCompletedBillForTicket(existing);
+      if (paidBill) {
+        throw new BadRequestException("Cannot edit items on a paid order");
+      }
+      // New / changed lines must go back to the kitchen board.
+      if (input.lines !== undefined && input.status === undefined) {
+        reopenKitchenDone = true;
+      }
     }
 
     // Only the waiter who took the order may change its contents. Status-only
     // updates (kitchen marking cooking/ready/done) stay open to everyone, and
     // managers/admins/cashiers can always edit.
-    const isContentEdit =
-      input.lines !== undefined || input.notes !== undefined || input.stationLabel !== undefined;
     const editorIsStaff = editor && (editor.role === "waiter" || editor.role === "rider");
     if (
       isContentEdit &&
@@ -449,11 +460,14 @@ export class KitchenService implements OnModuleInit {
     let absorbedDestNotes: string | null = null;
 
     if (input.stationLabel !== undefined) {
-      if (existing.status === "done") {
+      const nextLabel = input.stationLabel.trim();
+      const stationChanged =
+        nextLabel.toLowerCase() !== existing.stationLabel.trim().toLowerCase();
+      // POS Update always re-sends stationLabel — only block a real table move on kitchen-done.
+      if (existing.status === "done" && stationChanged) {
         throw new BadRequestException("Cannot change table on a completed order");
       }
-      const nextLabel = input.stationLabel.trim();
-      if (nextLabel.toLowerCase() !== existing.stationLabel.trim().toLowerCase()) {
+      if (stationChanged) {
         // Table transfer: merge any open order already on the destination into this
         // ticket, move held bills, then relocate — do not hard-block booked tables.
         if (isDineInTableLabel(nextLabel)) {
@@ -576,7 +590,7 @@ export class KitchenService implements OnModuleInit {
       itemsSummary = notes ? `${lineText} · ${notes}` : lineText;
     }
 
-    const nextStatus = input.status ?? existing.status;
+    const nextStatus = reopenKitchenDone ? "new" : (input.status ?? existing.status);
 
     let billId = existing.billId;
     // When marking done, only *link* an existing completed bill (e.g. already paid on POS).
@@ -657,7 +671,11 @@ export class KitchenService implements OnModuleInit {
       .update(popsKitchenTickets)
       .set({
         ...(input.priority !== undefined ? { priority: input.priority } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(reopenKitchenDone
+          ? { status: "new" }
+          : input.status !== undefined
+            ? { status: input.status }
+            : {}),
         ...(input.stationLabel !== undefined
           ? { stationLabel: input.stationLabel.trim() }
           : {}),
@@ -672,6 +690,8 @@ export class KitchenService implements OnModuleInit {
         ...(nextStatus === "cooking" && !existing.startedAt
           ? { startedAt: new Date() }
           : {}),
+        // Fresh kitchen cycle after POS adds items to a previously completed ticket.
+        ...(reopenKitchenDone ? { startedAt: null } : {}),
         ...(updatedByUserId !== undefined
           ? { updatedByUserId, updatedByName: updatedByName ?? null }
           : {}),
@@ -1075,6 +1095,34 @@ export class KitchenService implements OnModuleInit {
       throw new NotFoundException("Kitchen ticket not found");
     }
     return row;
+  }
+
+  /** True when this kitchen ticket (or its orderRef) already has a paid/completed bill. */
+  private async findCompletedBillForTicket(
+    ticket: typeof popsKitchenTickets.$inferSelect,
+  ): Promise<{ id: string } | null> {
+    if (ticket.billId) {
+      const byId = await this.db
+        .select({ id: popsBills.id })
+        .from(popsBills)
+        .where(and(eq(popsBills.id, ticket.billId), eq(popsBills.status, "completed")))
+        .limit(1);
+      if (byId[0]) return byId[0];
+    }
+    const orderRef = ticket.orderRef?.trim();
+    if (!orderRef) return null;
+    const byRef = await this.db
+      .select({ id: popsBills.id })
+      .from(popsBills)
+      .where(
+        and(
+          eq(popsBills.branchId, ticket.branchId),
+          eq(popsBills.orderRef, orderRef),
+          eq(popsBills.status, "completed"),
+        ),
+      )
+      .limit(1);
+    return byRef[0] ?? null;
   }
 }
 

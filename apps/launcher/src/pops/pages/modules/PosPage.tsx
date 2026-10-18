@@ -311,6 +311,7 @@ export function PosPage(): JSX.Element {
   const [searchHighlight, setSearchHighlight] = useState(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const fullScreenSearchInputRef = useRef<HTMLInputElement>(null);
   const [cart, setCart] = useState<PosCartLine[]>([]);
   /** Which cart card is active — controls whether bill Disc % / Disc Rs is shown. */
   const [selectedCartKey, setSelectedCartKey] = useState<string | null>(null);
@@ -1486,7 +1487,7 @@ export function PosPage(): JSX.Element {
       : {};
 
   function onDiscountPctChange(raw: number): void {
-    const pct = Math.max(0, Math.min(50, raw));
+    const pct = Math.max(0, Math.min(100, raw));
     const base = itemEligibility.discountableSubtotal;
     setDiscountEditedAs("pct");
     setDiscountPctInput(pct);
@@ -2960,6 +2961,11 @@ export function PosPage(): JSX.Element {
 
   posShortcutActionsRef.current = {
     search: () => {
+      if (fullScreenMenuOpen) {
+        fullScreenSearchInputRef.current?.focus();
+        fullScreenSearchInputRef.current?.select();
+        return;
+      }
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
       setSearchDropdownOpen(true);
@@ -3265,6 +3271,7 @@ export function PosPage(): JSX.Element {
           items={menuItems}
           cartLines={displayCart}
           selectedCartKey={selectedCartKey}
+          searchInputRef={fullScreenSearchInputRef}
           totalQty={totalQty}
           subtotal={subtotal}
           discount={discount}
@@ -3733,11 +3740,11 @@ export function PosPage(): JSX.Element {
                             : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
                         }`}
                       >
-                        <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/5">
+                        <span className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/5">
                           <SafeMenuImage
                             imageUrl={c.imageUrl}
                             alt=""
-                            className="absolute inset-0 h-full w-full object-cover object-center"
+                            fill
                             fallback={initialFallback}
                           />
                         </span>
@@ -3788,7 +3795,7 @@ export function PosPage(): JSX.Element {
                     : "No items in this category."}
               </p>
             ) : (
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="flex flex-wrap content-start gap-1.5">
                 {filteredMenu.map((item) => {
                   const variants = resolvePosSellableVariants(item);
                   const displayPrice = happyHourActiveSlot?.percentOff
@@ -3801,7 +3808,7 @@ export function PosPage(): JSX.Element {
                   const hasPicker = variants.length > 1;
                   const qty = itemQtyInCart(item.id, displayCart);
                   const itemFallback = (
-                    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/60 text-sm font-bold text-slate-500">
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-sm font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">
                       {isSearching || showFeaturedOnly || showAllItems
                         ? categoryById.get(item.categoryId)
                         : item.name.slice(0, 2).toUpperCase()}
@@ -3819,70 +3826,65 @@ export function PosPage(): JSX.Element {
                           onDishClick(item);
                         }
                       }}
-                      className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900/40 transition hover:border-amber-500/40 hover:ring-1 hover:ring-amber-500/30"
+                      className="group relative h-24 w-24 shrink-0 cursor-pointer overflow-hidden rounded-md border border-slate-200 bg-white transition hover:border-amber-500/50 hover:ring-1 hover:ring-amber-500/30 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-amber-400/70"
                     >
                       <SafeMenuImage
                         imageUrl={item.imageUrl}
                         alt=""
-                        className="absolute inset-0 h-full w-full object-cover object-center"
+                        fill
                         fallback={itemFallback}
                       />
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/85 to-transparent px-2 pb-2 pt-10 opacity-0 transition group-hover:opacity-100">
+                      {/* Hover-only qty controls — above fixed footer */}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[2] flex h-8 items-center justify-between gap-0.5 px-1 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
+                        <button
+                          type="button"
+                          disabled={qty <= 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            decrementItemFromCart(item);
+                          }}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-sm font-bold text-slate-800 shadow disabled:opacity-30 dark:border-slate-500 dark:bg-slate-900 dark:text-white"
+                          aria-label={`Remove one ${item.name}`}
+                        >
+                          −
+                        </button>
+                        <span className="min-w-[1.25rem] rounded bg-white/95 px-1 text-center text-[11px] font-bold tabular-nums text-slate-900 shadow dark:bg-slate-950/90 dark:text-white">
+                          {qty}
+                        </span>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             onDishClick(item);
                           }}
-                          className="w-full text-left"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-amber-400 text-sm font-bold text-slate-950 shadow"
+                          aria-label={`Add one ${item.name}`}
                         >
-                          <span className="line-clamp-2 text-sm font-bold leading-snug text-white">
-                            {item.featured ? (
-                              <span className="mr-0.5 text-amber-300" aria-hidden>
-                                ★
-                              </span>
-                            ) : null}
-                            {item.name}
-                          </span>
-                          <span className="mt-0.5 block text-sm font-bold text-amber-300">
-                            {hasPicker ? "From " : ""}
-                            {displayPrice.toLocaleString()}
-                            {showHappyHourPrice ? (
-                              <span className="ml-1 font-normal text-slate-400 line-through">
-                                {menuItemDisplayPrice(item).toLocaleString()}
-                              </span>
-                            ) : null}
-                          </span>
+                          +
                         </button>
-                        <div className="mt-1.5 flex items-center justify-between gap-1">
-                          <button
-                            type="button"
-                            disabled={qty <= 0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              decrementItemFromCart(item);
-                            }}
-                            className="flex h-8 w-8 items-center justify-center rounded border border-slate-500 bg-slate-900 text-base font-bold text-white disabled:opacity-30"
-                            aria-label={`Remove one ${item.name}`}
-                          >
-                            −
-                          </button>
-                          <span className="min-w-[1.5rem] text-center text-sm font-bold text-white">{qty}</span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDishClick(item);
-                            }}
-                            className="flex h-8 w-8 items-center justify-center rounded bg-amber-400 text-base font-bold text-slate-950"
-                            aria-label={`Add one ${item.name}`}
-                          >
-                            +
-                          </button>
-                        </div>
+                      </div>
+                      {/* Fixed-height footer — same on every card */}
+                      <div className="absolute inset-x-0 bottom-0 z-[1] flex h-12 flex-col justify-end bg-white/95 px-1.5 pb-1 pt-0.5 dark:bg-slate-950/95">
+                        <span className="line-clamp-1 min-h-[1.1rem] text-[11px] font-bold leading-tight text-slate-900 dark:text-white">
+                          {item.featured ? (
+                            <span className="mr-0.5 text-amber-600 dark:text-amber-300" aria-hidden>
+                              ★
+                            </span>
+                          ) : null}
+                          {item.name}
+                        </span>
+                        <span className="mt-0.5 block min-h-[1.1rem] truncate text-[11px] font-bold text-orange-600 dark:text-orange-400">
+                          {hasPicker ? "From " : ""}
+                          {displayPrice.toLocaleString()}
+                          {showHappyHourPrice ? (
+                            <span className="ml-1 font-normal text-slate-400 line-through dark:text-slate-300">
+                              {menuItemDisplayPrice(item).toLocaleString()}
+                            </span>
+                          ) : null}
+                        </span>
                       </div>
                       {qty > 0 ? (
-                        <span className="absolute right-1 top-1 rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950 group-hover:opacity-0">
+                        <span className="absolute right-0.5 top-0.5 z-[1] rounded bg-amber-400 px-1 py-px text-[9px] font-bold text-slate-950 group-hover:opacity-0">
                           {qty}
                         </span>
                       ) : null}
@@ -3911,7 +3913,7 @@ export function PosPage(): JSX.Element {
                   {editingOrder ? "Modify order" : mode === "staff-food" ? "Staff food" : "New order"}
                 </div>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {editingOrder ? (
                   <button
                     type="button"
@@ -3924,11 +3926,21 @@ export function PosPage(): JSX.Element {
                 <button
                   type="button"
                   onClick={startNewManualOrder}
-                  title="Start a new blank order"
-                  aria-label="New order"
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-amber-500 text-sm font-bold leading-none text-slate-950 shadow-sm transition hover:bg-amber-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+                  title="Start a new blank order — pick Dine-in / Takeaway / Delivery"
+                  className="inline-flex items-center rounded-md bg-amber-500 px-2 py-1 text-[10px] font-bold text-slate-950 shadow-sm transition hover:bg-amber-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
                 >
-                  +
+                  New Order
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFullScreenMenuOpen(true)}
+                  title="Full screen — see and manage more items"
+                  aria-label="Full screen order"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:border-amber-400 hover:bg-amber-50 hover:text-amber-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-amber-500/50 dark:hover:bg-amber-500/10 dark:hover:text-amber-200"
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" strokeLinecap="round" />
+                  </svg>
                 </button>
                 <span
                   className="max-w-[6.5rem] truncate rounded-md bg-amber-100 px-1 py-0.5 font-mono text-[9px] font-semibold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25"
@@ -4163,58 +4175,71 @@ export function PosPage(): JSX.Element {
               ) : (
                 <span />
               )}
-              <div
-                className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-950"
-                role="group"
-                aria-label="Cart layout"
-              >
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  title="List view"
-                  aria-pressed={cartLayout === "list"}
-                  onClick={() => {
-                    setCartLayout("list");
-                    try {
-                      localStorage.setItem("pops-pos-cart-layout", "list");
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  className={`rounded px-1.5 py-1 transition ${
-                    cartLayout === "list"
-                      ? "bg-amber-500 text-slate-950"
-                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-                  }`}
+                  title="Full screen — see and manage more items"
+                  onClick={() => setFullScreenMenuOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-1 text-[10px] font-bold text-slate-950 shadow-sm shadow-amber-500/25 transition hover:bg-amber-400"
                 >
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" />
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" strokeLinecap="round" />
                   </svg>
+                  Full screen
                 </button>
-                <button
-                  type="button"
-                  title="Grid view"
-                  aria-pressed={cartLayout === "grid"}
-                  onClick={() => {
-                    setCartLayout("grid");
-                    try {
-                      localStorage.setItem("pops-pos-cart-layout", "grid");
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  className={`rounded px-1.5 py-1 transition ${
-                    cartLayout === "grid"
-                      ? "bg-amber-500 text-slate-950"
-                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
-                  }`}
+                <div
+                  className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-950"
+                  role="group"
+                  aria-label="Cart layout"
                 >
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                    <rect x="3" y="3" width="7" height="7" rx="1" />
-                    <rect x="14" y="3" width="7" height="7" rx="1" />
-                    <rect x="3" y="14" width="7" height="7" rx="1" />
-                    <rect x="14" y="14" width="7" height="7" rx="1" />
-                  </svg>
-                </button>
+                  <button
+                    type="button"
+                    title="List view"
+                    aria-pressed={cartLayout === "list"}
+                    onClick={() => {
+                      setCartLayout("list");
+                      try {
+                        localStorage.setItem("pops-pos-cart-layout", "list");
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className={`rounded px-1.5 py-1 transition ${
+                      cartLayout === "list"
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                    }`}
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    title="Grid view"
+                    aria-pressed={cartLayout === "grid"}
+                    onClick={() => {
+                      setCartLayout("grid");
+                      try {
+                        localStorage.setItem("pops-pos-cart-layout", "grid");
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className={`rounded px-1.5 py-1 transition ${
+                      cartLayout === "grid"
+                        ? "bg-amber-500 text-slate-950"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                    }`}
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <rect x="3" y="3" width="7" height="7" rx="1" />
+                      <rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" />
+                      <rect x="14" y="14" width="7" height="7" rx="1" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
 
