@@ -80,6 +80,8 @@ type Props = {
   onCloseAfterPayHandled?: () => void;
   /** Parent (POS) wires shortcut P → quick print selected bill. */
   quickPrintRef?: { current: (() => boolean) | null };
+  /** Imperative print for a specific order (full-screen Open/Closed drawers). */
+  externalPrintOrderRef?: { current: ((order: PosRecentOrder) => void) | null };
 };
 
 function statusDotClass(tone: PosRecentOrder["statusTone"]): string {
@@ -99,6 +101,7 @@ export function PosLatestOrdersPanel({
   closeAfterPayBillId = null,
   onCloseAfterPayHandled,
   quickPrintRef,
+  externalPrintOrderRef,
 }: Props): JSX.Element {
   const queryClient = useQueryClient();
   const branch = usePopsStore((s) => s.branch);
@@ -494,6 +497,10 @@ export function PosLatestOrdersPanel({
   /** Print P / shortcut P — simple customer slip only (no PRA/PRF, no kitchen KOT). */
   async function quickPrintOrder(order: PosRecentOrder): Promise<void> {
     onNotice?.(`Printing ${order.ref}…`, "success");
+    const isPaidBill =
+      order.bill?.status === "completed" ||
+      Boolean(order.bill?.praInvoiceNumber) ||
+      modeFilter === "Paid";
 
     const built = await buildPaidReceiptInput(order, {
       embedPra: false,
@@ -609,6 +616,16 @@ export function PosLatestOrdersPanel({
       quickPrintRef.current = null;
     };
   }, [quickPrintRef, onNotice]);
+
+  useEffect(() => {
+    if (!externalPrintOrderRef) return;
+    externalPrintOrderRef.current = (order) => {
+      printOrderRef.current(order);
+    };
+    return () => {
+      externalPrintOrderRef.current = null;
+    };
+  }, [externalPrintOrderRef]);
 
   /**
    * Close (paid): mark status Closed + show this order’s real PRA invoice (number + QR + logo).

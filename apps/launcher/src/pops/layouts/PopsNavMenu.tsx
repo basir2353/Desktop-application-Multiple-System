@@ -83,7 +83,14 @@ function PopsNavGroupSidebar({ group }: { group: PopsNavGroup }): JSX.Element {
       {open ? (
         <div className="mt-0.5 space-y-0.5 border-l-2 border-slate-500 ml-4 pl-1">
           {group.children.map((child) => (
-            <NavLink key={child.path} to={`/pops/${child.path}`} end className={childNavLinkClass}>
+            <NavLink
+              key={child.path}
+              to={`/pops/${child.path}`}
+              end
+              /* Avoid Back from POS landing on Cash drawer (sibling under same group). */
+              replace={pathname.includes("/pos/cash-drawer") && child.path === "pos"}
+              className={childNavLinkClass}
+            >
               {child.label}
             </NavLink>
           ))}

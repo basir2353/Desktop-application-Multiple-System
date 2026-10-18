@@ -13,7 +13,7 @@ import {
 } from "@platform/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { fetchTaxAuthorityStatus } from "../../../lib/taxAuthorityApi";
 import { usePopsStore } from "../../../stores/popsStore";
 import { useSessionStore } from "../../../stores/sessionStore";
@@ -70,6 +70,7 @@ import {
   cartLineNet,
   isMenuItemDiscountable,
   itemNeedsPosPrompt,
+  itemQtyInCart,
   lineBlocksBillDiscount,
   nextCartSortOrder,
   pickDefaultVariant,
@@ -418,6 +419,8 @@ export function PosPage(): JSX.Element {
   /** Last Order/Print-order KOT — Pay must reuse this ref and never create/print a second ticket. */
   const lastPrintedKotRef = useRef<{ orderRef: string; ticketId: string; at: number } | null>(null);
   const latestOrdersQuickPrintRef = useRef<(() => boolean) | null>(null);
+  const latestOrdersPrintOrderRef = useRef<((order: import("../../lib/recentOrders").PosRecentOrder) => void) | null>(null);
+  const navigate = useNavigate();
   const cashierPromptShown = useRef(false);
   const seatingAutoOpened = useRef(false);
   const deliveryCustomerFieldRef = useRef<HTMLDivElement>(null);
@@ -472,6 +475,7 @@ export function PosPage(): JSX.Element {
       showPosTaxServiceFreeToggles: local.showPosTaxServiceFreeToggles,
       kotChangeReasonGraceMinutes: local.kotChangeReasonGraceMinutes,
       fullScreenTicketPanelSide: local.fullScreenTicketPanelSide,
+      showDeliveryAddress: local.showDeliveryAddress,
       autoPrintOrderDineIn: local.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
       autoPrintOrderDelivery: local.autoPrintOrderDelivery,
@@ -858,8 +862,38 @@ export function PosPage(): JSX.Element {
   /** Full-screen Closed Orders: paid + locally closed labels. */
   const fullScreenClosedOrders = useMemo(() => {
     const paid = filterPosRecentOrdersByMode(recentOrders, "Paid");
-    return branch?.code ? withClosedPosOrderStatus(paid, branch.code) : paid;
+    const labeled = branch?.code ? withClosedPosOrderStatus(paid, branch.code) : paid;
+    const cutoff = Date.now() - 2 * 86_400_000;
+    return labeled.filter((order) => {
+      const at = new Date(order.createdAt).getTime();
+      return Number.isFinite(at) && at >= cutoff;
+    });
   }, [recentOrders, branch?.code]);
+
+  /** Full-screen Back (browser) closes overlay instead of leaving POS → cash drawer. */
+  useEffect(() => {
+    if (!fullScreenMenuOpen) return;
+    window.history.pushState({ posFullscreen: true }, "");
+    const onPop = () => {
+      setFullScreenMenuOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [fullScreenMenuOpen]);
+
+  /** If history Back lands on cash-drawer from POS, bounce back to POS. */
+  useEffect(() => {
+    if (!location.pathname.includes("/pos")) return;
+    const onPop = () => {
+      window.setTimeout(() => {
+        if (window.location.pathname.includes("/pos/cash-drawer")) {
+          navigate("/pops/pos", { replace: true });
+        }
+      }, 0);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [location.pathname, navigate]);
 
   const transferableOrders = useMemo(
     () => recentOrders.filter(canChangePosRecentOrderTable),
@@ -1836,7 +1870,9 @@ export function PosPage(): JSX.Element {
     }
     pendingEditRef.current = null;
     resetAfterBill();
-    setPrintNotice({ message: "New order ready — add items from the menu.", tone: "success" });
+    setModeConfirmed(false);
+    setOrderTypeModalOpen(true);
+    setPrintNotice({ message: "New order — pick Dine-in, Takeaway or Delivery.", tone: "success" });
   }
 
   function openTableTransfer(): void {
@@ -2789,8 +2825,11 @@ export function PosPage(): JSX.Element {
     setDeliveryCustomerPickerOpen(true);
     setDeliveryCustomerSearch(deliveryCustomer.trim());
     window.setTimeout(() => {
-      customerPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      deliveryCustomerInputRef.current?.focus();
+      // Full-screen overlay uses fixed + UI zoom — scrollIntoView pushes the top bar off-screen.
+      if (!fullScreenMenuOpen) {
+        customerPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      deliveryCustomerInputRef.current?.focus({ preventScroll: true });
       deliveryCustomerInputRef.current?.select();
     }, 50);
   }
@@ -3285,6 +3324,8 @@ export function PosPage(): JSX.Element {
             deliveryChargePkr,
             customerPickerOpen: deliveryCustomerPickerOpen,
             filteredCustomers: filteredDeliveryCustomers,
+            knownCustomers: knownDeliveryCustomers,
+            showAddress: posSettings.showDeliveryAddress,
             customersLoading: customerInvoicesQuery.isLoading,
             customersError: customerInvoicesQuery.isError
               ? (customerInvoicesQuery.error as Error).message
@@ -3303,7 +3344,7 @@ export function PosPage(): JSX.Element {
                   setDeliveryCustomerPickerOpen(true);
                   setDeliveryCustomerSearch(deliveryCustomer.trim());
                   window.setTimeout(() => {
-                    deliveryCustomerInputRef.current?.focus();
+                    deliveryCustomerInputRef.current?.focus({ preventScroll: true });
                   }, 0);
                 } else {
                   setDeliveryCustomerPickerOpen(false);
@@ -3363,6 +3404,17 @@ export function PosPage(): JSX.Element {
           }}
           onPayOpenOrder={(order) => {
             loadRecentOrderForPayment(order);
+          }}
+          onPrintOrder={(order) => {
+            const printFn = latestOrdersPrintOrderRef.current;
+            if (printFn) {
+              printFn(order);
+              return;
+            }
+            setPrintNotice({
+              message: "Enable Latest orders panel in Settings to print from this list, or use Print Bill on the ticket.",
+              tone: "error",
+            });
           }}
           onOpenCustomer={() => openCustomerShortcut()}
           onNewOrder={startNewManualOrder}
@@ -3464,7 +3516,9 @@ export function PosPage(): JSX.Element {
       {/* Main POS grid — UI zoom is applied globally from the top nav */}
       <div
         className={`grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-rows-1 lg:items-stretch ${
-          posSettings.showLatestOrdersPanel ? "lg:grid-cols-3" : "lg:grid-cols-2"
+          posSettings.showLatestOrdersPanel
+            ? "lg:grid-cols-[minmax(0,1.45fr)_minmax(0,0.8fr)_minmax(0,1fr)]"
+            : "lg:grid-cols-[minmax(0,1.55fr)_minmax(0,0.85fr)]"
         }`}
       >
         {/* Menu column */}
@@ -3607,7 +3661,7 @@ export function PosPage(): JSX.Element {
                   })}
                 </div>
               ) : (
-                <div className="grid max-h-32 grid-cols-3 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-4">
+                <div className="grid max-h-48 grid-cols-3 gap-2.5 overflow-y-auto pr-0.5 sm:grid-cols-4">
                   <button
                     type="button"
                     onClick={() => {
@@ -3621,13 +3675,13 @@ export function PosPage(): JSX.Element {
                     }`}
                   >
                     <span
-                      className={`flex h-11 w-11 items-center justify-center rounded-md text-sm font-bold ${
+                      className={`flex h-14 w-14 items-center justify-center rounded-md text-base font-bold ${
                         showAllItems ? "bg-slate-950/15" : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
                       }`}
                     >
                       All
                     </span>
-                    <span className="line-clamp-2 w-full text-[10px] font-semibold leading-tight">All</span>
+                    <span className="line-clamp-2 w-full text-xs font-bold leading-tight">All</span>
                   </button>
                   <button
                     type="button"
@@ -3673,11 +3727,11 @@ export function PosPage(): JSX.Element {
                           <img
                             src={img}
                             alt=""
-                            className="h-12 w-12 rounded-lg object-cover ring-1 ring-black/5"
+                            className="h-14 w-14 rounded-lg object-cover ring-1 ring-black/5"
                           />
                         ) : (
                           <span
-                            className={`flex h-12 w-12 items-center justify-center rounded-lg text-sm font-bold ${
+                            className={`flex h-14 w-14 items-center justify-center rounded-lg text-base font-bold ${
                               active
                                 ? "bg-slate-950/15"
                                 : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
@@ -3686,7 +3740,7 @@ export function PosPage(): JSX.Element {
                             {initial}
                           </span>
                         )}
-                        <span className="line-clamp-2 w-full text-[10px] font-semibold leading-tight">
+                        <span className="line-clamp-2 w-full text-xs font-bold leading-tight">
                           {c.name}
                         </span>
                       </button>
@@ -3745,57 +3799,72 @@ export function PosPage(): JSX.Element {
                     happyHourActiveSlot.percentOff > 0 &&
                     displayPrice !== menuItemDisplayPrice(item);
                   const hasPicker = variants.length > 1;
+                  const qty = itemQtyInCart(item.id, displayCart);
                   return (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
-                      onClick={() => onDishClick(item)}
-                      className="flex flex-col rounded-lg border border-slate-800/80 bg-slate-900/40 p-2 text-left transition hover:border-amber-500/30 hover:bg-slate-900"
+                      className="group relative aspect-square overflow-hidden rounded-lg border border-slate-800/80 bg-slate-900/40 transition hover:border-amber-500/40 hover:ring-1 hover:ring-amber-500/30"
                     >
                       {img ? (
-                        <img
-                          src={img}
-                          alt=""
-                          className="mb-1.5 aspect-[4/3] h-auto w-full rounded-lg object-cover"
-                        />
+                        <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
                       ) : (
-                        <div className="mb-1.5 flex aspect-[4/3] items-center justify-center rounded-lg bg-slate-950/60 text-[10px] text-slate-600">
+                        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/60 text-sm font-bold text-slate-500">
                           {isSearching || showFeaturedOnly || showAllItems
                             ? categoryById.get(item.categoryId)
-                            : "—"}
+                            : item.name.slice(0, 2).toUpperCase()}
                         </div>
                       )}
-                      <span className="line-clamp-2 text-xs font-medium leading-snug text-slate-100">
-                        {item.featured ? (
-                          <span className="mr-0.5 text-amber-700 dark:text-amber-300" aria-hidden>
-                            ★
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/85 to-transparent px-2 pb-2 pt-10 opacity-0 transition group-hover:opacity-100">
+                        <button
+                          type="button"
+                          onClick={() => onDishClick(item)}
+                          className="w-full text-left"
+                        >
+                          <span className="line-clamp-2 text-sm font-bold leading-snug text-white">
+                            {item.featured ? (
+                              <span className="mr-0.5 text-amber-300" aria-hidden>
+                                ★
+                              </span>
+                            ) : null}
+                            {item.name}
                           </span>
-                        ) : null}
-                        {item.name}
-                      </span>
-                      <span className="mt-0.5 text-xs font-semibold text-amber-200/90">
-                        {hasPicker ? "From " : ""}
-                        {displayPrice.toLocaleString()}
-                        {showHappyHourPrice ? (
-                          <span className="ml-1 font-normal text-slate-500 line-through">
-                            {menuItemDisplayPrice(item).toLocaleString()}
+                          <span className="mt-0.5 block text-sm font-bold text-amber-300">
+                            {hasPicker ? "From " : ""}
+                            {displayPrice.toLocaleString()}
+                            {showHappyHourPrice ? (
+                              <span className="ml-1 font-normal text-slate-400 line-through">
+                                {menuItemDisplayPrice(item).toLocaleString()}
+                              </span>
+                            ) : null}
                           </span>
-                        ) : null}
-                      </span>
-                      {item.featured || item.barcode || happyHourGiftItemIds.has(item.id) ? (
-                        <div className="mt-0.5 flex flex-wrap items-center gap-0.5">
-                          {item.featured ? (
-                            <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">★</span>
-                          ) : null}
-                          {happyHourGiftItemIds.has(item.id) ? (
-                            <span className="rounded bg-amber-500/15 px-0.5 text-[8px] text-amber-400">HH</span>
-                          ) : null}
-                          {item.barcode ? (
-                            <span className="truncate text-[8px] text-slate-600">{item.barcode}</span>
-                          ) : null}
+                        </button>
+                        <div className="mt-1.5 flex items-center justify-between gap-1">
+                          <button
+                            type="button"
+                            disabled={qty <= 0}
+                            onClick={() => decrementItemFromCart(item)}
+                            className="flex h-8 w-8 items-center justify-center rounded border border-slate-500 bg-slate-900 text-base font-bold text-white disabled:opacity-30"
+                            aria-label={`Remove one ${item.name}`}
+                          >
+                            −
+                          </button>
+                          <span className="min-w-[1.5rem] text-center text-sm font-bold text-white">{qty}</span>
+                          <button
+                            type="button"
+                            onClick={() => onDishClick(item)}
+                            className="flex h-8 w-8 items-center justify-center rounded bg-amber-400 text-base font-bold text-slate-950"
+                            aria-label={`Add one ${item.name}`}
+                          >
+                            +
+                          </button>
                         </div>
+                      </div>
+                      {qty > 0 ? (
+                        <span className="absolute right-1 top-1 rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950 group-hover:opacity-0">
+                          {qty}
+                        </span>
                       ) : null}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -3839,7 +3908,10 @@ export function PosPage(): JSX.Element {
                 >
                   +
                 </button>
-                <span className="rounded-md bg-amber-100 px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
+                <span
+                  className="max-w-[6.5rem] truncate rounded-md bg-amber-100 px-1 py-0.5 font-mono text-[9px] font-semibold tracking-wide text-amber-800 ring-1 ring-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25"
+                  title={orderRef}
+                >
                   {orderRef}
                 </span>
               </div>
@@ -3997,6 +4069,8 @@ export function PosPage(): JSX.Element {
                 deliveryChargePkr={deliveryChargePkr}
                 customerPickerOpen={deliveryCustomerPickerOpen}
                 filteredCustomers={filteredDeliveryCustomers}
+                knownCustomers={knownDeliveryCustomers}
+                showAddress={posSettings.showDeliveryAddress}
                 customersLoading={customerInvoicesQuery.isLoading}
                 customersError={
                   customerInvoicesQuery.isError
@@ -4017,7 +4091,7 @@ export function PosPage(): JSX.Element {
                       setDeliveryCustomerPickerOpen(true);
                       setDeliveryCustomerSearch(deliveryCustomer.trim());
                       window.setTimeout(() => {
-                        deliveryCustomerInputRef.current?.focus();
+                        deliveryCustomerInputRef.current?.focus({ preventScroll: true });
                       }, 0);
                     } else {
                       setDeliveryCustomerPickerOpen(false);
@@ -4610,6 +4684,7 @@ export function PosPage(): JSX.Element {
               onCloseAfterPayHandled={() => setCloseAfterPayBillId(null)}
               onNotice={(message, tone = "success") => setPrintNotice({ message, tone })}
               quickPrintRef={latestOrdersQuickPrintRef}
+              externalPrintOrderRef={latestOrdersPrintOrderRef}
             />
           </div>
         ) : null}

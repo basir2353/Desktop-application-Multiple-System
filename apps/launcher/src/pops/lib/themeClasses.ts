@@ -19,7 +19,7 @@ export const headingClass = "text-xl font-semibold tracking-tight text-slate-900
 
 export const mutedClass = "text-slate-600 dark:text-slate-400";
 
-export const tableOrderRefClass = "table-order-ref font-mono text-sm font-semibold";
+export const tableOrderRefClass = "table-order-ref max-w-[10rem] truncate font-mono text-[11px] font-semibold";
 
 export const tableCellPrimaryClass = "font-medium text-slate-900 dark:text-slate-100";
 

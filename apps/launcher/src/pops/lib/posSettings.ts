@@ -81,6 +81,12 @@ export type PosSettings = {
    * Local UI preference (not synced to mobile tax API).
    */
   fullScreenTicketPanelSide: "left" | "right";
+  /**
+   * When on, delivery customer panel shows the address field.
+   * Default off — phone + name (+ rider) are enough for most counters.
+   * Local UI preference (not synced to mobile tax API).
+   */
+  showDeliveryAddress: boolean;
   autoPrintOrderDineIn: boolean;
   autoPrintOrderTakeaway: boolean;
   autoPrintOrderDelivery: boolean;
@@ -118,6 +124,7 @@ export const DEFAULT_POS_SETTINGS: PosSettings = {
   showPosTaxServiceFreeToggles: false,
   kotChangeReasonGraceMinutes: 2,
   fullScreenTicketPanelSide: "right",
+  showDeliveryAddress: false,
   autoPrintOrderDineIn: false,
   autoPrintOrderTakeaway: false,
   autoPrintOrderDelivery: false,
@@ -170,6 +177,7 @@ export function normalizePosSettings(input: Partial<PosSettings>): PosSettings {
     ),
     fullScreenTicketPanelSide:
       input.fullScreenTicketPanelSide === "left" ? "left" : "right",
+    showDeliveryAddress: input.showDeliveryAddress ?? DEFAULT_POS_SETTINGS.showDeliveryAddress,
     autoPrintOrderDineIn: input.autoPrintOrderDineIn ?? DEFAULT_POS_SETTINGS.autoPrintOrderDineIn,
     autoPrintOrderTakeaway: input.autoPrintOrderTakeaway ?? DEFAULT_POS_SETTINGS.autoPrintOrderTakeaway,
     autoPrintOrderDelivery: input.autoPrintOrderDelivery ?? DEFAULT_POS_SETTINGS.autoPrintOrderDelivery,
@@ -348,6 +356,7 @@ export function posSettingsFromTaxApi(
   /** Preserve local-only UI flags across cloud sync. */
   localUi?: Partial<Pick<PosSettings, "showBillNotes" | "fullScreenMenuEnabled" | "showLatestOrdersPanel" | "menuViewMode" |
     "showPosTaxServiceFreeToggles" | "kotChangeReasonGraceMinutes" | "fullScreenTicketPanelSide" |
+    "showDeliveryAddress" |
     "autoPrintOrderDineIn" | "autoPrintOrderTakeaway" | "autoPrintOrderDelivery" |
     "autoPrintFinalDineIn" | "autoPrintFinalTakeaway" | "autoPrintFinalDelivery">>,
 ): PosSettings {
@@ -364,6 +373,7 @@ export function posSettingsFromTaxApi(
       showPosTaxServiceFreeToggles: localUi?.showPosTaxServiceFreeToggles,
       kotChangeReasonGraceMinutes: localUi?.kotChangeReasonGraceMinutes,
       fullScreenTicketPanelSide: localUi?.fullScreenTicketPanelSide,
+      showDeliveryAddress: localUi?.showDeliveryAddress,
       autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
       autoPrintOrderDelivery: localUi?.autoPrintOrderDelivery,
@@ -385,6 +395,7 @@ export function posSettingsFromTaxApi(
     showPosTaxServiceFreeToggles: localUi?.showPosTaxServiceFreeToggles,
     kotChangeReasonGraceMinutes: localUi?.kotChangeReasonGraceMinutes,
     fullScreenTicketPanelSide: localUi?.fullScreenTicketPanelSide,
+    showDeliveryAddress: localUi?.showDeliveryAddress,
     autoPrintOrderDineIn: localUi?.autoPrintOrderDineIn,
     autoPrintOrderTakeaway: localUi?.autoPrintOrderTakeaway,
     autoPrintOrderDelivery: localUi?.autoPrintOrderDelivery,

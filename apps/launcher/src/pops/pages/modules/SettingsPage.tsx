@@ -313,6 +313,7 @@ export function SettingsPage(): JSX.Element {
       showPosTaxServiceFreeToggles: local.showPosTaxServiceFreeToggles,
       kotChangeReasonGraceMinutes: local.kotChangeReasonGraceMinutes,
       fullScreenTicketPanelSide: local.fullScreenTicketPanelSide,
+      showDeliveryAddress: local.showDeliveryAddress,
       autoPrintOrderDineIn: local.autoPrintOrderDineIn,
       autoPrintOrderTakeaway: local.autoPrintOrderTakeaway,
       autoPrintOrderDelivery: local.autoPrintOrderDelivery,
@@ -488,7 +489,8 @@ export function SettingsPage(): JSX.Element {
       draftNorm.menuViewMode !== saved.menuViewMode ||
       draftNorm.showPosTaxServiceFreeToggles !== saved.showPosTaxServiceFreeToggles ||
       draftNorm.kotChangeReasonGraceMinutes !== saved.kotChangeReasonGraceMinutes ||
-      draftNorm.fullScreenTicketPanelSide !== saved.fullScreenTicketPanelSide;
+      draftNorm.fullScreenTicketPanelSide !== saved.fullScreenTicketPanelSide ||
+      draftNorm.showDeliveryAddress !== saved.showDeliveryAddress;
     const visibilityChanged =
       JSON.stringify(visibilityNorm) !== JSON.stringify(savedVisibility);
     if (!chargesChanged && !visibilityChanged) return;
@@ -826,6 +828,20 @@ export function SettingsPage(): JSX.Element {
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
             Move the order summary / cart column to the left or right on full-screen POS.
+          </p>
+          <label className="mt-3 flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={draft.showDeliveryAddress}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, showDeliveryAddress: e.target.checked }))
+              }
+            />
+            Show delivery address field on POS
+          </label>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Off by default. When on, Delivery orders show an address box under phone / customer.
           </p>
         </div>
 

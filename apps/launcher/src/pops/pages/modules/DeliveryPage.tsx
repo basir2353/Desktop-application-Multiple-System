@@ -174,6 +174,9 @@ export function DeliveryPage(): JSX.Element {
   const [tab, setTab] = useState<DeliveryTab>("orders");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"all" | "active">("all");
+  /** Date filter for orders list + rider totals report (yyyy-mm-dd). */
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
   const [selected, setSelected] = useState<UnifiedOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
@@ -269,8 +272,28 @@ export function DeliveryPage(): JSX.Element {
     [allOrders],
   );
 
+  const dateBounds = useMemo(() => {
+    const fromMs = filterDateFrom
+      ? new Date(`${filterDateFrom}T00:00:00`).getTime()
+      : null;
+    const toMs = filterDateTo
+      ? new Date(`${filterDateTo}T23:59:59.999`).getTime()
+      : null;
+    return { fromMs, toMs };
+  }, [filterDateFrom, filterDateTo]);
+
   const filtered = useMemo(() => {
     let list = view === "active" ? allOrders.filter(isActiveDeliveryOrder) : allOrders;
+    const { fromMs, toMs } = dateBounds;
+    if (fromMs != null || toMs != null) {
+      list = list.filter((o) => {
+        const at = new Date(o.createdAt).getTime();
+        if (!Number.isFinite(at)) return false;
+        if (fromMs != null && at < fromMs) return false;
+        if (toMs != null && at > toMs) return false;
+        return true;
+      });
+    }
     const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter((o) => {
@@ -291,7 +314,24 @@ export function DeliveryPage(): JSX.Element {
         extra.includes(q)
       );
     });
-  }, [allOrders, search, view]);
+  }, [allOrders, search, view, dateBounds]);
+
+  /** Rider name → order count within the date filter (for Riders report). */
+  const riderOrderTotals = useMemo(() => {
+    const { fromMs, toMs } = dateBounds;
+    const map = new Map<string, number>();
+    for (const o of allOrders) {
+      const at = new Date(o.createdAt).getTime();
+      if (!Number.isFinite(at)) continue;
+      if (fromMs != null && at < fromMs) continue;
+      if (toMs != null && at > toMs) continue;
+      const rider = deliveryOrderRider(o).trim();
+      if (!rider || rider === "—") continue;
+      const key = rider.toLowerCase();
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [allOrders, dateBounds]);
 
   function invalidate(): void {
     void queryClient.invalidateQueries({ queryKey: ["kitchen"] });
@@ -625,6 +665,36 @@ export function DeliveryPage(): JSX.Element {
               value={riderSearch}
               onChange={(e) => setRiderSearch(e.target.value)}
             />
+            <label className={`flex items-center gap-1.5 text-xs ${mutedClass}`}>
+              From
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className={`h-8 ${fieldInputClass}`}
+              />
+            </label>
+            <label className={`flex items-center gap-1.5 text-xs ${mutedClass}`}>
+              To
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className={`h-8 ${fieldInputClass}`}
+              />
+            </label>
+            {(filterDateFrom || filterDateTo) ? (
+              <button
+                type="button"
+                className="text-xs text-amber-600 hover:underline dark:text-amber-400"
+                onClick={() => {
+                  setFilterDateFrom("");
+                  setFilterDateTo("");
+                }}
+              >
+                Clear dates
+              </button>
+            ) : null}
             <label className={`flex items-center gap-2 text-xs ${mutedClass}`}>
               Branch
               <select
@@ -640,6 +710,9 @@ export function DeliveryPage(): JSX.Element {
               </select>
             </label>
           </ModuleFilterBar>
+          <p className={`text-xs ${mutedClass}`}>
+            Rider report: Total orders column uses the date filter above (same filter as Orders tab).
+          </p>
 
           {ridersQuery.isLoading ? (
             <p className="text-xs text-slate-500">Loading riders…</p>
@@ -655,6 +728,15 @@ export function DeliveryPage(): JSX.Element {
               rows={filteredRiders}
               columns={[
                 { key: "name", header: "Name", render: (r) => <span className={tableCellPrimaryClass}>{r.name}</span> },
+                {
+                  key: "totalOrders",
+                  header: "Total orders",
+                  render: (r) => (
+                    <span className={`${tableCellAmountClass} font-semibold`}>
+                      {riderOrderTotals.get(r.name.trim().toLowerCase()) ?? 0}
+                    </span>
+                  ),
+                },
                 {
                   key: "email",
                   header: "Login",
@@ -802,6 +884,24 @@ export function DeliveryPage(): JSX.Element {
               onChange={setSearch}
               placeholder="Search order, customer, rider…"
             />
+            <label className={`flex items-center gap-1.5 text-xs ${mutedClass}`}>
+              From
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className={`h-8 ${fieldInputClass}`}
+              />
+            </label>
+            <label className={`flex items-center gap-1.5 text-xs ${mutedClass}`}>
+              To
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className={`h-8 ${fieldInputClass}`}
+              />
+            </label>
             <ModuleCountBadge shown={filtered.length} total={allOrders.length} />
           </ModuleFilterBar>
 

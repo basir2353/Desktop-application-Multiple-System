@@ -28,11 +28,15 @@ type Props = {
   deliveryChargePkr: number;
   customerPickerOpen: boolean;
   filteredCustomers: PosKnownCustomer[];
+  /** Full known list for phone autofill (defaults to filteredCustomers). */
+  knownCustomers?: PosKnownCustomer[];
   customersLoading?: boolean;
   customersError?: string | null;
   riders: PosRiderOption[];
   ridersLoading?: boolean;
   ridersError?: boolean;
+  /** When false (default), hide delivery address field. */
+  showAddress?: boolean;
   panelRef?: RefObject<HTMLDivElement>;
   customerInputRef?: RefObject<HTMLInputElement>;
   phoneInputRef?: RefObject<HTMLInputElement>;
@@ -54,9 +58,13 @@ const TICKET_INPUT = `${fieldInputClass} w-full min-w-0 text-xs py-1.5`;
 const FULL_INPUT =
   "w-full min-w-0 rounded border border-slate-600 bg-slate-950 px-2 py-1.5 text-[11px] text-white outline-none placeholder:text-slate-500 focus:border-amber-400";
 
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
 /**
  * Shared customer / delivery details panel for split POS ticket and full-screen POS.
- * Takeaway + delivery (and other channel modes) are managed here without leaving the register.
+ * Phone is first; matching saved numbers auto-fill name (and address when enabled).
  */
 export function PosCustomerDetailsPanel({
   tone = "ticket",
@@ -70,11 +78,13 @@ export function PosCustomerDetailsPanel({
   deliveryChargePkr,
   customerPickerOpen,
   filteredCustomers,
+  knownCustomers,
   customersLoading = false,
   customersError = null,
   riders,
   ridersLoading = false,
   ridersError = false,
+  showAddress = false,
   panelRef,
   customerInputRef,
   phoneInputRef,
@@ -121,6 +131,18 @@ export function PosCustomerDetailsPanel({
     ? "rounded border border-amber-400/40 bg-amber-400/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-300 hover:bg-amber-400/25"
     : "rounded-md border border-amber-500/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-500/25 dark:text-amber-100";
 
+  function handlePhoneChange(value: string): void {
+    onPhoneChange(value);
+    const dig = digitsOnly(value);
+    if (dig.length < 7) return;
+    const pool = knownCustomers ?? filteredCustomers;
+    const match = pool.find((row) => {
+      const phoneDig = digitsOnly(row.phone);
+      return phoneDig.length > 0 && (phoneDig === dig || phoneDig.endsWith(dig) || dig.endsWith(phoneDig));
+    });
+    if (match) onSelectCustomer(match);
+  }
+
   return (
     <div className={isFullscreen ? "mt-1.5" : "mt-2"} ref={panelRef}>
       <button
@@ -140,7 +162,23 @@ export function PosCustomerDetailsPanel({
 
       {open ? (
         <div className={bodyClass}>
-          <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-1.5">
+          {/* Phone first, then customer — autofill when number matches saved data */}
+          <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-1.5">
+            <input
+              ref={phoneInputRef}
+              placeholder="Phone"
+              type="tel"
+              value={phone}
+              onChange={(e) => handlePhoneChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  customerInputRef?.current?.focus({ preventScroll: true });
+                }
+              }}
+              className={inputClass}
+              title="Customer phone — saved numbers auto-fill name"
+            />
             <div className="relative min-w-0" ref={fieldRef}>
               <input
                 ref={customerInputRef}
@@ -151,7 +189,7 @@ export function PosCustomerDetailsPanel({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    phoneInputRef?.current?.focus();
+                    onApply();
                   }
                   if (e.key === "Escape") {
                     onCloseCustomerPicker();
@@ -190,31 +228,18 @@ export function PosCustomerDetailsPanel({
                 </div>
               ) : null}
             </div>
-            <input
-              ref={phoneInputRef}
-              placeholder="Phone"
-              type="tel"
-              value={phone}
-              onChange={(e) => onPhoneChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  onApply();
-                }
-              }}
-              className={inputClass}
-              title="Customer phone"
-            />
           </div>
 
           {isDelivery ? (
             <>
-              <input
-                placeholder="Delivery address"
-                value={address}
-                onChange={(e) => onAddressChange(e.target.value)}
-                className={inputClass}
-              />
+              {showAddress ? (
+                <input
+                  placeholder="Delivery address"
+                  value={address}
+                  onChange={(e) => onAddressChange(e.target.value)}
+                  className={inputClass}
+                />
+              ) : null}
               <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-1.5">
                 <select
                   value={riderId}

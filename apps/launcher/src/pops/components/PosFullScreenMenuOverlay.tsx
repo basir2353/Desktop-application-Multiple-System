@@ -59,6 +59,8 @@ type CustomerPanelProps = {
   onChargeChange: (amount: number) => void;
   onApply: () => void;
   applyLabel: string;
+  showAddress?: boolean;
+  knownCustomers?: PosKnownCustomer[];
 };
 
 type Props = {
@@ -134,6 +136,8 @@ type Props = {
   onPickOpenOrder: (order: PosRecentOrder) => void;
   /** Pay an open takeaway / delivery / dine-in order from the list. */
   onPayOpenOrder?: (order: PosRecentOrder) => void;
+  /** Print receipt / slip for an open or closed order in the drawer. */
+  onPrintOrder?: (order: PosRecentOrder) => void;
   onOpenCustomer?: () => void;
   onNewOrder: () => void;
   onSelectTables: () => void;
@@ -225,6 +229,7 @@ export function PosFullScreenMenuOverlay({
   onReprintKot,
   onPickOpenOrder,
   onPayOpenOrder,
+  onPrintOrder,
   onOpenCustomer,
   onNewOrder,
   onSelectTables,
@@ -386,7 +391,7 @@ export function PosFullScreenMenuOverlay({
 
   const ticketAside = (
     <aside
-      className={`flex min-h-[36vh] w-full shrink-0 flex-col bg-slate-900 lg:min-h-0 lg:w-[20rem] xl:w-[22rem] ${
+      className={`flex min-h-[36vh] w-full shrink-0 flex-col bg-slate-900 lg:min-h-0 lg:w-[15.5rem] xl:w-[16.5rem] ${
         panelOnLeft
           ? "border-b border-slate-800 lg:order-first lg:border-b-0 lg:border-r"
           : "border-t border-slate-800 lg:border-l lg:border-t-0"
@@ -402,7 +407,7 @@ export function PosFullScreenMenuOverlay({
               <div className="truncate text-xs font-semibold text-white">{editingLabel}</div>
             ) : null}
           </div>
-          <span className="rounded bg-amber-400/15 px-1.5 py-px font-mono text-[10px] font-bold tracking-wide text-amber-300 ring-1 ring-amber-400/30">
+          <span className="max-w-[7.5rem] truncate rounded bg-amber-400/15 px-1 py-px font-mono text-[8px] font-semibold tracking-wide text-amber-300 ring-1 ring-amber-400/30" title={orderRef}>
             {orderRef}
           </span>
         </div>
@@ -629,6 +634,23 @@ export function PosFullScreenMenuOverlay({
           <button
             type="button"
             className={primaryBtn}
+            onClick={onNewOrder}
+            title="Start a new order — pick Dine-in / Takeaway / Delivery"
+          >
+            New Order
+          </button>
+          <button
+            type="button"
+            className={closeBtn}
+            disabled={cartLines.length === 0 || payBusy}
+            onClick={onCloseOrder}
+            title="Close this open order (cash)"
+          >
+            {payBusy ? "…" : "Close Order"}
+          </button>
+          <button
+            type="button"
+            className={primaryBtn}
             disabled={cartLines.length === 0 || orderBusy}
             onClick={onPlaceOrder}
             title="Place order + print KOT — stay on this screen"
@@ -654,15 +676,6 @@ export function PosFullScreenMenuOverlay({
           </button>
           <button
             type="button"
-            className={closeBtn}
-            disabled={cartLines.length === 0 || payBusy}
-            onClick={onCloseOrder}
-            title="Close this open order (cash)"
-          >
-            {payBusy ? "…" : "Close Order"}
-          </button>
-          <button
-            type="button"
             className={secondaryBtn}
             disabled={cartLines.length === 0 || orderBusy}
             onClick={onReprintKot}
@@ -679,7 +692,7 @@ export function PosFullScreenMenuOverlay({
           </button>
           <button
             type="button"
-            className={`${secondaryBtn} col-span-2 ${ordersListMode === "closed" ? "ring-1 ring-amber-400" : ""}`}
+            className={`${secondaryBtn} ${ordersListMode === "closed" ? "ring-1 ring-amber-400" : ""}`}
             onClick={() => openOrdersDrawer("closed")}
           >
             Closed Orders
@@ -692,8 +705,8 @@ export function PosFullScreenMenuOverlay({
   const menuColumn = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {viewMode === "category" && categories.length > 0 ? (
-        <div className="shrink-0 border-b border-slate-800 bg-slate-900 px-2 py-1.5">
-          <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-7 xl:grid-cols-9 2xl:grid-cols-11">
+        <div className="shrink-0 border-b border-slate-800 bg-slate-900 px-2 py-2">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8">
             {categories.map((c, index) => {
               const active = activeCategoryId === c.id;
               const img = resolveMenuImageUrl(c.imageUrl);
@@ -703,27 +716,27 @@ export function PosFullScreenMenuOverlay({
                   key={c.id}
                   type="button"
                   onClick={() => setCategoryId(c.id)}
-                  className={`flex min-w-[4.5rem] flex-col items-center gap-0.5 rounded-md px-1.5 py-1.5 text-center transition ${
+                  className={`group relative flex min-h-[5.5rem] min-w-0 flex-col overflow-hidden rounded-lg text-center transition ${
                     active
-                      ? "bg-amber-400 text-slate-950 shadow-sm shadow-amber-400/30"
-                      : "bg-slate-800 text-white ring-1 ring-slate-600 hover:bg-slate-700"
+                      ? "ring-2 ring-amber-400 shadow-sm shadow-amber-400/30"
+                      : "ring-1 ring-slate-600 hover:ring-amber-400/50"
                   }`}
                 >
                   {img ? (
-                    <img src={img} alt="" className="h-11 w-11 rounded-lg object-cover" />
+                    <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
                   ) : (
                     <span
-                      className={`flex h-8 w-8 items-center justify-center rounded text-xs font-bold ${
-                        active ? "bg-slate-950/15" : "bg-slate-700 text-amber-300"
+                      className={`absolute inset-0 flex items-center justify-center text-2xl font-bold ${
+                        active ? "bg-amber-400 text-slate-950" : "bg-slate-800 text-amber-300"
                       }`}
                     >
                       {(c.name.trim().charAt(0) || "?").toUpperCase()}
                     </span>
                   )}
-                  <span className="line-clamp-2 w-full text-[9px] font-semibold leading-tight">
+                  <span className="relative z-[1] mt-auto w-full bg-slate-950/75 px-1 py-1.5 text-[11px] font-bold leading-tight text-white">
                     {index + 1}. {c.name}
+                    <span className="ml-1 text-[10px] font-semibold opacity-80">({count})</span>
                   </span>
-                  <span className="text-[8px] opacity-70">{count}</span>
                 </button>
               );
             })}
@@ -737,7 +750,7 @@ export function PosFullScreenMenuOverlay({
             ? "No items to show."
             : `${filtered.length} item${filtered.length === 1 ? "" : "s"}`}
         </p>
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {filtered.map((item) => {
             const img = resolveMenuImageUrl(item.imageUrl);
             const hasPicker = resolvePosSellableVariants(item).length > 1;
@@ -748,50 +761,57 @@ export function PosFullScreenMenuOverlay({
             return (
               <div
                 key={item.id}
-                className="flex flex-col rounded-md border border-slate-600 bg-slate-800 p-1.5 transition hover:border-amber-400/60"
+                className="group relative aspect-square overflow-hidden rounded-lg border border-slate-600 bg-slate-800 transition hover:border-amber-400/70 hover:ring-1 hover:ring-amber-400/40"
               >
                 {img ? (
-                  <img src={img} alt="" className="mb-1.5 aspect-[4/3] h-auto w-full rounded-lg object-cover" />
+                  <img src={img} alt="" className="absolute inset-0 h-full w-full object-cover" />
                 ) : (
-                  <div className="mb-1 flex h-12 items-center justify-center rounded bg-slate-700 text-[9px] font-semibold text-slate-300">
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-700 text-lg font-bold text-slate-300">
                     {item.name.slice(0, 2).toUpperCase()}
                   </div>
                 )}
-                <span className="line-clamp-2 text-[10px] font-semibold leading-tight text-white">
-                  {item.featured ? <span className="mr-0.5 text-amber-400">★</span> : null}
-                  {item.name}
-                </span>
-                <span className="mt-0.5 text-[10px] font-semibold text-amber-300">
-                  {hasPicker ? "From " : ""}
-                  {display.toLocaleString()}
-                  {original != null && original !== display ? (
-                    <span className="ml-1 font-normal text-slate-500 line-through">
-                      {original.toLocaleString()}
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent px-1.5 pb-1.5 pt-8 opacity-0 transition group-hover:opacity-100">
+                  <span className="line-clamp-2 text-[12px] font-bold leading-tight text-white">
+                    {item.featured ? <span className="mr-0.5 text-amber-400">★</span> : null}
+                    {item.name}
+                  </span>
+                  <span className="mt-0.5 block text-[12px] font-bold text-amber-300">
+                    {hasPicker ? "From " : ""}
+                    {display.toLocaleString()}
+                    {original != null && original !== display ? (
+                      <span className="ml-1 font-normal text-slate-400 line-through">
+                        {original.toLocaleString()}
+                      </span>
+                    ) : null}
+                  </span>
+                  <div className="mt-1.5 flex items-center justify-between gap-1">
+                    <button
+                      type="button"
+                      disabled={qty <= 0}
+                      onClick={() => onDecrementItem(item)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-500 bg-slate-900 text-base font-bold text-white transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-30"
+                      aria-label={`Remove one ${item.name}`}
+                    >
+                      −
+                    </button>
+                    <span className="min-w-[1.75rem] text-center text-sm font-bold tabular-nums text-white">
+                      {qty}
                     </span>
-                  ) : null}
-                </span>
-                <div className="mt-auto flex items-center justify-between gap-1 pt-1.5">
-                  <button
-                    type="button"
-                    disabled={qty <= 0}
-                    onClick={() => onDecrementItem(item)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-slate-600 bg-slate-900 text-sm font-semibold text-white transition hover:border-amber-400 hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-30"
-                    aria-label={`Remove one ${item.name}`}
-                  >
-                    −
-                  </button>
-                  <span className="min-w-[1.75rem] text-center text-xs font-bold tabular-nums text-white">
+                    <button
+                      type="button"
+                      onClick={() => onAddItem(item)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-amber-400/60 bg-amber-400 text-base font-bold text-slate-950 transition hover:bg-amber-300"
+                      aria-label={`Add one ${item.name}`}
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                {qty > 0 ? (
+                  <span className="absolute right-1 top-1 rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950 group-hover:opacity-0">
                     {qty}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onAddItem(item)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-amber-400/50 bg-amber-400/15 text-sm font-semibold text-amber-300 transition hover:bg-amber-400/30"
-                    aria-label={`Add one ${item.name}`}
-                  >
-                    +
-                  </button>
-                </div>
+                ) : null}
               </div>
             );
           })}
@@ -802,12 +822,13 @@ export function PosFullScreenMenuOverlay({
 
   return (
     <div
-      className="fixed inset-0 z-[45] flex flex-col bg-slate-950 text-slate-100"
+      className="fixed inset-0 z-[45] flex flex-col overflow-hidden bg-slate-950 text-slate-100"
       role="dialog"
       aria-modal="true"
       aria-labelledby="pos-fullscreen-menu-title"
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-800 px-2.5 py-1.5">
+      {/* Always pinned — must stay visible for dine-in / takeaway / delivery */}
+      <div className="sticky top-0 z-30 flex shrink-0 flex-wrap items-center gap-1.5 border-b border-slate-800 bg-slate-950 px-2.5 py-1.5">
         <div className="min-w-0 flex-1">
           <h2 id="pos-fullscreen-menu-title" className="text-xs font-semibold text-white">
             Full screen POS
@@ -880,9 +901,6 @@ export function PosFullScreenMenuOverlay({
           role="toolbar"
           aria-label="POS shortcuts"
         >
-          <button type="button" className={topQuickBtn(false)} onClick={onNewOrder} title="Start a new blank order">
-            New Order
-          </button>
           {showCustomerPanel && onOpenCustomer ? (
             <button
               type="button"
@@ -968,26 +986,6 @@ export function PosFullScreenMenuOverlay({
             All items
           </button>
         </div>
-        <label className="relative flex min-w-[12rem] flex-1 items-center sm:max-w-xs lg:max-w-sm">
-          <span className="sr-only">Search menu item</span>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search item by name or barcode…"
-            autoComplete="off"
-            className="w-full rounded-md border border-amber-500/40 bg-slate-900 px-3 py-1.5 text-sm font-medium text-white placeholder:text-slate-400 outline-none ring-amber-400/20 focus:border-amber-400 focus:ring-2"
-          />
-          {search.trim() ? (
-            <button
-              type="button"
-              className="absolute right-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
-              onClick={() => setSearch("")}
-              title="Clear search"
-            >
-              Clear
-            </button>
-          ) : null}
-        </label>
         <button
           type="button"
           onClick={onDone}
@@ -1002,6 +1000,30 @@ export function PosFullScreenMenuOverlay({
         >
           Close
         </button>
+      </div>
+
+      {/* Always-visible search row — not squeezed off by toolbar chips */}
+      <div className="shrink-0 border-b border-slate-800 bg-slate-900 px-2.5 py-1.5">
+        <label className="relative flex w-full items-center">
+          <span className="sr-only">Search menu item</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search item by name or barcode…"
+            autoComplete="off"
+            className="w-full rounded-md border border-amber-500/50 bg-slate-950 px-3 py-2 text-sm font-semibold text-white placeholder:text-slate-400 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
+          />
+          {search.trim() ? (
+            <button
+              type="button"
+              className="absolute right-2 rounded px-2 py-0.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
+              onClick={() => setSearch("")}
+              title="Clear search"
+            >
+              Clear
+            </button>
+          ) : null}
+        </label>
       </div>
 
       <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -1042,8 +1064,8 @@ export function PosFullScreenMenuOverlay({
                   </h3>
                   <p className="text-[10px] text-slate-500">
                     {ordersListMode === "open"
-                      ? "Dine-in, takeaway & delivery — edit or pay here"
-                      : "Paid / closed bills"}
+                      ? "Dine-in, takeaway & delivery — edit, pay or print"
+                      : "Paid / closed — last 2 days only"}
                   </p>
                 </div>
                 <button
@@ -1140,7 +1162,7 @@ export function PosFullScreenMenuOverlay({
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="truncate font-mono text-xs font-bold text-amber-300">
+                                  <span className="max-w-[9rem] truncate font-mono text-[10px] font-semibold text-amber-300" title={order.ref}>
                                     {order.ref}
                                   </span>
                                   <span
@@ -1168,34 +1190,45 @@ export function PosFullScreenMenuOverlay({
                                 </div>
                               </div>
                             </div>
-                            {ordersListMode === "open" ? (
-                              <div className="mt-2 flex gap-1.5">
-                                <button
-                                  type="button"
-                                  disabled={!canEdit}
-                                  onClick={() => {
-                                    onPickOpenOrder(order);
-                                    setOrdersListMode(null);
-                                  }}
-                                  className="min-w-0 flex-1 rounded border border-slate-500 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white hover:border-amber-400/50 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
-                                >
-                                  Edit
-                                </button>
-                                {onPayOpenOrder ? (
+                            <div className="mt-2 flex gap-1.5">
+                              {ordersListMode === "open" ? (
+                                <>
                                   <button
                                     type="button"
-                                    disabled={!canPay || payBusy}
+                                    disabled={!canEdit}
                                     onClick={() => {
-                                      onPayOpenOrder(order);
+                                      onPickOpenOrder(order);
                                       setOrdersListMode(null);
                                     }}
-                                    className="min-w-0 flex-1 rounded bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                                    className="min-w-0 flex-1 rounded border border-slate-500 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white hover:border-amber-400/50 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
                                   >
-                                    Pay
+                                    Edit
                                   </button>
-                                ) : null}
-                              </div>
-                            ) : null}
+                                  {onPayOpenOrder ? (
+                                    <button
+                                      type="button"
+                                      disabled={!canPay || payBusy}
+                                      onClick={() => {
+                                        onPayOpenOrder(order);
+                                        setOrdersListMode(null);
+                                      }}
+                                      className="min-w-0 flex-1 rounded bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                      Pay
+                                    </button>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              {onPrintOrder ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onPrintOrder(order)}
+                                  className="min-w-0 flex-1 rounded border border-amber-400/40 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/25"
+                                >
+                                  Print
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                         </li>
                       );

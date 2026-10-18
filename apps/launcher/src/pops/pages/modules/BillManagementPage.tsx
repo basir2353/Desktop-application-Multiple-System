@@ -616,11 +616,6 @@ export function BillManagementPage(): JSX.Element {
                       Reprint
                     </button>
                   ) : null}
-                  {r.status === "held" || r.status === "completed" ? (
-                    <button type="button" className={`text-xs ${linkDangerClass}`} onClick={() => confirmVoid(r)}>
-                      Void
-                    </button>
-                  ) : null}
                 </span>
               ),
             },
@@ -640,11 +635,7 @@ export function BillManagementPage(): JSX.Element {
           onEdit={detailBill.status === "held" ? () => openEdit(detailBill) : undefined}
           onAddItem={detailBill.status === "held" ? () => openEdit(detailBill, true) : undefined}
           onPay={detailBill.status === "held" ? () => { setHeldToPay(detailBill); setDetailBill(null); } : undefined}
-          onVoid={
-            detailBill.status === "held" || detailBill.status === "completed"
-              ? () => confirmVoid(detailBill)
-              : undefined
-          }
+          onVoid={undefined}
         />
       ) : null}
 
