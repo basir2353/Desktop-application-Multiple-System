@@ -10,6 +10,8 @@ import {
   filterDismissedPosOrders,
   filterPosRecentOrders,
   filterPosRecentOrdersByMode,
+  filterPosRecentOrdersWithinDays,
+  sumPosRecentOrdersItemQty,
   formatRecentOrderTime,
   isPaidPosRecentOrder,
   posRecentOrderTotal,
@@ -221,8 +223,13 @@ export function PosLatestOrdersPanel({
   const visibleOrders = useMemo(() => {
     if (!branch?.code) return orders;
     void dismissedRevision;
-    // Paid tab: keep closed bills visible with status "Closed".
-    if (modeFilter === "Paid") return withClosedPosOrderStatus(orders, branch.code);
+    // Paid tab: closed bills, last 2 days only.
+    if (modeFilter === "Paid") {
+      return filterPosRecentOrdersWithinDays(
+        withClosedPosOrderStatus(orders, branch.code).filter(isPaidPosRecentOrder),
+        2,
+      );
+    }
     return filterDismissedPosOrders(orders, branch.code);
   }, [orders, branch?.code, dismissedRevision, modeFilter]);
 
@@ -231,6 +238,13 @@ export function PosLatestOrdersPanel({
     void dismissedRevision;
     const base = branch?.code ? filterDismissedPosOrders(orders, branch.code) : orders;
     const open = filterPosRecentOrdersByMode(base, "all");
+    const paidLast2Days = filterPosRecentOrdersWithinDays(
+      filterPosRecentOrdersByMode(
+        branch?.code ? withClosedPosOrderStatus(orders, branch.code) : orders,
+        "Paid",
+      ),
+      2,
+    );
     return {
       all: open.length,
       byMode: Object.fromEntries(
@@ -239,10 +253,8 @@ export function PosLatestOrdersPanel({
           filterPosRecentOrdersByMode(open, label as PosRecentOrderModeFilter).length,
         ]),
       ) as Record<string, number>,
-      paid: filterPosRecentOrdersByMode(
-        branch?.code ? withClosedPosOrderStatus(orders, branch.code) : orders,
-        "Paid",
-      ).length,
+      /** Paid badge = item quantity (not order count). */
+      paidQty: sumPosRecentOrdersItemQty(paidLast2Days),
     };
   }, [orders, branch?.code, dismissedRevision, visibleFilterModes]);
 
@@ -958,7 +970,7 @@ export function PosLatestOrdersPanel({
                 modeFilter === "Paid" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
               }`}
             >
-              Paid{openOrderCounts.paid > 0 ? ` (${openOrderCounts.paid})` : ""}
+              Paid
             </button>
           </div>
         </div>
@@ -1027,7 +1039,7 @@ export function PosLatestOrdersPanel({
                     {showEdit ? (
                       <button
                         type="button"
-                        className="rounded border border-sky-300 px-1.5 py-0.5 text-[9px] font-medium text-sky-700 transition hover:border-sky-400 hover:bg-sky-50 dark:border-sky-700/60 dark:text-sky-300 dark:hover:border-sky-500/50 dark:hover:bg-sky-500/10"
+                        className="rounded border border-sky-300 px-2 py-1 text-[11px] font-semibold text-sky-700 transition hover:border-sky-400 hover:bg-sky-50 dark:border-sky-700/60 dark:text-sky-300 dark:hover:border-sky-500/50 dark:hover:bg-sky-500/10"
                         onClick={(e) => {
                           e.stopPropagation();
                           onEdit?.(order);
@@ -1041,7 +1053,7 @@ export function PosLatestOrdersPanel({
                     {showCancel ? (
                       <button
                         type="button"
-                        className="rounded border border-rose-300 px-1.5 py-0.5 text-[9px] font-medium text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-700/60 dark:text-rose-300 dark:hover:border-rose-500/50 dark:hover:bg-rose-500/10"
+                        className="rounded border border-rose-300 px-2 py-1 text-[11px] font-semibold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 dark:border-rose-700/60 dark:text-rose-300 dark:hover:border-rose-500/50 dark:hover:bg-rose-500/10"
                         onClick={(e) => {
                           e.stopPropagation();
                           setCancelOrder(order);
@@ -1055,7 +1067,7 @@ export function PosLatestOrdersPanel({
                     {showPay ? (
                       <button
                         type="button"
-                        className="rounded border border-emerald-400 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-600/60 dark:bg-emerald-600/20 dark:text-emerald-300 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/30"
+                        className="rounded border border-emerald-400 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-600/60 dark:bg-emerald-600/20 dark:text-emerald-300 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/30"
                         onClick={(e) => {
                           e.stopPropagation();
                           onPayOrder?.(order);
@@ -1067,7 +1079,7 @@ export function PosLatestOrdersPanel({
                     ) : null}
                     <button
                       type="button"
-                      className="rounded border border-amber-300 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 transition hover:border-amber-400 hover:bg-amber-50 dark:border-slate-700 dark:text-amber-400 dark:hover:border-amber-500/40 dark:hover:bg-amber-500/10"
+                      className="rounded border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 transition hover:border-amber-400 hover:bg-amber-50 dark:border-slate-700 dark:text-amber-400 dark:hover:border-amber-500/40 dark:hover:bg-amber-500/10"
                       onClick={(e) => printOrder(order, e)}
                       title="Print simple customer slip (no PRA / no kitchen KOT) — or press P"
                     >
@@ -1077,7 +1089,7 @@ export function PosLatestOrdersPanel({
                     {showRpra ? (
                       <button
                         type="button"
-                        className="rounded border border-emerald-500/50 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-600/50 dark:bg-emerald-600/20 dark:text-emerald-300 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/30 dark:hover:text-white disabled:opacity-50"
+                        className="rounded border border-emerald-500/50 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-600/50 dark:bg-emerald-600/20 dark:text-emerald-300 dark:hover:border-emerald-400 dark:hover:bg-emerald-500/30 dark:hover:text-white disabled:opacity-50"
                         title="Upload this paid ticket to Real PRA and print Real fiscal slip"
                         disabled={rpraMutation.isPending}
                         onClick={(e) => {
@@ -1090,7 +1102,7 @@ export function PosLatestOrdersPanel({
                     ) : null}
                     <button
                       type="button"
-                      className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-medium text-slate-700 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-300 dark:hover:border-red-500/40 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                      className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-300 dark:hover:border-red-500/40 dark:hover:bg-red-500/10 dark:hover:text-red-400"
                       onClick={(e) => closeOrder(order, e)}
                       disabled={closeOrderMutation.isPending}
                       title={
@@ -1105,7 +1117,7 @@ export function PosLatestOrdersPanel({
                       <>
                         <button
                           type="button"
-                          className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
+                          className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
                           onClick={(e) => {
                             e.stopPropagation();
                             setViewOrder(order);
@@ -1116,7 +1128,7 @@ export function PosLatestOrdersPanel({
                         {showChangeTable ? (
                           <button
                             type="button"
-                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[9px] font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
                             onClick={(e) => {
                               e.stopPropagation();
                               setChangeTableOrder(order);
@@ -1145,50 +1157,50 @@ export function PosLatestOrdersPanel({
                           }
                         }}
                         className={[
-                          "flex items-center gap-1.5 rounded-lg border px-1.5 py-1 transition",
+                          "flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1.5 transition",
                           isSelected
                             ? "border-amber-500 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-slate-900 dark:ring-amber-500/20"
                             : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-950/40 dark:hover:border-slate-700",
                         ].join(" ")}
                       >
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1 basis-[8rem]">
                           <div className="flex min-w-0 items-center gap-1.5">
-                            <span className="shrink-0 font-mono text-[11px] font-bold text-slate-900 dark:text-white">
+                            <span className="max-w-[9rem] shrink-0 truncate font-mono text-[11px] font-bold text-slate-900 dark:text-white" title={order.ref}>
                               {order.ref}
                             </span>
                             <span
                               className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(order.statusTone)}`}
                               aria-hidden
                             />
-                            <span className="truncate text-[10px] text-slate-600 dark:text-slate-400">
+                            <span className="min-w-0 truncate text-[10px] text-slate-600 dark:text-slate-400" title={`${order.orderMode} · ${station}`}>
                               {order.orderMode} · {station}
                             </span>
                           </div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] text-slate-500 dark:text-slate-500">
+                          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] text-slate-500 dark:text-slate-500">
                             <span>{formatRecentOrderTime(order.createdAt)}</span>
                             <span className="truncate">{order.statusLabel}</span>
                             {order.orderTakerName ? (
-                              <span className="truncate" title={`Order taker: ${order.orderTakerName}`}>
+                              <span className="max-w-[7rem] truncate" title={`Order taker: ${order.orderTakerName}`}>
                                 By {order.orderTakerName}
                               </span>
                             ) : null}
                             {order.updatedByName ? (
-                              <span className="truncate" title={`Updated by: ${order.updatedByName}`}>
+                              <span className="max-w-[7rem] truncate" title={`Updated by: ${order.updatedByName}`}>
                                 Updated {order.updatedByName}
                               </span>
                             ) : null}
                           </div>
                         </div>
-                        <div className="shrink-0 text-right">
+                        <div className="w-14 shrink-0 text-right">
                           {orderTotal != null ? (
-                            <p className="text-[12px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                            <p className="truncate text-[12px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                               {orderTotal.toLocaleString()}
                             </p>
                           ) : (
                             <p className="text-[10px] text-slate-400 dark:text-slate-600">—</p>
                           )}
                         </div>
-                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                        <div className="flex min-w-0 max-w-full flex-1 basis-full flex-wrap items-center justify-end gap-1 sm:basis-auto sm:flex-none">
                           {actionButtons}
                         </div>
                       </div>

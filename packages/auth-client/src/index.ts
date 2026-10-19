@@ -76,10 +76,12 @@ async function resilientFetch(input: RequestInfo | URL, init?: RequestInit): Pro
 export function platformFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? "GET").toUpperCase();
   const url = requestUrl(input);
+  // Clone per waiter: GET dedupe shares one Promise, and reading `.json()` twice
+  // on the same Response throws "body stream already read" (Kitchen Accept/refresh).
   return enqueueHttpRequest(() => resilientFetch(input, init), {
     method,
     key: method === "GET" || method === "HEAD" ? `${method} ${url}` : undefined,
-  });
+  }).then((res) => res.clone());
 }
 
 export function isLikelyNetworkFailure(err: unknown): boolean {

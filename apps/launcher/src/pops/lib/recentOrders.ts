@@ -349,6 +349,29 @@ export function filterPosRecentOrdersByMode(
   return unpaid.filter((order) => order.orderMode === mode);
 }
 
+/** Paid tab / Closed Orders: only last N calendar days (default 2). */
+export function filterPosRecentOrdersWithinDays(
+  orders: PosRecentOrder[],
+  days = 2,
+): PosRecentOrder[] {
+  const cutoff = Date.now() - Math.max(1, days) * 86_400_000;
+  return orders.filter((order) => {
+    const at = new Date(order.createdAt).getTime();
+    return Number.isFinite(at) && at >= cutoff;
+  });
+}
+
+/** Sum of line quantities on an order (for Paid tab badge). */
+export function posRecentOrderItemQty(order: PosRecentOrder): number {
+  const lines = order.detail?.lines ?? [];
+  return lines.reduce((sum, line) => sum + Math.max(0, Math.round(line.qty || 0)), 0);
+}
+
+export function sumPosRecentOrdersItemQty(orders: PosRecentOrder[] | undefined | null): number {
+  if (!orders?.length) return 0;
+  return orders.reduce((sum, order) => sum + posRecentOrderItemQty(order), 0);
+}
+
 export function filterPosRecentOrders(
   orders: PosRecentOrder[],
   query: string,

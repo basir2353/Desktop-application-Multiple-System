@@ -369,7 +369,14 @@ export function KitchenPage(): JSX.Element {
         );
       }
       setCompletingId(null);
-      setNotice(err.message);
+      const msg = err.message?.trim() || "Could not complete order.";
+      setNotice(
+        /rider is required/i.test(msg)
+          ? "Complete failed: delivery rider missing — assign a rider on POS, then try Completed again."
+          : /not found|KITCHEN_TICKET_NOT_FOUND/i.test(msg)
+            ? "Complete failed: ticket already closed or missing — press Refresh."
+            : `Complete failed: ${msg}`,
+      );
     },
   });
 
@@ -385,7 +392,12 @@ export function KitchenPage(): JSX.Element {
     },
     onError: (err: Error) => {
       setAcceptingId(null);
-      setNotice(err.message);
+      const msg = err.message?.trim() || "Could not accept update.";
+      setNotice(
+        /not found|KITCHEN_TICKET_NOT_FOUND/i.test(msg)
+          ? "Accept failed: ticket already closed or missing — press Refresh."
+          : `Accept failed: ${msg}`,
+      );
     },
   });
 
@@ -496,7 +508,7 @@ export function KitchenPage(): JSX.Element {
         <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-yellow-400/50 bg-yellow-400/20 px-3 py-2 text-xs font-medium text-yellow-950 dark:text-yellow-100">
           <span>
             {pendingUpdateCount > 0
-              ? `${pendingUpdateCount} order update${pendingUpdateCount === 1 ? "" : "s"} waiting for Accept — press Accept so cashier is notified.`
+              ? `${pendingUpdateCount} order update${pendingUpdateCount === 1 ? "" : "s"} waiting for Accept — press Accept (then ticket stays in Active / moves when Completed).`
               : `${attentionCount} new / updated order${attentionCount === 1 ? "" : "s"} — yellow rows need attention. Bell rings on every new or changed ticket.`}
           </span>
           <button
@@ -700,7 +712,7 @@ export function KitchenPage(): JSX.Element {
                     {r.ticket.updatePending || attention.get(r.ticket.id) === "updated" ? (
                       <Button
                         type="button"
-                        className="h-7 border-0 bg-sky-600 px-2.5 text-[11px] font-semibold text-white hover:bg-sky-500"
+                        className="h-9 border-0 bg-sky-600 px-3 text-xs font-semibold text-white hover:bg-sky-500"
                         disabled={acceptUpdateMutation.isPending}
                         onClick={() => {
                           setAcceptingId(r.ticket.id);
@@ -714,7 +726,7 @@ export function KitchenPage(): JSX.Element {
                     ) : null}
                     <Button
                       type="button"
-                      className="h-7 border-0 bg-emerald-600 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-500"
+                      className="h-9 border-0 bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-500"
                       disabled={completeMutation.isPending}
                       onClick={() => {
                         setCompletingId(r.ticket.id);

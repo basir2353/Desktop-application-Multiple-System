@@ -116,6 +116,7 @@ import {
   canPayPosRecentOrder,
   filterDismissedPosOrders,
   filterPosRecentOrdersByMode,
+  filterPosRecentOrdersWithinDays,
   isPaidPosRecentOrder,
   withClosedPosOrderStatus,
   type PosRecentOrder,
@@ -148,10 +149,14 @@ import { PosTeamChangeModal } from "../../components/PosTeamChangeModal";
 import { PosMyPrintersModal } from "../../components/PosMyPrintersModal";
 import { PosCashierModal, type PosCashierMode } from "../../components/PosCashierModal";
 import {
+  clearPosCustomerDiscountDraft,
   loadPosCustomerDiscountDraft,
   savePosCustomerDiscountDraft,
-  clearPosCustomerDiscountDraft,
 } from "../../lib/posCustomerDiscountDraft";
+import {
+  loadPosKnownCustomers,
+  savePosKnownCustomer,
+} from "../../lib/posKnownCustomers";
 import {
   loadPosShiftTeam,
   POS_SHIFT_TEAM_CHANGED_EVENT,
@@ -666,7 +671,16 @@ export function PosPage(): JSX.Element {
   ]);
 
   useEffect(() => {
-    if (!posModeShowsCustomerPanel(mode)) setDeliveryDetailsOpen(false);
+    if (!posModeShowsCustomerPanel(mode)) {
+      setDeliveryDetailsOpen(false);
+      return;
+    }
+    // Only Delivery auto-opens customer details; Dine-in / Takeaway stay collapsed.
+    if (mode === "delivery") {
+      setDeliveryDetailsOpen(true);
+    } else if (mode === "dine-in" || mode === "takeaway") {
+      setDeliveryDetailsOpen(false);
+    }
   }, [mode]);
 
   const deliveryDetailsSummary = useMemo(() => {
@@ -756,6 +770,11 @@ export function PosPage(): JSX.Element {
 
   const knownDeliveryCustomers = useMemo(() => {
     const seen = new Map<string, { name: string; phone: string; address: string }>();
+    for (const local of loadPosKnownCustomers(branch?.code)) {
+      const key = (local.phone || local.name).trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.set(key, { name: local.name, phone: local.phone, address: local.address });
+    }
     for (const invoice of customerInvoicesQuery.data ?? []) {
       const key = (invoice.customerPhone || invoice.customerName).trim().toLowerCase();
       if (!key || seen.has(key)) continue;
@@ -778,7 +797,26 @@ export function PosPage(): JSX.Element {
       });
     }
     return [...seen.values()].slice(0, 50);
-  }, [customerInvoicesQuery.data, ordersQuery.data]);
+  }, [customerInvoicesQuery.data, ordersQuery.data, branch?.code]);
+
+  function persistCustomerFromTicketFields(): void {
+    if (!branch?.code) return;
+    if (!deliveryCustomer.trim() && !deliveryPhone.trim()) return;
+    savePosKnownCustomer(branch.code, {
+      name: deliveryCustomer,
+      phone: deliveryPhone,
+      address: deliveryAddress,
+    });
+    savePosCustomerDiscountDraft(branch.code, {
+      customer: deliveryCustomer,
+      phone: deliveryPhone,
+      address: deliveryAddress,
+      discountEditedAs,
+      discountPctInput,
+      discountAmountInput,
+      mode,
+    });
+  }
 
   const filteredDeliveryCustomers = useMemo(() => {
     const q = deliveryCustomerSearch.trim().toLowerCase();
@@ -862,15 +900,11 @@ export function PosPage(): JSX.Element {
     return branch?.code ? filterDismissedPosOrders(unpaid, branch.code) : unpaid;
   }, [recentOrders, branch?.code]);
 
-  /** Full-screen Closed Orders: paid + locally closed labels. */
+  /** Full-screen Paid / Closed Orders: last 2 days only. */
   const fullScreenClosedOrders = useMemo(() => {
     const paid = filterPosRecentOrdersByMode(recentOrders, "Paid");
     const labeled = branch?.code ? withClosedPosOrderStatus(paid, branch.code) : paid;
-    const cutoff = Date.now() - 2 * 86_400_000;
-    return labeled.filter((order) => {
-      const at = new Date(order.createdAt).getTime();
-      return Number.isFinite(at) && at >= cutoff;
-    });
+    return filterPosRecentOrdersWithinDays(labeled, 2);
   }, [recentOrders, branch?.code]);
 
   /** Immersive POS (full-screen menu or hidden top bar) owns HistoryNavBar Back. */
@@ -2044,6 +2078,8 @@ export function PosPage(): JSX.Element {
     },
     onSuccess: async (ticket) => {
       try {
+        // Place / Update without pressing Apply — still keep customer in the directory.
+        persistCustomerFromTicketFields();
         const wasTicketEdit = editingOrder?.kind === "ticket";
         const ticketOrderRef = (ticket.orderRef ?? orderRef).trim();
         if (ticketOrderRef) {
@@ -2339,6 +2375,8 @@ export function PosPage(): JSX.Element {
       };
     },
     onSuccess: async ({ bill, intent, skipStaffFoodLog, kotSent, kotPrintErrors }) => {
+      // Pay / Quick Bill without Apply — still auto-save customer into local directory.
+      persistCustomerFromTicketFields();
       setCheckoutModal(null);
       invalidateOrderFeeds();
       void queryClient.invalidateQueries({ queryKey: ["operations", "dashboard"] });
@@ -2838,6 +2876,7 @@ export function PosPage(): JSX.Element {
   function applyCustomerDetails(): void {
     setDeliveryDetailsOpen(false);
     setDeliveryCustomerPickerOpen(false);
+    persistCustomerFromTicketFields();
 
     // Persist customer details immediately when editing an existing order.
     if (editingOrder?.kind === "ticket" && branch?.code) {
@@ -3439,12 +3478,13 @@ export function PosPage(): JSX.Element {
             setSelectedFloorSectionId(null);
             setSelectedTableId(null);
             setSeatingModalOpen(false);
-            // Full screen: show customer strip so takeaway can be completed in-window.
-            setDeliveryDetailsOpen(true);
+            // Takeaway: keep customer details collapsed (tap to open when needed).
+            setDeliveryDetailsOpen(false);
           }}
           onDineIn={() => {
             switchMode("dine-in");
             setModeConfirmed(true);
+            setDeliveryDetailsOpen(false);
             // Restaurant flow: dining needs a table — open picker if none chosen yet.
             if (floorSections.length > 0 && !selectedTableId) {
               setSeatingModalOpen(true);
@@ -3457,7 +3497,7 @@ export function PosPage(): JSX.Element {
             setSelectedFloorSectionId(null);
             setSelectedTableId(null);
             setSeatingModalOpen(false);
-            // Full screen: open customer + rider fields (rider required before place order).
+            // Delivery only: open customer + rider fields by default.
             setDeliveryDetailsOpen(true);
           }}
           onTvDisplay={() => {
@@ -3718,8 +3758,8 @@ export function PosPage(): JSX.Element {
                       <span
                         className={`absolute inset-0 flex items-center justify-center text-base font-bold ${
                           active
-                            ? "bg-slate-950/15"
-                            : "bg-amber-100 text-amber-800 dark:bg-slate-950/60 dark:text-amber-300"
+                            ? "bg-slate-950/15 text-slate-950"
+                            : "bg-slate-700 text-white dark:bg-slate-950/60 dark:text-white"
                         }`}
                       >
                         {initial}
@@ -3734,10 +3774,10 @@ export function PosPage(): JSX.Element {
                           setMenuView("category");
                           setCategoryId(c.id);
                         }}
-                        className={`flex min-w-0 flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center transition ${
+                        className={`flex min-w-[4.5rem] max-w-[6.5rem] flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center transition ${
                           active
                             ? "bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/25"
-                            : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-amber-100/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                            : "bg-slate-800 text-white ring-1 ring-slate-600 hover:bg-slate-700 dark:bg-slate-800 dark:text-white dark:ring-slate-700"
                         }`}
                       >
                         <span className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/5">
@@ -3748,7 +3788,11 @@ export function PosPage(): JSX.Element {
                             fallback={initialFallback}
                           />
                         </span>
-                        <span className="line-clamp-2 w-full text-xs font-bold leading-tight">
+                        <span
+                          className={`line-clamp-2 w-full text-xs font-bold leading-tight ${
+                            active ? "text-slate-950" : "text-white"
+                          }`}
+                        >
                           {c.name}
                         </span>
                       </button>
@@ -3795,7 +3839,7 @@ export function PosPage(): JSX.Element {
                     : "No items in this category."}
               </p>
             ) : (
-              <div className="flex flex-wrap content-start gap-1.5">
+              <div className="flex flex-wrap content-start gap-2">
                 {filteredMenu.map((item) => {
                   const variants = resolvePosSellableVariants(item);
                   const displayPrice = happyHourActiveSlot?.percentOff
@@ -3808,17 +3852,14 @@ export function PosPage(): JSX.Element {
                   const hasPicker = variants.length > 1;
                   const qty = itemQtyInCart(item.id, displayCart);
                   const itemFallback = (
-                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-sm font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-                      {isSearching || showFeaturedOnly || showAllItems
-                        ? categoryById.get(item.categoryId)
-                        : item.name.slice(0, 2).toUpperCase()}
-                    </div>
+                    <div className="absolute inset-0 bg-gradient-to-b from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-800" />
                   );
                   return (
                     <div
                       key={item.id}
                       role="button"
                       tabIndex={0}
+                      title={item.name}
                       onClick={() => onDishClick(item)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -3826,7 +3867,7 @@ export function PosPage(): JSX.Element {
                           onDishClick(item);
                         }
                       }}
-                      className="group relative h-24 w-24 shrink-0 cursor-pointer overflow-hidden rounded-md border border-slate-200 bg-white transition hover:border-amber-500/50 hover:ring-1 hover:ring-amber-500/30 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-amber-400/70"
+                      className="group relative h-36 w-[7.5rem] shrink-0 cursor-pointer overflow-hidden rounded-md border border-slate-200 bg-white transition hover:border-amber-500/50 hover:ring-1 hover:ring-amber-500/30 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-amber-400/70"
                     >
                       <SafeMenuImage
                         imageUrl={item.imageUrl}
@@ -3835,7 +3876,7 @@ export function PosPage(): JSX.Element {
                         fallback={itemFallback}
                       />
                       {/* Hover-only qty controls — above fixed footer */}
-                      <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[2] flex h-8 items-center justify-between gap-0.5 px-1 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
+                      <div className="pointer-events-none absolute inset-x-0 bottom-[4.25rem] z-[2] flex h-8 items-center justify-between gap-0.5 px-1 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
                         <button
                           type="button"
                           disabled={qty <= 0}
@@ -3863,9 +3904,12 @@ export function PosPage(): JSX.Element {
                           +
                         </button>
                       </div>
-                      {/* Fixed-height footer — same on every card */}
-                      <div className="absolute inset-x-0 bottom-0 z-[1] flex h-12 flex-col justify-end bg-white/95 px-1.5 pb-1 pt-0.5 dark:bg-slate-950/95">
-                        <span className="line-clamp-1 min-h-[1.1rem] text-[11px] font-bold leading-tight text-slate-900 dark:text-white">
+                      {/* Name + price — wraps long names; hover title shows full name */}
+                      <div className="absolute inset-x-0 bottom-0 z-[1] flex min-h-[4.25rem] flex-col justify-end bg-white/95 px-1.5 pb-1.5 pt-1 dark:bg-slate-950/95">
+                        <span
+                          className="line-clamp-3 text-[12px] font-bold leading-snug text-slate-900 dark:text-white"
+                          title={item.name}
+                        >
                           {item.featured ? (
                             <span className="mr-0.5 text-amber-600 dark:text-amber-300" aria-hidden>
                               ★
@@ -3873,7 +3917,7 @@ export function PosPage(): JSX.Element {
                           ) : null}
                           {item.name}
                         </span>
-                        <span className="mt-0.5 block min-h-[1.1rem] truncate text-[11px] font-bold text-orange-600 dark:text-orange-400">
+                        <span className="mt-0.5 block truncate text-[12px] font-bold text-orange-600 dark:text-orange-400">
                           {hasPicker ? "From " : ""}
                           {displayPrice.toLocaleString()}
                           {showHappyHourPrice ? (
@@ -4319,7 +4363,10 @@ export function PosPage(): JSX.Element {
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[11px] font-medium text-slate-900 dark:text-slate-100">
+                          <div
+                            className="truncate text-[11px] font-medium text-slate-900 dark:text-slate-100"
+                            title={cartLinePrintLabel(line)}
+                          >
                             {cartLinePrintLabel(line)}
                           </div>
                           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] tabular-nums text-slate-500">

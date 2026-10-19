@@ -428,15 +428,15 @@ export class KitchenService implements OnModuleInit {
 
     // Kitchen "done" only means food was prepared — unpaid tickets stay editable on POS
     // so cashiers can add items after kitchen complete. Paid (completed bill) stays locked.
-    let reopenKitchenDone = false;
+    // New items after done → follow-up KOT with ONLY the delta (not the whole order again).
+    let spawnFollowUpKot = false;
     if (existing.status === "done" && (input.lines !== undefined || input.notes !== undefined)) {
       const paidBill = await this.findCompletedBillForTicket(existing);
       if (paidBill) {
         throw new BadRequestException("Cannot edit items on a paid order");
       }
-      // New / changed lines must go back to the kitchen board.
       if (input.lines !== undefined && input.status === undefined) {
-        reopenKitchenDone = true;
+        spawnFollowUpKot = true;
       }
     }
 
@@ -503,6 +503,7 @@ export class KitchenService implements OnModuleInit {
 
     let linesJson: string | undefined;
     let itemsSummary: string | undefined;
+    let followUpDeltaLines: StoredLine[] = [];
     let pendingCancellations: Array<{
       menuItemId: string | null;
       label: string;
@@ -523,6 +524,9 @@ export class KitchenService implements OnModuleInit {
       const enrichedLines = await this.enrichLinesFromMenu(existing.branchId, withDest);
       const previousLines = this.linesFromTicket(existing);
       pendingCancellations = diffCanceledLines(previousLines, enrichedLines);
+      if (spawnFollowUpKot) {
+        followUpDeltaLines = diffAddedOrIncreasedLines(previousLines, enrichedLines);
+      }
       linesJson = JSON.stringify(
         enrichedLines.map((l) => ({
           label: l.label,
@@ -590,7 +594,8 @@ export class KitchenService implements OnModuleInit {
       itemsSummary = notes ? `${lineText} · ${notes}` : lineText;
     }
 
-    const nextStatus = reopenKitchenDone ? "new" : (input.status ?? existing.status);
+    // Keep kitchen-done tickets on Completed; only the follow-up KOT goes to Active.
+    const nextStatus = input.status ?? existing.status;
 
     let billId = existing.billId;
     // When marking done, only *link* an existing completed bill (e.g. already paid on POS).
@@ -635,7 +640,8 @@ export class KitchenService implements OnModuleInit {
     let updatedByName: string | null | undefined;
     let nextContentRevision: number | undefined;
     let clearUpdateAck = false;
-    if (isContentEdit) {
+    // Follow-up KOT after kitchen-done: parent stays Completed — do not flag Accept on it.
+    if (isContentEdit && !spawnFollowUpKot) {
       nextContentRevision = Number(existing.contentRevision ?? 0) + 1;
       clearUpdateAck = true;
       if (editor?.userId) {
@@ -648,6 +654,15 @@ export class KitchenService implements OnModuleInit {
         const email = userRows[0]?.email;
         updatedByName = email ? waiterDisplayName(email) : null;
       }
+    } else if (isContentEdit && spawnFollowUpKot && editor?.userId) {
+      updatedByUserId = editor.userId;
+      const userRows = await this.db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, editor.userId))
+        .limit(1);
+      const email = userRows[0]?.email;
+      updatedByName = email ? waiterDisplayName(email) : null;
     }
 
     let acknowledgeAt: Date | undefined;
@@ -671,11 +686,7 @@ export class KitchenService implements OnModuleInit {
       .update(popsKitchenTickets)
       .set({
         ...(input.priority !== undefined ? { priority: input.priority } : {}),
-        ...(reopenKitchenDone
-          ? { status: "new" }
-          : input.status !== undefined
-            ? { status: input.status }
-            : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.stationLabel !== undefined
           ? { stationLabel: input.stationLabel.trim() }
           : {}),
@@ -690,8 +701,6 @@ export class KitchenService implements OnModuleInit {
         ...(nextStatus === "cooking" && !existing.startedAt
           ? { startedAt: new Date() }
           : {}),
-        // Fresh kitchen cycle after POS adds items to a previously completed ticket.
-        ...(reopenKitchenDone ? { startedAt: null } : {}),
         ...(updatedByUserId !== undefined
           ? { updatedByUserId, updatedByName: updatedByName ?? null }
           : {}),
@@ -710,6 +719,33 @@ export class KitchenService implements OnModuleInit {
       .returning();
 
     if (!row) throw new NotFoundException("Kitchen ticket not found");
+
+    // After kitchen-done, only NEW / EXTRA qty should hit the Active kitchen board.
+    if (spawnFollowUpKot && followUpDeltaLines.length > 0) {
+      const lineText = followUpDeltaLines.map((l) => `${l.label} x${l.qty}`).join(", ");
+      const followNotes = `ADD to ${existing.orderRef ?? existing.ticketRef}`;
+      const ticketRef = `KOT-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const stationLabel = (input.stationLabel?.trim() || existing.stationLabel).trim();
+      const isDelivery = stationLabel.toLowerCase().includes("delivery");
+      const riderId = input.riderId !== undefined ? input.riderId : existing.riderId;
+      await this.db.insert(popsKitchenTickets).values({
+        organizationId,
+        branchId: existing.branchId,
+        ticketRef,
+        orderRef: existing.orderRef,
+        stationLabel,
+        itemsSummary: `${lineText} · ${followNotes}`,
+        linesJson: JSON.stringify(followUpDeltaLines),
+        priority: "priority",
+        status: "new",
+        createdByUserId: editor?.userId ?? existing.createdByUserId ?? null,
+        createdByName: updatedByName ?? existing.createdByName ?? null,
+        riderId: riderId ?? null,
+        deliveryChargePkr: 0,
+        deliveryStatus: isDelivery ? (riderId ? "assigned" : "unassigned") : null,
+        contentRevision: 1,
+      });
+    }
 
     // Latest orders → Cancel order sends recordAsCancellation. Kitchen "mark done" does not.
     const closingOpenTicket =
@@ -1216,6 +1252,51 @@ function diffCanceledLines(
     }
   }
   return canceled;
+}
+
+/**
+ * Match prior qty for a line even when one side has menuItemId and the other
+ * only has a label (legacy tickets / enrich after the fact). Without this,
+ * every edit after kitchen-done looked like a full new order.
+ */
+function previousQtyForLine(
+  oldMap: Map<string, { label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+  newLine: { label: string; qty: number; unitPrice: number; menuItemId?: string },
+): number {
+  const idKey = newLine.menuItemId ? `id:${newLine.menuItemId}` : null;
+  const labelKey = `label:${normalizeMenuLabel(newLine.label)}`;
+  if (idKey && oldMap.has(idKey)) return oldMap.get(idKey)!.qty;
+  if (oldMap.has(labelKey)) return oldMap.get(labelKey)!.qty;
+  // Old row stored as id:… but new enrich uses a different path — match by label text.
+  for (const row of oldMap.values()) {
+    if (normalizeMenuLabel(row.label) === normalizeMenuLabel(newLine.label)) {
+      return row.qty;
+    }
+  }
+  return 0;
+}
+
+/** New items + qty increases only (for kitchen follow-up tickets after kitchen-done). */
+function diffAddedOrIncreasedLines(
+  previous: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+  next: Array<{ label: string; qty: number; unitPrice: number; menuItemId?: string }>,
+): StoredLine[] {
+  const oldMap = aggregateLines(previous);
+  const newMap = aggregateLines(next);
+  const out: StoredLine[] = [];
+  for (const newLine of newMap.values()) {
+    const prevQty = previousQtyForLine(oldMap, newLine);
+    const delta = newLine.qty - prevQty;
+    if (delta > 0) {
+      out.push({
+        label: newLine.label,
+        qty: delta,
+        unitPrice: newLine.unitPrice ?? 0,
+        ...(newLine.menuItemId ? { menuItemId: newLine.menuItemId } : {}),
+      });
+    }
+  }
+  return out;
 }
 
 /** Persist qty-edit reason into notes so increases (not only decreases) are auditable. */

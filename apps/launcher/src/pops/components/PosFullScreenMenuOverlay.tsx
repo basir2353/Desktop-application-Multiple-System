@@ -20,8 +20,10 @@ import {
   canEditPosRecentOrder,
   canPayPosRecentOrder,
   filterPosRecentOrdersByMode,
+  filterPosRecentOrdersWithinDays,
   formatRecentOrderTime,
   posRecentOrderTotal,
+  sumPosRecentOrdersItemQty,
   type PosRecentOrder,
   type PosRecentOrderModeFilter,
 } from "../lib/recentOrders";
@@ -420,26 +422,32 @@ export function PosFullScreenMenuOverlay({
     }
   }
 
+  const paidOrdersLast2Days = useMemo(
+    () => filterPosRecentOrdersWithinDays(closedOrders, 2),
+    [closedOrders],
+  );
+
   const listOrders = useMemo(() => {
-    const base = ordersListMode === "closed" ? closedOrders : openOrders;
-    if (ordersListMode === "closed") return base;
-    return filterPosRecentOrdersByMode(base, ordersChannelFilter);
-  }, [ordersListMode, closedOrders, openOrders, ordersChannelFilter]);
+    if (ordersListMode === "closed") return paidOrdersLast2Days;
+    if (ordersChannelFilter === "Paid") return paidOrdersLast2Days;
+    return filterPosRecentOrdersByMode(openOrders, ordersChannelFilter);
+  }, [ordersListMode, paidOrdersLast2Days, openOrders, ordersChannelFilter]);
 
   const openOrderCounts = useMemo(() => {
     const all = openOrders.length;
     const dineIn = filterPosRecentOrdersByMode(openOrders, "Dine-in").length;
     const takeaway = filterPosRecentOrdersByMode(openOrders, "Takeaway").length;
     const delivery = filterPosRecentOrdersByMode(openOrders, "Delivery").length;
-    return { all, dineIn, takeaway, delivery };
-  }, [openOrders]);
+    const paidQty = sumPosRecentOrdersItemQty(paidOrdersLast2Days);
+    return { all, dineIn, takeaway, delivery, paidQty };
+  }, [openOrders, paidOrdersLast2Days]);
 
   function openOrdersDrawer(next: OrdersListMode): void {
     setOrdersListMode((m) => (m === next ? null : next));
   }
 
   const actionBtn =
-    "rounded px-1.5 py-1.5 text-[10px] font-semibold leading-tight transition disabled:cursor-not-allowed disabled:opacity-40";
+    "rounded px-2 py-2 text-[11px] font-semibold leading-tight transition disabled:cursor-not-allowed disabled:opacity-40";
   const primaryBtn = `${actionBtn} bg-amber-400 text-slate-950 hover:bg-amber-300`;
   const payBtn = `${actionBtn} bg-emerald-500 text-white hover:bg-emerald-400`;
   const closeBtn = `${actionBtn} bg-rose-500/90 text-white hover:bg-rose-400`;
@@ -505,9 +513,9 @@ export function PosFullScreenMenuOverlay({
 
   const ticketAside = (
     <aside
-      className={`flex min-h-[36vh] w-full shrink-0 flex-col overflow-hidden bg-slate-900 lg:min-h-0 lg:w-[15.5rem] xl:w-[16.5rem] ${
+      className={`flex min-h-[36vh] w-full shrink-0 flex-col overflow-hidden bg-slate-900 lg:min-h-0 lg:w-[17.5rem] xl:w-[18.5rem] ${
         panelOnLeft
-          ? "border-b border-slate-800 lg:order-first lg:border-b-0 lg:border-r"
+          ? "border-b border-slate-800 lg:border-b-0 lg:border-r"
           : "border-t border-slate-800 lg:border-l lg:border-t-0"
       }`}
     >
@@ -599,7 +607,10 @@ export function PosFullScreenMenuOverlay({
                           : "border-slate-700 bg-slate-950/50 hover:border-slate-600"
                     }`}
                   >
-                    <div className="min-w-0 truncate text-[10px] font-medium text-white">
+                    <div
+                      className="min-w-0 truncate text-[10px] font-medium text-white"
+                      title={cartLinePrintLabel(line)}
+                    >
                       {cartLinePrintLabel(line)}
                     </div>
                     <div className="text-right text-[9px] tabular-nums text-slate-400">
@@ -752,7 +763,7 @@ export function PosFullScreenMenuOverlay({
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-1">
+        <div className="grid grid-cols-2 gap-1">
           <button
             type="button"
             className={primaryBtn}
@@ -760,15 +771,6 @@ export function PosFullScreenMenuOverlay({
             title="Start a new order — pick Dine-in / Takeaway / Delivery"
           >
             New Order
-          </button>
-          <button
-            type="button"
-            className={closeBtn}
-            disabled={cartLines.length === 0 || payBusy}
-            onClick={onCloseOrder}
-            title="Close this open order (cash)"
-          >
-            {payBusy ? "…" : "Close Order"}
           </button>
           <button
             type="button"
@@ -781,20 +783,29 @@ export function PosFullScreenMenuOverlay({
           </button>
           <button
             type="button"
-            className={secondaryBtn}
-            disabled={cartLines.length === 0 || payBusy}
-            onClick={onPrintBill}
-          >
-            Print Bill
-          </button>
-          <button
-            type="button"
             className={payBtn}
             disabled={cartLines.length === 0 || payBusy}
             onClick={onQuickBill}
             title="Close order as cash — no payment screen"
           >
             {payBusy ? "…" : "Quick Bill"}
+          </button>
+          <button
+            type="button"
+            className={closeBtn}
+            disabled={cartLines.length === 0 || payBusy}
+            onClick={onCloseOrder}
+            title="Close this open order (cash)"
+          >
+            {payBusy ? "…" : "Close Order"}
+          </button>
+          <button
+            type="button"
+            className={secondaryBtn}
+            disabled={cartLines.length === 0 || payBusy}
+            onClick={onPrintBill}
+          >
+            Print Bill
           </button>
           <button
             type="button"
@@ -816,8 +827,9 @@ export function PosFullScreenMenuOverlay({
             type="button"
             className={`${secondaryBtn} ${ordersListMode === "closed" ? "ring-1 ring-amber-400" : ""}`}
             onClick={() => openOrdersDrawer("closed")}
+            title="Paid / closed orders — last 2 days (badge = item qty)"
           >
-            Closed Orders
+            Paid
           </button>
         </div>
       </div>
@@ -834,8 +846,8 @@ export function PosFullScreenMenuOverlay({
               const count = items.filter((m) => m.isActive && m.categoryId === c.id).length;
               const letterFallback = (
                 <span
-                  className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${
-                    active ? "bg-amber-400 text-slate-950" : "bg-slate-700 text-amber-300"
+                  className={`absolute inset-0 flex items-center justify-center bg-slate-800 text-lg font-bold ${
+                    active ? "text-amber-300" : "text-slate-500"
                   }`}
                 >
                   {(c.name.trim().charAt(0) || "?").toUpperCase()}
@@ -845,8 +857,9 @@ export function PosFullScreenMenuOverlay({
                 <button
                   key={c.id}
                   type="button"
+                  title={`${c.name} (${count})`}
                   onClick={() => setCategoryId(c.id)}
-                  className={`group relative h-12 w-[4.75rem] shrink-0 overflow-hidden rounded-md text-center transition ${
+                  className={`group relative h-14 min-w-[5.5rem] max-w-[7.5rem] flex-1 overflow-hidden rounded-md text-center transition ${
                     active
                       ? "ring-2 ring-amber-400 shadow-sm shadow-amber-400/30"
                       : "ring-1 ring-slate-600 hover:ring-amber-400/50"
@@ -858,9 +871,9 @@ export function PosFullScreenMenuOverlay({
                     fill
                     fallback={letterFallback}
                   />
-                  <span className="absolute inset-x-0 bottom-0 z-[1] w-full truncate bg-slate-950/85 px-0.5 py-0.5 text-[8px] font-bold leading-tight text-white">
+                  <span className="absolute inset-x-0 bottom-0 z-[1] line-clamp-2 w-full bg-slate-950/90 px-1 py-1 text-[10px] font-bold leading-tight text-white">
                     {index + 1}. {c.name}
-                    <span className="ml-0.5 opacity-80">({count})</span>
+                    <span className="ml-0.5 font-semibold text-amber-200">({count})</span>
                   </span>
                 </button>
               );
@@ -879,7 +892,7 @@ export function PosFullScreenMenuOverlay({
               ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}`
               : `${filtered.length} item${filtered.length === 1 ? "" : "s"}`}
         </p>
-        <div className="flex flex-wrap content-start gap-1.5">
+        <div className="flex flex-wrap content-start gap-2">
           {filtered.map((item) => {
             const hasPicker = resolvePosSellableVariants(item).length > 1;
             const priced = priceLabel?.(item);
@@ -887,15 +900,14 @@ export function PosFullScreenMenuOverlay({
             const original = priced?.original;
             const qty = itemQtyInCart(item.id, cartLines);
             const itemFallback = (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-sm font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-                {item.name.slice(0, 2).toUpperCase()}
-              </div>
+              <div className="absolute inset-0 bg-gradient-to-b from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-800" />
             );
             return (
               <div
                 key={item.id}
                 role="button"
                 tabIndex={0}
+                title={item.name}
                 onClick={() => onAddItem(item)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -903,7 +915,7 @@ export function PosFullScreenMenuOverlay({
                     onAddItem(item);
                   }
                 }}
-                className="group relative h-24 w-24 shrink-0 cursor-pointer overflow-hidden rounded-md border border-slate-200 bg-white transition hover:border-amber-500/50 hover:ring-1 hover:ring-amber-400/40 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-amber-400/70"
+                className="group relative h-36 w-[7.5rem] shrink-0 cursor-pointer overflow-hidden rounded-md border border-slate-200 bg-white transition hover:border-amber-500/50 hover:ring-1 hover:ring-amber-400/40 dark:border-slate-600 dark:bg-slate-800 dark:hover:border-amber-400/70"
               >
                 <SafeMenuImage
                   imageUrl={item.imageUrl}
@@ -912,7 +924,7 @@ export function PosFullScreenMenuOverlay({
                   fallback={itemFallback}
                 />
                 {/* Hover-only qty controls — above fixed footer */}
-                <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[2] flex h-8 items-center justify-between gap-0.5 px-1 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
+                <div className="pointer-events-none absolute inset-x-0 bottom-[4.25rem] z-[2] flex h-8 items-center justify-between gap-0.5 px-1 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
                   <button
                     type="button"
                     disabled={qty <= 0}
@@ -940,13 +952,16 @@ export function PosFullScreenMenuOverlay({
                     +
                   </button>
                 </div>
-                {/* Fixed-height footer — same on every card */}
-                <div className="absolute inset-x-0 bottom-0 z-[1] flex h-12 flex-col justify-end bg-white/95 px-1.5 pb-1 pt-0.5 dark:bg-slate-950/95">
-                  <span className="line-clamp-1 min-h-[1.1rem] text-[11px] font-bold leading-tight text-slate-900 dark:text-white">
+                {/* Name + price — taller so long names wrap instead of cutting off */}
+                <div className="absolute inset-x-0 bottom-0 z-[1] flex min-h-[4.25rem] flex-col justify-end bg-white/95 px-1.5 pb-1.5 pt-1 dark:bg-slate-950/95">
+                  <span
+                    className="line-clamp-3 text-[12px] font-bold leading-snug text-slate-900 dark:text-white"
+                    title={item.name}
+                  >
                     {item.featured ? <span className="mr-0.5 text-amber-600 dark:text-amber-300">★</span> : null}
                     {item.name}
                   </span>
-                  <span className="mt-0.5 block min-h-[1.1rem] truncate text-[11px] font-bold text-orange-600 dark:text-orange-400">
+                  <span className="mt-0.5 block truncate text-[12px] font-bold text-orange-600 dark:text-orange-400">
                     {hasPicker ? "From " : ""}
                     {display.toLocaleString()}
                     {original != null && original !== display ? (
@@ -1254,12 +1269,12 @@ export function PosFullScreenMenuOverlay({
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
                 <div>
                   <h3 className="text-sm font-semibold text-white">
-                    {ordersListMode === "open" ? "Open Orders" : "Closed Orders"}
+                    {ordersListMode === "open" ? "Open Orders" : "Paid"}
                   </h3>
                   <p className="text-[10px] text-slate-500">
                     {ordersListMode === "open"
-                      ? "Dine-in, takeaway & delivery — edit, pay or print"
-                      : "Paid / closed — last 2 days only"}
+                      ? "Dine-in, takeaway, delivery & Paid — edit, pay or print"
+                      : "Paid / closed — last 2 days only · badge shows item qty"}
                   </p>
                 </div>
                 <button
@@ -1300,7 +1315,18 @@ export function PosFullScreenMenuOverlay({
                             },
                           ]
                         : []),
-                    ] as { id: PosRecentOrderModeFilter; label: string; count: number }[]
+                      {
+                        id: "Paid" as const,
+                        label: "Paid",
+                        count: 0,
+                        hideCount: true,
+                      },
+                    ] as {
+                      id: PosRecentOrderModeFilter;
+                      label: string;
+                      count: number;
+                      hideCount?: boolean;
+                    }[]
                   ).map((tab) => (
                     <button
                       key={tab.id}
@@ -1315,7 +1341,7 @@ export function PosFullScreenMenuOverlay({
                       }`}
                     >
                       {tab.label}
-                      {tab.count > 0 ? ` (${tab.count})` : ""}
+                      {!tab.hideCount && tab.count > 0 ? ` (${tab.count})` : ""}
                     </button>
                   ))}
                 </div>
@@ -1325,18 +1351,24 @@ export function PosFullScreenMenuOverlay({
                   <p className="px-2 py-6 text-center text-xs text-slate-500">Loading orders…</p>
                 ) : listOrders.length === 0 ? (
                   <p className="px-2 py-6 text-center text-xs text-slate-500">
-                    {ordersListMode === "open"
-                      ? ordersChannelFilter === "all"
+                    {ordersListMode === "closed" || ordersChannelFilter === "Paid"
+                      ? "No paid orders in the last 2 days."
+                      : ordersChannelFilter === "all"
                         ? "No open orders."
-                        : `No open ${String(ordersChannelFilter).toLowerCase()} orders.`
-                      : "No closed orders."}
+                        : `No open ${String(ordersChannelFilter).toLowerCase()} orders.`}
                   </p>
                 ) : (
                   <ul className="flex flex-col gap-1.5">
                     {listOrders.map((order) => {
                       const amount = posRecentOrderTotal(order, DEFAULT_POS_SETTINGS);
-                      const canEdit = ordersListMode === "open" && canEditPosRecentOrder(order);
+                      const listingPaid =
+                        ordersListMode === "closed" || ordersChannelFilter === "Paid";
+                      const canEdit =
+                        !listingPaid &&
+                        ordersListMode === "open" &&
+                        canEditPosRecentOrder(order);
                       const canPay =
+                        !listingPaid &&
                         ordersListMode === "open" &&
                         Boolean(onPayOpenOrder) &&
                         canPayPosRecentOrder(order);
@@ -1347,45 +1379,50 @@ export function PosFullScreenMenuOverlay({
                       return (
                         <li key={order.id}>
                           <div
-                            className={`rounded-md border px-2.5 py-2 ${
+                            className={`overflow-hidden rounded-md border px-2.5 py-2 ${
                               ordersListMode === "open"
                                 ? "border-slate-600 bg-slate-800"
                                 : "border-slate-700 bg-slate-950/60"
                             }`}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="max-w-[9rem] truncate font-mono text-[10px] font-semibold text-amber-300" title={order.ref}>
+                            <div className="flex min-w-0 items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                  <span className="max-w-full truncate font-mono text-[10px] font-semibold text-amber-300" title={order.ref}>
                                     {order.ref}
                                   </span>
                                   <span
-                                    className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ring-1 ${channelBadgeClass(order.orderMode)}`}
+                                    className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ring-1 ${channelBadgeClass(order.orderMode)}`}
                                   >
                                     {order.orderMode}
                                   </span>
                                 </div>
-                                <div className="truncate text-[11px] text-slate-300">{station}</div>
-                                <div className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">
+                                <div className="truncate text-[11px] text-slate-300" title={station}>
+                                  {station}
+                                </div>
+                                <div
+                                  className="mt-0.5 line-clamp-2 break-words text-[10px] text-slate-500"
+                                  title={order.summary}
+                                >
                                   {order.summary}
                                 </div>
                               </div>
-                              <div className="shrink-0 text-right">
-                                <div className="text-[10px] font-semibold text-slate-400">
+                              <div className="w-[4.5rem] shrink-0 text-right">
+                                <div className="truncate text-[10px] font-semibold text-slate-400">
                                   {order.statusLabel}
                                 </div>
                                 {amount != null ? (
-                                  <div className="text-xs font-bold tabular-nums text-white">
+                                  <div className="truncate text-xs font-bold tabular-nums text-white">
                                     {amount.toLocaleString()}
                                   </div>
                                 ) : null}
-                                <div className="text-[9px] text-slate-500">
+                                <div className="truncate text-[9px] text-slate-500">
                                   {formatRecentOrderTime(order.createdAt)}
                                 </div>
                               </div>
                             </div>
-                            <div className="mt-2 flex gap-1.5">
-                              {ordersListMode === "open" ? (
+                            <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
+                              {ordersListMode === "open" && !listingPaid ? (
                                 <>
                                   <button
                                     type="button"
@@ -1394,7 +1431,7 @@ export function PosFullScreenMenuOverlay({
                                       onPickOpenOrder(order);
                                       setOrdersListMode(null);
                                     }}
-                                    className="min-w-0 flex-1 rounded border border-slate-500 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white hover:border-amber-400/50 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                    className="min-w-0 flex-1 rounded border border-slate-500 bg-slate-900 px-2 py-1.5 text-[11px] font-semibold text-white hover:border-amber-400/50 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
                                   >
                                     Edit
                                   </button>
@@ -1406,7 +1443,7 @@ export function PosFullScreenMenuOverlay({
                                         onPayOpenOrder(order);
                                         setOrdersListMode(null);
                                       }}
-                                      className="min-w-0 flex-1 rounded bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                                      className="min-w-0 flex-1 rounded bg-emerald-500 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
                                     >
                                       Pay
                                     </button>
@@ -1417,7 +1454,7 @@ export function PosFullScreenMenuOverlay({
                                 <button
                                   type="button"
                                   onClick={() => onPrintOrder(order)}
-                                  className="min-w-0 flex-1 rounded border border-amber-400/40 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/25"
+                                  className="min-w-0 flex-1 rounded border border-amber-400/40 bg-amber-400/15 px-2 py-1.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-400/25"
                                 >
                                   Print
                                 </button>

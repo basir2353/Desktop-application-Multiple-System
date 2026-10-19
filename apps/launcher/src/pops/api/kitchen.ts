@@ -206,8 +206,10 @@ export async function updateKitchenTicket(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // Read body once — never call res.json() twice on the same Response.
+  const payload: unknown = await res.json().catch(() => null);
   if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    const err = payload as { message?: string } | null;
     const message = err?.message ?? `Update KOT failed: ${res.status}`;
     if (res.status === 404 || isKitchenTicketNotFoundMessage(message)) {
       throw new Error("KITCHEN_TICKET_NOT_FOUND");
@@ -215,7 +217,7 @@ export async function updateKitchenTicket(
     throw new Error(message);
   }
   // Soft-parse so Complete/Accept still moves the ticket if one nested field is odd.
-  return softParseKitchenTicket(await res.json());
+  return softParseKitchenTicket(payload);
 }
 
 /** True when update/create should recreate because the ticket no longer exists on the server. */
