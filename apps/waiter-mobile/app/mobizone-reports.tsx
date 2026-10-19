@@ -1,10 +1,11 @@
 import Constants from "expo-constants";
 import { Redirect } from "expo-router";
 import { useMemo, useState } from "react";
-import { ScrollView, Text, TextInput, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
 import { formatPkr, getBusinessReport } from "../src/mobizone/storeCore";
 import { mz } from "../src/mobizone/theme";
+import { MzCard, MzField, MzInput, MzScreenTitle } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -34,60 +35,61 @@ export default function MobizoneReportsScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <Text style={{ color: mz.gold, fontSize: 20, fontWeight: "800" }}>Business Report</Text>
+        <MzScreenTitle title="Reports" subtitle="Profit & Loss · dues · cash/bank" />
+
         <View style={{ flexDirection: "row", gap: 10 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: mz.muted, fontSize: 11, marginBottom: 4 }}>From</Text>
-            <TextInput
-              value={from}
-              onChangeText={setFrom}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={mz.muted}
-              style={inputStyle}
-            />
+            <MzField label="From">
+              <MzInput value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" />
+            </MzField>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: mz.muted, fontSize: 11, marginBottom: 4 }}>To</Text>
-            <TextInput
-              value={to}
-              onChangeText={setTo}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={mz.muted}
-              style={inputStyle}
-            />
+            <MzField label="To">
+              <MzInput value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" />
+            </MzField>
           </View>
         </View>
+
+        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.goldDim }}>
+          <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "700", letterSpacing: 0.6 }}>
+            NET PROFIT
+          </Text>
+          <Text style={{ color: mz.goldBright, fontSize: 30, fontWeight: "800", marginTop: 6 }}>
+            {formatPkr(report.profitPkr)}
+          </Text>
+          <Text style={{ color: mz.muted, marginTop: 4, fontSize: 12 }}>
+            Margin {profitPct}% · expenses already deducted
+          </Text>
+        </MzCard>
 
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
           <Mini label="Purchase" value={formatPkr(report.purchaseAmountPkr)} tone={mz.rose} />
           <Mini label="Sales" value={formatPkr(report.saleAmountPkr)} tone={mz.teal} />
-          <Mini label="Profit" value={formatPkr(report.profitPkr)} tone={mz.gold} />
-          <Mini label="Profit %" value={`${profitPct}%`} tone={mz.blue} />
+          <Mini label="Gross profit" value={formatPkr(report.grossProfitPkr)} tone={mz.blue} />
+          <Mini label="Expenses" value={formatPkr(report.expenseTotalPkr)} tone={mz.rose} />
         </View>
 
         {[
+          { label: "Stock value (maal)", value: formatPkr(report.stockValuePkr), tone: mz.gold },
           { label: "Cash Balance", value: formatPkr(report.cashBalancePkr), tone: mz.teal },
           { label: "Bank Balance", value: formatPkr(report.bankBalancePkr), tone: mz.blue },
-          { label: "Total Due (Receive)", value: formatPkr(report.receivablesPkr), tone: mz.orange },
-          { label: "Total Due (Pay)", value: formatPkr(report.payablesPkr), tone: mz.rose },
+          { label: "To receive", value: formatPkr(report.receivablesPkr), tone: mz.orange },
+          { label: "To pay", value: formatPkr(report.payablesPkr), tone: mz.rose },
           { label: "Sale Count", value: String(report.saleCount), tone: mz.text },
           { label: "Purchase Count", value: String(report.purchaseCount), tone: mz.text },
         ].map((row) => (
-          <View
+          <MzCard
             key={row.label}
             style={{
-              backgroundColor: mz.card,
-              borderRadius: 12,
-              padding: 14,
-              borderWidth: 1,
-              borderColor: mz.border,
               flexDirection: "row",
               justifyContent: "space-between",
+              alignItems: "center",
+              paddingVertical: 14,
             }}
           >
-            <Text style={{ color: mz.muted }}>{row.label}</Text>
+            <Text style={{ color: mz.muted, fontWeight: "600" }}>{row.label}</Text>
             <Text style={{ color: row.tone, fontWeight: "800" }}>{row.value}</Text>
-          </View>
+          </MzCard>
         ))}
       </ScrollView>
     </MzShell>
@@ -106,7 +108,7 @@ function Mini({
   return (
     <View
       style={{
-        width: "47%",
+        width: "47.5%",
         backgroundColor: mz.card,
         borderRadius: 14,
         padding: 14,
@@ -114,19 +116,8 @@ function Mini({
         borderColor: mz.border,
       }}
     >
-      <Text style={{ color: mz.muted, fontSize: 11 }}>{label}</Text>
-      <Text style={{ color: tone, fontWeight: "800", fontSize: 16, marginTop: 6 }}>{value}</Text>
+      <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "600" }}>{label}</Text>
+      <Text style={{ color: tone, fontSize: 15, fontWeight: "800", marginTop: 6 }}>{value}</Text>
     </View>
   );
 }
-
-const inputStyle = {
-  backgroundColor: mz.card,
-  borderWidth: 1,
-  borderColor: mz.border,
-  borderRadius: 12,
-  paddingHorizontal: 14,
-  paddingVertical: 12,
-  color: mz.text,
-  fontSize: 15,
-} as const;

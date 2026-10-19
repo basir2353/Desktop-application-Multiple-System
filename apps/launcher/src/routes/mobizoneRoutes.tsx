@@ -21,6 +21,7 @@ import {
   MobizoneReportsPage,
 } from "../mobizone/pages/MobizoneReportsPages";
 import { MobizoneWhatsappPage } from "../mobizone/pages/MobizoneWhatsappPage";
+import { MobizoneReceiptSettingsPage } from "../mobizone/pages/MobizoneReceiptSettingsPage";
 
 /** MobiZone routes — rendered only in mobizone or suite editions. */
 export function mobizoneRoutes(): JSX.Element {
@@ -45,6 +46,7 @@ export function mobizoneRoutes(): JSX.Element {
       <Route path="mobizone/reports" element={<MobizoneReportsPage />} />
       <Route path="mobizone/profit" element={<MobizoneProfitPage />} />
       <Route path="mobizone/whatsapp" element={<MobizoneWhatsappPage />} />
+      <Route path="mobizone/receipt-settings" element={<MobizoneReceiptSettingsPage />} />
     </>
   );
 }

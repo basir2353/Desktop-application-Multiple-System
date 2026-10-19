@@ -21,8 +21,10 @@ export async function hydrateMobizoneStorage(branchCode: string): Promise<void> 
   const keys = [`mobizone-db-v2:${branchCode}`, `mobizone-db-v1:${branchCode}`];
   for (const key of keys) {
     try {
+      // Never clobber in-memory writes that raced ahead of AsyncStorage hydrate.
+      if (memory.has(key)) continue;
       const raw = await AsyncStorage.getItem(key);
-      if (raw) memory.set(key, raw);
+      if (raw && !memory.has(key)) memory.set(key, raw);
     } catch {
       /* ignore */
     }

@@ -6,6 +6,8 @@ import {
   buildWhatsAppSaleText,
   formatPkr,
   openWhatsApp,
+  printPurchaseReceipt,
+  printSaleReceipt,
   returnSale,
 } from "../lib/mobizoneStore";
 import { MzPage, MzSecondaryButton } from "../ui/MobizoneUi";
@@ -49,6 +51,9 @@ export function MobizoneSalesHistoryPage(): JSX.Element {
               {s.warrantyDays ? ` · Warranty ${s.warrantyDays}d` : ""}
             </p>
             <div className="flex flex-wrap gap-2">
+              <MzSecondaryButton onClick={() => branchCode && printSaleReceipt(s, branchCode)}>
+                Print bill
+              </MzSecondaryButton>
               <MzSecondaryButton onClick={() => openWhatsApp(s.customerPhone, buildWhatsAppSaleText(s))}>
                 WhatsApp
               </MzSecondaryButton>
@@ -91,6 +96,9 @@ export function MobizoneSalesHistoryPage(): JSX.Element {
                 <td className={`px-4 py-3 text-xs ${mutedClass}`}>{new Date(s.createdAt).toLocaleString()}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
+                    <MzSecondaryButton onClick={() => branchCode && printSaleReceipt(s, branchCode)}>
+                      Print
+                    </MzSecondaryButton>
                     <MzSecondaryButton onClick={() => openWhatsApp(s.customerPhone, buildWhatsAppSaleText(s))}>
                       WhatsApp
                     </MzSecondaryButton>
@@ -116,7 +124,7 @@ export function MobizoneSalesHistoryPage(): JSX.Element {
 }
 
 export function MobizonePurchasesHistoryPage(): JSX.Element {
-  const { db } = useMobizoneDb();
+  const { branchCode, db } = useMobizoneDb();
   return (
     <MzPage>
       <PageHeader title="Purchase history" subtitle="Bought phones with identity and payment split." />
@@ -138,9 +146,14 @@ export function MobizonePurchasesHistoryPage(): JSX.Element {
             <p className={`text-xs ${mutedClass}`}>
               Paid {formatPkr(p.paidPkr || 0)} · Udhaar {formatPkr(p.remainingPkr || 0)}
             </p>
-            <MzSecondaryButton onClick={() => openWhatsApp(p.sellerPhone, buildWhatsAppPurchaseText(p))}>
-              WhatsApp
-            </MzSecondaryButton>
+            <div className="flex flex-wrap gap-2">
+              <MzSecondaryButton onClick={() => printPurchaseReceipt(p, branchCode ?? undefined)}>
+                Print bill
+              </MzSecondaryButton>
+              <MzSecondaryButton onClick={() => openWhatsApp(p.sellerPhone, buildWhatsAppPurchaseText(p))}>
+                WhatsApp
+              </MzSecondaryButton>
+            </div>
           </article>
         ))}
       </div>
@@ -173,9 +186,14 @@ export function MobizonePurchasesHistoryPage(): JSX.Element {
                 </td>
                 <td className={`px-4 py-3 text-xs ${mutedClass}`}>{new Date(p.createdAt).toLocaleString()}</td>
                 <td className="px-4 py-3">
-                  <MzSecondaryButton onClick={() => openWhatsApp(p.sellerPhone, buildWhatsAppPurchaseText(p))}>
-                    WhatsApp
-                  </MzSecondaryButton>
+                  <div className="flex flex-wrap gap-2">
+                    <MzSecondaryButton onClick={() => printPurchaseReceipt(p, branchCode ?? undefined)}>
+                      Print
+                    </MzSecondaryButton>
+                    <MzSecondaryButton onClick={() => openWhatsApp(p.sellerPhone, buildWhatsAppPurchaseText(p))}>
+                      WhatsApp
+                    </MzSecondaryButton>
+                  </div>
                 </td>
               </tr>
             ))}

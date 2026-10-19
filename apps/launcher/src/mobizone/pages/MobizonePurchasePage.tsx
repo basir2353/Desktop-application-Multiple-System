@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { MobizonePurchase } from "@platform/contracts";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { useMobizoneDb } from "../hooks/useMobizone";
-import { formatPkr, recordPurchase } from "../lib/mobizoneStore";
+import { formatPkr, printPurchaseReceipt, recordPurchase } from "../lib/mobizoneStore";
 import {
   MzField,
   MzInput,
   MzPage,
   MzPhotoUpload,
   MzPrimaryButton,
+  MzSecondaryButton,
   MzSection,
   MzSelect,
   MzStickyActions,
@@ -40,6 +42,13 @@ export function MobizonePurchasePage(): JSX.Element {
   const [dueDate, setDueDate] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [lastPurchase, setLastPurchase] = useState<MobizonePurchase | null>(null);
+
+  useEffect(() => {
+    if (!bankAccountId && db.bankAccounts.length === 1) {
+      setBankAccountId(db.bankAccounts[0]!.id);
+    }
+  }, [db.bankAccounts, bankAccountId]);
 
   const priceN = Number(price) || 0;
   const paid = (Number(cash) || 0) + (Number(bank) || 0);
@@ -56,7 +65,14 @@ export function MobizonePurchasePage(): JSX.Element {
       setErr("Seller name, IMEI, brand, model, and purchase price are required.");
       return;
     }
-    const acc = db.bankAccounts.find((a) => a.id === bankAccountId);
+    const bankN = Number(bank) || 0;
+    const resolvedBankId =
+      bankAccountId || (bankN > 0 && db.bankAccounts.length === 1 ? db.bankAccounts[0]!.id : "");
+    if (bankN > 0 && !resolvedBankId) {
+      setErr("Bank amount enter kiya hai — pehle Banks page se account add/select karein.");
+      return;
+    }
+    const acc = db.bankAccounts.find((a) => a.id === resolvedBankId);
     try {
       const row = recordPurchase(branchCode, {
         sellerName: sellerName.trim(),
@@ -79,10 +95,10 @@ export function MobizonePurchasePage(): JSX.Element {
         dueDate: remaining > 0 ? dueDate || null : null,
         payment: {
           cashPkr: Number(cash) || 0,
-          bankPkr: Number(bank) || 0,
+          bankPkr: bankN,
           bankLabel: acc ? `${acc.bankName} · ${acc.accountTitle}` : null,
           bank: {
-            bankAccountId: bankAccountId || null,
+            bankAccountId: resolvedBankId || null,
             bankName: acc?.bankName ?? null,
             accountTitle: acc?.accountTitle ?? null,
             accountNumber: acc?.accountNumber ?? null,
@@ -93,6 +109,7 @@ export function MobizonePurchasePage(): JSX.Element {
         },
       });
       refresh();
+      setLastPurchase(row);
       setMsg(
         `Purchase saved — ${row.brand} ${row.model}. Paid ${formatPkr(row.paidPkr)} · Udhaar ${formatPkr(row.remainingPkr)}.`,
       );
@@ -129,7 +146,18 @@ export function MobizonePurchasePage(): JSX.Element {
         subtitle="Seller photo + CNIC, IMEI, cash/bank, aur udhaar due date."
       />
       {err ? <p className="text-sm text-red-600 dark:text-red-400">{err}</p> : null}
-      {msg ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p> : null}
+      {msg ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p>
+          {lastPurchase ? (
+            <MzSecondaryButton
+              onClick={() => branchCode && printPurchaseReceipt(lastPurchase, branchCode)}
+            >
+              Print bill
+            </MzSecondaryButton>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <MzSection title="Seller / customer">

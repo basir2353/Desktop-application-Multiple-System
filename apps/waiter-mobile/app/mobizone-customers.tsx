@@ -1,10 +1,20 @@
 import Constants from "expo-constants";
 import { Redirect } from "expo-router";
 import { useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
 import { formatPkr, upsertCustomer } from "../src/mobizone/storeCore";
 import { mz } from "../src/mobizone/theme";
+import {
+  MzCard,
+  MzChip,
+  MzEmpty,
+  MzField,
+  MzInput,
+  MzPrimaryButton,
+  MzScreenTitle,
+  MzSection,
+} from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -19,6 +29,7 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [cnic, setCnic] = useState("");
+  const [address, setAddress] = useState("");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -43,11 +54,13 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
       name: name.trim(),
       phone: phone.trim() || null,
       cnic: cnic.trim() || null,
+      address: address.trim() || null,
     });
     refresh();
     setName("");
     setPhone("");
     setCnic("");
+    setAddress("");
     setTab("list");
     Alert.alert("Saved", "Customer added");
   }
@@ -55,77 +68,54 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <Text style={{ color: mz.gold, fontSize: 20, fontWeight: "800" }}>Customers</Text>
+        <MzScreenTitle title="Customers" subtitle="Search by Name · Phone · CNIC" />
+
         <View style={{ flexDirection: "row", gap: 8 }}>
-          {(
-            [
-              { id: "list", label: "All Customers" },
-              { id: "add", label: "Add Customer" },
-            ] as const
-          ).map((t) => (
-            <Pressable
-              key={t.id}
-              onPress={() => setTab(t.id)}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                borderRadius: 10,
-                alignItems: "center",
-                backgroundColor: tab === t.id ? mz.gold : mz.card,
-                borderWidth: 1,
-                borderColor: tab === t.id ? mz.gold : mz.border,
-              }}
-            >
-              <Text style={{ color: tab === t.id ? mz.bg : mz.text, fontWeight: "700" }}>
-                {t.label}
-              </Text>
-            </Pressable>
-          ))}
+          <MzChip label="All Customers" active={tab === "list"} onPress={() => setTab("list")} />
+          <MzChip label="Add Customer" active={tab === "add"} onPress={() => setTab("add")} />
         </View>
 
         {tab === "list" ? (
           <>
-            <TextInput
+            <MzInput
               value={q}
               onChangeText={setQ}
               placeholder="Search name, phone, CNIC"
-              placeholderTextColor={mz.muted}
-              style={inputStyle}
+              style={{ flex: undefined }}
             />
             {filtered.length === 0 ? (
-              <Text style={{ color: mz.muted }}>No customers yet</Text>
+              <MzEmpty
+                title="No customers yet"
+                note="Add Customer dabao — CNIC / phone book yahan manage hoga"
+              />
             ) : (
               filtered.map((c) => (
-                <View
+                <MzCard
                   key={c.id}
-                  style={{
-                    backgroundColor: mz.card,
-                    borderRadius: 14,
-                    padding: 14,
-                    borderWidth: 1,
-                    borderColor: mz.border,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 12,
-                  }}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 14 }}
                 >
                   <View
                     style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 22,
-                      backgroundColor: mz.cardSoft,
+                      width: 46,
+                      height: 46,
+                      borderRadius: 23,
+                      backgroundColor: mz.navyDeep,
+                      borderWidth: 1,
+                      borderColor: mz.goldDim,
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
-                    <Text style={{ color: mz.gold, fontWeight: "800", fontSize: 16 }}>
+                    <Text style={{ color: mz.goldBright, fontWeight: "800", fontSize: 16 }}>
                       {c.name.slice(0, 1).toUpperCase()}
                     </Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: mz.text, fontWeight: "700" }}>{c.name}</Text>
-                    <Text style={{ color: mz.muted, fontSize: 12 }}>{c.phone || "No phone"}</Text>
+                    <Text style={{ color: mz.muted, fontSize: 12, marginTop: 2 }}>
+                      {c.phone || "No phone"}
+                      {c.cnic ? ` · ${c.cnic}` : ""}
+                    </Text>
                   </View>
                   <Text
                     style={{
@@ -136,74 +126,40 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
                   >
                     {(c.pendingPkr || 0) > 0 ? formatPkr(c.pendingPkr) : "Clear"}
                   </Text>
-                </View>
+                </MzCard>
               ))
             )}
+            {filtered.length > 0 ? (
+              <Pressable onPress={() => setTab("add")}>
+                <Text style={{ color: mz.goldBright, textAlign: "center", fontWeight: "700" }}>
+                  + Add Customer
+                </Text>
+              </Pressable>
+            ) : null}
           </>
         ) : (
-          <>
-            <Field label="Name">
-              <TextInput
-                value={name}
-                onChangeText={setName}
-                placeholder="Customer name"
-                placeholderTextColor={mz.muted}
-                style={inputStyle}
-              />
-            </Field>
-            <Field label="Phone">
-              <TextInput
+          <MzSection title="New customer">
+            <MzField label="Name *">
+              <MzInput value={name} onChangeText={setName} placeholder="Customer name" />
+            </MzField>
+            <MzField label="Phone">
+              <MzInput
                 value={phone}
                 onChangeText={setPhone}
                 keyboardType="phone-pad"
                 placeholder="03XXXXXXXXX"
-                placeholderTextColor={mz.muted}
-                style={inputStyle}
               />
-            </Field>
-            <Field label="CNIC">
-              <TextInput
-                value={cnic}
-                onChangeText={setCnic}
-                placeholder="XXXXX-XXXXXXX-X"
-                placeholderTextColor={mz.muted}
-                style={inputStyle}
-              />
-            </Field>
-            <Pressable
-              onPress={onAdd}
-              style={{
-                backgroundColor: mz.gold,
-                borderRadius: 14,
-                paddingVertical: 16,
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: mz.bg, fontWeight: "800", fontSize: 16 }}>Save Customer</Text>
-            </Pressable>
-          </>
+            </MzField>
+            <MzField label="CNIC">
+              <MzInput value={cnic} onChangeText={setCnic} placeholder="XXXXX-XXXXXXX-X" />
+            </MzField>
+            <MzField label="Address">
+              <MzInput value={address} onChangeText={setAddress} placeholder="Address" />
+            </MzField>
+            <MzPrimaryButton label="Save Customer" onPress={onAdd} />
+          </MzSection>
         )}
       </ScrollView>
     </MzShell>
   );
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: mz.muted, fontSize: 12, fontWeight: "600" }}>{label}</Text>
-      {children}
-    </View>
-  );
-}
-
-const inputStyle = {
-  backgroundColor: mz.card,
-  borderWidth: 1,
-  borderColor: mz.border,
-  borderRadius: 12,
-  paddingHorizontal: 14,
-  paddingVertical: 12,
-  color: mz.text,
-  fontSize: 15,
-} as const;

@@ -3,6 +3,7 @@ import { Redirect, useRouter } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
 import { mz } from "../src/mobizone/theme";
+import { MzCard, MzScreenTitle } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { getApiBaseUrl } from "../src/lib/apiBase";
 import { useBranchStore } from "../src/stores/branchStore";
@@ -12,11 +13,18 @@ const extra = Constants.expoConfig?.extra as { appVariant?: string; appVersion?:
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
 const LINKS = [
-  { href: "/mobizone-stock", title: "Stock / Inventory", note: "In-stock phones & IMEI" },
-  { href: "/mobizone-reports", title: "Reports", note: "Profit, dues, balances" },
-  { href: "/mobizone-sale", title: "Sales history entry", note: "New sale + WhatsApp receipt" },
-  { href: "/mobizone-purchase", title: "Purchase entry", note: "Buy phone · add stock" },
-  { href: "/mobizone-customers", title: "Customers", note: "CNIC / phone book" },
+  { href: "/mobizone-stock", title: "Stock / Inventory", note: "In-stock phones & IMEI", icon: "▣" },
+  { href: "/mobizone-reports", title: "Reports", note: "Profit, dues, balances", icon: "📊" },
+  { href: "/mobizone-expenses", title: "Shop expenses", note: "Salary, khana — profit se minus", icon: "💸" },
+  {
+    href: "/mobizone-receipt-settings",
+    title: "Bill print settings",
+    note: "Restaurant-style thermal bill",
+    icon: "🖨",
+  },
+  { href: "/mobizone-sale", title: "Sales history entry", note: "New sale + print / WhatsApp", icon: "↗" },
+  { href: "/mobizone-purchase", title: "Purchase entry", note: "Buy phone · add stock", icon: "↙" },
+  { href: "/mobizone-customers", title: "Customers", note: "CNIC / phone book", icon: "◉" },
 ] as const;
 
 export default function MobizoneMoreScreen(): React.JSX.Element {
@@ -34,18 +42,10 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <Text style={{ color: mz.gold, fontSize: 20, fontWeight: "800" }}>More</Text>
+        <MzScreenTitle title="More" subtitle="Shop tools & settings" />
 
-        <View
-          style={{
-            backgroundColor: mz.card,
-            borderRadius: 16,
-            padding: 16,
-            borderWidth: 1,
-            borderColor: mz.border,
-          }}
-        >
-          <Text style={{ color: mz.text, fontWeight: "800", fontSize: 16 }}>
+        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.goldDim }}>
+          <Text style={{ color: mz.goldBright, fontWeight: "800", fontSize: 16 }}>
             {claims?.email ?? "Shop user"}
           </Text>
           <Text style={{ color: mz.muted, marginTop: 4 }}>
@@ -58,7 +58,7 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
             Banks: {db.bankAccounts.length} · Devices: {db.devices.length} · v
             {extra?.appVersion ?? "1.0"}
           </Text>
-        </View>
+        </MzCard>
 
         {LINKS.map((link) => (
           <Pressable
@@ -70,10 +70,19 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
               padding: 14,
               borderWidth: 1,
               borderColor: mz.border,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
             }}
           >
-            <Text style={{ color: mz.text, fontWeight: "700" }}>{link.title}</Text>
-            <Text style={{ color: mz.muted, fontSize: 12, marginTop: 2 }}>{link.note}</Text>
+            <Text style={{ color: mz.gold, fontSize: 18, width: 28, textAlign: "center" }}>
+              {link.icon}
+            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: mz.text, fontWeight: "700" }}>{link.title}</Text>
+              <Text style={{ color: mz.muted, fontSize: 12, marginTop: 2 }}>{link.note}</Text>
+            </View>
+            <Text style={{ color: mz.muted }}>›</Text>
           </Pressable>
         ))}
 
@@ -84,14 +93,16 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
             router.replace("/");
           }}
           style={{
-            backgroundColor: mz.rose,
-            borderRadius: 14,
-            paddingVertical: 14,
-            alignItems: "center",
             marginTop: 8,
+            backgroundColor: "#3A1F2A",
+            borderRadius: 14,
+            padding: 14,
+            borderWidth: 1,
+            borderColor: mz.rose,
+            alignItems: "center",
           }}
         >
-          <Text style={{ color: mz.white, fontWeight: "800" }}>Sign out</Text>
+          <Text style={{ color: mz.rose, fontWeight: "800" }}>Sign out</Text>
         </Pressable>
       </ScrollView>
     </MzShell>

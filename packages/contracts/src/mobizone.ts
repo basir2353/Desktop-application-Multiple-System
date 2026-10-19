@@ -174,8 +174,11 @@ export type MobizoneLedgerEntry = z.infer<typeof mobizoneLedgerEntrySchema>;
 
 export const mobizoneDashboardSchema = z.object({
   inStock: z.number().int().nonnegative(),
+  /** Sum of purchase cost of phones still in stock (maal value). */
+  stockValuePkr: z.number(),
   todaySalesPkr: z.number(),
   todayPurchasesPkr: z.number(),
+  /** Gross phone profit minus today's shop expenses. */
   todayProfitPkr: z.number(),
   pendingReceivablesPkr: z.number(),
   pendingPayablesPkr: z.number(),
@@ -191,7 +194,14 @@ export const mobizoneBusinessReportSchema = z.object({
   saleCount: z.number().int(),
   purchaseAmountPkr: z.number(),
   saleAmountPkr: z.number(),
+  /** Sale − purchase cost before expenses. */
+  grossProfitPkr: z.number(),
+  /** Shop expenses in the date range (salary, food, rent, etc.). */
+  expenseTotalPkr: z.number(),
+  /** Gross profit minus expenses. */
   profitPkr: z.number(),
+  /** Current in-stock inventory at purchase cost. */
+  stockValuePkr: z.number(),
   receivablesPkr: z.number(),
   payablesPkr: z.number(),
   cashBalancePkr: z.number(),

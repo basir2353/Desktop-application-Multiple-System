@@ -58,13 +58,22 @@ export function MobizoneProfitPage(): JSX.Element {
     () => filterByPeriod(db.sales.filter((s) => !s.returnedAt), period),
     [db.sales, period],
   );
-  const profit = sales.reduce((a, s) => a + s.profitPkr, 0);
+  const expenses = useMemo(
+    () => filterByPeriod(db.expenses ?? [], period),
+    [db.expenses, period],
+  );
   const revenue = sales.reduce((a, s) => a + s.pricePkr, 0);
   const cost = sales.reduce((a, s) => a + s.costPkr, 0);
+  const grossProfit = sales.reduce((a, s) => a + s.profitPkr, 0);
+  const expenseTotal = expenses.reduce((a, x) => a + x.amountPkr, 0);
+  const netProfit = grossProfit - expenseTotal;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Profit / loss" subtitle="Per-phone profit after sale (sale price − purchase cost)." />
+      <PageHeader
+        title="Profit / loss"
+        subtitle="Gross phone profit (sale − purchase cost), minus shop expenses (salary, food, rent, etc.)."
+      />
       <MzField label="Period">
         <MzSelect value={period} onChange={(e) => setPeriod(e.target.value as Period)} className="max-w-xs">
           <option value="daily">Daily</option>
@@ -73,11 +82,20 @@ export function MobizoneProfitPage(): JSX.Element {
           <option value="all">All time</option>
         </MzSelect>
       </MzField>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <MzStat label="Revenue" value={formatPkr(revenue)} />
         <MzStat label="Cost of goods" value={formatPkr(cost)} />
-        <MzStat label="Profit" value={formatPkr(profit)} />
+        <MzStat label="Gross profit" value={formatPkr(grossProfit)} />
+        <MzStat label="Expenses" value={formatPkr(expenseTotal)} />
+        <MzStat label="Net profit" value={formatPkr(netProfit)} />
       </div>
+      <p className={`text-sm ${mutedClass}`}>
+        Expenses add karne ke baad net profit automatically update hota hai — Expenses page se khana, salary, rent,
+        courier wagaira record karein.
+      </p>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
+        Phone profits
+      </h3>
       <ul className="space-y-2">
         {sales.map((s) => (
           <li
@@ -96,6 +114,30 @@ export function MobizoneProfitPage(): JSX.Element {
           </li>
         ))}
         {sales.length === 0 ? <p className={`text-sm ${mutedClass}`}>No sold phones in this period.</p> : null}
+      </ul>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
+        Expenses deducted
+      </h3>
+      <ul className="space-y-2">
+        {expenses.map((x) => (
+          <li
+            key={x.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-800"
+          >
+            <div>
+              <p className="text-sm font-medium text-slate-900 dark:text-white">{x.title}</p>
+              <p className={`text-xs ${mutedClass}`}>
+                {x.method} · {new Date(x.createdAt).toLocaleString()}
+              </p>
+            </div>
+            <p className="text-sm font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+              −{formatPkr(x.amountPkr)}
+            </p>
+          </li>
+        ))}
+        {expenses.length === 0 ? (
+          <p className={`text-sm ${mutedClass}`}>Is period mein koi expense nahi — net = gross profit.</p>
+        ) : null}
       </ul>
     </div>
   );

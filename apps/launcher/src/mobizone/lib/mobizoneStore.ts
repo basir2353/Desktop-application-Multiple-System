@@ -12,6 +12,11 @@ import type {
   MobizoneShopkeeper,
   MobizoneSplitPayment,
 } from "@platform/contracts";
+import {
+  DEFAULT_MOBIZONE_RECEIPT_SETTINGS,
+  loadMobizoneReceiptSettings,
+  type MobizoneReceiptSettings,
+} from "./mobizoneReceiptSettings";
 
 export type MobizoneDb = {
   customers: MobizoneCustomer[];
@@ -207,15 +212,23 @@ function imeiClashInStock(db: MobizoneDb, imei: string, imei2?: string | null): 
   });
 }
 
+export function stockValuePkr(db: MobizoneDb): number {
+  return db.devices
+    .filter((d) => d.status === "in_stock")
+    .reduce((a, d) => a + (d.purchasePricePkr || 0), 0);
+}
+
 export function getMobizoneDashboard(branchCode: string): MobizoneDashboard {
   const db = loadMobizoneDb(branchCode);
   const today = new Date().toISOString().slice(0, 10);
+  const inStockDevices = db.devices.filter((d) => d.status === "in_stock");
   const salesToday = db.sales.filter((s) => !s.returnedAt && s.createdAt.startsWith(today));
   const purchasesToday = db.purchases.filter((p) => p.createdAt.startsWith(today));
   const expensesToday = (db.expenses ?? []).filter((x) => x.createdAt.startsWith(today));
   const { cash, bank } = getCashBankBalances(db);
   return {
-    inStock: db.devices.filter((d) => d.status === "in_stock").length,
+    inStock: inStockDevices.length,
+    stockValuePkr: inStockDevices.reduce((a, d) => a + (d.purchasePricePkr || 0), 0),
     todaySalesPkr: salesToday.reduce((a, s) => a + s.pricePkr, 0),
     todayPurchasesPkr: purchasesToday.reduce((a, p) => a + p.purchasePricePkr, 0),
     todayProfitPkr:
@@ -246,6 +259,7 @@ export function getBusinessReport(
   const purchases = db.purchases.filter((p) => inRange(p.createdAt));
   const expenses = (db.expenses ?? []).filter((x) => inRange(x.createdAt));
   const expenseTotal = expenses.reduce((a, x) => a + x.amountPkr, 0);
+  const grossProfit = sales.reduce((a, s) => a + s.profitPkr, 0);
   const { cash, bank } = getCashBankBalances(db);
   return {
     from: from || "—",
@@ -254,7 +268,10 @@ export function getBusinessReport(
     saleCount: sales.length,
     purchaseAmountPkr: purchases.reduce((a, p) => a + p.purchasePricePkr, 0),
     saleAmountPkr: sales.reduce((a, s) => a + s.pricePkr, 0),
-    profitPkr: sales.reduce((a, s) => a + s.profitPkr, 0) - expenseTotal,
+    grossProfitPkr: grossProfit,
+    expenseTotalPkr: expenseTotal,
+    profitPkr: grossProfit - expenseTotal,
+    stockValuePkr: stockValuePkr(db),
     receivablesPkr: db.sales
       .filter((s) => !s.returnedAt)
       .reduce((a, s) => a + (s.remainingPkr || 0), 0),
@@ -914,6 +931,14 @@ export function filterByPeriod<T extends { createdAt: string }>(
   return rows.filter((r) => new Date(r.createdAt) >= start);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export function buildWhatsAppSaleText(sale: MobizoneSale): string {
   const bank = sale.payment.bank;
   return [
@@ -921,16 +946,18 @@ export function buildWhatsAppSaleText(sale: MobizoneSale): string {
     `Customer: ${sale.customerName}`,
     sale.customerPhone ? `Phone: ${sale.customerPhone}` : null,
     sale.customerCnic ? `CNIC: ${sale.customerCnic}` : null,
+    sale.customerAddress ? `Address: ${sale.customerAddress}` : null,
     `Device: ${sale.brand} ${sale.model}`,
     `IMEI: ${sale.imei}`,
     `Price: ${formatPkr(sale.pricePkr)}`,
     `Cash: ${formatPkr(sale.payment.cashPkr || 0)}`,
     `Bank: ${formatPkr(sale.payment.bankPkr || 0)}`,
-    bank?.bankName ? `Bank: ${bank.bankName}` : null,
+    bank?.bankName ? `Bank name: ${bank.bankName}` : null,
     bank?.accountTitle ? `Title: ${bank.accountTitle}` : null,
     bank?.txnRef ? `Txn: ${bank.txnRef}` : null,
     `Remaining: ${formatPkr(sale.remainingPkr)}`,
     sale.dueDate ? `Due: ${sale.dueDate}` : null,
+    sale.warrantyDays ? `Warranty: ${sale.warrantyDays} days` : null,
     `Date: ${new Date(sale.createdAt).toLocaleString()}`,
   ]
     .filter(Boolean)
@@ -943,6 +970,7 @@ export function buildWhatsAppPurchaseText(purchase: MobizonePurchase): string {
     `Seller: ${purchase.sellerName}`,
     purchase.sellerPhone ? `Phone: ${purchase.sellerPhone}` : null,
     purchase.sellerCnic ? `CNIC: ${purchase.sellerCnic}` : null,
+    purchase.sellerAddress ? `Address: ${purchase.sellerAddress}` : null,
     `Device: ${purchase.brand} ${purchase.model}`,
     `IMEI: ${purchase.imei}`,
     `Purchase: ${formatPkr(purchase.purchasePricePkr)}`,
@@ -955,6 +983,207 @@ export function buildWhatsAppPurchaseText(purchase: MobizonePurchase): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function resolveReceiptSettings(
+  branchCode?: string | null,
+  override?: MobizoneReceiptSettings,
+): MobizoneReceiptSettings {
+  if (override) return override;
+  if (branchCode) return loadMobizoneReceiptSettings(branchCode);
+  return DEFAULT_MOBIZONE_RECEIPT_SETTINGS;
+}
+
+function enrichSaleCustomer(
+  sale: MobizoneSale,
+  branchCode?: string | null,
+): MobizoneSale {
+  if (!branchCode || !sale.customerId) return sale;
+  const customer = loadMobizoneDb(branchCode).customers.find((c) => c.id === sale.customerId);
+  if (!customer) return sale;
+  return {
+    ...sale,
+    customerName: sale.customerName || customer.name,
+    customerPhone: sale.customerPhone || customer.phone || null,
+    customerAddress: sale.customerAddress || customer.address || null,
+    customerCnic: sale.customerCnic || customer.cnic || null,
+  };
+}
+
+function enrichPurchaseSeller(
+  purchase: MobizonePurchase,
+  branchCode?: string | null,
+): MobizonePurchase {
+  if (!branchCode || !purchase.customerId) return purchase;
+  const customer = loadMobizoneDb(branchCode).customers.find((c) => c.id === purchase.customerId);
+  if (!customer) return purchase;
+  return {
+    ...purchase,
+    sellerName: purchase.sellerName || customer.name,
+    sellerPhone: purchase.sellerPhone || customer.phone || null,
+    sellerAddress: purchase.sellerAddress || customer.address || null,
+    sellerCnic: purchase.sellerCnic || customer.cnic || null,
+  };
+}
+
+/** Restaurant-style thermal receipt helpers (dashed lines, mono, left/right rows). */
+function thermalDash(widthPx: number): string {
+  return `<div class="dash">${"─".repeat(widthPx >= 320 ? 32 : 28)}</div>`;
+}
+
+function thermalKv(label: string, value: string): string {
+  return `<div class="kv"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`;
+}
+
+function thermalPartyBlock(
+  title: string,
+  input: {
+    name?: string | null;
+    phone?: string | null;
+    cnic?: string | null;
+    address?: string | null;
+  },
+): string {
+  const v = (x?: string | null) => (x ?? "").trim() || "—";
+  return `
+  <div class="sec">${escapeHtml(title)}</div>
+  ${thermalKv("Name", v(input.name))}
+  ${thermalKv("Phone", v(input.phone))}
+  ${thermalKv("CNIC / ID", v(input.cnic))}
+  ${thermalKv("Address", v(input.address))}`;
+}
+
+function thermalShell(width: number, body: string): string {
+  return `
+<style>
+  .rcpt{max-width:${width}px;margin:0 auto;font-family:"Courier New",Courier,monospace;font-size:12px;color:#111;line-height:1.35}
+  .rcpt .shop{font-size:16px;font-weight:800;margin:0;text-align:center;letter-spacing:.02em}
+  .rcpt .sub{text-align:center;font-size:11px;margin:1px 0;color:#222}
+  .rcpt .title{text-align:center;font-size:13px;font-weight:800;margin:6px 0 2px;text-transform:uppercase}
+  .rcpt .dash{text-align:center;letter-spacing:1px;margin:6px 0;color:#333;white-space:pre;overflow:hidden}
+  .rcpt .sec{font-size:11px;font-weight:800;margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+  .rcpt .kv{display:flex;justify-content:space-between;gap:8px;margin:2px 0}
+  .rcpt .kv span:last-child{text-align:right;font-weight:600}
+  .rcpt .item{margin:4px 0}
+  .rcpt .item .name{font-weight:800}
+  .rcpt .item .meta{font-size:11px;color:#333}
+  .rcpt .totalbox{margin-top:6px;padding:6px 0;border-top:2px solid #111;border-bottom:2px solid #111}
+  .rcpt .totalbox .kv span{font-size:14px;font-weight:800}
+  .rcpt .foot{text-align:center;margin-top:10px;font-size:11px}
+  .rcpt .cut{text-align:center;margin-top:8px;font-size:10px;color:#666}
+</style>
+<div class="rcpt">${body}</div>`;
+}
+
+/** Restaurant-style sale bill — customer block always on. */
+export function buildSaleReceiptHtml(
+  sale: MobizoneSale,
+  branchCode?: string | null,
+  settingsOverride?: MobizoneReceiptSettings,
+): string {
+  const settings = resolveReceiptSettings(branchCode, settingsOverride);
+  const f = settings.fields;
+  const enriched = enrichSaleCustomer(sale, branchCode);
+  const bank = enriched.payment.bank;
+  const width = settings.paperWidthMm === 58 ? 280 : 360;
+  const dash = thermalDash(width);
+  const deviceLabel = `${enriched.brand} ${enriched.model}`;
+  const received = (enriched.payment.cashPkr || 0) + (enriched.payment.bankPkr || 0);
+  const body = `
+  ${f.shopName ? `<p class="shop">${escapeHtml(settings.shopName)}</p>` : ""}
+  ${f.shopPhone && settings.shopPhone ? `<p class="sub">Tel: ${escapeHtml(settings.shopPhone)}</p>` : ""}
+  ${f.shopAddress && settings.shopAddress ? `<p class="sub">${escapeHtml(settings.shopAddress)}</p>` : ""}
+  ${dash}
+  ${f.documentTitle ? `<p class="title">${escapeHtml(settings.documentTitle)}</p>` : ""}
+  ${f.timestamp ? `<p class="sub">${escapeHtml(new Date(enriched.createdAt).toLocaleString())}</p>` : ""}
+  <p class="sub">Bill # ${escapeHtml(enriched.id.slice(0, 8).toUpperCase())}</p>
+  ${dash}
+  ${thermalPartyBlock("Customer details", {
+    name: enriched.customerName,
+    phone: enriched.customerPhone,
+    cnic: enriched.customerCnic,
+    address: enriched.customerAddress,
+  })}
+  ${dash}
+  <div class="sec">Items</div>
+  <div class="item">
+    <div class="kv"><span class="name">${escapeHtml(f.device ? deviceLabel : "Device")}</span><span>${escapeHtml(f.salePrice ? formatPkr(enriched.pricePkr) : "")}</span></div>
+    ${f.imei ? `<div class="meta">IMEI: ${escapeHtml(enriched.imei)}</div>` : ""}
+    ${f.warranty && enriched.warrantyDays ? `<div class="meta">Warranty: ${enriched.warrantyDays} days</div>` : ""}
+    <div class="meta">Qty: 1</div>
+  </div>
+  ${dash}
+  <div class="sec">Payment</div>
+  ${f.salePrice ? thermalKv("Subtotal", formatPkr(enriched.pricePkr)) : ""}
+  ${f.cash ? thermalKv("Cash", formatPkr(enriched.payment.cashPkr || 0)) : ""}
+  ${f.bank ? thermalKv("Bank", formatPkr(enriched.payment.bankPkr || 0)) : ""}
+  ${f.bankDetails && bank?.bankName ? thermalKv("Bank name", bank.bankName) : ""}
+  ${f.bankDetails && bank?.accountTitle ? thermalKv("Account", bank.accountTitle) : ""}
+  ${f.bankDetails && bank?.txnRef ? thermalKv("Txn ref", bank.txnRef) : ""}
+  ${thermalKv("Received", formatPkr(received))}
+  ${f.remaining ? thermalKv("Remaining / Udhaar", formatPkr(enriched.remainingPkr)) : ""}
+  ${f.dueDate && enriched.dueDate ? thermalKv("Due date", enriched.dueDate) : ""}
+  ${f.salePrice ? `<div class="totalbox">${thermalKv("TOTAL", formatPkr(enriched.pricePkr))}</div>` : ""}
+  ${f.footer && settings.footerText ? `<p class="foot">${escapeHtml(settings.footerText)}</p>` : `<p class="foot">Shukriya — Visit again</p>`}
+  <p class="cut">*** ${escapeHtml(settings.shopName || "MobiZone")} ***</p>`;
+  return thermalShell(width, body);
+}
+
+/** Restaurant-style purchase bill — seller details always on. */
+export function buildPurchaseReceiptHtml(
+  purchase: MobizonePurchase,
+  branchCode?: string | null,
+  settingsOverride?: MobizoneReceiptSettings,
+): string {
+  const settings = resolveReceiptSettings(branchCode, settingsOverride);
+  const f = settings.fields;
+  const enriched = enrichPurchaseSeller(purchase, branchCode);
+  const width = settings.paperWidthMm === 58 ? 280 : 360;
+  const dash = thermalDash(width);
+  const deviceLabel = `${enriched.brand} ${enriched.model}${enriched.storage ? ` ${enriched.storage}` : ""}`;
+  const body = `
+  ${f.shopName ? `<p class="shop">${escapeHtml(settings.shopName)}</p>` : ""}
+  ${f.shopPhone && settings.shopPhone ? `<p class="sub">Tel: ${escapeHtml(settings.shopPhone)}</p>` : ""}
+  ${f.shopAddress && settings.shopAddress ? `<p class="sub">${escapeHtml(settings.shopAddress)}</p>` : ""}
+  ${dash}
+  <p class="title">${escapeHtml((settings.documentTitle || "Sale Receipt").replace(/Sale/i, "Purchase"))}</p>
+  ${f.timestamp ? `<p class="sub">${escapeHtml(new Date(enriched.createdAt).toLocaleString())}</p>` : ""}
+  <p class="sub">Bill # ${escapeHtml(enriched.id.slice(0, 8).toUpperCase())}</p>
+  ${dash}
+  ${thermalPartyBlock("Seller details", {
+    name: enriched.sellerName,
+    phone: enriched.sellerPhone,
+    cnic: enriched.sellerCnic,
+    address: enriched.sellerAddress,
+  })}
+  ${dash}
+  <div class="sec">Items</div>
+  <div class="item">
+    <div class="kv"><span class="name">${escapeHtml(f.device ? deviceLabel : "Device")}</span><span>${escapeHtml(f.salePrice ? formatPkr(enriched.purchasePricePkr) : "")}</span></div>
+    ${f.imei ? `<div class="meta">IMEI: ${escapeHtml(enriched.imei)}</div>` : ""}
+    ${f.device && enriched.condition ? `<div class="meta">Condition: ${escapeHtml(enriched.condition)}</div>` : ""}
+    <div class="meta">Qty: 1</div>
+  </div>
+  ${dash}
+  <div class="sec">Payment</div>
+  ${f.salePrice ? thermalKv("Purchase", formatPkr(enriched.purchasePricePkr)) : ""}
+  ${f.salePrice ? thermalKv("Paid", formatPkr(enriched.paidPkr || 0)) : ""}
+  ${f.cash ? thermalKv("Cash", formatPkr(enriched.payment.cashPkr || 0)) : ""}
+  ${f.bank ? thermalKv("Bank", formatPkr(enriched.payment.bankPkr || 0)) : ""}
+  ${f.remaining ? thermalKv("Remaining / Udhaar", formatPkr(enriched.remainingPkr || 0)) : ""}
+  ${f.dueDate && enriched.dueDate ? thermalKv("Due date", enriched.dueDate) : ""}
+  ${f.salePrice ? `<div class="totalbox">${thermalKv("TOTAL", formatPkr(enriched.purchasePricePkr))}</div>` : ""}
+  ${f.footer && settings.footerText ? `<p class="foot">${escapeHtml(settings.footerText)}</p>` : `<p class="foot">Shukriya</p>`}
+  <p class="cut">*** ${escapeHtml(settings.shopName || "MobiZone")} ***</p>`;
+  return thermalShell(width, body);
+}
+
+export function printSaleReceipt(sale: MobizoneSale, branchCode?: string | null): void {
+  printHtmlPage("MobiZone Sale Receipt", buildSaleReceiptHtml(sale, branchCode));
+}
+
+export function printPurchaseReceipt(purchase: MobizonePurchase, branchCode?: string | null): void {
+  printHtmlPage("MobiZone Purchase Receipt", buildPurchaseReceiptHtml(purchase, branchCode));
 }
 
 export function buildWhatsAppAccountStatement(
@@ -996,21 +1225,16 @@ export function openWhatsApp(phone: string | null | undefined, text: string): vo
 }
 
 export function printHtmlPage(title: string, bodyHtml: string): void {
-  const w = window.open("", "_blank", "noopener,noreferrer,width=800,height=900");
+  const w = window.open("", "_blank", "noopener,noreferrer,width=480,height=900");
   if (!w) return;
   w.document.write(`<!doctype html><html><head><title>${title}</title>
 <style>
-  body{font-family:system-ui,sans-serif;padding:24px;color:#111}
-  h1{font-size:20px;margin:0 0 8px}
-  .muted{color:#555;font-size:13px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
-  .card{border:1px solid #ddd;border-radius:8px;padding:12px}
-  .label{font-size:11px;text-transform:uppercase;color:#666}
-  .val{font-size:18px;font-weight:700;margin-top:4px}
-  @media print{button{display:none}}
+  body{font-family:"Courier New",Courier,monospace;padding:12px;color:#111;background:#fff}
+  button{display:block;margin:16px auto;padding:10px 20px;font-family:system-ui,sans-serif;font-weight:700;cursor:pointer}
+  @media print{button{display:none} body{padding:0}}
 </style></head><body>
 ${bodyHtml}
-<button onclick="window.print()">Print</button>
+<button onclick="window.print()">Print bill</button>
 <script>setTimeout(()=>window.print(),400)<\/script>
 </body></html>`);
   w.document.close();

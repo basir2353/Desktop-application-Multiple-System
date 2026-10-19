@@ -1,4 +1,4 @@
-/** MobexPro-inspired classic dark palette for MobiZone ERP APK. */
+/** MobiZone APK palette — same as desktop screenshot (navy + bright gold + cream). */
 export const mz = {
   bg: "#0B1220",
   surface: "#141C2E",
@@ -6,9 +6,11 @@ export const mz = {
   cardSoft: "#222D44",
   border: "#2A3650",
   text: "#F4F7FB",
+  ivory: "#F8F1E3",
   muted: "#94A3B8",
   gold: "#F5C542",
   goldDim: "#C9A227",
+  goldBright: "#FFD56A",
   teal: "#2DD4BF",
   tealDim: "#0D9488",
   rose: "#FB7185",
@@ -16,4 +18,11 @@ export const mz = {
   orange: "#FB923C",
   green: "#4ADE80",
   white: "#FFFFFF",
+  navyDeep: "#070D18",
+  ink: "#0E1628",
+  purple: "#C026D3",
+  /** Dark-theme form field fill (typed text stays light/visible). */
+  inputBg: "#1E2A3F",
+  inputText: "#F4F7FB",
+  inputBorder: "#3A4A66",
 } as const;

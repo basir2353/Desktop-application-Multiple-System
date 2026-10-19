@@ -257,21 +257,39 @@ export default function LoginScreen() {
     : ROLE_DEFAULTS[roleTab];
 
   return (
-    <Screen safeTop>
+    <Screen
+      safeTop
+      style={
+        isMobizoneApp
+          ? { backgroundColor: "#0B1220", flex: 1 }
+          : undefined
+      }
+    >
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <View style={{ flex: 1 }}>
-              <Title>{appName}</Title>
-              <Subtitle>
-                {isMobizoneApp
-                  ? "Live API login · classic phone-shop ERP (sale, purchase, stock, reports)."
-                  : isAdminApp
-                    ? "Admin login — sales dashboard, users, activity, and PRA."
-                    : "One Staff APK · Waiter or Rider · then Email or PIN below."}
-              </Subtitle>
+              {isMobizoneApp ? (
+                <>
+                  <Text style={{ color: "#F5C542", fontSize: 28, fontWeight: "800", letterSpacing: 0.3 }}>
+                    MobiZone
+                  </Text>
+                  <Text style={{ color: "#94A3B8", fontSize: 14, marginTop: 6, lineHeight: 20 }}>
+                    Classic shop ERP · Buy · Sell · Stock · Udhaar
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Title>{appName}</Title>
+                  <Subtitle>
+                    {isAdminApp
+                      ? "Admin login — sales dashboard, users, activity, and PRA."
+                      : "One Staff APK · Waiter or Rider · then Email or PIN below."}
+                  </Subtitle>
+                </>
+              )}
             </View>
-            <ThemeToggle />
+            {!isMobizoneApp ? <ThemeToggle /> : null}
           </View>
 
           {roleTabs.length > 0 ? (

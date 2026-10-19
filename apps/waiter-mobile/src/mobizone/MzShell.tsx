@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, StatusBar, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MzBottomNav } from "./MzBottomNav";
 import { mz } from "./theme";
@@ -11,6 +11,7 @@ export function MzShell({ children }: { children: ReactNode }): React.JSX.Elemen
 
   return (
     <View style={{ flex: 1, backgroundColor: mz.bg, paddingTop: insets.top }}>
+      <StatusBar barStyle="light-content" backgroundColor={mz.bg} />
       <View style={{ flex: 1 }}>
         {!ready ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>

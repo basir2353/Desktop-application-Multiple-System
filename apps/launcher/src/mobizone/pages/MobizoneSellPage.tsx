@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { MobizoneSale } from "@platform/contracts";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
@@ -7,6 +8,7 @@ import {
   findDeviceByImei,
   formatPkr,
   openWhatsApp,
+  printSaleReceipt,
   recordSale,
 } from "../lib/mobizoneStore";
 import {
@@ -44,6 +46,13 @@ export function MobizoneSellPage(): JSX.Element {
   const [warrantyDays, setWarrantyDays] = useState("0");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [lastSale, setLastSale] = useState<MobizoneSale | null>(null);
+
+  useEffect(() => {
+    if (!bankAccountId && db.bankAccounts.length === 1) {
+      setBankAccountId(db.bankAccounts[0]!.id);
+    }
+  }, [db.bankAccounts, bankAccountId]);
 
   const selected = inStock.find((d) => d.id === deviceId) ?? null;
   const priceN = Number(price) || 0;
@@ -81,7 +90,17 @@ export function MobizoneSellPage(): JSX.Element {
       setErr("Select a phone, enter customer name, and sale price.");
       return;
     }
-    const acc = db.bankAccounts.find((a) => a.id === bankAccountId);
+    if (!customerPhone.trim()) {
+      setErr("Customer phone bill / WhatsApp ke liye zaroori hai.");
+      return;
+    }
+    const resolvedBankId =
+      bankAccountId || (bankN > 0 && db.bankAccounts.length === 1 ? db.bankAccounts[0]!.id : "");
+    if (bankN > 0 && !resolvedBankId) {
+      setErr("Bank amount enter kiya hai — pehle Banks page se account add/select karein.");
+      return;
+    }
+    const acc = db.bankAccounts.find((a) => a.id === resolvedBankId);
     try {
       const sale = recordSale(branchCode, {
         deviceId,
@@ -101,7 +120,7 @@ export function MobizoneSellPage(): JSX.Element {
           bankPkr: bankN,
           bankLabel: acc ? `${acc.bankName} · ${acc.accountTitle}` : null,
           bank: {
-            bankAccountId: bankAccountId || null,
+            bankAccountId: resolvedBankId || null,
             bankName: acc?.bankName ?? null,
             accountTitle: acc?.accountTitle ?? null,
             accountNumber: acc?.accountNumber ?? null,
@@ -112,7 +131,10 @@ export function MobizoneSellPage(): JSX.Element {
         },
       });
       refresh();
+      setLastSale(sale);
       setMsg(`Sale saved — profit ${formatPkr(sale.profitPkr)}. Remaining ${formatPkr(sale.remainingPkr)}.`);
+      // Bill turant open — customer name/phone/CNIC/address receipt par.
+      printSaleReceipt(sale, branchCode);
       setCustomerName("");
       setCustomerPhone("");
       setCustomerAddress("");
@@ -135,21 +157,28 @@ export function MobizoneSellPage(): JSX.Element {
   }
 
   function whatsappLast(): void {
-    const last = db.sales[0];
+    const last = lastSale ?? db.sales[0];
     if (!last) return;
     openWhatsApp(last.customerPhone, buildWhatsAppSaleText(last));
+  }
+
+  function printLast(): void {
+    const last = lastSale ?? db.sales[0];
+    if (!last || !branchCode) return;
+    printSaleReceipt(last, branchCode);
   }
 
   return (
     <MzPage>
       <PageHeader
         title="Sell phone"
-        subtitle="Photo + CNIC, cash/bank split, udhaar, warranty — WhatsApp receipt ready."
+        subtitle="Customer details + print/WhatsApp receipt — barcode/IMEI scan se phone open."
       />
       {err ? <p className="text-sm text-red-600 dark:text-red-400">{err}</p> : null}
       {msg ? (
         <div className="flex flex-wrap items-center gap-3">
           <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p>
+          <MzSecondaryButton onClick={printLast}>Print bill</MzSecondaryButton>
           <MzSecondaryButton onClick={whatsappLast}>Send WhatsApp receipt</MzSecondaryButton>
         </div>
       ) : null}
@@ -188,16 +217,16 @@ export function MobizoneSellPage(): JSX.Element {
 
         <MzSection title="Customer / shopkeeper">
           <div className="grid gap-3 sm:grid-cols-2">
-            <MzField label="Customer name *">
+            <MzField label="Customer name * (bill par)">
               <MzInput value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
             </MzField>
-            <MzField label="CNIC / ID">
+            <MzField label="CNIC / ID (bill par)">
               <MzInput value={customerCnic} onChange={(e) => setCustomerCnic(e.target.value)} />
             </MzField>
-            <MzField label="Mobile (WhatsApp)">
+            <MzField label="Mobile * (bill + WhatsApp)">
               <MzInput value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
             </MzField>
-            <MzField label="Address">
+            <MzField label="Address (bill par)">
               <MzInput value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} />
             </MzField>
             <MzField label="Shopkeeper account (optional)">

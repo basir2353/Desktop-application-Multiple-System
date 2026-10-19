@@ -27,7 +27,10 @@ export function MobizoneBusinessReportPage(): JSX.Element {
         <div class="card"><div class="label">Phones sold</div><div class="val">${report.saleCount}</div></div>
         <div class="card"><div class="label">Purchase amount</div><div class="val">${formatPkr(report.purchaseAmountPkr)}</div></div>
         <div class="card"><div class="label">Sale amount</div><div class="val">${formatPkr(report.saleAmountPkr)}</div></div>
-        <div class="card"><div class="label">Profit / loss</div><div class="val">${formatPkr(report.profitPkr)}</div></div>
+        <div class="card"><div class="label">Gross profit</div><div class="val">${formatPkr(report.grossProfitPkr)}</div></div>
+        <div class="card"><div class="label">Expenses</div><div class="val">${formatPkr(report.expenseTotalPkr)}</div></div>
+        <div class="card"><div class="label">Net profit / loss</div><div class="val">${formatPkr(report.profitPkr)}</div></div>
+        <div class="card"><div class="label">Stock value (maal)</div><div class="val">${formatPkr(report.stockValuePkr)}</div></div>
         <div class="card"><div class="label">Receivables (lena)</div><div class="val">${formatPkr(report.receivablesPkr)}</div></div>
         <div class="card"><div class="label">Payables (dena)</div><div class="val">${formatPkr(report.payablesPkr)}</div></div>
         <div class="card"><div class="label">Cash</div><div class="val">${formatPkr(report.cashBalancePkr)}</div></div>
@@ -76,7 +79,10 @@ export function MobizoneBusinessReportPage(): JSX.Element {
           <MzStat label="Phones sold" value={report.saleCount} />
           <MzStat label="Purchase amount" value={formatPkr(report.purchaseAmountPkr)} />
           <MzStat label="Sale amount" value={formatPkr(report.saleAmountPkr)} />
-          <MzStat label="Profit / loss" value={formatPkr(report.profitPkr)} />
+          <MzStat label="Gross profit" value={formatPkr(report.grossProfitPkr)} />
+          <MzStat label="Expenses (auto-deducted)" value={formatPkr(report.expenseTotalPkr)} />
+          <MzStat label="Net profit / loss" value={formatPkr(report.profitPkr)} />
+          <MzStat label="Stock value (maal)" value={formatPkr(report.stockValuePkr)} />
           <MzStat label="Receivables (lena baqi)" value={formatPkr(report.receivablesPkr)} />
           <MzStat label="Payables (dena baqi)" value={formatPkr(report.payablesPkr)} />
           <MzStat label="Cash balance" value={formatPkr(report.cashBalancePkr)} />

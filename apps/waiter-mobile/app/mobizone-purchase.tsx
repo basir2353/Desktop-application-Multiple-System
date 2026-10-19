@@ -1,15 +1,25 @@
 import Constants from "expo-constants";
 import { Redirect } from "expo-router";
-import { useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
 import {
   buildWhatsAppPurchaseText,
   formatPkr,
   openWhatsApp,
+  printPurchaseReceipt,
   recordPurchase,
 } from "../src/mobizone/storeCore";
 import { mz } from "../src/mobizone/theme";
+import {
+  MzChip,
+  MzField,
+  MzInput,
+  MzPrimaryButton,
+  MzRow,
+  MzScreenTitle,
+  MzSection,
+} from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -18,10 +28,12 @@ const isMobizoneApp = extra?.appVariant === "mobizone";
 
 export default function MobizonePurchaseScreen(): React.JSX.Element {
   const accessToken = useSessionStore((s) => s.accessToken);
-  const { branchCode, db, refresh } = useMobizoneDb();
+  const { branchCode, db, refresh, ready } = useMobizoneDb();
 
   const [sellerName, setSellerName] = useState("");
   const [sellerPhone, setSellerPhone] = useState("");
+  const [sellerCnic, setSellerCnic] = useState("");
+  const [sellerAddress, setSellerAddress] = useState("");
   const [imei, setImei] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
@@ -33,6 +45,12 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
   const [bankAccountId, setBankAccountId] = useState("");
   const [payMode, setPayMode] = useState<"cash" | "bank" | "both">("cash");
 
+  useEffect(() => {
+    if (!bankAccountId && db.bankAccounts.length === 1) {
+      setBankAccountId(db.bankAccounts[0]!.id);
+    }
+  }, [db.bankAccounts, bankAccountId]);
+
   if (!accessToken) return <Redirect href="/" />;
   if (extra?.appVariant && !isMobizoneApp) return <Redirect href="/home" />;
 
@@ -42,19 +60,27 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
   const remaining = Math.max(0, priceN - cashN - bankN);
 
   function onSave(): void {
+    if (!ready) {
+      Alert.alert("Please wait", "Data abhi load ho raha hai — 1 second baad try karein.");
+      return;
+    }
     if (!sellerName.trim() || !imei.trim() || !brand.trim() || !model.trim() || !(priceN > 0)) {
       Alert.alert("Missing info", "Seller, IMEI, brand, model, and purchase price required.");
       return;
     }
-    if (payMode !== "cash" && bankN > 0 && !bankAccountId) {
-      Alert.alert("Bank account", "Select a bank account for bank payment.");
+    const resolvedBankId =
+      bankAccountId || (bankN > 0 && db.bankAccounts.length === 1 ? db.bankAccounts[0]!.id : "");
+    if (bankN > 0 && !resolvedBankId) {
+      Alert.alert("Bank account", "Bank amount ke liye account select karein.");
       return;
     }
-    const acc = db.bankAccounts.find((a) => a.id === bankAccountId);
+    const acc = db.bankAccounts.find((a) => a.id === resolvedBankId);
     try {
       const purchase = recordPurchase(branchCode, {
         sellerName: sellerName.trim(),
         sellerPhone: sellerPhone.trim() || null,
+        sellerCnic: sellerCnic.trim() || null,
+        sellerAddress: sellerAddress.trim() || null,
         imei: imei.trim(),
         brand: brand.trim(),
         model: model.trim(),
@@ -67,7 +93,7 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
           bank:
             bankN > 0
               ? {
-                  bankAccountId,
+                  bankAccountId: resolvedBankId,
                   bankName: acc?.bankName ?? null,
                   accountTitle: acc?.accountTitle ?? null,
                   verified: true,
@@ -76,19 +102,24 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
         },
       });
       refresh();
-      Alert.alert(
-        "Purchase saved",
-        `${purchase.brand} ${purchase.model} added to stock`,
-        [
-          {
-            text: "WhatsApp",
-            onPress: () => openWhatsApp(purchase.sellerPhone, buildWhatsAppPurchaseText(purchase)),
+      void printPurchaseReceipt(purchase, branchCode);
+      Alert.alert("Purchase saved", `${purchase.brand} ${purchase.model} added to stock`, [
+        {
+          text: "Print again",
+          onPress: () => {
+            void printPurchaseReceipt(purchase, branchCode);
           },
-          { text: "OK" },
-        ],
-      );
+        },
+        {
+          text: "WhatsApp",
+          onPress: () => openWhatsApp(purchase.sellerPhone, buildWhatsAppPurchaseText(purchase)),
+        },
+        { text: "OK" },
+      ]);
       setSellerName("");
       setSellerPhone("");
+      setSellerCnic("");
+      setSellerAddress("");
       setImei("");
       setBrand("");
       setModel("");
@@ -104,246 +135,143 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <Text style={{ color: mz.gold, fontSize: 20, fontWeight: "800" }}>New Purchase</Text>
-        <Text style={{ color: mz.muted, fontSize: 13 }}>Phone khareedo · stock mein add</Text>
+        <MzScreenTitle title="New Purchase" subtitle="Seller details · IMEI · Used/New · payment" />
+        {!ready ? <ActivityIndicator color={mz.gold} /> : null}
 
-        <Field label="Seller Name">
-          <TextInput
-            value={sellerName}
-            onChangeText={setSellerName}
-            placeholder="Seller / shop name"
-            placeholderTextColor={mz.muted}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="Seller Phone">
-          <TextInput
-            value={sellerPhone}
-            onChangeText={setSellerPhone}
-            keyboardType="phone-pad"
-            placeholder="03XXXXXXXXX"
-            placeholderTextColor={mz.muted}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="IMEI / Barcode">
-          <TextInput
-            value={imei}
-            onChangeText={setImei}
-            placeholder="Scan or type IMEI"
-            placeholderTextColor={mz.muted}
-            style={inputStyle}
-          />
-        </Field>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Field label="Brand">
-              <TextInput
-                value={brand}
-                onChangeText={setBrand}
-                placeholder="Samsung"
-                placeholderTextColor={mz.muted}
-                style={inputStyle}
-              />
-            </Field>
+        <MzSection title="Seller details">
+          <MzField label="Seller Name *">
+            <MzInput
+              value={sellerName}
+              onChangeText={setSellerName}
+              placeholder="Seller / shop name"
+            />
+          </MzField>
+          <MzField label="Phone">
+            <MzInput
+              value={sellerPhone}
+              onChangeText={setSellerPhone}
+              keyboardType="phone-pad"
+              placeholder="03XXXXXXXXX"
+            />
+          </MzField>
+          <MzField label="CNIC / ID">
+            <MzInput
+              value={sellerCnic}
+              onChangeText={setSellerCnic}
+              placeholder="xxxxx-xxxxxxx-x"
+            />
+          </MzField>
+          <MzField label="Address">
+            <MzInput
+              value={sellerAddress}
+              onChangeText={setSellerAddress}
+              placeholder="Address"
+            />
+          </MzField>
+        </MzSection>
+
+        <MzSection title="Phone details">
+          <MzField label="IMEI / Barcode *">
+            <MzInput value={imei} onChangeText={setImei} placeholder="Scan or type IMEI" />
+          </MzField>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <MzField label="Brand *">
+                <MzInput value={brand} onChangeText={setBrand} placeholder="Samsung" />
+              </MzField>
+            </View>
+            <View style={{ flex: 1 }}>
+              <MzField label="Model *">
+                <MzInput value={model} onChangeText={setModel} placeholder="A54" />
+              </MzField>
+            </View>
           </View>
-          <View style={{ flex: 1 }}>
-            <Field label="Model">
-              <TextInput
-                value={model}
-                onChangeText={setModel}
-                placeholder="A54"
-                placeholderTextColor={mz.muted}
-                style={inputStyle}
-              />
-            </Field>
+          <Text style={{ color: mz.muted, fontSize: 12, fontWeight: "600" }}>Condition</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <MzChip label="Used" active={condition === "used"} onPress={() => setCondition("used")} />
+            <MzChip label="New" active={condition === "new"} onPress={() => setCondition("new")} />
           </View>
-        </View>
+        </MzSection>
 
-        <Text style={{ color: mz.muted, fontSize: 12, fontWeight: "600" }}>Condition</Text>
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          {(["used", "new"] as const).map((c) => (
-            <Pressable
-              key={c}
-              onPress={() => setCondition(c)}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                borderRadius: 10,
-                alignItems: "center",
-                backgroundColor: condition === c ? mz.gold : mz.card,
-                borderWidth: 1,
-                borderColor: condition === c ? mz.gold : mz.border,
-              }}
-            >
-              <Text
-                style={{
-                  color: condition === c ? mz.bg : mz.text,
-                  fontWeight: "700",
-                  textTransform: "capitalize",
-                }}
-              >
-                {c}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Field label="Purchase Price">
-          <TextInput
-            value={purchasePrice}
-            onChangeText={setPurchasePrice}
-            keyboardType="numeric"
-            placeholder="0"
-            placeholderTextColor={mz.muted}
-            style={inputStyle}
-          />
-        </Field>
-        <Field label="Expected Sale Price (optional)">
-          <TextInput
-            value={salePrice}
-            onChangeText={setSalePrice}
-            keyboardType="numeric"
-            placeholder="0"
-            placeholderTextColor={mz.muted}
-            style={inputStyle}
-          />
-        </Field>
-
-        <Text style={{ color: mz.muted, fontSize: 12, fontWeight: "600" }}>Payment Method</Text>
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          {(["cash", "bank", "both"] as const).map((m) => (
-            <Pressable
-              key={m}
-              onPress={() => setPayMode(m)}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                borderRadius: 10,
-                alignItems: "center",
-                backgroundColor: payMode === m ? mz.gold : mz.card,
-                borderWidth: 1,
-                borderColor: payMode === m ? mz.gold : mz.border,
-              }}
-            >
-              <Text
-                style={{
-                  color: payMode === m ? mz.bg : mz.text,
-                  fontWeight: "700",
-                  textTransform: "capitalize",
-                }}
-              >
-                {m === "both" ? "Both" : m}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        {payMode !== "bank" ? (
-          <Field label="Cash Paid">
-            <TextInput
-              value={cash}
-              onChangeText={setCash}
+        <MzSection title="Payment">
+          <MzField label="Purchase Price *">
+            <MzInput
+              value={purchasePrice}
+              onChangeText={setPurchasePrice}
               keyboardType="numeric"
               placeholder="0"
-              placeholderTextColor={mz.muted}
-              style={inputStyle}
             />
-          </Field>
-        ) : null}
-        {payMode !== "cash" ? (
-          <>
-            <Field label="Bank Paid">
-              <TextInput
-                value={bank}
-                onChangeText={setBank}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor={mz.muted}
-                style={inputStyle}
+          </MzField>
+          <MzField label="Expected Sale Price">
+            <MzInput
+              value={salePrice}
+              onChangeText={setSalePrice}
+              keyboardType="numeric"
+              placeholder="0"
+            />
+          </MzField>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {(["cash", "bank", "both"] as const).map((m) => (
+              <MzChip
+                key={m}
+                label={m === "both" ? "Both" : m === "cash" ? "Cash" : "Bank"}
+                active={payMode === m}
+                onPress={() => setPayMode(m)}
               />
-            </Field>
-            <Field label="Bank Account">
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {db.bankAccounts.map((a) => (
-                  <Pressable
-                    key={a.id}
-                    onPress={() => setBankAccountId(a.id)}
-                    style={{
-                      paddingHorizontal: 12,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                      backgroundColor: bankAccountId === a.id ? mz.tealDim : mz.card,
-                      borderWidth: 1,
-                      borderColor: bankAccountId === a.id ? mz.teal : mz.border,
-                    }}
-                  >
-                    <Text style={{ color: mz.text, fontWeight: "600", fontSize: 12 }}>
-                      {a.bankName}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </Field>
-          </>
-        ) : null}
+            ))}
+          </View>
+          {payMode !== "bank" ? (
+            <MzField label="Cash Paid">
+              <MzInput value={cash} onChangeText={setCash} keyboardType="numeric" placeholder="0" />
+            </MzField>
+          ) : null}
+          {payMode !== "cash" ? (
+            <>
+              <MzField label="Bank Paid">
+                <MzInput
+                  value={bank}
+                  onChangeText={setBank}
+                  keyboardType="numeric"
+                  placeholder="0"
+                />
+              </MzField>
+              <MzField label="Bank Account">
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {db.bankAccounts.map((a) => (
+                    <Pressable
+                      key={a.id}
+                      onPress={() => setBankAccountId(a.id)}
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        backgroundColor: bankAccountId === a.id ? mz.tealDim : mz.cardSoft,
+                        borderWidth: 1,
+                        borderColor: bankAccountId === a.id ? mz.teal : mz.border,
+                      }}
+                    >
+                      <Text style={{ color: mz.text, fontWeight: "600", fontSize: 12 }}>
+                        {a.bankName}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </MzField>
+            </>
+          ) : null}
+          <View style={{ gap: 6, marginTop: 4 }}>
+            <MzRow label="Purchase" value={formatPkr(priceN)} />
+            <MzRow label="Paid" value={formatPkr(cashN + bankN)} tone={mz.teal} />
+            <MzRow
+              label="Udhaar"
+              value={formatPkr(remaining)}
+              tone={remaining > 0 ? mz.rose : mz.teal}
+            />
+          </View>
+        </MzSection>
 
-        <View
-          style={{
-            backgroundColor: mz.card,
-            borderRadius: 12,
-            padding: 14,
-            borderWidth: 1,
-            borderColor: mz.border,
-            gap: 6,
-          }}
-        >
-          <Row label="Purchase" value={formatPkr(priceN)} />
-          <Row label="Paid" value={formatPkr(cashN + bankN)} tone={mz.teal} />
-          <Row label="Udhaar" value={formatPkr(remaining)} tone={remaining > 0 ? mz.rose : mz.teal} />
-        </View>
-
-        <Pressable
-          onPress={onSave}
-          style={{
-            backgroundColor: mz.gold,
-            borderRadius: 14,
-            paddingVertical: 16,
-            alignItems: "center",
-          }}
-        >
-          <Text style={{ color: mz.bg, fontWeight: "800", fontSize: 16 }}>Save Purchase</Text>
-        </Pressable>
+        <MzPrimaryButton label="Save Purchase · Print bill" onPress={onSave} />
       </ScrollView>
     </MzShell>
   );
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: mz.muted, fontSize: 12, fontWeight: "600" }}>{label}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-      <Text style={{ color: mz.muted }}>{label}</Text>
-      <Text style={{ color: tone ?? mz.text, fontWeight: "700" }}>{value}</Text>
-    </View>
-  );
-}
-
-const inputStyle = {
-  backgroundColor: mz.card,
-  borderWidth: 1,
-  borderColor: mz.border,
-  borderRadius: 12,
-  paddingHorizontal: 14,
-  paddingVertical: 12,
-  color: mz.text,
-  fontSize: 15,
-} as const;

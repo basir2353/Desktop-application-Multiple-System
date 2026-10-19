@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildSaleReceiptHtml,
   findDeviceByImei,
   getBusinessReport,
   getCashBankBalances,
@@ -14,6 +15,7 @@ import {
   upsertBankAccount,
   upsertShopkeeper,
 } from "../mobizoneStore";
+import { saveMobizoneReceiptSettings } from "../mobizoneReceiptSettings";
 
 const BRANCH = "MZ-TEST";
 
@@ -174,12 +176,90 @@ describe("mobizoneStore", () => {
 
     const dash = getMobizoneDashboard(BRANCH);
     expect(dash.todayProfitPkr).toBe(4500);
+    expect(dash.stockValuePkr).toBe(0);
     const today = new Date().toISOString().slice(0, 10);
     const report = getBusinessReport(BRANCH, today, today);
+    expect(report.grossProfitPkr).toBe(5000);
+    expect(report.expenseTotalPkr).toBe(500);
     expect(report.profitPkr).toBe(4500);
     expect(report.saleCount).toBe(1);
     expect(report.purchaseCount).toBe(1);
     expect(getCashBankBalances(loadMobizoneDb(BRANCH)).cash).toBe(4500);
+  });
+
+  it("sale receipt includes customer name phone address from settings", () => {
+    recordPurchase(BRANCH, {
+      sellerName: "S",
+      imei: "358888888888888",
+      brand: "Oppo",
+      model: "A78",
+      condition: "used",
+      purchasePricePkr: 20000,
+      payment: { cashPkr: 20000, bankPkr: 0 },
+    });
+    const device = findDeviceByImei(BRANCH, "358888888888888")!;
+    const sale = recordSale(BRANCH, {
+      deviceId: device.id,
+      customerName: "Bilal Ahmed",
+      customerPhone: "03001112233",
+      customerAddress: "Hall Road",
+      customerCnic: "35202-9999999-9",
+      pricePkr: 28000,
+      payment: { cashPkr: 28000, bankPkr: 0 },
+    });
+    saveMobizoneReceiptSettings(BRANCH, {
+      shopName: "Test Shop",
+      shopPhone: "0421111111",
+      shopAddress: "Lahore",
+      documentTitle: "Sale Receipt",
+      footerText: "Shukriya",
+      paperWidthMm: 80,
+      fields: {
+        shopName: true,
+        shopPhone: true,
+        shopAddress: true,
+        documentTitle: true,
+        timestamp: true,
+        customerName: true,
+        customerPhone: true,
+        customerCnic: true,
+        customerAddress: true,
+        device: true,
+        imei: true,
+        warranty: true,
+        salePrice: true,
+        cash: true,
+        bank: true,
+        bankDetails: true,
+        remaining: true,
+        dueDate: true,
+        footer: true,
+      },
+    });
+    const html = buildSaleReceiptHtml(sale, BRANCH);
+    expect(html).toContain("Customer details");
+    expect(html).toContain("Bilal Ahmed");
+    expect(html).toContain("03001112233");
+    expect(html).toContain("Hall Road");
+    expect(html).toContain("35202-9999999-9");
+    expect(html).toContain("Test Shop");
+    expect(html).toContain("TOTAL");
+    expect(html).toContain("Items");
+    expect(html).toContain("Courier");
+    // Empty fields still show as labels with —
+    const htmlEmpty = buildSaleReceiptHtml(
+      {
+        ...sale,
+        customerId: null,
+        customerPhone: null,
+        customerAddress: null,
+        customerCnic: null,
+      },
+      BRANCH,
+    );
+    expect(htmlEmpty).toContain("Phone");
+    expect(htmlEmpty).toContain("Address");
+    expect(htmlEmpty).toContain("—");
   });
 
   it("normalizes CNIC duplicates and shopkeeper balance uses remainders only", () => {

@@ -20,11 +20,11 @@ export function MzBottomNav(): React.JSX.Element {
     <View
       style={{
         flexDirection: "row",
-        backgroundColor: mz.surface,
+        backgroundColor: mz.navyDeep,
         borderTopWidth: 1,
         borderTopColor: mz.border,
         paddingBottom: Math.max(insets.bottom, 8),
-        paddingTop: 8,
+        paddingTop: 10,
       }}
     >
       {TABS.map((tab) => {
@@ -33,14 +33,27 @@ export function MzBottomNav(): React.JSX.Element {
           <Pressable
             key={tab.href}
             onPress={() => router.replace(tab.href as never)}
-            style={{ flex: 1, alignItems: "center", gap: 2, paddingVertical: 4 }}
+            style={{ flex: 1, alignItems: "center", gap: 3, paddingVertical: 4 }}
           >
-            <Text style={{ color: active ? mz.gold : mz.muted, fontSize: 18 }}>{tab.icon}</Text>
+            <View
+              style={{
+                width: 36,
+                height: 28,
+                borderRadius: 10,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: active ? "rgba(185,150,83,0.18)" : "transparent",
+              }}
+            >
+              <Text style={{ color: active ? mz.goldBright : mz.muted, fontSize: 17 }}>
+                {tab.icon}
+              </Text>
+            </View>
             <Text
               style={{
-                color: active ? mz.gold : mz.muted,
+                color: active ? mz.goldBright : mz.muted,
                 fontSize: 10,
-                fontWeight: active ? "700" : "500",
+                fontWeight: active ? "800" : "500",
               }}
             >
               {tab.label}

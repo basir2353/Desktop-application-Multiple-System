@@ -1,5 +1,4 @@
 import type { ChangeEvent, ReactNode } from "react";
-import { cardClass, fieldInputClass, mutedClass } from "../../pops/lib/themeClasses";
 import "../mobizone.css";
 
 export function MzPage({ children }: { children: ReactNode }): JSX.Element {
@@ -8,9 +7,9 @@ export function MzPage({ children }: { children: ReactNode }): JSX.Element {
 
 export function MzStat({ label, value }: { label: string; value: string | number }): JSX.Element {
   return (
-    <div className={`${cardClass} p-3 sm:p-4`}>
-      <p className={`text-[10px] uppercase tracking-wide sm:text-xs ${mutedClass}`}>{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 sm:text-xl dark:text-white">
+    <div className="mz-card p-3 sm:p-4">
+      <p className="mz-muted text-[10px] uppercase tracking-wide sm:text-xs">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums text-[var(--mz-text)] sm:text-xl">
         {value}
       </p>
     </div>
@@ -25,10 +24,8 @@ export function MzSection({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <section className={`${cardClass} space-y-3 p-3 sm:p-4`}>
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-600 sm:text-sm dark:text-amber-400">
-        {title}
-      </h2>
+    <section className="mz-card space-y-3 p-3 sm:p-4">
+      <h2 className="mz-section-title">{title}</h2>
       {children}
     </section>
   );
@@ -43,7 +40,7 @@ export function MzField({
 }): JSX.Element {
   return (
     <label className="block space-y-1.5">
-      <span className={`text-xs font-medium ${mutedClass}`}>{label}</span>
+      <span className="mz-muted text-xs font-medium">{label}</span>
       {children}
     </label>
   );
@@ -53,7 +50,7 @@ export function MzInput(props: React.InputHTMLAttributes<HTMLInputElement>): JSX
   return (
     <input
       {...props}
-      className={`${fieldInputClass} mz-touch w-full text-base sm:text-sm ${props.className ?? ""}`}
+      className={`mz-input mz-touch ${props.className ?? ""}`}
     />
   );
 }
@@ -62,7 +59,7 @@ export function MzSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>): 
   return (
     <select
       {...props}
-      className={`${fieldInputClass} mz-touch w-full text-base sm:text-sm ${props.className ?? ""}`}
+      className={`mz-input mz-touch ${props.className ?? ""}`}
     />
   );
 }
@@ -71,7 +68,7 @@ export function MzTextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaEleme
   return (
     <textarea
       {...props}
-      className={`${fieldInputClass} w-full min-h-[88px] text-base sm:text-sm ${props.className ?? ""}`}
+      className={`mz-input min-h-[88px] ${props.className ?? ""}`}
     />
   );
 }
@@ -81,11 +78,7 @@ export function MzPrimaryButton(
 ): JSX.Element {
   const { children, className, ...rest } = props;
   return (
-    <button
-      type="button"
-      {...rest}
-      className={`mz-touch inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-sm transition hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 sm:w-auto ${className ?? ""}`}
-    >
+    <button type="button" {...rest} className={`mz-btn-primary mz-touch ${className ?? ""}`}>
       {children}
     </button>
   );
@@ -96,18 +89,18 @@ export function MzSecondaryButton(
 ): JSX.Element {
   const { children, className, ...rest } = props;
   return (
-    <button
-      type="button"
-      {...rest}
-      className={`mz-touch inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 ${className ?? ""}`}
-    >
+    <button type="button" {...rest} className={`mz-btn-secondary mz-touch ${className ?? ""}`}>
       {children}
     </button>
   );
 }
 
 export function MzStickyActions({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="mz-sticky-actions flex flex-col gap-2 sm:flex-row sm:items-center">{children}</div>;
+  return (
+    <div className="mz-sticky-actions flex flex-col gap-2 sm:flex-row sm:items-center">
+      {children}
+    </div>
+  );
 }
 
 /** Read an image file as a compressed data URL for local storage. */
@@ -148,26 +141,30 @@ export function MzPhotoUpload({
   }
   return (
     <div className="space-y-2">
-      <p className={`text-xs font-medium ${mutedClass}`}>{label}</p>
+      <p className="mz-muted text-xs font-medium">{label}</p>
       <div className="flex items-center gap-3">
         {value ? (
           <img
             src={value}
             alt={label}
-            className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200 dark:ring-slate-700"
+            className="h-16 w-16 rounded-lg object-cover ring-1 ring-[var(--mz-border)]"
           />
         ) : (
-          <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-slate-300 text-[10px] text-slate-500 dark:border-slate-700">
+          <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-[var(--mz-border)] text-[10px] text-[var(--mz-muted)]">
             No photo
           </div>
         )}
         <div className="flex flex-col gap-1">
-          <label className="cursor-pointer rounded-lg bg-violet-600/10 px-3 py-2 text-sm font-medium text-violet-700 dark:text-violet-300">
+          <label className="mz-btn-secondary cursor-pointer px-3 py-2 text-sm">
             Camera / gallery
             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
           </label>
           {value ? (
-            <button type="button" className="text-left text-xs text-red-600" onClick={() => onChange(null)}>
+            <button
+              type="button"
+              className="text-left text-xs text-[var(--mz-rose)]"
+              onClick={() => onChange(null)}
+            >
               Remove
             </button>
           ) : null}

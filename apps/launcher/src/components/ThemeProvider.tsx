@@ -1,6 +1,7 @@
 import { useLayoutEffect, type ReactNode } from "react";
 import { applyTheme } from "../lib/theme";
 import { useThemeStore } from "../stores/themeStore";
+import "../mobizone/mobizone.css";
 
 export function ThemeProvider({ children }: { children: ReactNode }): JSX.Element {
   const mode = useThemeStore((s) => s.mode);

@@ -4,12 +4,50 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native"
 import { MzShell } from "../src/mobizone/MzShell";
 import { formatPkr } from "../src/mobizone/storeCore";
 import { mz } from "../src/mobizone/theme";
+import { MzCard, MzScreenTitle } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
 const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined;
 const isMobizoneApp = extra?.appVariant === "mobizone";
+
+type Action = {
+  title: string;
+  icon: string;
+  href: string;
+  tone: string;
+  metric?: "sales" | "purchase" | "profit" | "due";
+};
+
+const ACTIONS: Action[] = [
+  { title: "New Sale", icon: "↗", href: "/mobizone-sale", tone: mz.teal },
+  { title: "Purchase", icon: "↙", href: "/mobizone-purchase", tone: mz.orange },
+  { title: "Customers", icon: "◉", href: "/mobizone-customers", tone: mz.blue },
+  { title: "Stock", icon: "▣", href: "/mobizone-stock", tone: mz.goldBright },
+  { title: "Total Sales", icon: "Rs", href: "/mobizone-reports", tone: mz.teal, metric: "sales" },
+  {
+    title: "Total Purchase",
+    icon: "Rs",
+    href: "/mobizone-reports",
+    tone: mz.rose,
+    metric: "purchase",
+  },
+  {
+    title: "Today Profit",
+    icon: "★",
+    href: "/mobizone-reports",
+    tone: mz.gold,
+    metric: "profit",
+  },
+  {
+    title: "Due Receive",
+    icon: "⏳",
+    href: "/mobizone-reports",
+    tone: mz.orange,
+    metric: "due",
+  },
+];
 
 export default function MobizoneHomeScreen(): React.JSX.Element {
   const router = useRouter();
@@ -18,151 +56,128 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
   const { dashboard, refresh, ready } = useMobizoneDb();
 
   if (!accessToken) return <Redirect href="/" />;
-  // Allow screens when built as mobizone APK; skip gate during Metro if variant unset.
   if (extra?.appVariant && !isMobizoneApp) return <Redirect href="/home" />;
 
-  const totalBalance = (dashboard?.cashBalancePkr ?? 0) + (dashboard?.bankBalancePkr ?? 0);
+  const cashBank = (dashboard?.cashBalancePkr ?? 0) + (dashboard?.bankBalancePkr ?? 0);
+  const investment = cashBank + (dashboard?.stockValuePkr ?? 0);
+
+  function metricValue(key?: Action["metric"]): string | null {
+    if (!key || !dashboard) return null;
+    if (key === "sales") return formatPkr(dashboard.todaySalesPkr);
+    if (key === "purchase") return formatPkr(dashboard.todayPurchasesPkr);
+    if (key === "profit") return formatPkr(dashboard.todayProfitPkr);
+    return formatPkr(dashboard.pendingReceivablesPkr);
+  }
 
   return (
     <MzShell>
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 24, gap: 14 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 14 }}
         refreshControl={
           <RefreshControl refreshing={!ready} onRefresh={refresh} tintColor={mz.gold} />
         }
       >
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <View>
-            <Text style={{ color: mz.gold, fontSize: 22, fontWeight: "800", letterSpacing: 0.3 }}>
-              MobiZone
-            </Text>
-            <Text style={{ color: mz.muted, fontSize: 13, marginTop: 2 }}>
-              {branch?.name ?? "Main Shop"} · Mobile Business ERP
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => router.push("/mobizone-reports" as never)}
-            style={{
-              backgroundColor: mz.card,
-              borderRadius: 10,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderWidth: 1,
-              borderColor: mz.border,
-            }}
-          >
-            <Text style={{ color: mz.text, fontWeight: "600", fontSize: 12 }}>Reports</Text>
-          </Pressable>
-        </View>
+        <MzScreenTitle
+          title="MobiZone"
+          subtitle={`${branch?.name ?? "Main Shop"} · Mobile Business ERP`}
+        />
 
-        <View
+        <MzCard
           style={{
-            backgroundColor: mz.card,
-            borderRadius: 18,
-            padding: 18,
-            borderWidth: 1,
-            borderColor: mz.border,
+            backgroundColor: mz.navyDeep,
+            borderColor: mz.goldDim,
+            paddingVertical: 20,
           }}
         >
-          <Text style={{ color: mz.muted, fontSize: 12, fontWeight: "600" }}>TOTAL BALANCE</Text>
-          <Text style={{ color: mz.gold, fontSize: 32, fontWeight: "800", marginTop: 6 }}>
-            {formatPkr(totalBalance)}
+          <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "700", letterSpacing: 1 }}>
+            TOTAL BALANCE
           </Text>
-          <View style={{ flexDirection: "row", gap: 16, marginTop: 12 }}>
-            <View>
-              <Text style={{ color: mz.muted, fontSize: 11 }}>Cash</Text>
-              <Text style={{ color: mz.teal, fontWeight: "700" }}>
-                {formatPkr(dashboard?.cashBalancePkr ?? 0)}
-              </Text>
-            </View>
-            <View>
-              <Text style={{ color: mz.muted, fontSize: 11 }}>Bank</Text>
-              <Text style={{ color: mz.blue, fontWeight: "700" }}>
-                {formatPkr(dashboard?.bankBalancePkr ?? 0)}
-              </Text>
-            </View>
-            <View>
-              <Text style={{ color: mz.muted, fontSize: 11 }}>Stock</Text>
-              <Text style={{ color: mz.text, fontWeight: "700" }}>{dashboard?.inStock ?? 0}</Text>
-            </View>
+          <Text style={{ color: mz.goldBright, fontSize: 36, fontWeight: "800", marginTop: 8 }}>
+            {formatPkr(investment)}
+          </Text>
+          <Text style={{ color: mz.muted, fontSize: 12, marginTop: 4 }}>
+            Cash + Bank + Maal
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              gap: 14,
+              marginTop: 16,
+              borderTopWidth: 1,
+              borderTopColor: mz.border,
+              paddingTop: 14,
+            }}
+          >
+            <MiniStat label="Cash" value={formatPkr(dashboard?.cashBalancePkr ?? 0)} color={mz.teal} />
+            <MiniStat label="Bank" value={formatPkr(dashboard?.bankBalancePkr ?? 0)} color={mz.blue} />
+            <MiniStat label="Maal" value={formatPkr(dashboard?.stockValuePkr ?? 0)} color={mz.gold} />
+            <MiniStat label="Phones" value={String(dashboard?.inStock ?? 0)} color={mz.ivory} />
           </View>
-        </View>
+        </MzCard>
 
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-          {[
-            { title: "New Sale", color: mz.tealDim, href: "/mobizone-sale" },
-            { title: "New Purchase", color: "#B45309", href: "/mobizone-purchase" },
-            { title: "Customers", color: "#1D4ED8", href: "/mobizone-customers" },
-            { title: "Stock", color: "#7C3AED", href: "/mobizone-stock" },
-          ].map((a) => (
-            <Pressable
-              key={a.title}
-              onPress={() => router.push(a.href as never)}
-              style={{
-                width: "47%",
-                backgroundColor: a.color,
-                borderRadius: 16,
-                paddingVertical: 22,
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: mz.white, fontWeight: "800", fontSize: 15 }}>{a.title}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <StatCard
-            label="Total Sales"
-            value={formatPkr(dashboard?.todaySalesPkr ?? 0)}
-            tone={mz.teal}
-          />
-          <StatCard
-            label="Total Purchase"
-            value={formatPkr(dashboard?.todayPurchasesPkr ?? 0)}
-            tone={mz.rose}
-          />
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <StatCard
-            label="Today Profit"
-            value={formatPkr(dashboard?.todayProfitPkr ?? 0)}
-            tone={mz.gold}
-          />
-          <StatCard
-            label="Due Receive"
-            value={formatPkr(dashboard?.pendingReceivablesPkr ?? 0)}
-            tone={mz.orange}
-          />
+          {ACTIONS.map((a) => {
+            const value = metricValue(a.metric);
+            return (
+              <Pressable
+                key={a.title}
+                onPress={() => router.push(a.href as never)}
+                style={{
+                  width: "47.5%",
+                  backgroundColor: mz.card,
+                  borderRadius: 18,
+                  paddingVertical: 18,
+                  paddingHorizontal: 14,
+                  borderWidth: 1,
+                  borderColor: mz.border,
+                  minHeight: 108,
+                }}
+              >
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 12,
+                    backgroundColor: "rgba(185,150,83,0.14)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text style={{ color: a.tone, fontSize: 16, fontWeight: "800" }}>{a.icon}</Text>
+                </View>
+                <Text style={{ color: mz.text, fontWeight: "800", fontSize: 14, marginTop: 12 }}>
+                  {a.title}
+                </Text>
+                {value ? (
+                  <Text style={{ color: a.tone, fontWeight: "700", fontSize: 12, marginTop: 4 }}>
+                    {value}
+                  </Text>
+                ) : (
+                  <Text style={{ color: mz.muted, fontSize: 11, marginTop: 4 }}>Open</Text>
+                )}
+              </Pressable>
+            );
+          })}
         </View>
       </ScrollView>
     </MzShell>
   );
 }
 
-function StatCard({
+function MiniStat({
   label,
   value,
-  tone,
+  color,
 }: {
   label: string;
   value: string;
-  tone: string;
+  color: string;
 }): React.JSX.Element {
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: mz.card,
-        borderRadius: 14,
-        padding: 14,
-        borderWidth: 1,
-        borderColor: mz.border,
-      }}
-    >
-      <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "600" }}>{label}</Text>
-      <Text style={{ color: tone, fontSize: 16, fontWeight: "800", marginTop: 6 }}>{value}</Text>
+    <View>
+      <Text style={{ color: mz.muted, fontSize: 11 }}>{label}</Text>
+      <Text style={{ color, fontWeight: "700", fontSize: 13 }}>{value}</Text>
     </View>
   );
 }
