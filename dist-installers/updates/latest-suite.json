@@ -1,11 +1,11 @@
 {
-  "version": "0.3.109",
-  "notes": "Desktop suite update 0.3.109",
-  "pub_date": "2026-10-18T14:49:35.733Z",
+  "version": "0.3.110",
+  "notes": "Desktop suite update 0.3.110",
+  "pub_date": "2026-10-18T15:31:18.903Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRYzA0SUNlc3FEYVpvamJNQXRXbFoyeCt2MTVrcThhS0hZL3JpK3p6V2Y1eTBUb3poOWpQSUI4Ynd4clh6VERCRjUzUjNjajVXSkQ3TDUyamJVZVAwWWd2VjlOL2tzMmdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzM0OTcyCWZpbGU6UE9QUyBVbml2ZXJzYWwgTWFuYWdlbWVudCBTeXN0ZW1fMC4zLjEwOV94NjQtc2V0dXAuZXhlCkRkdGs3U2paY3B0Yy9Rc1VTSkI5dGx2SzRpM2gvcldwVnV5RUZUNVFCQTlCOHBXTG5rdC9ydnJTUUI0WW5KZVhKWEhxMnhvQTJPVTZRdXlmbUdVTUFRPT0K",
-      "url": "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-v0.3.109/POPS-Universal-Management-System_0.3.109_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSMWtPYXc1endxUVpsZ1dnYXA2YXY1Yy9VeTNLbDVLbGJ6VHFoZTNlb3I5ckxxSXBENXdSdG5xUWxHNk1lVHB0eDdNUnExU1lBUEloK0orb1hPTDMyRzU4K21FSCsxQ0FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzM3NDc0CWZpbGU6UE9QUyBVbml2ZXJzYWwgTWFuYWdlbWVudCBTeXN0ZW1fMC4zLjExMF94NjQtc2V0dXAuZXhlCmFiLzI5NWNsMDZyRHZ2MXRBcE5hTVBDQTR2TDdTYlViZFlhcGQyMmQ2VjI1cTExQ1hwdTg1U0djM3pZZnAwSFliMXIwVVBPS2kzdlNSMTJQemtwZEJBPT0K",
+      "url": "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-v0.3.110/POPS-Universal-Management-System_0.3.110_x64-setup.exe"
     }
   }
 }

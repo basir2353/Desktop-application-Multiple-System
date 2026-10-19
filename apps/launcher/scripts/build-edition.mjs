@@ -21,6 +21,51 @@ function withSigningEnv(baseEnv) {
 }
 
 /**
+ * Fail fast if tauri.conf pubkey ≠ pops-updater.key.pub.
+ * Mismatch causes clients to show: "signature was created with a different key".
+ */
+function assertUpdaterPubkeyMatchesPrivateKey() {
+  const confPath = join(tauriDir, "tauri.conf.json");
+  const conf = JSON.parse(readFileSync(confPath, "utf8"));
+  const bundled = String(conf?.plugins?.updater?.pubkey ?? "").replace(/\s+/g, "");
+  if (!bundled) {
+    console.error("[build-edition] Missing plugins.updater.pubkey in tauri.conf.json");
+    process.exit(1);
+  }
+
+  const keyPath = (process.env.TAURI_SIGNING_PRIVATE_KEY_PATH ?? "").trim();
+  const pubPath = keyPath ? `${keyPath}.pub` : "";
+  if (!pubPath || !existsSync(pubPath)) {
+    console.warn(
+      "[build-edition] Skipping pubkey check — no .pub next to TAURI_SIGNING_PRIVATE_KEY_PATH",
+    );
+    return;
+  }
+
+  const diskPub = readFileSync(pubPath, "utf8").replace(/\s+/g, "");
+  if (diskPub !== bundled) {
+    const decodeId = (b64) => {
+      try {
+        const text = Buffer.from(b64, "base64").toString("utf8");
+        const m = text.match(/minisign public key:\s*([0-9A-Fa-f]+)/i);
+        return m?.[1] ?? "?";
+      } catch {
+        return "?";
+      }
+    };
+    console.error(
+      "[build-edition] FATAL: updater pubkey mismatch.\n" +
+        `  tauri.conf.json pubkey id: ${decodeId(bundled)}\n` +
+        `  ${pubPath} id:             ${decodeId(diskPub)}\n` +
+        "  Fix: set plugins.updater.pubkey to the contents of pops-updater.key.pub\n" +
+        '  (otherwise clients get "signature was created with a different key").',
+    );
+    process.exit(1);
+  }
+  console.log("[build-edition] Updater pubkey matches signing key.pub ✓");
+}
+
+/**
  * Builds a single-system desktop installer.
  *
  * Usage:
@@ -95,6 +140,8 @@ const icons = spawnSync("node", ["./scripts/ensure-icons.mjs"], {
 if (icons.status !== 0) {
   process.exit(icons.status ?? 1);
 }
+
+assertUpdaterPubkeyMatchesPrivateKey();
 
 console.log(`[build-edition] Building "${edition}" installer (API: ${apiUrl})…`);
 

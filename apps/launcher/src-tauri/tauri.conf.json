@@ -41,7 +41,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY5ODNDQTdBMDI4MkQzMUMKUldRYzA0SUNlc3FEYVRDRFMzdGJpR0p5bHpwQ1BYR2tKN2psWTdIT1poVEk0b0pHeklQTjE3dGsK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxMkEzQ0U3QjBFNjkwNzUKUldSMWtPYXc1endxUVhKUUhpRmVZQ2UwTytweWtXNkhUS05KVjdBeEdpVW9NMzhrZEhGR0xCY1AK",
       "endpoints": [
         "https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-updater-feed/latest-suite.json",
         "https://github.com/basir2353/pops-desktop-updates/releases/latest/download/latest-suite.json"
