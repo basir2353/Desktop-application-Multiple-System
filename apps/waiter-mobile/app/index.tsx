@@ -261,7 +261,7 @@ export default function LoginScreen() {
       safeTop
       style={
         isMobizoneApp
-          ? { backgroundColor: "#0B1220", flex: 1 }
+          ? { backgroundColor: "#F6F4EF", flex: 1 }
           : undefined
       }
     >
@@ -271,11 +271,11 @@ export default function LoginScreen() {
             <View style={{ flex: 1 }}>
               {isMobizoneApp ? (
                 <>
-                  <Text style={{ color: "#F5C542", fontSize: 28, fontWeight: "800", letterSpacing: 0.3 }}>
+                  <Text style={{ color: "#14243A", fontSize: 28, fontWeight: "800", letterSpacing: 0.3 }}>
                     MobiZone
                   </Text>
-                  <Text style={{ color: "#94A3B8", fontSize: 14, marginTop: 6, lineHeight: 20 }}>
-                    Classic shop ERP · Buy · Sell · Stock · Udhaar
+                  <Text style={{ color: "#B89653", fontSize: 14, marginTop: 6, lineHeight: 20 }}>
+                    Classic Navy · Gold · Ivory · Buy · Sell · Stock · Udhaar
                   </Text>
                 </>
               ) : (

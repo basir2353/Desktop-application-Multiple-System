@@ -574,29 +574,31 @@ function applyAndroidPatches(buildPaths) {
 
 /**
  * Light AppTheme + NavigationContainer fallback=null → empty white window on some OEMs.
- * Force a dark windowBackground so the first native frame matches the JS boot shell.
+ * Force a Classic ivory windowBackground so the first native frame matches MobiZone UI.
  */
 function patchAndroidWindowBackground(androidDirPath) {
   const stylesPath = join(androidDirPath, "app", "src", "main", "res", "values", "styles.xml");
   if (!existsSync(stylesPath)) return;
   let text = readFileSync(stylesPath, "utf8");
+  const splashBg = variantArg === "mobizone" ? "#F6F4EF" : "#0B1220";
+  const statusBg = variantArg === "mobizone" ? "#14243A" : "#0B1220";
   if (text.includes("android:windowBackground")) {
     text = text.replace(
       /<item name="android:windowBackground">[^<]*<\/item>/,
-      '<item name="android:windowBackground">#0B1220</item>',
+      `<item name="android:windowBackground">${splashBg}</item>`,
     );
   } else {
     text = text.replace(
       /(<item name="android:statusBarColor">[^<]*<\/item>)/,
-      '$1\n    <item name="android:windowBackground">#0B1220</item>',
+      `$1\n    <item name="android:windowBackground">${splashBg}</item>`,
     );
   }
   text = text.replace(
     /<item name="android:statusBarColor">[^<]*<\/item>/,
-    '<item name="android:statusBarColor">#0B1220</item>',
+    `<item name="android:statusBarColor">${statusBg}</item>`,
   );
   writeFileSync(stylesPath, text);
-  console.log("[build-apk] Forced dark android:windowBackground (#0B1220)");
+  console.log(`[build-apk] Forced android:windowBackground (${splashBg})`);
 }
 
 /**

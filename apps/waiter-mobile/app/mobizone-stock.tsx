@@ -58,7 +58,7 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                 paddingVertical: 10,
               }}
             >
-              <Text style={{ color: mz.navyDeep, fontWeight: "800", fontSize: 12 }}>+ Add</Text>
+              <Text style={{ color: mz.onGold, fontWeight: "800", fontSize: 12 }}>+ Add</Text>
             </Pressable>
           }
         />
@@ -89,18 +89,18 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                   width: 52,
                   height: 52,
                   borderRadius: 14,
-                  backgroundColor: mz.navyDeep,
+                  backgroundColor: mz.navy,
                   borderWidth: 1,
-                  borderColor: mz.border,
+                  borderColor: mz.goldDim,
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
-                <Text style={{ color: mz.goldBright, fontWeight: "800", fontSize: 10 }}>PHONE</Text>
+                <Text style={{ color: mz.gold, fontWeight: "800", fontSize: 10 }}>PHONE</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={{ color: mz.text, fontWeight: "800", flexShrink: 1 }}>
+                  <Text style={{ color: mz.navy, fontWeight: "800", flexShrink: 1 }}>
                     {d.brand} {d.model}
                   </Text>
                   <MzBadge
@@ -110,6 +110,7 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                 </View>
                 <Text style={{ color: mz.muted, fontSize: 12, marginTop: 4 }}>
                   IMEI {d.imei}
+                  {d.colour ? ` · ${d.colour}` : ""}
                   {d.storage ? ` · ${d.storage}` : ""}
                 </Text>
                 <Text style={{ color: mz.muted, fontSize: 11, marginTop: 2 }}>
@@ -117,7 +118,7 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                 </Text>
               </View>
               <View style={{ alignItems: "flex-end" }}>
-                <Text style={{ color: mz.goldBright, fontWeight: "800" }}>
+                <Text style={{ color: mz.goldDim, fontWeight: "800" }}>
                   {formatPkr(d.salePricePkr ?? d.purchasePricePkr)}
                 </Text>
                 <Text style={{ color: mz.muted, fontSize: 10, marginTop: 2 }}>sale</Text>
@@ -145,7 +146,7 @@ function StatPill({ label, value }: { label: string; value: string }): React.JSX
       }}
     >
       <Text style={{ color: mz.muted, fontSize: 10, fontWeight: "700" }}>{label}</Text>
-      <Text style={{ color: mz.goldBright, fontWeight: "800", fontSize: 16, marginTop: 2 }}>
+      <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 16, marginTop: 2 }}>
         {value}
       </Text>
     </View>

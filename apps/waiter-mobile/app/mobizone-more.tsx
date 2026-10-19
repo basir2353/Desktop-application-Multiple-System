@@ -1,11 +1,11 @@
 import Constants from "expo-constants";
 import { Redirect, useRouter } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { getApiBaseUrl } from "../src/lib/apiBase";
 import { MzShell } from "../src/mobizone/MzShell";
 import { mz } from "../src/mobizone/theme";
 import { MzCard, MzScreenTitle } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
-import { getApiBaseUrl } from "../src/lib/apiBase";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -22,7 +22,7 @@ const LINKS = [
     note: "Restaurant-style thermal bill",
     icon: "🖨",
   },
-  { href: "/mobizone-sale", title: "Sales history entry", note: "New sale + print / WhatsApp", icon: "↗" },
+  { href: "/mobizone-sale", title: "Sales history entry", note: "New sale + WhatsApp receipt", icon: "↗" },
   { href: "/mobizone-purchase", title: "Purchase entry", note: "Buy phone · add stock", icon: "↙" },
   { href: "/mobizone-customers", title: "Customers", note: "CNIC / phone book", icon: "◉" },
 ] as const;
@@ -44,20 +44,35 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
         <MzScreenTitle title="More" subtitle="Shop tools & settings" />
 
-        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.goldDim }}>
-          <Text style={{ color: mz.goldBright, fontWeight: "800", fontSize: 16 }}>
-            {claims?.email ?? "Shop user"}
-          </Text>
-          <Text style={{ color: mz.muted, marginTop: 4 }}>
-            {branch?.name ?? "Main"} · {branch?.code ?? "MAIN"}
-          </Text>
-          <Text style={{ color: mz.muted, marginTop: 8, fontSize: 11 }}>
-            Live API: {getApiBaseUrl()}
-          </Text>
-          <Text style={{ color: mz.muted, fontSize: 11 }}>
-            Banks: {db.bankAccounts.length} · Devices: {db.devices.length} · v
-            {extra?.appVersion ?? "1.0"}
-          </Text>
+        <MzCard
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            borderColor: mz.gold,
+          }}
+        >
+          <View
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: mz.navy,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text style={{ color: mz.gold, fontWeight: "800" }}>MZ</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 16 }}>
+              {claims?.email ?? "Shop user"}
+            </Text>
+            <Text style={{ color: mz.muted, marginTop: 2, fontSize: 12 }}>
+              {branch?.name ?? "Main"} · Connected
+            </Text>
+          </View>
+          <Text style={{ color: mz.muted }}>›</Text>
         </MzCard>
 
         {LINKS.map((link) => (
@@ -65,7 +80,7 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
             key={link.href}
             onPress={() => router.push(link.href as never)}
             style={{
-              backgroundColor: mz.card,
+              backgroundColor: mz.white,
               borderRadius: 14,
               padding: 14,
               borderWidth: 1,
@@ -75,16 +90,30 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
               gap: 12,
             }}
           >
-            <Text style={{ color: mz.gold, fontSize: 18, width: 28, textAlign: "center" }}>
-              {link.icon}
-            </Text>
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: mz.ivory,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ color: mz.navy, fontSize: 16 }}>{link.icon}</Text>
+            </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: mz.text, fontWeight: "700" }}>{link.title}</Text>
+              <Text style={{ color: mz.navy, fontWeight: "700" }}>{link.title}</Text>
               <Text style={{ color: mz.muted, fontSize: 12, marginTop: 2 }}>{link.note}</Text>
             </View>
             <Text style={{ color: mz.muted }}>›</Text>
           </Pressable>
         ))}
+
+        <Text style={{ color: mz.muted, fontSize: 11, textAlign: "center", marginTop: 8 }}>
+          API {getApiBaseUrl()} · Banks {db.bankAccounts.length} · Devices {db.devices.length}
+          {"\n"}v{extra?.appVersion ?? "1.0"} · MobiZone Classic
+        </Text>
 
         <Pressable
           onPress={() => {
@@ -93,12 +122,11 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
             router.replace("/");
           }}
           style={{
-            marginTop: 8,
-            backgroundColor: "#3A1F2A",
+            backgroundColor: "#FEF2F2",
             borderRadius: 14,
             padding: 14,
             borderWidth: 1,
-            borderColor: mz.rose,
+            borderColor: "#FECACA",
             alignItems: "center",
           }}
         >

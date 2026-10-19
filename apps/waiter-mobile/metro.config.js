@@ -3,16 +3,28 @@ const path = require("path");
 const fs = require("fs");
 
 const projectRoot = __dirname;
-/** Prefer D:\pops short mirror so Android drawable asset filenames stay under MAX_PATH. */
+/** Prefer short mirror so Android drawable asset filenames stay under MAX_PATH. */
 const monorepoRoot = path.resolve(projectRoot, "../..");
-const REAL_REPO = "D:\\desktop\\Desktop-application-Multiple-System";
+const REAL_REPO_CANDIDATES = [
+  process.env.POPS_REAL_REPO,
+  "E:\\main pos\\Desktop-application-Multiple-System",
+  "D:\\desktop\\Desktop-application-Multiple-System",
+  "D:\\main pos\\Desktop-application-Multiple-System",
+].filter(Boolean);
+const REAL_REPO = REAL_REPO_CANDIDATES.find((p) => fs.existsSync(p)) || REAL_REPO_CANDIDATES[0];
 
 const config = getDefaultConfig(projectRoot);
 
 config.projectRoot = projectRoot;
-config.watchFolders = [projectRoot, monorepoRoot, REAL_REPO, "D:\\emc"].filter(
-  (p, i, arr) => fs.existsSync(p) && arr.indexOf(p) === i,
-);
+config.watchFolders = [
+  projectRoot,
+  monorepoRoot,
+  path.join(monorepoRoot, "packages"),
+  REAL_REPO,
+  path.join(REAL_REPO, "packages"),
+  "D:\\emc",
+  "C:\\emc",
+].filter((p, i, arr) => p && fs.existsSync(p) && arr.indexOf(p) === i);
 
 const appNodeModules = path.resolve(projectRoot, "node_modules");
 config.resolver.nodeModulesPaths = [
@@ -145,6 +157,52 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       (p) => fs.existsSync(p),
     );
     if (withExt) return { type: "sourceFile", filePath: withExt };
+  }
+
+  // Workspace packages (@platform/*) — resolve via junction / packages folder.
+  if (moduleName === "@platform/contracts" || moduleName.startsWith("@platform/contracts/")) {
+    const contractsRoot = [
+      path.join(appNodeModules, "@platform", "contracts"),
+      path.join(monorepoRoot, "packages", "contracts"),
+      path.join(REAL_REPO, "packages", "contracts"),
+    ].find((p) => fs.existsSync(path.join(p, "package.json")));
+    if (contractsRoot) {
+      const rest =
+        moduleName === "@platform/contracts"
+          ? null
+          : moduleName.slice("@platform/contracts/".length);
+      if (!rest) {
+        const main = path.join(contractsRoot, "dist", "index.js");
+        const src = path.join(contractsRoot, "src", "index.ts");
+        const hit = [main, src].find((p) => fs.existsSync(p));
+        if (hit) return { type: "sourceFile", filePath: hit };
+      } else {
+        const abs = path.join(contractsRoot, rest);
+        const withExt = [abs, `${abs}.js`, `${abs}.ts`, path.join(abs, "index.js")].find((p) =>
+          fs.existsSync(p),
+        );
+        if (withExt) return { type: "sourceFile", filePath: withExt };
+      }
+    }
+  }
+  if (moduleName === "@platform/auth-client" || moduleName.startsWith("@platform/auth-client/")) {
+    const authRoot = [
+      path.join(appNodeModules, "@platform", "auth-client"),
+      path.join(monorepoRoot, "packages", "auth-client"),
+      path.join(REAL_REPO, "packages", "auth-client"),
+    ].find((p) => fs.existsSync(path.join(p, "package.json")));
+    if (authRoot) {
+      const rest =
+        moduleName === "@platform/auth-client"
+          ? null
+          : moduleName.slice("@platform/auth-client/".length);
+      if (!rest) {
+        const main = path.join(authRoot, "dist", "index.js");
+        const src = path.join(authRoot, "src", "index.ts");
+        const hit = [main, src].find((p) => fs.existsSync(p));
+        if (hit) return { type: "sourceFile", filePath: hit };
+      }
+    }
   }
 
   // TypeScript ESM imports often use ".js" for ".ts" sources — Metro needs a redirect.

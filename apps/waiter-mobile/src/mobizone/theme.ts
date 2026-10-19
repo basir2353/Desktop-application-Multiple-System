@@ -1,28 +1,36 @@
-/** MobiZone APK palette — same as desktop screenshot (navy + bright gold + cream). */
+/** Classic Refined UI — Midnight Navy + Antique Gold + Warm Ivory (mockup middle row). */
 export const mz = {
-  bg: "#0B1220",
-  surface: "#141C2E",
-  card: "#1A2438",
-  cardSoft: "#222D44",
-  border: "#2A3650",
-  text: "#F4F7FB",
-  ivory: "#F8F1E3",
-  muted: "#94A3B8",
-  gold: "#F5C542",
-  goldDim: "#C9A227",
-  goldBright: "#FFD56A",
-  teal: "#2DD4BF",
+  /** Page / content background */
+  bg: "#F6F4EF",
+  /** Navy chrome (header, bottom nav, hero cards) */
+  navy: "#14243A",
+  navyDeep: "#0E1A2B",
+  surface: "#FFFFFF",
+  card: "#FFFFFF",
+  cardSoft: "#F0EDE6",
+  border: "#E2DDD2",
+  /** Body text on ivory/white */
+  text: "#2E2E2E",
+  muted: "#6B7280",
+  ivory: "#F6F4EF",
+  /** Antique gold accents */
+  gold: "#B89653",
+  goldDim: "#9A7A3E",
+  goldBright: "#C9A96A",
+  teal: "#0F766E",
   tealDim: "#0D9488",
-  rose: "#FB7185",
-  blue: "#38BDF8",
-  orange: "#FB923C",
-  green: "#4ADE80",
+  rose: "#B91C1C",
+  blue: "#1D4ED8",
+  orange: "#C2410C",
+  green: "#15803D",
   white: "#FFFFFF",
-  navyDeep: "#070D18",
-  ink: "#0E1628",
-  purple: "#C026D3",
-  /** Dark-theme form field fill (typed text stays light/visible). */
-  inputBg: "#1E2A3F",
-  inputText: "#F4F7FB",
-  inputBorder: "#3A4A66",
+  ink: "#14243A",
+  purple: "#7E22CE",
+  /** Form fields — ivory fill, dark readable text */
+  inputBg: "#FFFDF8",
+  inputText: "#2E2E2E",
+  inputBorder: "#D6D0C4",
+  /** Text on navy surfaces */
+  onNavy: "#F6F4EF",
+  onGold: "#14243A",
 } as const;

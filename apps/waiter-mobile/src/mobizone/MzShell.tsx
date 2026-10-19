@@ -11,7 +11,7 @@ export function MzShell({ children }: { children: ReactNode }): React.JSX.Elemen
 
   return (
     <View style={{ flex: 1, backgroundColor: mz.bg, paddingTop: insets.top }}>
-      <StatusBar barStyle="light-content" backgroundColor={mz.bg} />
+      <StatusBar barStyle="dark-content" backgroundColor={mz.bg} />
       <View style={{ flex: 1 }}>
         {!ready ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>

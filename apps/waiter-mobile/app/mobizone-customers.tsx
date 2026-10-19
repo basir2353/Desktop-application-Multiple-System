@@ -25,22 +25,24 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode, db, refresh } = useMobizoneDb();
   const [q, setQ] = useState("");
-  const [tab, setTab] = useState<"list" | "add">("list");
+  const [tab, setTab] = useState<"all" | "due" | "add">("all");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [cnic, setCnic] = useState("");
   const [address, setAddress] = useState("");
 
   const filtered = useMemo(() => {
+    let rows = db.customers;
+    if (tab === "due") rows = rows.filter((c) => (c.pendingPkr || 0) > 0);
     const needle = q.trim().toLowerCase();
-    if (!needle) return db.customers;
-    return db.customers.filter(
+    if (!needle) return rows;
+    return rows.filter(
       (c) =>
         c.name.toLowerCase().includes(needle) ||
         (c.phone ?? "").includes(needle) ||
         (c.cnic ?? "").includes(needle),
     );
-  }, [db.customers, q]);
+  }, [db.customers, q, tab]);
 
   if (!accessToken) return <Redirect href="/" />;
   if (extra?.appVariant && !isMobizoneApp) return <Redirect href="/home" />;
@@ -61,32 +63,49 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
     setPhone("");
     setCnic("");
     setAddress("");
-    setTab("list");
+    setTab("all");
     Alert.alert("Saved", "Customer added");
   }
 
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <MzScreenTitle title="Customers" subtitle="Search by Name · Phone · CNIC" />
+        <MzScreenTitle
+          title="Customers"
+          subtitle="Search name, phone or CNIC"
+          right={
+            <Pressable
+              onPress={() => setTab("add")}
+              style={{
+                backgroundColor: mz.gold,
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+              }}
+            >
+              <Text style={{ color: mz.onGold, fontWeight: "800", fontSize: 12 }}>+ Add</Text>
+            </Pressable>
+          }
+        />
 
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <MzChip label="All Customers" active={tab === "list"} onPress={() => setTab("list")} />
-          <MzChip label="Add Customer" active={tab === "add"} onPress={() => setTab("add")} />
-        </View>
-
-        {tab === "list" ? (
+        {tab !== "add" ? (
           <>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <MzChip label="All Customers" active={tab === "all"} onPress={() => setTab("all")} />
+              <MzChip label="Outstanding" active={tab === "due"} onPress={() => setTab("due")} />
+            </View>
             <MzInput
               value={q}
               onChangeText={setQ}
-              placeholder="Search name, phone, CNIC"
+              placeholder="Search name, phone or CNIC"
               style={{ flex: undefined }}
             />
             {filtered.length === 0 ? (
               <MzEmpty
                 title="No customers yet"
-                note="Add Customer dabao — CNIC / phone book yahan manage hoga"
+                note="CNIC / phone book yahan manage hoga"
+                actionLabel="Add Customer"
+                onAction={() => setTab("add")}
               />
             ) : (
               filtered.map((c) => (
@@ -99,19 +118,19 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
                       width: 46,
                       height: 46,
                       borderRadius: 23,
-                      backgroundColor: mz.navyDeep,
+                      backgroundColor: mz.ivory,
                       borderWidth: 1,
-                      borderColor: mz.goldDim,
+                      borderColor: mz.gold,
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
-                    <Text style={{ color: mz.goldBright, fontWeight: "800", fontSize: 16 }}>
+                    <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 16 }}>
                       {c.name.slice(0, 1).toUpperCase()}
                     </Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: mz.text, fontWeight: "700" }}>{c.name}</Text>
+                    <Text style={{ color: mz.navy, fontWeight: "700" }}>{c.name}</Text>
                     <Text style={{ color: mz.muted, fontSize: 12, marginTop: 2 }}>
                       {c.phone || "No phone"}
                       {c.cnic ? ` · ${c.cnic}` : ""}
@@ -129,13 +148,6 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
                 </MzCard>
               ))
             )}
-            {filtered.length > 0 ? (
-              <Pressable onPress={() => setTab("add")}>
-                <Text style={{ color: mz.goldBright, textAlign: "center", fontWeight: "700" }}>
-                  + Add Customer
-                </Text>
-              </Pressable>
-            ) : null}
           </>
         ) : (
           <MzSection title="New customer">
@@ -157,6 +169,9 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
               <MzInput value={address} onChangeText={setAddress} placeholder="Address" />
             </MzField>
             <MzPrimaryButton label="Save Customer" onPress={onAdd} />
+            <Pressable onPress={() => setTab("all")} style={{ alignItems: "center", padding: 8 }}>
+              <Text style={{ color: mz.muted, fontWeight: "600" }}>Cancel</Text>
+            </Pressable>
           </MzSection>
         )}
       </ScrollView>

@@ -37,11 +37,16 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [customerCnic, setCustomerCnic] = useState("");
+  const [attachCnic, setAttachCnic] = useState(false);
+  const [attachPhoto, setAttachPhoto] = useState(false);
   const [price, setPrice] = useState("");
   const [cash, setCash] = useState("");
   const [bank, setBank] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
-  const [payMode, setPayMode] = useState<"cash" | "bank" | "both">("cash");
+  const [payMode, setPayMode] = useState<"cash" | "bank" | "split" | "udhaar">("cash");
+  const [dueDate, setDueDate] = useState("");
+  const [warrantyDays, setWarrantyDays] = useState("0");
+  const [shareWa, setShareWa] = useState(true);
 
   useEffect(() => {
     if (!bankAccountId && db.bankAccounts.length === 1) {
@@ -54,8 +59,8 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
 
   const selected = inStock.find((d) => d.id === deviceId) ?? null;
   const priceN = Number(price) || 0;
-  const cashN = payMode === "bank" ? 0 : Number(cash) || 0;
-  const bankN = payMode === "cash" ? 0 : Number(bank) || 0;
+  const cashN = payMode === "bank" || payMode === "udhaar" ? 0 : Number(cash) || 0;
+  const bankN = payMode === "cash" || payMode === "udhaar" ? 0 : Number(bank) || 0;
   const remaining = Math.max(0, priceN - cashN - bankN);
 
   function applyScan(): void {
@@ -88,6 +93,10 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
       Alert.alert("Bank account", "Bank amount ke liye account select karein.");
       return;
     }
+    if (remaining > 0 && !dueDate.trim()) {
+      Alert.alert("Due date", "Udhaar / remaining balance ke liye due date likhein (YYYY-MM-DD).");
+      return;
+    }
     const acc = db.bankAccounts.find((a) => a.id === resolvedBankId);
     try {
       const sale = recordSale(branchCode, {
@@ -96,7 +105,12 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
         customerPhone: customerPhone.trim() || null,
         customerAddress: customerAddress.trim() || null,
         customerCnic: customerCnic.trim() || null,
+        customerPhotoDataUrl: attachPhoto ? "attached://customer-photo" : null,
+        cnicFrontDataUrl: attachCnic ? "attached://cnic-front" : null,
+        cnicBackDataUrl: attachCnic ? "attached://cnic-back" : null,
         pricePkr: priceN,
+        dueDate: remaining > 0 ? dueDate.trim() : null,
+        warrantyDays: Number(warrantyDays) || 0,
         payment: {
           cashPkr: cashN,
           bankPkr: bankN,
@@ -121,20 +135,25 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
           },
         },
         {
-          text: "WhatsApp",
-          onPress: () => openWhatsApp(sale.customerPhone, buildWhatsAppSaleText(sale)),
+          text: shareWa ? "OK · WhatsApp" : "OK",
+          onPress: () => {
+            if (shareWa) openWhatsApp(sale.customerPhone, buildWhatsAppSaleText(sale));
+          },
         },
-        { text: "OK" },
       ]);
       setDeviceId("");
       setCustomerName("");
       setCustomerPhone("");
       setCustomerAddress("");
       setCustomerCnic("");
+      setAttachCnic(false);
+      setAttachPhoto(false);
       setPrice("");
       setCash("");
       setBank("");
       setScan("");
+      setDueDate("");
+      setWarrantyDays("0");
     } catch (e) {
       Alert.alert("Error", e instanceof Error ? e.message : "Could not save sale");
     }
@@ -143,7 +162,7 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <MzScreenTitle title="New Sale" subtitle="Restaurant-style bill · customer details print" />
+        <MzScreenTitle title="New Sale" subtitle="Select phone · customer · cash / bank / udhaar" />
         {!ready ? <ActivityIndicator color={mz.gold} /> : null}
 
         <MzSection title="Phone">
@@ -151,7 +170,7 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
             <View style={{ flexDirection: "row", gap: 8 }}>
               <MzInput value={scan} onChangeText={setScan} placeholder="Enter or scan IMEI" />
               <Pressable onPress={applyScan} style={btnSoft}>
-                <Text style={{ color: mz.goldBright, fontWeight: "700" }}>Find</Text>
+                <Text style={{ color: mz.navy, fontWeight: "800" }}>Find</Text>
               </Pressable>
             </View>
           </MzField>
@@ -172,19 +191,20 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
                         paddingHorizontal: 12,
                         paddingVertical: 10,
                         borderRadius: 10,
-                        backgroundColor: deviceId === d.id ? mz.gold : mz.cardSoft,
+                        backgroundColor: deviceId === d.id ? mz.gold : mz.ivory,
                         borderWidth: 1,
                         borderColor: deviceId === d.id ? mz.gold : mz.border,
                       }}
                     >
                       <Text
                         style={{
-                          color: deviceId === d.id ? mz.navyDeep : mz.text,
+                          color: mz.navy,
                           fontWeight: "700",
                           fontSize: 12,
                         }}
                       >
                         {d.brand} {d.model}
+                        {d.storage ? ` · ${d.storage}` : ""}
                       </Text>
                     </Pressable>
                   ))
@@ -193,7 +213,11 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
             </ScrollView>
             {selected ? (
               <Text style={{ color: mz.teal, marginTop: 6, fontSize: 12 }}>
-                IMEI {selected.imei} · Cost {formatPkr(selected.purchasePricePkr)}
+                IMEI {selected.imei}
+                {selected.imei2 ? ` / ${selected.imei2}` : ""}
+                {selected.colour ? ` · ${selected.colour}` : ""}
+                {" · Cost "}
+                {formatPkr(selected.purchasePricePkr)}
               </Text>
             ) : null}
           </MzField>
@@ -229,6 +253,18 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
               placeholder="Customer address"
             />
           </MzField>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <AttachChip
+              label={attachCnic ? "CNIC attached ✓" : "Attach CNIC"}
+              active={attachCnic}
+              onPress={() => setAttachCnic((v) => !v)}
+            />
+            <AttachChip
+              label={attachPhoto ? "Photo attached ✓" : "Customer photo"}
+              active={attachPhoto}
+              onPress={() => setAttachPhoto((v) => !v)}
+            />
+          </View>
         </MzSection>
 
         <MzSection title="Payment">
@@ -240,23 +276,44 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
               placeholder="0"
             />
           </MzField>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            {(["cash", "bank", "both"] as const).map((m) => (
+          <MzField label="Warranty (days)">
+            <MzInput
+              value={warrantyDays}
+              onChangeText={setWarrantyDays}
+              keyboardType="number-pad"
+              placeholder="0"
+            />
+          </MzField>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {(
+              [
+                ["cash", "Cash"],
+                ["bank", "Bank"],
+                ["split", "Split"],
+                ["udhaar", "Udhaar"],
+              ] as const
+            ).map(([m, label]) => (
               <MzChip
                 key={m}
-                label={m === "both" ? "Both" : m === "cash" ? "Cash" : "Bank"}
+                label={label}
                 active={payMode === m}
-                onPress={() => setPayMode(m)}
+                onPress={() => {
+                  setPayMode(m);
+                  if (m === "udhaar") {
+                    setCash("");
+                    setBank("");
+                  }
+                }}
               />
             ))}
           </View>
 
-          {payMode !== "bank" ? (
+          {payMode === "cash" || payMode === "split" ? (
             <MzField label="Cash Received">
               <MzInput value={cash} onChangeText={setCash} keyboardType="numeric" placeholder="0" />
             </MzField>
           ) : null}
-          {payMode !== "cash" ? (
+          {payMode === "bank" || payMode === "split" ? (
             <>
               <MzField label="Bank Received">
                 <MzInput
@@ -276,12 +333,18 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
                         paddingHorizontal: 12,
                         paddingVertical: 10,
                         borderRadius: 10,
-                        backgroundColor: bankAccountId === a.id ? mz.tealDim : mz.cardSoft,
+                        backgroundColor: bankAccountId === a.id ? mz.navy : mz.ivory,
                         borderWidth: 1,
-                        borderColor: bankAccountId === a.id ? mz.teal : mz.border,
+                        borderColor: bankAccountId === a.id ? mz.navy : mz.border,
                       }}
                     >
-                      <Text style={{ color: mz.text, fontWeight: "600", fontSize: 12 }}>
+                      <Text
+                        style={{
+                          color: bankAccountId === a.id ? mz.gold : mz.text,
+                          fontWeight: "600",
+                          fontSize: 12,
+                        }}
+                      >
                         {a.bankName}
                       </Text>
                     </Pressable>
@@ -290,15 +353,49 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
               </MzField>
             </>
           ) : null}
-          <View style={{ gap: 6, marginTop: 4 }}>
+          {remaining > 0 ? (
+            <MzField label="Due date (udhaar)">
+              <MzInput value={dueDate} onChangeText={setDueDate} placeholder="YYYY-MM-DD" />
+            </MzField>
+          ) : null}
+          <View
+            style={{
+              backgroundColor: "#F3E8D0",
+              borderRadius: 12,
+              padding: 12,
+              borderWidth: 1,
+              borderColor: mz.gold,
+              gap: 6,
+            }}
+          >
             <Row label="Sale Price" value={formatPkr(priceN)} />
             <Row label="Received" value={formatPkr(cashN + bankN)} tone={mz.teal} />
             <Row
-              label="Remaining"
+              label="Remaining balance"
               value={formatPkr(remaining)}
               tone={remaining > 0 ? mz.rose : mz.teal}
             />
           </View>
+          <Pressable
+            onPress={() => setShareWa((v) => !v)}
+            style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 4 }}
+          >
+            <View
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: 6,
+                borderWidth: 2,
+                borderColor: mz.navy,
+                backgroundColor: shareWa ? mz.gold : mz.white,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {shareWa ? <Text style={{ color: mz.navy, fontWeight: "900", fontSize: 12 }}>✓</Text> : null}
+            </View>
+            <Text style={{ color: mz.text, fontWeight: "600" }}>Share receipt on WhatsApp</Text>
+          </Pressable>
         </MzSection>
 
         <MzPrimaryButton label="Save Sale · Print bill" onPress={onSave} />
@@ -316,8 +413,36 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: stri
   );
 }
 
+function AttachChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 10,
+        backgroundColor: active ? "#EEF6FF" : mz.ivory,
+        borderWidth: 1,
+        borderColor: active ? mz.blue : mz.border,
+      }}
+    >
+      <Text style={{ color: active ? mz.blue : mz.navy, fontWeight: "700", fontSize: 12 }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const btnSoft = {
-  backgroundColor: mz.cardSoft,
+  backgroundColor: mz.gold,
   borderWidth: 1,
   borderColor: mz.gold,
   borderRadius: 12,

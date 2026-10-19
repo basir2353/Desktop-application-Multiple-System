@@ -60,9 +60,9 @@ export default function MobizoneReceiptSettingsScreen(): React.JSX.Element {
           subtitle="Restaurant thermal bill · customer block always ON"
         />
 
-        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.goldDim }}>
-          <Text style={{ color: mz.goldBright, fontWeight: "800" }}>Always on bill</Text>
-          <Text style={{ color: mz.muted, marginTop: 6, fontSize: 13 }}>
+        <MzCard style={{ backgroundColor: mz.navy, borderColor: mz.goldDim }}>
+          <Text style={{ color: mz.gold, fontWeight: "800" }}>Always on bill</Text>
+          <Text style={{ color: "rgba(246,244,239,0.7)", marginTop: 6, fontSize: 13 }}>
             Customer Name · Phone · CNIC · Address — restaurant style dashed layout
           </Text>
         </MzCard>
