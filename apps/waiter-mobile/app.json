@@ -2,7 +2,7 @@
   "expo": {
     "name": "POPS Waiter",
     "slug": "pops-waiter",
-    "version": "1.1.69",
+    "version": "1.1.71",
     "orientation": "portrait",
     "scheme": "pops-waiter",
     "userInterfaceStyle": "dark",
@@ -20,7 +20,7 @@
         "backgroundColor": "#0A1218"
       },
       "package": "com.platform.pops.waiter",
-      "versionCode": 1169,
+      "versionCode": 1171,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",

@@ -16,10 +16,17 @@ set "REPO=%CD%"
 call "%REPO%\local\set-build-live-api.bat"
 set "POPS_FAST_BUILD=1"
 set "POPS_GRADLE_DAEMON=0"
-set "GRADLE_USER_HOME=D:\pops\gradle-home"
+set "GRADLE_USER_HOME=E:\pos-build\gradle-home"
+if not exist "E:\pos-build" set "GRADLE_USER_HOME=C:\pops\gradle-home"
 if not exist "%GRADLE_USER_HOME%" mkdir "%GRADLE_USER_HOME%"
 set "NODE_ENV=production"
-set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+if exist "C:\Android\Sdk\SDK\platform-tools" (
+  set "ANDROID_HOME=C:\Android\Sdk\SDK"
+) else if exist "%LOCALAPPDATA%\Android\Sdk\platform-tools" (
+  set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+) else (
+  set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+)
 set "ANDROID_SDK_ROOT=%ANDROID_HOME%"
 
 set "TARGET=%~1"
