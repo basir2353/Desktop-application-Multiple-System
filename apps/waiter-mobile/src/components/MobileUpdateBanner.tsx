@@ -46,7 +46,7 @@ function feedUrl(): string {
   const extra = Constants.expoConfig?.extra as { updateFeedUrl?: string } | undefined;
   if (extra?.updateFeedUrl) return extra.updateFeedUrl;
   const variant = resolveAppVariant();
-  return `https://github.com/basir2353/pops-mobile-updates/releases/latest/download/latest-${variant}.json`;
+  return `https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-updater-feed/latest-${variant}.json`;
 }
 
 /**
