@@ -50,10 +50,10 @@ export default function MobizoneReportsScreen(): React.JSX.Element {
           </View>
         </View>
 
-        <MzCard style={{ backgroundColor: mz.navy, borderColor: mz.goldDim }}>
+        <MzCard style={{ backgroundColor: mz.ink, borderColor: mz.accent }}>
           <Text
             style={{
-              color: "rgba(246,244,239,0.7)",
+              color: "rgba(233,238,243,0.7)",
               fontSize: 11,
               fontWeight: "700",
               letterSpacing: 0.6,
@@ -61,10 +61,10 @@ export default function MobizoneReportsScreen(): React.JSX.Element {
           >
             NET PROFIT
           </Text>
-          <Text style={{ color: mz.gold, fontSize: 30, fontWeight: "800", marginTop: 6 }}>
+          <Text style={{ color: mz.accent, fontSize: 30, fontWeight: "800", marginTop: 6 }}>
             {formatPkr(report.profitPkr)}
           </Text>
-          <Text style={{ color: "rgba(246,244,239,0.65)", marginTop: 4, fontSize: 12 }}>
+          <Text style={{ color: "rgba(233,238,243,0.65)", marginTop: 4, fontSize: 12 }}>
             Margin {profitPct}% · expenses already deducted
           </Text>
         </MzCard>

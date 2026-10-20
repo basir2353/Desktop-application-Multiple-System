@@ -156,7 +156,11 @@ export function MzPhotoUpload({
         )}
         <div className="flex flex-col gap-1">
           <label className="mz-btn-secondary cursor-pointer px-3 py-2 text-sm">
-            Camera / gallery
+            Gallery
+            <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+          </label>
+          <label className="mz-btn-secondary cursor-pointer px-3 py-2 text-sm">
+            Camera (optional)
             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
           </label>
           {value ? (

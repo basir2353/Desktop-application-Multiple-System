@@ -12,22 +12,23 @@ import { useSessionStore } from "../src/stores/sessionStore";
 const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined;
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
-type Action = {
+type MoreAction = {
   title: string;
-  icon: string;
+  note: string;
   href: string;
   metric?: "sales" | "purchase" | "profit" | "due";
 };
 
-const ACTIONS: Action[] = [
-  { title: "New Sale", icon: "↗", href: "/mobizone-sale" },
-  { title: "Purchase", icon: "↙", href: "/mobizone-purchase" },
-  { title: "Customers", icon: "◉", href: "/mobizone-customers" },
-  { title: "Stock", icon: "▣", href: "/mobizone-stock" },
-  { title: "Total Sales", icon: "Rs", href: "/mobizone-reports", metric: "sales" },
-  { title: "Total Purchase", icon: "Rs", href: "/mobizone-reports", metric: "purchase" },
-  { title: "Today Profit", icon: "★", href: "/mobizone-reports", metric: "profit" },
-  { title: "Due Receive", icon: "⏳", href: "/mobizone-reports", metric: "due" },
+/** Everything else stays visible — compact grid under Order strip */
+const MORE: MoreAction[] = [
+  { title: "Customers", note: "CNIC book", href: "/mobizone-customers" },
+  { title: "Stock", note: "IMEI list", href: "/mobizone-stock" },
+  { title: "Today Sales", note: "Live", href: "/mobizone-reports", metric: "sales" },
+  { title: "Today Buy", note: "Live", href: "/mobizone-reports", metric: "purchase" },
+  { title: "Profit", note: "Today", href: "/mobizone-reports", metric: "profit" },
+  { title: "Due", note: "Receivable", href: "/mobizone-reports", metric: "due" },
+  { title: "Expenses", note: "Shop costs", href: "/mobizone-expenses" },
+  { title: "Bill print", note: "Receipt", href: "/mobizone-receipt-settings" },
 ];
 
 export default function MobizoneHomeScreen(): React.JSX.Element {
@@ -50,7 +51,7 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 5);
 
-  function metricValue(key?: Action["metric"]): string | null {
+  function metricValue(key?: MoreAction["metric"]): string | null {
     if (!key || !dashboard) return null;
     if (key === "sales") return formatPkr(dashboard.todaySalesPkr);
     if (key === "purchase") return formatPkr(dashboard.todayPurchasesPkr);
@@ -61,126 +62,208 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 12 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 14 }}
         refreshControl={
-          <RefreshControl refreshing={!ready} onRefresh={refresh} tintColor={mz.gold} />
+          <RefreshControl refreshing={!ready} onRefresh={refresh} tintColor={mz.accent} />
         }
       >
         <MzNavyHeader
-          title="MobiZone"
-          subtitle={`${branch?.name ?? "Main Shop"} · Mobile Business ERP`}
+          title={branch?.name ?? "Main Shop"}
+          subtitle={`Order counter · ${todayLabel}`}
           right={
             <View
               style={{
-                width: 36,
-                height: 36,
-                borderRadius: 18,
-                backgroundColor: "rgba(184,150,83,0.25)",
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                backgroundColor: "rgba(15,155,142,0.2)",
                 alignItems: "center",
                 justifyContent: "center",
-                borderWidth: 1,
-                borderColor: mz.gold,
+                borderWidth: 1.5,
+                borderColor: mz.accent,
               }}
             >
-              <Text style={{ color: mz.gold, fontWeight: "800" }}>MZ</Text>
+              <Text style={{ color: mz.accent, fontWeight: "900", fontSize: 14 }}>MZ</Text>
             </View>
           }
         />
 
+        {/* ORDER — primary, biggest on home */}
+        <View style={{ gap: 10 }}>
+          <Text
+            style={{
+              color: mz.ink,
+              fontSize: 12,
+              fontWeight: "800",
+              letterSpacing: 1.1,
+            }}
+          >
+            ORDER NOW
+          </Text>
+
+          <Pressable
+            onPress={() => router.push("/mobizone-sale" as never)}
+            style={{
+              backgroundColor: mz.accent,
+              borderRadius: 18,
+              paddingVertical: 22,
+              paddingHorizontal: 18,
+              minHeight: 108,
+              justifyContent: "center",
+              shadowColor: mz.accent,
+              shadowOpacity: 0.35,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 6,
+            }}
+          >
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, fontWeight: "800" }}>
+              PRIMARY ORDER
+            </Text>
+            <Text style={{ color: mz.white, fontSize: 26, fontWeight: "900", marginTop: 4 }}>
+              New Sale
+            </Text>
+            <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
+              Customer ko phone becho · cash / bank / udhaar
+            </Text>
+            <View
+              style={{
+                position: "absolute",
+                right: 16,
+                top: "50%",
+                marginTop: -18,
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                backgroundColor: "rgba(255,255,255,0.22)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ color: mz.white, fontSize: 20, fontWeight: "900" }}>›</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push("/mobizone-purchase" as never)}
+            style={{
+              backgroundColor: mz.ink,
+              borderRadius: 18,
+              paddingVertical: 20,
+              paddingHorizontal: 18,
+              minHeight: 96,
+              justifyContent: "center",
+              borderWidth: 2,
+              borderColor: mz.accent,
+            }}
+          >
+            <Text style={{ color: mz.accent, fontSize: 12, fontWeight: "800" }}>STOCK ORDER</Text>
+            <Text style={{ color: mz.white, fontSize: 22, fontWeight: "900", marginTop: 4 }}>
+              Purchase
+            </Text>
+            <Text style={{ color: "rgba(233,238,243,0.75)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
+              Phone khareedo · IMEI stock add
+            </Text>
+            <View
+              style={{
+                position: "absolute",
+                right: 16,
+                top: "50%",
+                marginTop: -18,
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                backgroundColor: "rgba(15,155,142,0.25)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ color: mz.accent, fontSize: 20, fontWeight: "900" }}>›</Text>
+            </View>
+          </Pressable>
+        </View>
+
         <View
           style={{
-            alignSelf: "flex-start",
             backgroundColor: mz.white,
-            borderRadius: 12,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
+            borderRadius: 14,
+            padding: 14,
             borderWidth: 1,
             borderColor: mz.border,
           }}
         >
-          <Text style={{ color: mz.navy, fontWeight: "700", fontSize: 13 }}>{todayLabel}</Text>
-        </View>
-
-        <View
-          style={{
-            backgroundColor: mz.navy,
-            borderRadius: 18,
-            padding: 18,
-            borderWidth: 1,
-            borderColor: mz.goldDim,
-          }}
-        >
           <Text
             style={{
-              color: "rgba(246,244,239,0.7)",
+              color: mz.muted,
               fontSize: 11,
-              fontWeight: "700",
-              letterSpacing: 1,
+              fontWeight: "800",
+              letterSpacing: 0.8,
             }}
           >
-            TOTAL BALANCE
+            TOTAL POSITION
           </Text>
-          <Text style={{ color: mz.gold, fontSize: 34, fontWeight: "800", marginTop: 6 }}>
+          <Text
+            style={{
+              color: mz.ink,
+              fontSize: 26,
+              fontWeight: "800",
+              marginTop: 4,
+              letterSpacing: -0.4,
+            }}
+          >
             {formatPkr(investment)}
           </Text>
-          <View
-            style={{
-              flexDirection: "row",
-              flexWrap: "wrap",
-              gap: 16,
-              marginTop: 14,
-              borderTopWidth: 1,
-              borderTopColor: "rgba(184,150,83,0.25)",
-              paddingTop: 12,
-            }}
-          >
-            <Mini label="Cash" value={formatPkr(dashboard?.cashBalancePkr ?? 0)} />
-            <Mini label="Bank" value={formatPkr(dashboard?.bankBalancePkr ?? 0)} />
-            <Mini label="Stock" value={formatPkr(dashboard?.stockValuePkr ?? 0)} />
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 12 }}>
+            <MiniLight label="Cash" value={formatPkr(dashboard?.cashBalancePkr ?? 0)} />
+            <MiniLight label="Bank" value={formatPkr(dashboard?.bankBalancePkr ?? 0)} />
+            <MiniLight label="Stock" value={formatPkr(dashboard?.stockValuePkr ?? 0)} />
           </View>
         </View>
 
-        <MzCard style={{ padding: 12 }}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-            {ACTIONS.map((a) => {
-              const value = metricValue(a.metric);
-              return (
-                <Pressable
-                  key={a.title}
-                  onPress={() => router.push(a.href as never)}
-                  style={{
-                    width: "47.5%",
-                    backgroundColor: mz.ivory,
-                    borderRadius: 14,
-                    paddingVertical: 14,
-                    paddingHorizontal: 12,
-                    borderWidth: 1,
-                    borderColor: mz.border,
-                    minHeight: 92,
-                  }}
-                >
-                  <Text style={{ color: mz.navy, fontSize: 16, fontWeight: "800" }}>{a.icon}</Text>
-                  <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 13, marginTop: 8 }}>
-                    {a.title}
-                  </Text>
-                  <Text style={{ color: mz.goldDim, fontWeight: "700", fontSize: 11, marginTop: 3 }}>
-                    {value ?? "Open"}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </MzCard>
+        <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 13, letterSpacing: 0.4 }}>
+          ALL MODULES
+        </Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+          {MORE.map((a) => {
+            const value = metricValue(a.metric);
+            return (
+              <Pressable
+                key={a.title}
+                onPress={() => router.push(a.href as never)}
+                style={{
+                  width: "47.5%",
+                  backgroundColor: mz.white,
+                  borderRadius: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 12,
+                  borderWidth: 1,
+                  borderColor: mz.border,
+                  minHeight: 72,
+                }}
+              >
+                <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 13 }}>{a.title}</Text>
+                <Text style={{ color: mz.muted, fontWeight: "600", fontSize: 11, marginTop: 4 }}>
+                  {value ?? a.note}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
 
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 15 }}>Recent activity</Text>
+          <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 15 }}>Recent orders</Text>
           <Pressable onPress={() => router.push("/mobizone-reports" as never)}>
-            <Text style={{ color: mz.goldDim, fontWeight: "700", fontSize: 12 }}>View all</Text>
+            <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 12 }}>View all</Text>
           </Pressable>
         </View>
 
         {recent.length === 0 ? (
-          <MzEmpty title="No recent activity yet" note="Sale ya purchase save karo — yahan dikhega" />
+          <MzEmpty
+            title="No orders yet"
+            note="Upar se New Sale ya Purchase dabao"
+            actionLabel="New Sale"
+            onAction={() => router.push("/mobizone-sale" as never)}
+          />
         ) : (
           recent.map((row) => {
             const isSale = "pricePkr" in row;
@@ -190,18 +273,19 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
-                  paddingVertical: 12,
+                  paddingVertical: 13,
+                  alignItems: "center",
                 }}
               >
-                <View>
-                  <Text style={{ color: mz.navy, fontWeight: "700" }}>
-                    {isSale ? "Sale" : "Purchase"} · {row.brand} {row.model}
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ color: mz.ink, fontWeight: "700" }}>
+                    {isSale ? "Sale" : "Buy"} · {row.brand} {row.model}
                   </Text>
-                  <Text style={{ color: mz.muted, fontSize: 11, marginTop: 2 }}>
+                  <Text style={{ color: mz.muted, fontSize: 11, marginTop: 3 }}>
                     {new Date(row.createdAt).toLocaleString()}
                   </Text>
                 </View>
-                <Text style={{ color: isSale ? mz.teal : mz.orange, fontWeight: "800" }}>
+                <Text style={{ color: isSale ? mz.accent : mz.orange, fontWeight: "800" }}>
                   {formatPkr(isSale ? row.pricePkr : row.purchasePricePkr)}
                 </Text>
               </MzCard>
@@ -213,11 +297,11 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
   );
 }
 
-function Mini({ label, value }: { label: string; value: string }): React.JSX.Element {
+function MiniLight({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
-    <View>
-      <Text style={{ color: "rgba(246,244,239,0.65)", fontSize: 11 }}>{label}</Text>
-      <Text style={{ color: mz.gold, fontWeight: "700", fontSize: 13 }}>{value}</Text>
+    <View style={{ minWidth: 88 }}>
+      <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "600" }}>{label}</Text>
+      <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 13, marginTop: 2 }}>{value}</Text>
     </View>
   );
 }

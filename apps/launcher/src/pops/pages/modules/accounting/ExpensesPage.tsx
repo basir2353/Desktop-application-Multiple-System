@@ -49,11 +49,14 @@ export function ExpensesPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Expense management" subtitle="Add expenses, approve, and post to the ledger." />
+      <PageHeader
+        title="Expense management"
+        subtitle="Add expenses — approve to post an automatic expense voucher to the ledger. Admins can add extra expense heads under Chart of accounts."
+      />
 
       {canManage ? (
         <AccountingFormPanel
-          title="Add expense"
+          title="Add expense (creates voucher on approve)"
           submitLabel="Submit for approval"
           disabled={createMutation.isPending || !amount}
           onSubmit={() => {

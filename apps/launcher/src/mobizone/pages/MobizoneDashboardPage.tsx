@@ -5,9 +5,24 @@ import { useMobizoneBranchCode, useMobizoneDb } from "../hooks/useMobizone";
 import { formatPkr, getMobizoneDashboard, seedFriendlyDefaults } from "../lib/mobizoneStore";
 import { MzPage, MzStat } from "../ui/MobizoneUi";
 
-const QUICK = [
-  { to: "/pops/mobizone/sell", title: "New Sale", note: "Customer ko phone becho", primary: true },
-  { to: "/pops/mobizone/purchase", title: "Purchase", note: "Phone khareedo", primary: true },
+/** Order strip — biggest CTAs on home */
+const ORDERS = [
+  {
+    to: "/pops/mobizone/sell",
+    title: "New Sale",
+    note: "Customer ko phone becho · cash / bank / udhaar",
+    kind: "sale" as const,
+  },
+  {
+    to: "/pops/mobizone/purchase",
+    title: "Purchase",
+    note: "Phone khareedo · IMEI stock add",
+    kind: "buy" as const,
+  },
+] as const;
+
+/** Everything else — still fully visible */
+const ALL = [
   { to: "/pops/mobizone/customers", title: "Customers", note: "CNIC / phone book" },
   { to: "/pops/mobizone/stock", title: "Stock", note: "IMEI inventory" },
   { to: "/pops/mobizone/sales", title: "Total Sales", note: "Aaj + history" },
@@ -39,8 +54,30 @@ export function MobizoneDashboardPage(): JSX.Element {
     <MzPage>
       <PageHeader
         title="MobiZone"
-        subtitle="Classic shop ERP — buy, sell, stock, udhaar, banks, WhatsApp."
+        subtitle="Order counter — sale & purchase pehle, baaki modules neeche."
       />
+
+      <p className="mz-section-title" style={{ marginBottom: "-0.35rem" }}>
+        Order now
+      </p>
+      <div className="mz-order-strip">
+        {ORDERS.map((link) => (
+          <Link
+            key={link.to}
+            to={link.to}
+            className={`mz-order-cta mz-order-cta--${link.kind}`}
+          >
+            <span className="mz-order-eyebrow">
+              {link.kind === "sale" ? "Primary order" : "Stock order"}
+            </span>
+            <span className="mz-order-title">{link.title}</span>
+            <span className="mz-order-note">{link.note}</span>
+            <span className="mz-order-arrow" aria-hidden>
+              ›
+            </span>
+          </Link>
+        ))}
+      </div>
 
       <div className="mz-balance-hero">
         <p className="mz-balance-label">Total balance</p>
@@ -54,20 +91,19 @@ export function MobizoneDashboardPage(): JSX.Element {
           <span style={{ color: "var(--mz-blue)" }}>
             Bank {m ? formatPkr(m.bankBalancePkr) : "—"}
           </span>
-          <span style={{ color: "var(--mz-gold)" }}>
+          <span style={{ color: "var(--mz-accent)" }}>
             Maal {m ? formatPkr(m.stockValuePkr) : "—"}
           </span>
           <span style={{ color: "var(--mz-muted)" }}>Phones {m?.inStock ?? "—"}</span>
         </div>
       </div>
 
+      <p className="mz-section-title" style={{ marginBottom: "-0.35rem" }}>
+        All modules
+      </p>
       <div className="mz-quick-grid">
-        {QUICK.map((link) => (
-          <Link
-            key={link.to}
-            to={link.to}
-            className={`mz-quick-card${"primary" in link && link.primary ? " mz-quick-card--primary" : ""}`}
-          >
+        {ALL.map((link) => (
+          <Link key={link.to} to={link.to} className="mz-quick-card">
             <span className="mz-quick-title">{link.title}</span>
             <span className="mz-quick-note">{link.note}</span>
           </Link>

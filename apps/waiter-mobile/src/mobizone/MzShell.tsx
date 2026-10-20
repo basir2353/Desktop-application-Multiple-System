@@ -14,8 +14,8 @@ export function MzShell({ children }: { children: ReactNode }): React.JSX.Elemen
       <StatusBar barStyle="dark-content" backgroundColor={mz.bg} />
       <View style={{ flex: 1 }}>
         {!ready ? (
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <ActivityIndicator color={mz.gold} size="large" />
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12 }}>
+            <ActivityIndicator color={mz.accent} size="large" />
           </View>
         ) : (
           children

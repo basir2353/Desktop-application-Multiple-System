@@ -352,15 +352,15 @@ export class AccountingHooksService {
 
   async ensureBranchChart(organizationId: string, branchId: string): Promise<void> {
     const existing = await this.db
-      .select({ id: popsAccounts.id })
+      .select({ code: popsAccounts.code })
       .from(popsAccounts)
       .where(
         and(eq(popsAccounts.organizationId, organizationId), eq(popsAccounts.branchId, branchId)),
-      )
-      .limit(1);
-    if (existing.length > 0) return;
-
+      );
+    const have = new Set(existing.map((row) => row.code));
+    let added = 0;
     for (const acct of DEFAULT_CHART) {
+      if (have.has(acct.code)) continue;
       await this.db.insert(popsAccounts).values({
         organizationId,
         branchId,
@@ -369,8 +369,13 @@ export class AccountingHooksService {
         type: acct.type,
         subtype: acct.subtype,
       });
+      added += 1;
     }
-    this.logger.log(`Seeded chart of accounts for branch ${branchId}`);
+    if (existing.length === 0) {
+      this.logger.log(`Seeded chart of accounts for branch ${branchId}`);
+    } else if (added > 0) {
+      this.logger.log(`Added ${added} missing account head(s) for branch ${branchId}`);
+    }
   }
 
   async postEntry(

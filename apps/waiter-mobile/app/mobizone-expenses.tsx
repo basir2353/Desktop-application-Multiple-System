@@ -79,13 +79,13 @@ export default function MobizoneExpensesScreen(): React.JSX.Element {
           title="Shop Expenses"
           subtitle="Khana, salary, rent — profit se auto minus"
         />
-        {!ready ? <ActivityIndicator color={mz.gold} /> : null}
+        {!ready ? <ActivityIndicator color={mz.accent} /> : null}
 
-        <MzCard style={{ backgroundColor: mz.navy, borderColor: mz.goldDim }}>
-          <Text style={{ color: "rgba(246,244,239,0.7)", fontSize: 11, fontWeight: "700" }}>
+        <MzCard style={{ backgroundColor: mz.ink, borderColor: mz.accent }}>
+          <Text style={{ color: "rgba(233,238,243,0.7)", fontSize: 11, fontWeight: "700" }}>
             TOTAL EXPENSES
           </Text>
-          <Text style={{ color: mz.gold, fontWeight: "800", fontSize: 24, marginTop: 4 }}>
+          <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 24, marginTop: 4 }}>
             {formatPkr(total)}
           </Text>
         </MzCard>
@@ -125,9 +125,9 @@ export default function MobizoneExpensesScreen(): React.JSX.Element {
                         paddingHorizontal: 12,
                         paddingVertical: 10,
                         borderRadius: 10,
-                        backgroundColor: bankAccountId === a.id ? mz.gold : mz.cardSoft,
+                        backgroundColor: bankAccountId === a.id ? mz.accent : mz.cardSoft,
                         borderWidth: 1,
-                        borderColor: bankAccountId === a.id ? mz.gold : mz.border,
+                        borderColor: bankAccountId === a.id ? mz.accent : mz.border,
                       }}
                     >
                       <Text

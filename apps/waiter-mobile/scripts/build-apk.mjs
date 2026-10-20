@@ -580,8 +580,8 @@ function patchAndroidWindowBackground(androidDirPath) {
   const stylesPath = join(androidDirPath, "app", "src", "main", "res", "values", "styles.xml");
   if (!existsSync(stylesPath)) return;
   let text = readFileSync(stylesPath, "utf8");
-  const splashBg = variantArg === "mobizone" ? "#F6F4EF" : "#0B1220";
-  const statusBg = variantArg === "mobizone" ? "#14243A" : "#0B1220";
+  const splashBg = variantArg === "mobizone" ? "#E9EEF3" : "#0B1220";
+  const statusBg = variantArg === "mobizone" ? "#0C1524" : "#0B1220";
   if (text.includes("android:windowBackground")) {
     text = text.replace(
       /<item name="android:windowBackground">[^<]*<\/item>/,
@@ -852,7 +852,10 @@ console.log(`[build-apk] Done → ${apkDest}`);
 
 try {
   const manifestScript = join(__dirname, "write-mobile-update-manifest.mjs");
-  if ((variantArg === "admin" || variantArg === "staff") && existsSync(manifestScript)) {
+  if (
+    (variantArg === "admin" || variantArg === "staff" || variantArg === "mobizone") &&
+    existsSync(manifestScript)
+  ) {
     const appJsonPath = join(appRoot, "app.json");
     let ver = "1.0.0";
     let code = "0";

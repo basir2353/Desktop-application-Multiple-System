@@ -12,6 +12,7 @@ export const DEFAULT_CHART = [
   { code: "4103", name: "Delivery Revenue", type: "income", subtype: "sales" },
   { code: "4104", name: "Service Charges", type: "income", subtype: "sales" },
   { code: "4105", name: "Sales Discounts", type: "expense", subtype: "contra" },
+  { code: "4106", name: "Sales Returns", type: "expense", subtype: "contra" },
   { code: "5101", name: "Cost of Goods Sold", type: "expense", subtype: "cogs" },
   { code: "5201", name: "Food Purchases", type: "expense", subtype: "purchase" },
   { code: "5202", name: "Utility Bills", type: "expense", subtype: "operating" },

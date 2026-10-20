@@ -1,18 +1,15 @@
 import { usePathname, useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { mz } from "./theme";
 
-/** Pic footer: Home · Stock · Sales · Customers · More — drawn icons (no font deps). */
 const TABS = [
   { href: "/mobizone-home", label: "Home", kind: "home" as const },
   { href: "/mobizone-stock", label: "Stock", kind: "stock" as const },
-  { href: "/mobizone-sale", label: "Sales", kind: "sales" as const },
+  { href: "/mobizone-sale", label: "Order", kind: "sales" as const },
   { href: "/mobizone-customers", label: "Customers", kind: "customers" as const },
   { href: "/mobizone-more", label: "More", kind: "more" as const },
 ] as const;
-
-const ACTIVE = "#1B5E3B";
-const INACTIVE = "#5F6368";
 
 export function MzBottomNav(): React.JSX.Element {
   const router = useRouter();
@@ -23,11 +20,11 @@ export function MzBottomNav(): React.JSX.Element {
     <View
       style={{
         flexDirection: "row",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: mz.white,
         borderTopWidth: 1,
-        borderTopColor: "#E5E7EB",
+        borderTopColor: mz.border,
         paddingBottom: Math.max(insets.bottom, 8),
-        paddingTop: 10,
+        paddingTop: 8,
       }}
     >
       {TABS.map((tab) => {
@@ -40,20 +37,33 @@ export function MzBottomNav(): React.JSX.Element {
           (tab.href === "/mobizone-more" && !!pathname?.includes("mobizone-more")) ||
           (tab.href === "/mobizone-home" &&
             (!!pathname?.includes("mobizone-home") || pathname === "/"));
-        const color = active ? ACTIVE : INACTIVE;
+        const color = active ? mz.accent : mz.muted;
 
         return (
           <Pressable
             key={tab.href}
             onPress={() => router.replace(tab.href as never)}
-            style={{ flex: 1, alignItems: "center", gap: 5, paddingVertical: 2 }}
+            style={{ flex: 1, alignItems: "center", gap: 4, paddingVertical: 2 }}
           >
+            {active ? (
+              <View
+                style={{
+                  position: "absolute",
+                  top: -8,
+                  width: 28,
+                  height: 3,
+                  borderRadius: 2,
+                  backgroundColor: mz.accent,
+                }}
+              />
+            ) : null}
             <TabIcon kind={tab.kind} color={color} active={active} />
             <Text
               style={{
                 color,
-                fontSize: 11,
-                fontWeight: active ? "700" : "500",
+                fontSize: 10,
+                fontWeight: active ? "800" : "600",
+                letterSpacing: 0.2,
               }}
             >
               {tab.label}
@@ -81,7 +91,6 @@ function TabIcon({
   return <MoreIcon color={color} />;
 }
 
-/** House outline — matches pic Home */
 function HomeIcon({ color }: { color: string }): React.JSX.Element {
   return (
     <View style={{ width: 26, height: 24, alignItems: "center", justifyContent: "flex-end" }}>
@@ -118,18 +127,16 @@ function HomeIcon({ color }: { color: string }): React.JSX.Element {
           borderWidth: 2,
           borderBottomWidth: 0,
           borderColor: color,
-          backgroundColor: "#FFFFFF",
+          backgroundColor: mz.white,
         }}
       />
     </View>
   );
 }
 
-/** 3D cube / box outline — matches pic Stock */
 function CubeIcon({ color }: { color: string }): React.JSX.Element {
   return (
     <View style={{ width: 26, height: 24, alignItems: "center", justifyContent: "center" }}>
-      {/* top face */}
       <View
         style={{
           width: 14,
@@ -137,12 +144,11 @@ function CubeIcon({ color }: { color: string }): React.JSX.Element {
           borderWidth: 2,
           borderColor: color,
           borderBottomWidth: 0,
-          transform: [{ rotate: "0deg" }, { skewX: "-20deg" }],
+          transform: [{ skewX: "-20deg" }],
           marginBottom: -1,
         }}
       />
       <View style={{ flexDirection: "row" }}>
-        {/* left face */}
         <View
           style={{
             width: 11,
@@ -152,7 +158,6 @@ function CubeIcon({ color }: { color: string }): React.JSX.Element {
             borderRightWidth: 1,
           }}
         />
-        {/* right face */}
         <View
           style={{
             width: 11,
@@ -168,7 +173,6 @@ function CubeIcon({ color }: { color: string }): React.JSX.Element {
   );
 }
 
-/** Document with fold — solid green when active (pic Sales) */
 function DocIcon({ color, active }: { color: string; active: boolean }): React.JSX.Element {
   if (active) {
     return (
@@ -177,29 +181,16 @@ function DocIcon({ color, active }: { color: string; active: boolean }): React.J
           width: 20,
           height: 24,
           backgroundColor: color,
-          borderRadius: 2,
+          borderRadius: 3,
           overflow: "hidden",
         }}
       >
         <View
           style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            width: 0,
-            height: 0,
-            borderLeftWidth: 7,
-            borderBottomWidth: 7,
-            borderLeftColor: "transparent",
-            borderBottomColor: "rgba(255,255,255,0.35)",
-          }}
-        />
-        <View
-          style={{
             marginTop: 9,
             marginHorizontal: 4,
             height: 2,
-            backgroundColor: "rgba(255,255,255,0.85)",
+            backgroundColor: "rgba(255,255,255,0.9)",
             borderRadius: 1,
           }}
         />
@@ -208,7 +199,7 @@ function DocIcon({ color, active }: { color: string; active: boolean }): React.J
             marginTop: 3,
             marginHorizontal: 4,
             height: 2,
-            backgroundColor: "rgba(255,255,255,0.85)",
+            backgroundColor: "rgba(255,255,255,0.9)",
             borderRadius: 1,
           }}
         />
@@ -222,22 +213,9 @@ function DocIcon({ color, active }: { color: string; active: boolean }): React.J
         height: 24,
         borderWidth: 2,
         borderColor: color,
-        borderRadius: 2,
+        borderRadius: 3,
       }}
     >
-      <View
-        style={{
-          position: "absolute",
-          top: -2,
-          right: -2,
-          width: 0,
-          height: 0,
-          borderLeftWidth: 7,
-          borderBottomWidth: 7,
-          borderLeftColor: "transparent",
-          borderBottomColor: color,
-        }}
-      />
       <View
         style={{
           marginTop: 9,
@@ -260,7 +238,6 @@ function DocIcon({ color, active }: { color: string; active: boolean }): React.J
   );
 }
 
-/** Two people outlines — matches pic Customers */
 function PeopleIcon({ color }: { color: string }): React.JSX.Element {
   return (
     <View style={{ width: 28, height: 24, flexDirection: "row", alignItems: "flex-end" }}>
@@ -314,7 +291,6 @@ function PeopleIcon({ color }: { color: string }): React.JSX.Element {
   );
 }
 
-/** Three horizontal dots — matches pic More */
 function MoreIcon({ color }: { color: string }): React.JSX.Element {
   return (
     <View

@@ -77,13 +77,13 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
             <Pressable
               onPress={() => setTab("add")}
               style={{
-                backgroundColor: mz.gold,
+                backgroundColor: mz.accent,
                 borderRadius: 12,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
               }}
             >
-              <Text style={{ color: mz.onGold, fontWeight: "800", fontSize: 12 }}>+ Add</Text>
+              <Text style={{ color: mz.onAccent, fontWeight: "800", fontSize: 12 }}>+ Add</Text>
             </Pressable>
           }
         />
@@ -120,12 +120,12 @@ export default function MobizoneCustomersScreen(): React.JSX.Element {
                       borderRadius: 23,
                       backgroundColor: mz.ivory,
                       borderWidth: 1,
-                      borderColor: mz.gold,
+                      borderColor: mz.accent,
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
-                    <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 16 }}>
+                    <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 16 }}>
                       {c.name.slice(0, 1).toUpperCase()}
                     </Text>
                   </View>

@@ -26,19 +26,23 @@ function currentVersionCode(): number {
   return Number.isFinite(configured) ? configured : 0;
 }
 
-function resolveAppVariant(): "admin" | "staff" {
+function resolveAppVariant(): "admin" | "staff" | "mobizone" {
   const extra = Constants.expoConfig?.extra as
     | { updateFeedUrl?: string; appVariant?: string; appKind?: string }
     | undefined;
-  if (extra?.appVariant === "admin" || extra?.appKind === "admin") return "admin";
+  if (extra?.appVariant === "mobizone") return "mobizone";
+  if (extra?.appVariant === "admin") return "admin";
   if (extra?.appVariant === "staff" || extra?.appKind === "staff") return "staff";
-  // Fallback: Android package id (admin APK must not check the staff feed).
+  // Fallback: Android package id (admin/mobizone must not check the staff feed).
   const pkg = String(
     Constants.expoConfig?.android?.package ??
       (Constants as { androidId?: string }).androidId ??
       "",
   ).toLowerCase();
+  if (pkg.includes("mobizone")) return "mobizone";
   if (pkg.includes(".admin") || pkg.endsWith("admin")) return "admin";
+  // appKind "admin" is shared by MobiZone login shell — package check above first.
+  if (extra?.appKind === "admin") return "admin";
   return "staff";
 }
 

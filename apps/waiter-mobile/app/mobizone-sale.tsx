@@ -163,7 +163,7 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
         <MzScreenTitle title="New Sale" subtitle="Select phone · customer · cash / bank / udhaar" />
-        {!ready ? <ActivityIndicator color={mz.gold} /> : null}
+        {!ready ? <ActivityIndicator color={mz.accent} /> : null}
 
         <MzSection title="Phone">
           <MzField label="Scan IMEI / Barcode">

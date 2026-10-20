@@ -45,7 +45,7 @@ export function ChartOfAccountsPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Chart of accounts"
-        subtitle="System heads remain available, and you can add heads for your own accounts and expenses."
+        subtitle="Cash Register (1101), bank, sales, purchases, and expenses. Admins can add extra heads for custom expenses, purchase categories, or return accounts."
       />
 
       {canManage ? (

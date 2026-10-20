@@ -1503,6 +1503,22 @@ export class AccountingService implements OnApplicationBootstrap {
       .returning();
     if (!row) throw new BadRequestException("Failed to open cash session");
 
+    // Opening float posts to Cash Register (1101) so the cash account starts with a ledger balance.
+    if (openingFloat > 0) {
+      await this.hooks.postEntry(organizationId, branch.id, {
+        entryRef: `JV-CASH-OPEN-${sessionRef}`,
+        entryDate: new Date().toISOString().slice(0, 10),
+        source: "cash",
+        sourceRef: sessionRef,
+        description: `Cash Register opening balance — ${sessionRef}`,
+        createdBy: userEmail,
+        lines: [
+          { accountCode: "1101", debit: openingFloat, credit: 0, memo: "Opening float" },
+          { accountCode: "3001", debit: 0, credit: openingFloat, memo: "Owner equity / float" },
+        ],
+      });
+    }
+
     return {
       id: row.id,
       sessionRef: row.sessionRef,

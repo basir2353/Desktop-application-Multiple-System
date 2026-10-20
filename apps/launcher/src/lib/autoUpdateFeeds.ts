@@ -39,6 +39,12 @@ const MOBILE_FEEDS = {
     downloadTag: (v: string) =>
       `https://github.com/${MOBILE_REPO}/releases/download/mobile-v${v}/pops-staff-release.apk`,
   },
+  mobizone: {
+    manifest: "latest-mobizone.json",
+    label: "Mobile · MobiZone APK",
+    downloadTag: (v: string) =>
+      `https://github.com/${MOBILE_REPO}/releases/download/mobile-v${v}/mobizone-erp-release.apk`,
+  },
 } as const;
 
 type GhRelease = {

@@ -21,15 +21,10 @@ export function MzCard({
       style={[
         {
           backgroundColor: mz.card,
-          borderRadius: 16,
+          borderRadius: 14,
           padding: 16,
           borderWidth: 1,
           borderColor: mz.border,
-          shadowColor: "#14243A",
-          shadowOpacity: 0.06,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: 3 },
-          elevation: 2,
         },
         style,
       ]}
@@ -50,10 +45,10 @@ export function MzSection({
     <MzCard>
       <Text
         style={{
-          color: mz.navy,
-          fontSize: 12,
+          color: mz.accent,
+          fontSize: 11,
           fontWeight: "800",
-          letterSpacing: 0.5,
+          letterSpacing: 1.1,
           textTransform: "uppercase",
           marginBottom: 12,
         }}
@@ -85,9 +80,9 @@ export const mzInputStyle = {
   color: mz.inputText,
   borderRadius: 12,
   paddingHorizontal: 14,
-  paddingVertical: 12,
+  paddingVertical: 13,
   fontSize: 15,
-  borderWidth: 1,
+  borderWidth: 1.5,
   borderColor: mz.inputBorder,
   flex: 1,
 } as const;
@@ -95,7 +90,7 @@ export const mzInputStyle = {
 export function MzInput(props: TextInputProps): React.JSX.Element {
   return (
     <TextInput
-      placeholderTextColor="#9CA3AF"
+      placeholderTextColor="#8A9AAB"
       {...props}
       style={[mzInputStyle, props.style as object]}
     />
@@ -116,14 +111,16 @@ export function MzPrimaryButton({
       onPress={onPress}
       disabled={disabled}
       style={{
-        backgroundColor: mz.gold,
-        borderRadius: 14,
+        backgroundColor: mz.accent,
+        borderRadius: 12,
         paddingVertical: 16,
         alignItems: "center",
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.45 : 1,
       }}
     >
-      <Text style={{ color: mz.onGold, fontWeight: "800", fontSize: 16 }}>{label}</Text>
+      <Text style={{ color: mz.onGold, fontWeight: "800", fontSize: 16, letterSpacing: 0.3 }}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -142,15 +139,18 @@ export function MzChip({
       onPress={onPress}
       style={{
         flex: 1,
-        paddingVertical: 12,
-        borderRadius: 12,
+        minWidth: 72,
+        paddingVertical: 11,
+        borderRadius: 10,
         alignItems: "center",
-        backgroundColor: active ? mz.navy : mz.white,
-        borderWidth: 1,
-        borderColor: active ? mz.navy : mz.border,
+        backgroundColor: active ? mz.ink : mz.white,
+        borderWidth: 1.5,
+        borderColor: active ? mz.ink : mz.border,
       }}
     >
-      <Text style={{ color: active ? mz.white : mz.text, fontWeight: "700" }}>{label}</Text>
+      <Text style={{ color: active ? mz.white : mz.text, fontWeight: "700", fontSize: 13 }}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -175,11 +175,13 @@ export function MzScreenTitle({
       }}
     >
       <View style={{ flex: 1 }}>
-        <Text style={{ color: mz.navy, fontSize: 22, fontWeight: "800", letterSpacing: 0.2 }}>
+        <Text style={{ color: mz.ink, fontSize: 24, fontWeight: "800", letterSpacing: -0.3 }}>
           {title}
         </Text>
         {subtitle ? (
-          <Text style={{ color: mz.muted, fontSize: 13, marginTop: 4 }}>{subtitle}</Text>
+          <Text style={{ color: mz.muted, fontSize: 13, marginTop: 4, lineHeight: 18 }}>
+            {subtitle}
+          </Text>
         ) : null}
       </View>
       {right}
@@ -195,28 +197,24 @@ export function MzBadge({
   tone?: "gold" | "teal" | "orange" | "rose";
 }): React.JSX.Element {
   const bg =
-    tone === "teal"
-      ? "#D1FAE5"
+    tone === "teal" || tone === "gold"
+      ? "#CCFBF1"
       : tone === "orange"
         ? "#FFEDD5"
-        : tone === "rose"
-          ? "#FEE2E2"
-          : "#F3E8D0";
+        : "#FEE2E2";
   const fg =
-    tone === "teal"
-      ? mz.green
+    tone === "teal" || tone === "gold"
+      ? mz.goldDim
       : tone === "orange"
         ? mz.orange
-        : tone === "rose"
-          ? mz.rose
-          : mz.goldDim;
+        : mz.rose;
   return (
     <View
       style={{
         backgroundColor: bg,
         paddingHorizontal: 8,
         paddingVertical: 3,
-        borderRadius: 8,
+        borderRadius: 6,
       }}
     >
       <Text style={{ color: fg, fontSize: 11, fontWeight: "800", textTransform: "capitalize" }}>
@@ -238,9 +236,23 @@ export function MzEmpty({
   onAction?: () => void;
 }): React.JSX.Element {
   return (
-    <MzCard style={{ alignItems: "center", paddingVertical: 32 }}>
-      <Text style={{ color: mz.gold, fontSize: 36, marginBottom: 10 }}>◇</Text>
-      <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 16 }}>{title}</Text>
+    <MzCard style={{ alignItems: "center", paddingVertical: 36 }}>
+      <View
+        style={{
+          width: 48,
+          height: 48,
+          borderRadius: 12,
+          backgroundColor: mz.cardSoft,
+          borderWidth: 1,
+          borderColor: mz.border,
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 12,
+        }}
+      >
+        <Text style={{ color: mz.accent, fontSize: 20, fontWeight: "800" }}>MZ</Text>
+      </View>
+      <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 16 }}>{title}</Text>
       {note ? (
         <Text
           style={{
@@ -249,6 +261,7 @@ export function MzEmpty({
             marginTop: 6,
             textAlign: "center",
             paddingHorizontal: 12,
+            lineHeight: 18,
           }}
         >
           {note}
@@ -259,7 +272,7 @@ export function MzEmpty({
           onPress={onAction}
           style={{
             marginTop: 16,
-            backgroundColor: mz.gold,
+            backgroundColor: mz.accent,
             borderRadius: 12,
             paddingHorizontal: 18,
             paddingVertical: 12,
@@ -289,6 +302,7 @@ export function MzRow({
   );
 }
 
+/** Brand header strip — ink + teal mark */
 export function MzNavyHeader({
   title,
   subtitle,
@@ -301,20 +315,43 @@ export function MzNavyHeader({
   return (
     <View
       style={{
-        backgroundColor: mz.navy,
+        backgroundColor: mz.ink,
         marginHorizontal: -16,
         marginTop: -4,
         paddingHorizontal: 16,
-        paddingTop: 8,
-        paddingBottom: 16,
-        marginBottom: 12,
+        paddingTop: 14,
+        paddingBottom: 20,
+        marginBottom: 14,
       }}
     >
+      <View
+        style={{
+          position: "absolute",
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: 120,
+          backgroundColor: "rgba(15,155,142,0.12)",
+        }}
+      />
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: mz.gold, fontSize: 22, fontWeight: "800" }}>{title}</Text>
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text
+            style={{
+              color: mz.accent,
+              fontSize: 11,
+              fontWeight: "800",
+              letterSpacing: 1.4,
+              textTransform: "uppercase",
+            }}
+          >
+            MobiZone
+          </Text>
+          <Text style={{ color: mz.onNavy, fontSize: 24, fontWeight: "800", letterSpacing: -0.4 }}>
+            {title}
+          </Text>
           {subtitle ? (
-            <Text style={{ color: "rgba(246,244,239,0.75)", fontSize: 12, marginTop: 3 }}>
+            <Text style={{ color: "rgba(233,238,243,0.72)", fontSize: 12, marginTop: 2 }}>
               {subtitle}
             </Text>
           ) : null}

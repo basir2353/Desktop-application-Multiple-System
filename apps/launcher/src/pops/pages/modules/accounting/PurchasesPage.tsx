@@ -22,7 +22,7 @@ export function PurchasesPage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Purchase accounting"
-        subtitle="Inventory purchases from goods receiving post to accounts payable."
+        subtitle="Goods receiving posts purchase vouchers to Accounts Payable automatically. Admins can add supplier heads under Chart of accounts."
         actions={
           <Link to="/pops/inventory/goods-receiving" className="inline-flex items-center rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-500">
             Receive goods

@@ -10,6 +10,7 @@ import {
   openWhatsApp,
   searchByCnic,
 } from "../lib/mobizoneStore";
+import { MzOptionalCameraImeiScan } from "../components/MzOptionalCameraImeiScan";
 import { MzField, MzInput, MzPrimaryButton, MzSecondaryButton, MzSection } from "../ui/MobizoneUi";
 
 export function MobizoneSearchPage(): JSX.Element {
@@ -68,21 +69,37 @@ export function MobizoneSearchPage(): JSX.Element {
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MzField label={mode === "imei" ? "IMEI / barcode" : "CNIC number"}>
-            <MzInput
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onSearch();
-              }}
-              className="min-w-[260px] font-mono"
-              placeholder={mode === "imei" ? "Scan or type IMEI…" : "xxxxx-xxxxxxx-x"}
-              autoFocus
-            />
+            <div className="space-y-2">
+              <MzInput
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onSearch();
+                }}
+                className="min-w-[260px] font-mono"
+                placeholder={mode === "imei" ? "Scan or type IMEI…" : "xxxxx-xxxxxxx-x"}
+                autoFocus
+              />
+              {mode === "imei" ? (
+                <MzOptionalCameraImeiScan
+                  label="Camera scan IMEI (optional — needs permission)"
+                  onDetected={(code) => {
+                    setQ(code);
+                    setErr(null);
+                  }}
+                />
+              ) : null}
+            </div>
           </MzField>
           <div className="flex items-end">
             <MzPrimaryButton onClick={onSearch}>Search</MzPrimaryButton>
           </div>
         </div>
+        {mode === "imei" ? (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Default: type or USB scanner. Camera scan is optional and only starts when you press the button.
+          </p>
+        ) : null}
         {err ? <p className="text-sm text-red-600">{err}</p> : null}
       </MzSection>
 

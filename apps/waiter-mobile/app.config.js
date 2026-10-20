@@ -104,7 +104,9 @@ module.exports = {
       appVersion: base.expo.version,
       updateFeedUrl:
         process.env.EXPO_PUBLIC_UPDATE_FEED_URL ||
-        `https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-updater-feed/latest-${variant === "admin" ? "admin" : "staff"}.json`,
+        `https://github.com/basir2353/pops-desktop-updates/releases/download/desktop-updater-feed/latest-${
+          variant === "mobizone" ? "mobizone" : variant === "admin" ? "admin" : "staff"
+        }.json`,
     },
   },
 };

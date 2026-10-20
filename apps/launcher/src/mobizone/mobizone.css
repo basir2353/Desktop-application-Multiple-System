@@ -1,70 +1,68 @@
-/* MobiZone — light + dark palettes (toggle via html[data-theme]) */
+/* MobiZone — Signal Teal retail system (light + dark) */
 
-/* ── Dark (default / data-theme=dark) ─────────────────────────────────── */
+/* ── Dark ─────────────────────────────────────────────────────────────── */
 :root,
 html[data-theme="dark"],
 html[data-edition="mobizone"][data-theme="dark"] {
-  --mz-bg: #0b1220;
-  --mz-surface: #141c2e;
-  --mz-card: #1a2438;
-  --mz-card-soft: #222d44;
-  --mz-border: #2a3650;
-  --mz-text: #f4f7fb;
-  --mz-muted: #94a3b8;
-  --mz-gold: #f5c542;
-  --mz-gold-bright: #ffd56a;
-  --mz-gold-dim: #c9a227;
-  --mz-ivory: #f8f1e3;
-  --mz-ivory-border: #e8dcc4;
-  --mz-ink: #0e1628;
-  --mz-teal: #2dd4bf;
+  --mz-bg: #070e18;
+  --mz-surface: #0f1a28;
+  --mz-card: #121f30;
+  --mz-card-soft: #182636;
+  --mz-border: #243447;
+  --mz-text: #e9eef3;
+  --mz-muted: #8aa0b4;
+  --mz-gold: #14b8a6;
+  --mz-gold-bright: #2dd4bf;
+  --mz-gold-dim: #0f9b8e;
+  --mz-ivory: #182636;
+  --mz-ivory-border: #243447;
+  --mz-ink: #e9eef3;
+  --mz-teal: #14b8a6;
   --mz-rose: #fb7185;
   --mz-blue: #38bdf8;
   --mz-orange: #fb923c;
-  --mz-accent: #f5c542;
-  --mz-navy-deep: #070d18;
-  --mz-purple: #c026d3;
-  /* Dark theme fields: dark fill + light text (readable typed data) */
-  --mz-input-bg: #1e2a3f;
-  --mz-input-text: #f4f7fb;
-  --mz-input-border: #3a4a66;
-  --mz-input-placeholder: #94a3b8;
-  --mz-btn-secondary-bg: #222d44;
-  --mz-btn-secondary-text: #f4f7fb;
+  --mz-accent: #14b8a6;
+  --mz-navy-deep: #050a12;
+  --mz-purple: #14b8a6;
+  --mz-input-bg: #0f1a28;
+  --mz-input-text: #e9eef3;
+  --mz-input-border: #2a3d52;
+  --mz-input-placeholder: #8aa0b4;
+  --mz-btn-secondary-bg: #182636;
+  --mz-btn-secondary-text: #e9eef3;
 }
 
 /* ── Light ────────────────────────────────────────────────────────────── */
 html[data-theme="light"],
 html[data-edition="mobizone"][data-theme="light"] {
-  --mz-bg: #f4f6fa;
+  --mz-bg: #e9eef3;
   --mz-surface: #ffffff;
   --mz-card: #ffffff;
   --mz-card-soft: #f1f5f9;
-  --mz-border: #d8e0ec;
-  --mz-text: #0f172a;
-  --mz-muted: #64748b;
-  --mz-gold: #c9971a;
-  --mz-gold-bright: #e0b03a;
-  --mz-gold-dim: #a67c12;
-  --mz-ivory: #ffffff;
-  --mz-ivory-border: #cbd5e1;
-  --mz-ink: #0f172a;
-  --mz-teal: #0d9488;
+  --mz-border: #cdd6e1;
+  --mz-text: #0c1524;
+  --mz-muted: #5b6b7c;
+  --mz-gold: #0f9b8e;
+  --mz-gold-bright: #14b8a6;
+  --mz-gold-dim: #0b7a70;
+  --mz-ivory: #f1f5f9;
+  --mz-ivory-border: #cdd6e1;
+  --mz-ink: #0c1524;
+  --mz-teal: #0f9b8e;
   --mz-rose: #e11d48;
   --mz-blue: #0284c7;
   --mz-orange: #ea580c;
-  --mz-accent: #c9971a;
-  --mz-navy-deep: #e8eef7;
-  --mz-purple: #a21caf;
+  --mz-accent: #0f9b8e;
+  --mz-navy-deep: #0c1524;
+  --mz-purple: #0f9b8e;
   --mz-input-bg: #ffffff;
-  --mz-input-text: #0f172a;
-  --mz-input-border: #cbd5e1;
-  --mz-input-placeholder: #64748b;
-  --mz-btn-secondary-bg: #eef2f7;
-  --mz-btn-secondary-text: #0f172a;
+  --mz-input-text: #0c1524;
+  --mz-input-border: #b8c4d1;
+  --mz-input-placeholder: #5b6b7c;
+  --mz-btn-secondary-bg: #f1f5f9;
+  --mz-btn-secondary-text: #0c1524;
 }
 
-/* Shell body follows active theme */
 html[data-edition="mobizone"] body,
 body.edition-mobizone {
   background: var(--mz-bg) !important;
@@ -100,23 +98,19 @@ body.edition-mobizone.theme-dark #root {
 }
 
 .mz-card {
-  border-radius: 0.9rem;
+  border-radius: 0.85rem;
   border: 1px solid var(--mz-border);
   background: var(--mz-card);
   color: var(--mz-text);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-
-html[data-theme="dark"] .mz-card {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
 }
 
 .mz-section-title {
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--mz-gold);
+  color: var(--mz-accent);
 }
 
 .mz-muted {
@@ -127,7 +121,7 @@ html[data-theme="dark"] .mz-card {
   width: 100%;
   min-height: 2.75rem;
   border-radius: 0.65rem;
-  border: 1px solid var(--mz-input-border);
+  border: 1.5px solid var(--mz-input-border);
   background: var(--mz-input-bg) !important;
   background-color: var(--mz-input-bg) !important;
   color: var(--mz-input-text) !important;
@@ -150,11 +144,10 @@ html[data-theme="light"] .mz-input {
 }
 
 .mz-input:focus {
-  border-color: var(--mz-gold);
-  box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.22);
+  border-color: var(--mz-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mz-accent) 28%, transparent);
 }
 
-/* Chrome autofill must not turn typed text invisible */
 .mz-input:-webkit-autofill,
 .mz-input:-webkit-autofill:hover,
 .mz-input:-webkit-autofill:focus,
@@ -169,21 +162,22 @@ html[data-theme="light"] .mz-input {
 
 .mz-btn-primary {
   min-height: 2.75rem;
-  border-radius: 0.75rem;
+  border-radius: 0.7rem;
   border: none;
-  background: linear-gradient(135deg, var(--mz-gold), var(--mz-gold-bright));
-  color: #0e1628;
-  font-weight: 700;
+  background: var(--mz-accent);
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: 0.02em;
   padding: 0.65rem 1.1rem;
 }
 
 .mz-btn-primary:hover {
-  filter: brightness(1.05);
+  filter: brightness(1.08);
 }
 
 .mz-btn-secondary {
   min-height: 2.75rem;
-  border-radius: 0.75rem;
+  border-radius: 0.7rem;
   border: 1px solid var(--mz-border);
   background: var(--mz-btn-secondary-bg);
   color: var(--mz-btn-secondary-text);
@@ -218,26 +212,132 @@ html[data-theme="light"] .mz-input {
 }
 
 .mz-balance-hero {
-  border-radius: 1.25rem;
-  border: 1px solid color-mix(in srgb, var(--mz-gold) 45%, transparent);
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, var(--mz-accent) 35%, transparent);
   background: linear-gradient(145deg, var(--mz-navy-deep), var(--mz-card));
   padding: 1.25rem 1.35rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.mz-balance-hero::after {
+  content: "";
+  position: absolute;
+  right: -2rem;
+  top: -2rem;
+  width: 10rem;
+  height: 10rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mz-accent) 18%, transparent);
+  pointer-events: none;
 }
 
 .mz-balance-label {
   font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--mz-muted);
 }
 
 .mz-balance-value {
-  margin-top: 0.25rem;
+  margin-top: 0.35rem;
   font-size: 2rem;
   font-weight: 800;
-  color: var(--mz-gold-bright);
+  color: var(--mz-text);
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
+}
+
+/* Home order strip — Sale / Purchase dominate */
+.mz-order-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 720px) {
+  .mz-order-strip {
+    grid-template-columns: 1.15fr 1fr;
+  }
+}
+
+.mz-order-cta {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 7.5rem;
+  border-radius: 1rem;
+  padding: 1.25rem 3.25rem 1.25rem 1.35rem;
+  text-decoration: none;
+  overflow: hidden;
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.mz-order-cta:active {
+  transform: scale(0.985);
+}
+
+.mz-order-cta--sale {
+  background: var(--mz-accent);
+  color: #fff;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--mz-accent) 35%, transparent);
+}
+
+.mz-order-cta--buy {
+  background: var(--mz-navy-deep);
+  color: #e9eef3;
+  border: 2px solid var(--mz-accent);
+}
+
+.mz-order-cta:hover {
+  filter: brightness(1.06);
+}
+
+.mz-order-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.mz-order-title {
+  margin-top: 0.35rem;
+  font-size: 1.65rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.mz-order-note {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  opacity: 0.9;
+  max-width: 28rem;
+}
+
+.mz-order-arrow {
+  position: absolute;
+  right: 1.1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 900;
+  background: rgba(255, 255, 255, 0.2);
+  line-height: 1;
+}
+
+.mz-order-cta--buy .mz-order-arrow {
+  background: color-mix(in srgb, var(--mz-accent) 28%, transparent);
+  color: var(--mz-accent);
 }
 
 .mz-quick-grid {
@@ -256,8 +356,8 @@ html[data-theme="light"] .mz-input {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 5.5rem;
-  border-radius: 1rem;
+  min-height: 5.25rem;
+  border-radius: 0.85rem;
   border: 1px solid var(--mz-border);
   background: var(--mz-card);
   padding: 0.9rem 1rem;
@@ -271,19 +371,24 @@ html[data-theme="light"] .mz-input {
 }
 
 .mz-quick-card:hover {
-  border-color: var(--mz-gold);
+  border-color: var(--mz-accent);
   background: var(--mz-card-soft);
 }
 
 .mz-quick-card--primary {
   border-color: transparent;
-  background: linear-gradient(135deg, #0f766e, #14b8a6);
+  background: var(--mz-accent);
   color: #fff;
 }
 
 .mz-quick-card--primary:nth-child(2) {
-  background: linear-gradient(135deg, #b45309, #f5c542);
-  color: #0e1628;
+  background: var(--mz-navy-deep);
+  color: var(--mz-text);
+  border: 1px solid color-mix(in srgb, var(--mz-accent) 40%, transparent);
+}
+
+html[data-theme="light"] .mz-quick-card--primary:nth-child(2) {
+  color: #e9eef3;
 }
 
 .mz-quick-card--primary:hover {
@@ -293,18 +398,17 @@ html[data-theme="light"] .mz-input {
 
 .mz-quick-title {
   font-size: 0.95rem;
-  font-weight: 700;
+  font-weight: 800;
   color: inherit;
 }
 
 .mz-quick-note {
-  margin-top: 0.2rem;
+  margin-top: 0.25rem;
   font-size: 0.75rem;
   opacity: 0.85;
   color: inherit;
 }
 
-/* Inputs inside MobiZone pages follow theme tokens (beats dark:text-white) */
 .mz-app input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
 .mz-app select,
 .mz-app textarea {
@@ -338,26 +442,23 @@ html[data-theme="light"] .mz-app textarea {
 .mz-app input:focus,
 .mz-app select:focus,
 .mz-app textarea:focus {
-  border-color: var(--mz-gold) !important;
-  box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.22);
+  border-color: var(--mz-accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mz-accent) 28%, transparent);
 }
 
-/* Never inherit page text-white onto cream/dark fields */
 html[data-theme="dark"] .mz-app input,
 html[data-theme="dark"] .mz-app select,
 html[data-theme="dark"] .mz-app textarea,
 html[data-theme="dark"] .mz-input {
-  color: #f4f7fb !important;
-  -webkit-text-fill-color: #f4f7fb !important;
+  color: #e9eef3 !important;
+  -webkit-text-fill-color: #e9eef3 !important;
 }
 
-/* Active nav in MobiZone */
 html[data-edition="mobizone"] a[aria-current="page"],
 body.edition-mobizone a[aria-current="page"] {
-  color: var(--mz-gold) !important;
+  color: var(--mz-accent) !important;
 }
 
-/* Dark shell: make sure POPS slate surfaces match MobiZone navy */
 html[data-edition="mobizone"][data-theme="dark"] .bg-slate-950,
 html[data-edition="mobizone"][data-theme="dark"] .bg-slate-950\/40,
 html[data-edition="mobizone"][data-theme="dark"] .bg-slate-950\/80,
@@ -398,5 +499,5 @@ html[data-edition="mobizone"][data-theme="dark"] .text-slate-500 {
 html[data-edition="mobizone"][data-theme="dark"] .text-amber-400,
 html[data-edition="mobizone"][data-theme="dark"] .text-amber-300,
 html[data-edition="mobizone"][data-theme="dark"] .dark\:text-amber-400 {
-  color: var(--mz-gold) !important;
+  color: var(--mz-accent) !important;
 }

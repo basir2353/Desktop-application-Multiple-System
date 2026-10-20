@@ -160,8 +160,11 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
-        <MzScreenTitle title="New Purchase" subtitle="Seller · IMEI · Used/New · split payment" />
-        {!ready ? <ActivityIndicator color={mz.gold} /> : null}
+        <MzScreenTitle
+          title="New Purchase"
+          subtitle="Seller · IMEI · Used/New · split payment"
+        />
+        {!ready ? <ActivityIndicator color={mz.accent} /> : null}
 
         <MzSection title="Purchase date">
           <MzField label="Date">
@@ -218,11 +221,18 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
         </MzSection>
 
         <MzSection title="Phone details">
+          <Text style={{ color: mz.muted, fontSize: 12, lineHeight: 17 }}>
+            IMEI type karo ya USB/Bluetooth barcode scanner lagao — camera permission purchase ke
+            liye zaroori nahi. Camera sirf optional seller photo / CNIC attach pe.
+          </Text>
           <MzField label="Scan or type IMEI *">
             <MzInput
               value={imei}
               onChangeText={setImei}
-              keyboardType="number-pad"
+              // Default keyboard so hardware wedge scanners can send Enter + digits.
+              keyboardType="default"
+              autoCapitalize="none"
+              autoCorrect={false}
               placeholder="Scan or type IMEI"
             />
           </MzField>
@@ -230,7 +240,9 @@ export default function MobizonePurchaseScreen(): React.JSX.Element {
             <MzInput
               value={imei2}
               onChangeText={setImei2}
-              keyboardType="number-pad"
+              keyboardType="default"
+              autoCapitalize="none"
+              autoCorrect={false}
               placeholder="Second IMEI"
             />
           </MzField>

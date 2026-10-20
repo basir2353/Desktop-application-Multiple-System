@@ -4,6 +4,7 @@ import { PageHeader } from "../../pops/ui/PageHeader";
 import { cardClass, mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
 import { findDeviceByImei, formatPkr } from "../lib/mobizoneStore";
+import { MzOptionalCameraImeiScan } from "../components/MzOptionalCameraImeiScan";
 import { MzField, MzInput, MzPrimaryButton, MzSecondaryButton, MzSection } from "../ui/MobizoneUi";
 
 export function MobizoneImeiPage(): JSX.Element {
@@ -61,21 +62,33 @@ setTimeout(()=>window.print(),400);<\/script>
         subtitle="Scan to open a phone record, or print IMEI stickers for stock."
       />
       <MzSection title="Scanner">
+        <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+          Type or USB/Bluetooth scanner fills this field without camera. Camera scan is optional.
+        </p>
         <div className="flex flex-wrap gap-2">
           <MzField label="IMEI / barcode">
-            <MzInput
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setErr(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onSearch();
-              }}
-              className="min-w-[260px] font-mono"
-              placeholder="Scan here…"
-              autoFocus
-            />
+            <div className="space-y-2">
+              <MzInput
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setErr(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onSearch();
+                }}
+                className="min-w-[260px] font-mono"
+                placeholder="Scan here…"
+                autoFocus
+              />
+              <MzOptionalCameraImeiScan
+                label="Camera scan (optional)"
+                onDetected={(code) => {
+                  setQ(code);
+                  setErr(null);
+                }}
+              />
+            </div>
           </MzField>
           <div className="flex items-end gap-2">
             <MzPrimaryButton onClick={onSearch}>Find</MzPrimaryButton>

@@ -44,19 +44,47 @@ export function CashManagementPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Cash management" subtitle="Cash drawer opening, closing, and variance reports." />
+      <PageHeader
+        title="Cash management"
+        subtitle="Cash Register (1101) drawer — set opening balance, run the shift, then close with counted cash."
+      />
+
+      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-100/90">
+        <p className="font-semibold text-emerald-200">Cash account flow</p>
+        <ol className="mt-1 list-decimal space-y-0.5 pl-4 text-emerald-100/80">
+          <li>Open shift with opening float (posts JV to Cash Register + Owner Equity).</li>
+          <li>POS cash sales and expenses update the same cash account.</li>
+          <li>Close shift with counted cash — variance posts automatically.</li>
+        </ol>
+      </div>
 
       {canOperateDrawer && !openSession ? (
         <AccountingFormPanel
-          title="Open cash drawer"
-          submitLabel="Open shift"
+          title="Open cash drawer — Cash Register opening balance"
+          submitLabel="Open shift & post opening balance"
           disabled={openMutation.isPending}
           onSubmit={() => {
             if (!branch?.code) return;
             openMutation.mutate({ branchCode: branch.code, openingFloat: Number(openingFloat) || 0 });
           }}
         >
-          <input className={accountingInputClass} placeholder="Opening float (PKR)" type="number" value={openingFloat} onChange={(e) => setOpeningFloat(e.target.value)} />
+          <label className="block text-xs text-slate-400">
+            Opening float / opening balance (PKR)
+            <input
+              className={`${accountingInputClass} mt-1`}
+              placeholder="e.g. 5000"
+              type="number"
+              value={openingFloat}
+              onChange={(e) => setOpeningFloat(e.target.value)}
+            />
+          </label>
+          <p className="text-[11px] text-slate-500">
+            Amount 0 = open drawer with empty float. Amount &gt; 0 creates a journal voucher for Cash
+            Register opening balance.
+          </p>
+          {openMutation.isError ? (
+            <p className="text-xs text-red-400">{(openMutation.error as Error).message}</p>
+          ) : null}
         </AccountingFormPanel>
       ) : null}
 
@@ -67,7 +95,19 @@ export function CashManagementPage(): JSX.Element {
           disabled={closeMutation.isPending || !countedCash}
           onSubmit={() => closeMutation.mutate({ sessionId: openSession.id, counted: Number(countedCash) })}
         >
-          <input className={accountingInputClass} placeholder="Counted cash (PKR)" type="number" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} />
+          <p className="text-xs text-slate-400">
+            Opening float: {formatPkr(Number(openSession.openingFloat))}
+            {openSession.expectedCash != null
+              ? ` · Expected now: ${formatPkr(Number(openSession.expectedCash))}`
+              : ""}
+          </p>
+          <input
+            className={accountingInputClass}
+            placeholder="Counted cash (PKR)"
+            type="number"
+            value={countedCash}
+            onChange={(e) => setCountedCash(e.target.value)}
+          />
         </AccountingFormPanel>
       ) : null}
 

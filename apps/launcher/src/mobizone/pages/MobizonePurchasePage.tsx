@@ -3,6 +3,7 @@ import type { MobizonePurchase } from "@platform/contracts";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { useMobizoneDb } from "../hooks/useMobizone";
 import { formatPkr, printPurchaseReceipt, recordPurchase } from "../lib/mobizoneStore";
+import { MzOptionalCameraImeiScan } from "../components/MzOptionalCameraImeiScan";
 import {
   MzField,
   MzInput,
@@ -193,9 +194,21 @@ export function MobizonePurchasePage(): JSX.Element {
         </MzSection>
 
         <MzSection title="Device">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            IMEI: type karo ya USB/Bluetooth barcode scanner use karo — camera permission zaroori nahi.
+          </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <MzField label="IMEI *">
-              <MzInput value={imei} onChange={(e) => setImei(e.target.value)} className="font-mono" />
+              <div className="space-y-2">
+                <MzInput
+                  value={imei}
+                  onChange={(e) => setImei(e.target.value)}
+                  className="font-mono"
+                  placeholder="Scan or type IMEI"
+                  autoComplete="off"
+                />
+                <MzOptionalCameraImeiScan onDetected={(code) => setImei(code)} />
+              </div>
             </MzField>
             <MzField label="IMEI 2">
               <MzInput value={imei2} onChange={(e) => setImei2(e.target.value)} className="font-mono" />

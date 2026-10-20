@@ -1,36 +1,42 @@
-/** Classic Refined UI — Midnight Navy + Antique Gold + Warm Ivory (mockup middle row). */
+/**
+ * MobiZone — Signal Teal retail system
+ * Cool mist surfaces + deep ink chrome + teal accent (phone-counter / IMEI shop).
+ * Avoids cream–gold and purple-indigo AI defaults.
+ */
 export const mz = {
-  /** Page / content background */
-  bg: "#F6F4EF",
-  /** Navy chrome (header, bottom nav, hero cards) */
-  navy: "#14243A",
-  navyDeep: "#0E1A2B",
+  /** Page background — cool mist */
+  bg: "#E9EEF3",
+  /** Ink chrome (headers, active chrome) */
+  navy: "#0C1524",
+  navyDeep: "#070E18",
+  ink: "#0C1524",
   surface: "#FFFFFF",
   card: "#FFFFFF",
-  cardSoft: "#F0EDE6",
-  border: "#E2DDD2",
-  /** Body text on ivory/white */
-  text: "#2E2E2E",
-  muted: "#6B7280",
-  ivory: "#F6F4EF",
-  /** Antique gold accents */
-  gold: "#B89653",
-  goldDim: "#9A7A3E",
-  goldBright: "#C9A96A",
-  teal: "#0F766E",
-  tealDim: "#0D9488",
-  rose: "#B91C1C",
-  blue: "#1D4ED8",
-  orange: "#C2410C",
+  cardSoft: "#F1F5F9",
+  border: "#CDD6E1",
+  text: "#0C1524",
+  muted: "#5B6B7C",
+  /** Soft panel fill (replaces old ivory) */
+  ivory: "#F1F5F9",
+  /** Primary accent — signal teal (legacy key `gold` kept for call sites) */
+  gold: "#0F9B8E",
+  goldDim: "#0B7A70",
+  goldBright: "#14B8A6",
+  accent: "#0F9B8E",
+  teal: "#0F9B8E",
+  tealDim: "#14B8A6",
+  rose: "#E11D48",
+  blue: "#0284C7",
+  orange: "#EA580C",
   green: "#15803D",
   white: "#FFFFFF",
-  ink: "#14243A",
-  purple: "#7E22CE",
-  /** Form fields — ivory fill, dark readable text */
-  inputBg: "#FFFDF8",
-  inputText: "#2E2E2E",
-  inputBorder: "#D6D0C4",
-  /** Text on navy surfaces */
-  onNavy: "#F6F4EF",
-  onGold: "#14243A",
+  purple: "#0F9B8E",
+  inputBg: "#FFFFFF",
+  inputText: "#0C1524",
+  inputBorder: "#B8C4D1",
+  /** Text on ink surfaces */
+  onNavy: "#E9EEF3",
+  /** Text on teal primary buttons */
+  onGold: "#FFFFFF",
+  onAccent: "#FFFFFF",
 } as const;

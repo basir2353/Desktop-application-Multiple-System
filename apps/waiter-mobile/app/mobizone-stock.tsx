@@ -52,8 +52,8 @@ export default function MobizoneStockScreen(): React.JSX.Element {
             <Pressable
               onPress={() => router.push("/mobizone-purchase" as never)}
               style={{
-                backgroundColor: mz.gold,
-                borderRadius: 12,
+                backgroundColor: mz.accent,
+                borderRadius: 10,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
               }}
@@ -66,9 +66,15 @@ export default function MobizoneStockScreen(): React.JSX.Element {
         <MzInput
           value={q}
           onChangeText={setQ}
-          placeholder="Search brand, model, IMEI"
+          placeholder="Type / USB-scan IMEI, brand, model"
+          autoCapitalize="none"
+          autoCorrect={false}
           style={{ flex: undefined }}
         />
+        <Text style={{ color: mz.muted, fontSize: 11, lineHeight: 15 }}>
+          IMEI search: type or hardware scanner. Camera permission sirf tab jab aap alag se camera scan
+          choose karein (purchase pe camera forced nahi).
+        </Text>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
           <StatPill label="In stock" value={String(stock.length)} />
@@ -89,18 +95,18 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                   width: 52,
                   height: 52,
                   borderRadius: 14,
-                  backgroundColor: mz.navy,
+                  backgroundColor: mz.ink,
                   borderWidth: 1,
-                  borderColor: mz.goldDim,
+                  borderColor: mz.accent,
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
-                <Text style={{ color: mz.gold, fontWeight: "800", fontSize: 10 }}>PHONE</Text>
+                <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 10 }}>PHONE</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={{ color: mz.navy, fontWeight: "800", flexShrink: 1 }}>
+                  <Text style={{ color: mz.ink, fontWeight: "800", flexShrink: 1 }}>
                     {d.brand} {d.model}
                   </Text>
                   <MzBadge
@@ -118,7 +124,7 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                 </Text>
               </View>
               <View style={{ alignItems: "flex-end" }}>
-                <Text style={{ color: mz.goldDim, fontWeight: "800" }}>
+                <Text style={{ color: mz.accent, fontWeight: "800" }}>
                   {formatPkr(d.salePricePkr ?? d.purchasePricePkr)}
                 </Text>
                 <Text style={{ color: mz.muted, fontSize: 10, marginTop: 2 }}>sale</Text>

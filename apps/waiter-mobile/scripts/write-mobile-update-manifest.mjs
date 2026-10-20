@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 /**
- * After APK build, write latest-{admin|staff}.json for GitHub Releases auto-update.
+ * After APK build, write latest-{admin|staff|mobizone}.json for GitHub Releases auto-update.
  *
  * Usage:
- *   node scripts/write-mobile-update-manifest.mjs <admin|staff> [version] [versionCode]
+ *   node scripts/write-mobile-update-manifest.mjs <admin|staff|mobizone> [version] [versionCode]
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const VARIANTS = {
+  admin: { apkName: "pops-admin-release.apk", label: "POPS admin" },
+  staff: { apkName: "pops-staff-release.apk", label: "POPS staff" },
+  mobizone: { apkName: "mobizone-erp-release.apk", label: "MobiZone ERP" },
+};
+
 const variant = (process.argv[2] ?? "").trim();
-if (variant !== "admin" && variant !== "staff") {
-  console.error("Usage: node scripts/write-mobile-update-manifest.mjs <admin|staff> [version] [versionCode]");
+const meta = VARIANTS[variant];
+if (!meta) {
+  console.error(
+    "Usage: node scripts/write-mobile-update-manifest.mjs <admin|staff|mobizone> [version] [versionCode]",
+  );
   process.exit(1);
 }
 
@@ -31,7 +40,7 @@ function resolveRepoRoot() {
   return resolve(join(appRoot, "..", ".."));
 }
 const repoRoot = resolveRepoRoot();
-const apkName = variant === "admin" ? "pops-admin-release.apk" : "pops-staff-release.apk";
+const apkName = meta.apkName;
 const apkPath = join(appRoot, "dist", apkName);
 if (!existsSync(apkPath)) {
   console.error(`[write-mobile-update-manifest] Missing APK: ${apkPath}`);
@@ -51,7 +60,7 @@ const url = `https://github.com/${repo}/releases/download/${tag}/${apkName}`;
 const manifest = {
   version,
   versionCode,
-  notes: `POPS ${variant} ${version} — auto-update`,
+  notes: `${meta.label} ${version} — auto-update`,
   pub_date: new Date().toISOString(),
   url,
 };

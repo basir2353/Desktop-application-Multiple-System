@@ -1,6 +1,7 @@
 import {
   formatMenuItemLabel,
   formatMenuItemPrintLabel,
+  isSilentMenuVariantLabel,
   menuItemDisplayPrice,
   type Bill,
   type ExpenseCategory,
@@ -675,12 +676,8 @@ export function PosPage(): JSX.Element {
       setDeliveryDetailsOpen(false);
       return;
     }
-    // Only Delivery auto-opens customer details; Dine-in / Takeaway stay collapsed.
-    if (mode === "delivery") {
-      setDeliveryDetailsOpen(true);
-    } else if (mode === "dine-in" || mode === "takeaway") {
-      setDeliveryDetailsOpen(false);
-    }
+    // Only Delivery auto-opens customer details; Dine-in / Takeaway / others stay collapsed.
+    setDeliveryDetailsOpen(mode === "delivery");
   }, [mode]);
 
   const deliveryDetailsSummary = useMemo(() => {
@@ -991,11 +988,13 @@ export function PosPage(): JSX.Element {
       setDiscountEditedAs("pct");
     }
     setMode(nextMode);
+    // Collapse customer panel immediately on mode change (Delivery re-opens via effect).
+    setDeliveryDetailsOpen(nextMode === "delivery" && posModeShowsCustomerPanel(nextMode));
+    setDeliveryCustomerPickerOpen(false);
     if (!editingOrder) {
       setOrderRef(peekNextOrderRef(branch?.code, nextMode));
     }
     if (posModeShowsCustomerPanel(nextMode)) {
-      // Customer panel stays closed until cashier taps Customer (Option 37).
       // Restore Apply draft only while the same open ticket still has cart lines —
       // never paste last order's customer onto a blank new order.
       if (!editingOrder && branch?.code && cart.length > 0) {
@@ -1391,13 +1390,15 @@ export function PosPage(): JSX.Element {
 
   const cartListRef = useRef<HTMLDivElement>(null);
 
+  // Only clear a stale selection — do not auto-select the first line on hover/add
+  // (clients mistook amber "selected" styling for a click they never made).
   useEffect(() => {
     if (displayCart.length === 0) {
       setSelectedCartKey(null);
       return;
     }
-    if (!selectedCartKey || !displayCart.some((l) => l.key === selectedCartKey)) {
-      setSelectedCartKey(displayCart[0].key);
+    if (selectedCartKey && !displayCart.some((l) => l.key === selectedCartKey)) {
+      setSelectedCartKey(null);
     }
   }, [displayCart, selectedCartKey]);
 
@@ -1442,15 +1443,15 @@ export function PosPage(): JSX.Element {
   }, [effectiveCart]);
 
   const selectedCartLine = useMemo(
-    () => displayCart.find((l) => l.key === selectedCartKey) ?? displayCart[0] ?? null,
+    () => (selectedCartKey ? displayCart.find((l) => l.key === selectedCartKey) ?? null : null),
     [displayCart, selectedCartKey],
   );
 
-  // Disc panel follows the clicked cart card (every item, not just the first).
+  // Bill Disc stays available for discountable carts; hide only when a
+  // non-discountable / complimentary line is explicitly selected.
   const showTicketDiscount = Boolean(
-    selectedCartLine &&
-      !lineBlocksBillDiscount(selectedCartLine) &&
-      itemEligibility.discountableSubtotal > 0,
+    itemEligibility.discountableSubtotal > 0 &&
+      (!selectedCartLine || !lineBlocksBillDiscount(selectedCartLine)),
   );
   // Tax row only when tax is enabled in Settings and cart has taxable lines.
   const showTaxRow = posSettings.taxEnabled && taxPct > 0 && itemEligibility.taxableSubtotal > 0;
@@ -2030,6 +2031,7 @@ export function PosPage(): JSX.Element {
 
   const createOrderMutation = useMutation({
     onMutate: () => {
+      ensureCustomerBoundBeforeOrder();
       setOrderFlowBusy(true);
     },
     mutationFn: async () => {
@@ -2115,6 +2117,10 @@ export function PosPage(): JSX.Element {
           await persistStaffFoodRecord();
         }
         invalidateOrderFeeds();
+        const boundCustomer =
+          deliveryCustomer.trim() || deliveryPhone.trim()
+            ? deliveryCustomer.trim() || deliveryPhone.trim()
+            : "";
         // Always clear the ticket panel after Order / Update / Print order.
         setEditingOrder(null);
         resetAfterKitchenOrder();
@@ -2124,12 +2130,13 @@ export function PosPage(): JSX.Element {
             message: `${modeLabel} order updated (no item changes — kitchen not reprinted).`,
           });
         } else if (kotOk) {
+          const customerHint = boundCustomer ? ` Customer: ${boundCustomer}.` : "";
           setPrintNotice(
             noticeFromPrintResult(
               true,
               wasTicketEdit
-                ? `${modeLabel} order updated — kitchen got UPDATE REVISED (changed items only).`
-                : `${modeLabel} order saved and sent to kitchen.`,
+                ? `${modeLabel} order updated — kitchen got UPDATE REVISED (changed items only).${customerHint}`
+                : `${modeLabel} order saved and sent to kitchen.${customerHint}`,
             ),
           );
         } else {
@@ -2189,6 +2196,9 @@ export function PosPage(): JSX.Element {
   });
 
   const checkoutMutation = useMutation({
+    onMutate: () => {
+      ensureCustomerBoundBeforeOrder();
+    },
     mutationFn: async ({
       intent,
       servicePct: checkoutServicePct,
@@ -2871,6 +2881,16 @@ export function PosPage(): JSX.Element {
       deliveryPhoneInputRef.current?.focus({ preventScroll: true });
       deliveryPhoneInputRef.current?.select();
     }, 50);
+  }
+
+  /** Place / Pay without pressing Apply — still bind typed customer into the ticket notes. */
+  function ensureCustomerBoundBeforeOrder(): void {
+    if (!deliveryCustomer.trim() && !deliveryPhone.trim() && !deliveryAddress.trim()) return;
+    persistCustomerFromTicketFields();
+    setDeliveryCustomerPickerOpen(false);
+    if (mode !== "delivery") {
+      setDeliveryDetailsOpen(false);
+    }
   }
 
   function applyCustomerDetails(): void {
@@ -4341,6 +4361,9 @@ export function PosPage(): JSX.Element {
               >
                 {displayCart.map((line) => {
                   const isSelected = selectedCartLine?.key === line.key;
+                  const variantLabel = line.variant?.label?.trim() ?? "";
+                  const showVariant =
+                    Boolean(variantLabel) && !isSilentMenuVariantLabel(variantLabel);
                   if (cartLayout === "list") {
                     return (
                       <li
@@ -4359,16 +4382,21 @@ export function PosPage(): JSX.Element {
                             ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
                             : isSelected
                               ? "border-amber-400 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-amber-500/10 dark:ring-amber-500/30"
-                              : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
+                              : "border-slate-200 bg-white hover:border-slate-300/80 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700/80"
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div
-                            className="truncate text-[11px] font-medium text-slate-900 dark:text-slate-100"
+                            className="break-words text-[11px] font-medium leading-tight text-slate-900 dark:text-slate-100"
                             title={cartLinePrintLabel(line)}
                           >
-                            {cartLinePrintLabel(line)}
+                            {line.item.name}
                           </div>
+                          {showVariant ? (
+                            <div className="mt-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                              Size: {variantLabel}
+                            </div>
+                          ) : null}
                           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] tabular-nums text-slate-500">
                             {line.isComplimentary ? (
                               <span className="font-medium text-amber-700 dark:text-amber-400">Free</span>
@@ -4381,7 +4409,7 @@ export function PosPage(): JSX.Element {
                               </span>
                             )}
                             {line.lineNote?.trim() ? (
-                              <span className="truncate text-amber-700 dark:text-amber-300">
+                              <span className="break-words text-amber-700 dark:text-amber-300">
                                 · {line.lineNote.trim()}
                               </span>
                             ) : null}
@@ -4437,13 +4465,21 @@ export function PosPage(): JSX.Element {
                         ? "border-amber-400/40 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/5"
                         : isSelected
                           ? "border-amber-400 bg-amber-50 ring-1 ring-amber-400/50 dark:border-amber-500/50 dark:bg-amber-500/10 dark:ring-amber-500/30"
-                          : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700"
+                          : "border-slate-200 bg-white hover:border-slate-300/80 dark:border-slate-800/80 dark:bg-slate-950/50 dark:hover:border-slate-700/80"
                     }`}
                   >
                     <div className="min-h-0 min-w-0 flex-1 overflow-hidden leading-snug">
-                      <div className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-900 dark:text-slate-100">
-                        {cartLinePrintLabel(line)}
+                      <div
+                        className="line-clamp-2 text-[11px] font-medium leading-tight text-slate-900 dark:text-slate-100"
+                        title={cartLinePrintLabel(line)}
+                      >
+                        {line.item.name}
                       </div>
+                      {showVariant ? (
+                        <div className="mt-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                          Size: {variantLabel}
+                        </div>
+                      ) : null}
                       {line.lineNote?.trim() ? (
                         <div className="mt-0.5 line-clamp-1 text-[9px] text-amber-700 dark:text-amber-300">
                           Note: {line.lineNote.trim()}
