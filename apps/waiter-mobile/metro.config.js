@@ -16,12 +16,14 @@ const REAL_REPO = REAL_REPO_CANDIDATES.find((p) => fs.existsSync(p)) || REAL_REP
 const config = getDefaultConfig(projectRoot);
 
 config.projectRoot = projectRoot;
-// Do NOT watch the whole monorepo root — Vite's apps/launcher/node_modules/.vite
-// can disappear mid-session and Metro's FallbackWatcher crashes with ENOENT.
+// Watch packages + node_modules (needed for D:\pops / C:\pops short-path APK builds).
+// Do NOT watch apps/launcher — Vite .vite deps can vanish and crash FallbackWatcher.
 config.watchFolders = [
   projectRoot,
   path.join(monorepoRoot, "packages"),
+  path.join(monorepoRoot, "node_modules"),
   path.join(REAL_REPO, "packages"),
+  path.join(REAL_REPO, "node_modules"),
   "D:\\emc",
   "C:\\emc",
 ].filter((p, i, arr) => p && fs.existsSync(p) && arr.indexOf(p) === i);
@@ -45,18 +47,29 @@ config.resolver.unstable_enableSymlinks = true;
 // Package exports can resolve React to react.shared-subset (no hooks) → "useRef of null" in release APKs.
 config.resolver.unstable_enablePackageExports = false;
 
-// Keep short junction paths (do NOT realpath) — realpaths make AAPT drawable names too long on Windows.
+/** Realpath for Metro hashing — Windows junctions under D:\pops break SHA-1. */
+function metroReal(p) {
+  try {
+    return fs.existsSync(p) ? fs.realpathSync(p) : p;
+  } catch {
+    return p;
+  }
+}
+
+// Keep short junction paths for native assets; Metro JS uses realpath below.
 const extra = {};
 for (const name of ["expo-router", "expo", "react", "react-native"]) {
   const candidate = path.join(appNodeModules, name);
   if (fs.existsSync(candidate)) extra[name] = candidate;
 }
-// Prefer monorepo React if app-local is a broken junction
+// Prefer real repo React so Metro can hash files under a watched real path.
 const reactRoot = [
-  path.join(appNodeModules, "react"),
-  path.resolve(monorepoRoot, "node_modules/react"),
   path.resolve(REAL_REPO, "node_modules/react"),
-].find((p) => fs.existsSync(path.join(p, "index.js")));
+  path.resolve(monorepoRoot, "node_modules/react"),
+  path.join(appNodeModules, "react"),
+]
+  .map(metroReal)
+  .find((p) => fs.existsSync(path.join(p, "index.js")));
 if (reactRoot) extra.react = reactRoot;
 
 const shortElements = path.join(projectRoot, "vendor", "rne");
@@ -83,13 +96,16 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // Single React instance — avoid monorepo duplicates / shared-subset.
   if (reactRoot) {
     if (moduleName === "react") {
-      return { type: "sourceFile", filePath: path.join(reactRoot, "index.js") };
+      return { type: "sourceFile", filePath: metroReal(path.join(reactRoot, "index.js")) };
     }
     if (moduleName === "react/jsx-runtime") {
-      return { type: "sourceFile", filePath: path.join(reactRoot, "jsx-runtime.js") };
+      return { type: "sourceFile", filePath: metroReal(path.join(reactRoot, "jsx-runtime.js")) };
     }
     if (moduleName === "react/jsx-dev-runtime") {
-      return { type: "sourceFile", filePath: path.join(reactRoot, "jsx-dev-runtime.js") };
+      return {
+        type: "sourceFile",
+        filePath: metroReal(path.join(reactRoot, "jsx-dev-runtime.js")),
+      };
     }
   }
 
