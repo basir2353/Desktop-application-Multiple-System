@@ -74,43 +74,67 @@ if not exist "C:\emc\package.json" (
 goto :eof
 
 :BUILD_APK_ADMIN
-call :PREP_APK_ROOT
 echo.
 echo === FAST ADMIN APK (Expo React Native) ===
+if /I "%POPS_SKIP_SHORT_PATH%"=="1" goto BUILD_APK_ADMIN_REPO
+call :PREP_APK_ROOT
 cd /d "%POPS_BUILD_ROOT%"
 call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:admin-apk:win
 if errorlevel 1 (
-  cd /d "%REPO%"
-  call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:admin-apk:win
-  if errorlevel 1 exit /b 1
+  echo Short-path admin APK failed — retrying from real repo...
+  goto BUILD_APK_ADMIN_REPO
 )
 call :COPY_APK_TO_REPO pops-admin-release.apk
 echo Done: %REPO%\apps\waiter-mobile\dist\pops-admin-release.apk
 exit /b 0
 
+:BUILD_APK_ADMIN_REPO
+cd /d "%REPO%"
+set "POPS_SKIP_SHORT_PATH=1"
+call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:admin-apk:win
+if errorlevel 1 exit /b 1
+echo Done: %REPO%\apps\waiter-mobile\dist\pops-admin-release.apk
+exit /b 0
+
 :BUILD_APK_STAFF
-call :PREP_APK_ROOT
 echo.
 echo === FAST STAFF APK (Expo React Native) ===
+if /I "%POPS_SKIP_SHORT_PATH%"=="1" goto BUILD_APK_STAFF_REPO
+call :PREP_APK_ROOT
 cd /d "%POPS_BUILD_ROOT%"
 call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:staff-apk:win
 if errorlevel 1 (
-  cd /d "%REPO%"
-  call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:staff-apk:win
-  if errorlevel 1 exit /b 1
+  echo Short-path staff APK failed — retrying from real repo...
+  goto BUILD_APK_STAFF_REPO
 )
 call :COPY_APK_TO_REPO pops-staff-release.apk
+echo Done: %REPO%\apps\waiter-mobile\dist\pops-staff-release.apk
+exit /b 0
+
+:BUILD_APK_STAFF_REPO
+cd /d "%REPO%"
+set "POPS_SKIP_SHORT_PATH=1"
+call "%APPDATA%\npm\pnpm.cmd" --filter @platform/waiter-mobile build:staff-apk:win
+if errorlevel 1 exit /b 1
 echo Done: %REPO%\apps\waiter-mobile\dist\pops-staff-release.apk
 exit /b 0
 
 :COPY_APK_TO_REPO
 set "APK_NAME=%~1"
 mkdir "%REPO%\apps\waiter-mobile\dist" 2>nul
-if exist "%POPS_BUILD_ROOT%\apps\waiter-mobile\dist\%APK_NAME%" (
-  copy /Y "%POPS_BUILD_ROOT%\apps\waiter-mobile\dist\%APK_NAME%" "%REPO%\apps\waiter-mobile\dist\%APK_NAME%" >nul
+REM Only pull from short-path dist when it is newer than the repo copy.
+REM Otherwise a failed D:\pops build + successful repo fallback gets overwritten by a stale APK.
+set "SRC=%POPS_BUILD_ROOT%\apps\waiter-mobile\dist\%APK_NAME%"
+set "DST=%REPO%\apps\waiter-mobile\dist\%APK_NAME%"
+if exist "%SRC%" (
+  if not exist "%DST%" (
+    copy /Y "%SRC%" "%DST%" >nul
+  ) else (
+    xcopy /Y /D "%SRC%" "%DST%" >nul
+  )
 )
 if exist "%POPS_BUILD_ROOT%\dist-installers\mobile-updates" (
-  robocopy "%POPS_BUILD_ROOT%\dist-installers\mobile-updates" "%REPO%\dist-installers\mobile-updates" /E /NFL /NDL /NJH /NJS /nc /ns /np >nul
+  robocopy "%POPS_BUILD_ROOT%\dist-installers\mobile-updates" "%REPO%\dist-installers\mobile-updates" /E /XO /NFL /NDL /NJH /NJS /nc /ns /np >nul
 )
 goto :eof
 

@@ -1,4 +1,5 @@
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useFonts } from "expo-font";
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
@@ -21,6 +22,9 @@ import { warmApiConnection } from "../src/lib/warmApi";
 import { useBranchStore } from "../src/stores/branchStore";
 import { useSessionStore } from "../src/stores/sessionStore";
 import { useThemeStore } from "../src/stores/themeStore";
+
+/** Local font — Metro often drops pnpm-nested @expo/vector-icons/*.ttf from release APKs. */
+const IONICONS_FONT = require("../assets/fonts/Ionicons.ttf") as number;
 
 /** Hard cap so SecureStore hangs never leave a permanent blank root. */
 const BOOT_HYDRATE_TIMEOUT_MS = 4000;
@@ -212,6 +216,10 @@ function ThemedStack() {
 }
 
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    // Must match @expo/vector-icons Ionicons fontFamily ("ionicons").
+    ionicons: IONICONS_FONT,
+  });
   const hydrateSession = useSessionStore((s) => s.hydrate);
   const hydrateBranch = useBranchStore((s) => s.hydrate);
   const hydrateTheme = useThemeStore((s) => s.hydrate);
@@ -219,7 +227,7 @@ export default function RootLayout() {
   const branchHydrated = useBranchStore((s) => s.hydrated);
   const accessToken = useSessionStore((s) => s.accessToken);
   const colors = getColors();
-  const booting = !sessionHydrated || !branchHydrated;
+  const booting = !fontsLoaded || !sessionHydrated || !branchHydrated;
 
   useEffect(() => {
     void warmApiConnection();

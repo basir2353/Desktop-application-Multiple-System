@@ -787,6 +787,25 @@ mkdirSync(
   { recursive: true },
 );
 
+// Ship icon fonts into android assets (Metro/pnpm often omits node_modules/*.ttf from release APKs).
+{
+  const fontSrc = join(paths.appRoot, "assets", "fonts", "Ionicons.ttf");
+  const fontDestDir = join(paths.androidDir, "app", "src", "main", "assets", "fonts");
+  if (existsSync(fontSrc)) {
+    mkdirSync(fontDestDir, { recursive: true });
+    copyFileSync(fontSrc, join(fontDestDir, "Ionicons.ttf"));
+    console.log("[build-apk] Packaged assets/fonts/Ionicons.ttf into android assets");
+  } else {
+    // Short-path builds may not mirror assets/ — fall back to real waiter-mobile tree.
+    const fallback = join(appRoot, "assets", "fonts", "Ionicons.ttf");
+    if (existsSync(fallback)) {
+      mkdirSync(fontDestDir, { recursive: true });
+      copyFileSync(fallback, join(fontDestDir, "Ionicons.ttf"));
+      console.log("[build-apk] Packaged Ionicons.ttf from real app root into android assets");
+    }
+  }
+}
+
 const gradlew = join(paths.androidDir, isWin ? "gradlew.bat" : "gradlew");
 // Fast builds keep the Gradle daemon warm (~minutes saved on repeat builds).
 const useDaemon =

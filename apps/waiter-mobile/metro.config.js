@@ -181,13 +181,15 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (withExt) return { type: "sourceFile", filePath: withExt };
   }
 
-  // Workspace packages (@platform/*) — resolve via junction / packages folder.
+  // Workspace packages (@platform/*) — always realpath so D:\pops junctions don't break Metro SHA-1.
   if (moduleName === "@platform/contracts" || moduleName.startsWith("@platform/contracts/")) {
     const contractsRoot = [
-      path.join(appNodeModules, "@platform", "contracts"),
-      path.join(monorepoRoot, "packages", "contracts"),
       path.join(REAL_REPO, "packages", "contracts"),
-    ].find((p) => fs.existsSync(path.join(p, "package.json")));
+      path.join(monorepoRoot, "packages", "contracts"),
+      path.join(appNodeModules, "@platform", "contracts"),
+    ]
+      .map(metroReal)
+      .find((p) => fs.existsSync(path.join(p, "package.json")));
     if (contractsRoot) {
       const rest =
         moduleName === "@platform/contracts"
@@ -196,23 +198,25 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       if (!rest) {
         const main = path.join(contractsRoot, "dist", "index.js");
         const src = path.join(contractsRoot, "src", "index.ts");
-        const hit = [main, src].find((p) => fs.existsSync(p));
+        const hit = [main, src].map(metroReal).find((p) => fs.existsSync(p));
         if (hit) return { type: "sourceFile", filePath: hit };
       } else {
         const abs = path.join(contractsRoot, rest);
-        const withExt = [abs, `${abs}.js`, `${abs}.ts`, path.join(abs, "index.js")].find((p) =>
-          fs.existsSync(p),
-        );
+        const withExt = [abs, `${abs}.js`, `${abs}.ts`, path.join(abs, "index.js")]
+          .map(metroReal)
+          .find((p) => fs.existsSync(p));
         if (withExt) return { type: "sourceFile", filePath: withExt };
       }
     }
   }
   if (moduleName === "@platform/auth-client" || moduleName.startsWith("@platform/auth-client/")) {
     const authRoot = [
-      path.join(appNodeModules, "@platform", "auth-client"),
-      path.join(monorepoRoot, "packages", "auth-client"),
       path.join(REAL_REPO, "packages", "auth-client"),
-    ].find((p) => fs.existsSync(path.join(p, "package.json")));
+      path.join(monorepoRoot, "packages", "auth-client"),
+      path.join(appNodeModules, "@platform", "auth-client"),
+    ]
+      .map(metroReal)
+      .find((p) => fs.existsSync(path.join(p, "package.json")));
     if (authRoot) {
       const rest =
         moduleName === "@platform/auth-client"
@@ -221,7 +225,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       if (!rest) {
         const main = path.join(authRoot, "dist", "index.js");
         const src = path.join(authRoot, "src", "index.ts");
-        const hit = [main, src].find((p) => fs.existsSync(p));
+        const hit = [main, src].map(metroReal).find((p) => fs.existsSync(p));
         if (hit) return { type: "sourceFile", filePath: hit };
       }
     }

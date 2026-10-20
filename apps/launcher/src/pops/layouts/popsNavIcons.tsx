@@ -223,6 +223,184 @@ const icons: Record<string, (props: IconProps) => JSX.Element> = {
       <path d="M17 11h4M19 9v4" />
     </Svg>
   ),
+  // —— MobiZone ——
+  "Universal Search": (p) => (
+    <Svg {...p}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4 4" />
+    </Svg>
+  ),
+  "Legal record": (p) => (
+    <Svg {...p}>
+      <path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z" />
+      <path d="M14 3v6h6M9 13h6M9 17h4" />
+    </Svg>
+  ),
+  Trade: (p) => (
+    <Svg {...p}>
+      <path d="M7 7h11l-1.5 8H8.5L7 7z" />
+      <circle cx="10" cy="19" r="1.4" />
+      <circle cx="16" cy="19" r="1.4" />
+      <path d="M3 5h4" />
+    </Svg>
+  ),
+  "Sell phone": (p) => (
+    <Svg {...p}>
+      <rect x="8" y="2" width="8" height="20" rx="2" />
+      <path d="M11 18h2" />
+    </Svg>
+  ),
+  "Buy phone": (p) => (
+    <Svg {...p}>
+      <rect x="8" y="2" width="8" height="20" rx="2" />
+      <path d="M12 8v4M10 10h4" />
+    </Svg>
+  ),
+  "Sale return": (p) => (
+    <Svg {...p}>
+      <path d="M9 14l-4-4 4-4" />
+      <path d="M5 10h11a4 4 0 010 8h-3" />
+    </Svg>
+  ),
+  "Purchase return": (p) => (
+    <Svg {...p}>
+      <path d="M15 10l4 4-4 4" />
+      <path d="M19 14H8a4 4 0 010-8h3" />
+    </Svg>
+  ),
+  "Sales history": (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v5l3 2" />
+    </Svg>
+  ),
+  "Purchase history": (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v5l-3 2" />
+    </Svg>
+  ),
+  Stock: (p) => (
+    <Svg {...p}>
+      <path d="M4 7l8-4 8 4-8 4-8-4z" />
+      <path d="M4 12l8 4 8-4M4 17l8 4 8-4" />
+    </Svg>
+  ),
+  "Phone stock": (p) => (
+    <Svg {...p}>
+      <rect x="7" y="3" width="10" height="18" rx="2" />
+      <path d="M10 17h4M4 8h3M4 12h3M17 8h3M17 12h3" />
+    </Svg>
+  ),
+  "IMEI / barcode": (p) => (
+    <Svg {...p}>
+      <path d="M4 7V5h3M17 5h3v2M20 17v2h-3M7 19H4v-2M7 8v8M10 8v8M12 8v8M15 8v8M17 8v8" />
+    </Svg>
+  ),
+  "People & ledgers": (p) => (
+    <Svg {...p}>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3 19c0-2.8 2.2-5 5-5h2c2.8 0 5 2.2 5 5" />
+      <path d="M16 11h5M18.5 8.5v5" />
+    </Svg>
+  ),
+  Customers: (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7" />
+    </Svg>
+  ),
+  Shopkeepers: (p) => (
+    <Svg {...p}>
+      <path d="M3 10l2-5h14l2 5" />
+      <path d="M4 10h16v9H4z" />
+      <path d="M9 19v-5h6v5" />
+    </Svg>
+  ),
+  "Credit & ledger": (p) => (
+    <Svg {...p}>
+      <path d="M4 5h16v14H4z" />
+      <path d="M8 9h8M8 13h5" />
+    </Svg>
+  ),
+  "Pending payments": (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l2.5 1.5" />
+    </Svg>
+  ),
+  Money: (p) => (
+    <Svg {...p}>
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.5" />
+    </Svg>
+  ),
+  "Cash Ledger": (p) => (
+    <Svg {...p}>
+      <rect x="3" y="6" width="18" height="12" rx="2" />
+      <path d="M7 12h2M15 12h2M12 9v6" />
+    </Svg>
+  ),
+  "Bank accounts": (p) => (
+    <Svg {...p}>
+      <path d="M3 10l9-5 9 5" />
+      <path d="M5 10v8M9 10v8M15 10v8M19 10v8M3 18h18" />
+    </Svg>
+  ),
+  "Create Expense": (p) => (
+    <Svg {...p}>
+      <path d="M12 5v14M5 12h14" />
+      <circle cx="12" cy="12" r="9" />
+    </Svg>
+  ),
+  "Account Expense": (p) => (
+    <Svg {...p}>
+      <path d="M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14" />
+      <path d="M8 15l2-3 2 2 3-4" />
+    </Svg>
+  ),
+  "Contra Voucher": (p) => (
+    <Svg {...p}>
+      <path d="M7 7h10M7 12h10M7 17h6" />
+      <path d="M17 15l3 3-3 3" />
+    </Svg>
+  ),
+  "General Voucher": (p) => (
+    <Svg {...p}>
+      <path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z" />
+      <path d="M14 3v6h6M8 13h8M8 17h5" />
+    </Svg>
+  ),
+  "Business report": (p) => (
+    <Svg {...p}>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </Svg>
+  ),
+  "Sale & purchase": (p) => (
+    <Svg {...p}>
+      <path d="M3 12h6l2-3 3 6 2-3h5" />
+    </Svg>
+  ),
+  "Profit / loss": (p) => (
+    <Svg {...p}>
+      <path d="M4 16l5-5 3 3 7-7" />
+      <path d="M14 7h5v5" />
+    </Svg>
+  ),
+  "Bill print settings": (p) => (
+    <Svg {...p}>
+      <path d="M6 9V3h12v6" />
+      <rect x="4" y="9" width="16" height="8" rx="1.5" />
+      <path d="M6 17h12v4H6zM9 13h6" />
+    </Svg>
+  ),
+  "Receipt printer": (p) => (
+    <Svg {...p}>
+      <path d="M6 9V3h12v6" />
+      <rect x="4" y="9" width="16" height="8" rx="1.5" />
+      <path d="M6 17h12v4H6z" />
+    </Svg>
+  ),
 };
 
 export function PopsNavIcon({ label, className }: { label: string; className?: string }): JSX.Element {
