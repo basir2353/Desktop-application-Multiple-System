@@ -55,3 +55,10 @@ ios/
 *.key
 *.mobileprovision
 *.orig.*
+
+# Local scratch / generated media (do not commit)
+.tmp-video/
+.tmp/
+
+# Built installers & updater payloads (keep local only)
+dist-installers/
