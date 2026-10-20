@@ -6,7 +6,9 @@ import {
   getCashBankBalances,
   getMobizoneDashboard,
   loadMobizoneDb,
+  recordContraVoucher,
   recordExpense,
+  recordGeneralVoucher,
   recordPurchase,
   recordSale,
   returnSale,
@@ -153,6 +155,77 @@ describe("mobizoneStore", () => {
         payment: { cashPkr: 1, bankPkr: 0 },
       }),
     ).toThrow(/not available/i);
+  });
+
+  it("contra voucher moves cash to bank", () => {
+    const bank = upsertBankAccount(BRANCH, {
+      bankName: "HBL",
+      accountTitle: "Shop",
+      openingBalancePkr: 0,
+    });
+    recordPurchase(BRANCH, {
+      sellerName: "S",
+      imei: "351000000000001",
+      brand: "A",
+      model: "1",
+      condition: "used",
+      purchasePricePkr: 5000,
+      payment: { cashPkr: 0, bankPkr: 0 },
+    });
+    const device = findDeviceByImei(BRANCH, "351000000000001")!;
+    recordSale(BRANCH, {
+      deviceId: device.id,
+      customerName: "C",
+      pricePkr: 10000,
+      payment: { cashPkr: 10000, bankPkr: 0 },
+    });
+    expect(getCashBankBalances(loadMobizoneDb(BRANCH)).cash).toBe(10000);
+    recordContraVoucher(BRANCH, {
+      from: { kind: "cash" },
+      to: { kind: "bank", accountId: bank.id },
+      amountPkr: 10000,
+      reference: "DEP-1",
+    });
+    const bal = getCashBankBalances(loadMobizoneDb(BRANCH));
+    expect(bal.cash).toBe(0);
+    expect(bal.byAccount[bank.id]).toBe(10000);
+  });
+
+  it("general voucher adjusts customer receivable and shopkeeper payable", () => {
+    const shop = upsertShopkeeper(BRANCH, { shopNo: "100", name: "Basit Bhai" });
+    recordPurchase(BRANCH, {
+      sellerName: "Basit Bhai",
+      shopkeeperId: shop.id,
+      imei: "351000000000002",
+      brand: "A",
+      model: "2",
+      condition: "used",
+      purchasePricePkr: 2000,
+      payment: { cashPkr: 0, bankPkr: 0 },
+    });
+    const device = findDeviceByImei(BRANCH, "351000000000002")!;
+    const sale = recordSale(BRANCH, {
+      deviceId: device.id,
+      customerName: "Affan Bhai",
+      customerPhone: "03001234567",
+      customerCnic: "35202-1234567-1",
+      pricePkr: 2000,
+      payment: { cashPkr: 0, bankPkr: 0 },
+    });
+    const customerId = sale.customerId!;
+    expect(shopkeeperBalance(BRANCH, shop.id)).toBe(2000);
+    expect(loadMobizoneDb(BRANCH).customers.find((c) => c.id === customerId)!.pendingPkr).toBe(2000);
+
+    recordGeneralVoucher(BRANCH, {
+      reference: "JV-1",
+      note: "Affan paid Basit directly",
+      lines: [
+        { accountKind: "shopkeeper", accountId: shop.id, side: "debit", amountPkr: 2000 },
+        { accountKind: "customer", accountId: customerId, side: "credit", amountPkr: 2000 },
+      ],
+    });
+    expect(shopkeeperBalance(BRANCH, shop.id)).toBe(0);
+    expect(loadMobizoneDb(BRANCH).customers.find((c) => c.id === customerId)!.pendingPkr).toBe(0);
   });
 
   it("expenses reduce dashboard profit and business report", () => {

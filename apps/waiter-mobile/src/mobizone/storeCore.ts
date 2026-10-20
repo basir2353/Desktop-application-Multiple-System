@@ -5,12 +5,16 @@ import type {
   MobizoneCustomer,
   MobizoneDashboard,
   MobizoneDevice,
+  MobizoneDocumentAttachment,
   MobizoneExpense,
+  MobizoneExpenseAccount,
   MobizoneLedgerEntry,
   MobizonePurchase,
   MobizoneSale,
   MobizoneShopkeeper,
   MobizoneSplitPayment,
+  MobizoneVoucher,
+  MobizoneVoucherLine,
 } from "@platform/contracts";
 import { Linking } from "react-native";
 import {
@@ -29,6 +33,8 @@ export type MobizoneDb = {
   shopkeepers: MobizoneShopkeeper[];
   ledger: MobizoneLedgerEntry[];
   expenses: MobizoneExpense[];
+  expenseAccounts: MobizoneExpenseAccount[];
+  vouchers: MobizoneVoucher[];
 };
 
 function storageKey(branchCode: string): string {
@@ -49,7 +55,71 @@ function emptyDb(): MobizoneDb {
     shopkeepers: [],
     ledger: [],
     expenses: [],
+    expenseAccounts: [],
+    vouchers: [],
   };
+}
+
+export function todayDateInput(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function monthStartDateInput(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
+}
+
+function startOfDayLocal(dateYmd: string): Date | null {
+  const raw = (dateYmd ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [ys, ms, ds] = raw.split("-");
+  const dt = new Date(Number(ys), Number(ms) - 1, Number(ds), 0, 0, 0, 0);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function endOfDayLocal(dateYmd: string): Date | null {
+  const raw = (dateYmd ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [ys, ms, ds] = raw.split("-");
+  const dt = new Date(Number(ys), Number(ms) - 1, Number(ds), 23, 59, 59, 999);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+export function filterByDateRange<T extends { createdAt: string }>(
+  rows: T[],
+  fromYmd: string | null | undefined,
+  toYmd: string | null | undefined,
+): T[] {
+  const from = fromYmd ? startOfDayLocal(fromYmd) : null;
+  const to = toYmd ? endOfDayLocal(toYmd) : null;
+  if (!from && !to) return rows;
+  return rows.filter((r) => {
+    const t = new Date(r.createdAt).getTime();
+    if (Number.isNaN(t)) return false;
+    if (from && t < from.getTime()) return false;
+    if (to && t > to.getTime()) return false;
+    return true;
+  });
+}
+
+export function billDateToIso(dateYmd: string | null | undefined): string {
+  const raw = (dateYmd ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return nowIso();
+  const [ys, ms, ds] = raw.split("-");
+  const y = Number(ys);
+  const m = Number(ms);
+  const d = Number(ds);
+  if (!y || !m || !d) return nowIso();
+  const now = new Date();
+  const dt = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  if (Number.isNaN(dt.getTime())) return nowIso();
+  return dt.toISOString();
 }
 
 function newId(): string {
@@ -80,6 +150,8 @@ export function loadMobizoneDb(branchCode: string): MobizoneDb {
         shopkeepers: parsed.shopkeepers ?? [],
         ledger: parsed.ledger ?? [],
         expenses: parsed.expenses ?? [],
+        expenseAccounts: parsed.expenseAccounts ?? [],
+        vouchers: parsed.vouchers ?? [],
       };
     }
     const legacy = mzStorageGet(legacyKey(branchCode));
@@ -113,6 +185,8 @@ export function loadMobizoneDb(branchCode: string): MobizoneDb {
         shopkeepers: [],
         ledger: [],
         expenses: [],
+        expenseAccounts: [],
+        vouchers: [],
       };
       saveMobizoneDb(branchCode, migrated);
       return migrated;
@@ -177,8 +251,37 @@ export function getCashBankBalances(db: MobizoneDb): { cash: number; bank: numbe
       byAccount[x.bankAccountId] = (byAccount[x.bankAccountId] || 0) - x.amountPkr;
     }
   }
+  for (const v of db.vouchers ?? []) {
+    for (const line of v.lines) {
+      const sign = line.side === "debit" ? 1 : -1;
+      if (line.accountKind === "cash") cash += sign * line.amountPkr;
+      else if (line.accountKind === "bank" && line.accountId) {
+        byAccount[line.accountId] = (byAccount[line.accountId] || 0) + sign * line.amountPkr;
+      }
+    }
+  }
   const bank = Object.values(byAccount).reduce((a, n) => a + n, 0);
   return { cash, bank, byAccount };
+}
+
+function customerVoucherAdjustPkr(db: MobizoneDb, customerId: string): number {
+  let adj = 0;
+  for (const v of db.vouchers ?? []) {
+    for (const line of v.lines) {
+      if (line.accountKind !== "customer" || line.accountId !== customerId) continue;
+      adj += line.side === "debit" ? line.amountPkr : -line.amountPkr;
+    }
+  }
+  return adj;
+}
+
+function bankLedgerName(account: MobizoneBankAccount): string {
+  const title = account.accountTitle?.trim();
+  const bank = account.bankName?.trim();
+  if (title && bank && title.toLowerCase() !== bank.toLowerCase()) {
+    return `${title} (${bank})`;
+  }
+  return title || bank || "Bank";
 }
 
 function normalizeCnic(cnic: string | null | undefined): string {
@@ -200,9 +303,10 @@ function assertBankAccountWhenNeeded(
 }
 
 function recomputeCustomerPending(db: MobizoneDb, customerId: string): void {
-  const pending = db.sales
+  const fromSales = db.sales
     .filter((s) => s.customerId === customerId && !s.returnedAt)
     .reduce((a, s) => a + (s.remainingPkr || 0), 0);
+  const pending = Math.max(0, fromSales + customerVoucherAdjustPkr(db, customerId));
   db.customers = db.customers.map((c) => (c.id === customerId ? { ...c, pendingPkr: pending } : c));
 }
 
@@ -241,11 +345,38 @@ export function getMobizoneDashboard(branchCode: string): MobizoneDashboard {
     todayPurchasesPkr: purchasesToday.reduce((a, p) => a + p.purchasePricePkr, 0),
     todayProfitPkr:
       salesToday.reduce((a, s) => a + s.profitPkr, 0) -
-      expensesToday.reduce((a, x) => a + x.amountPkr, 0),
-    pendingReceivablesPkr: db.sales
-      .filter((s) => !s.returnedAt)
-      .reduce((a, s) => a + (s.remainingPkr || 0), 0),
-    pendingPayablesPkr: db.purchases.reduce((a, p) => a + (p.remainingPkr || 0), 0),
+      expensesToday.reduce((a, x) => a + x.amountPkr, 0) -
+      (db.vouchers ?? [])
+        .filter((v) => v.createdAt.startsWith(today))
+        .reduce((a, v) => {
+          for (const line of v.lines) {
+            if (line.accountKind !== "expense") continue;
+            a += line.side === "debit" ? line.amountPkr : -line.amountPkr;
+          }
+          return a;
+        }, 0),
+    pendingReceivablesPkr: Math.max(
+      0,
+      db.sales.filter((s) => !s.returnedAt).reduce((a, s) => a + (s.remainingPkr || 0), 0) +
+        (db.vouchers ?? []).reduce((a, v) => {
+          for (const line of v.lines) {
+            if (line.accountKind !== "customer") continue;
+            a += line.side === "debit" ? line.amountPkr : -line.amountPkr;
+          }
+          return a;
+        }, 0),
+    ),
+    pendingPayablesPkr: Math.max(
+      0,
+      db.purchases.filter((p) => !p.returnedAt).reduce((a, p) => a + (p.remainingPkr || 0), 0) +
+        (db.vouchers ?? []).reduce((a, v) => {
+          for (const line of v.lines) {
+            if (line.accountKind !== "shopkeeper") continue;
+            a += line.side === "credit" ? line.amountPkr : -line.amountPkr;
+          }
+          return a;
+        }, 0),
+    ),
     cashBalancePkr: cash,
     bankBalancePkr: bank,
   };
@@ -266,7 +397,16 @@ export function getBusinessReport(
   const sales = db.sales.filter((s) => !s.returnedAt && inRange(s.createdAt));
   const purchases = db.purchases.filter((p) => inRange(p.createdAt));
   const expenses = (db.expenses ?? []).filter((x) => inRange(x.createdAt));
-  const expenseTotal = expenses.reduce((a, x) => a + x.amountPkr, 0);
+  const voucherExpense = (db.vouchers ?? [])
+    .filter((v) => inRange(v.createdAt))
+    .reduce((a, v) => {
+      for (const line of v.lines) {
+        if (line.accountKind !== "expense") continue;
+        a += line.side === "debit" ? line.amountPkr : -line.amountPkr;
+      }
+      return a;
+    }, 0);
+  const expenseTotal = expenses.reduce((a, x) => a + x.amountPkr, 0) + voucherExpense;
   const grossProfit = sales.reduce((a, s) => a + s.profitPkr, 0);
   const { cash, bank } = getCashBankBalances(db);
   return {
@@ -437,6 +577,12 @@ export function shopkeeperBalance(branchCode: string, shopkeeperId: string): num
       !x.relatedPurchaseId,
   )) {
     bal += e.direction === "receive" ? -e.amountPkr : e.amountPkr;
+  }
+  for (const v of db.vouchers ?? []) {
+    for (const line of v.lines) {
+      if (line.accountKind !== "shopkeeper" || line.accountId !== shopkeeperId) continue;
+      bal += line.side === "credit" ? line.amountPkr : -line.amountPkr;
+    }
   }
   return bal;
 }
@@ -801,10 +947,42 @@ export function returnSale(branchCode: string, saleId: string, reason?: string):
   return db.sales.find((s) => s.id === saleId)!;
 }
 
+export function upsertExpenseAccount(
+  branchCode: string,
+  input: { id?: string; name: string; notes?: string | null },
+): MobizoneExpenseAccount {
+  const name = input.name.trim();
+  if (!name) throw new Error("Account name is required.");
+  const db = loadMobizoneDb(branchCode);
+  const existing = input.id
+    ? db.expenseAccounts.find((a) => a.id === input.id)
+    : db.expenseAccounts.find((a) => a.name.toLowerCase() === name.toLowerCase());
+  const row: MobizoneExpenseAccount = {
+    id: existing?.id ?? newId(),
+    name,
+    notes: input.notes?.trim() || null,
+    createdAt: existing?.createdAt ?? nowIso(),
+  };
+  db.expenseAccounts = existing
+    ? db.expenseAccounts.map((a) => (a.id === row.id ? row : a))
+    : [row, ...(db.expenseAccounts ?? [])];
+  saveMobizoneDb(branchCode, db);
+  return row;
+}
+
+export function seedExpenseAccounts(branchCode: string): void {
+  const db = loadMobizoneDb(branchCode);
+  if ((db.expenseAccounts ?? []).length > 0) return;
+  for (const name of ["Rent", "Electricity", "Food", "Salary", "Courier"]) {
+    upsertExpenseAccount(branchCode, { name });
+  }
+}
+
 export function recordExpense(
   branchCode: string,
   input: {
-    title: string;
+    accountId?: string | null;
+    title?: string | null;
     amountPkr: number;
     method: "cash" | "bank";
     bankAccountId?: string | null;
@@ -812,14 +990,19 @@ export function recordExpense(
   },
 ): MobizoneExpense {
   if (!(input.amountPkr > 0)) throw new Error("Amount must be greater than zero.");
-  if (!input.title.trim()) throw new Error("Expense title is required.");
   const db = loadMobizoneDb(branchCode);
+  const account = input.accountId
+    ? db.expenseAccounts.find((a) => a.id === input.accountId)
+    : undefined;
+  const title = (account?.name || input.title || "").trim();
+  if (!title) throw new Error("Select an expense account.");
   if (input.method === "bank") {
     assertBankAccountWhenNeeded(db, input.amountPkr, input.bankAccountId);
   }
   const row: MobizoneExpense = {
     id: newId(),
-    title: input.title.trim(),
+    title,
+    accountId: account?.id ?? input.accountId ?? null,
     amountPkr: input.amountPkr,
     method: input.method,
     bankAccountId: input.method === "bank" ? input.bankAccountId ?? null : null,
@@ -829,6 +1012,175 @@ export function recordExpense(
   db.expenses = [row, ...(db.expenses ?? [])];
   saveMobizoneDb(branchCode, db);
   return row;
+}
+
+export type MoneyAccountRef = { kind: "cash" } | { kind: "bank"; accountId: string };
+
+function normalizeAttachments(
+  files: MobizoneDocumentAttachment[] | null | undefined,
+): MobizoneDocumentAttachment[] {
+  if (!files?.length) return [];
+  if (files.length > 8) throw new Error("Maximum 8 reference documents per voucher.");
+  return files.map((f) => ({
+    id: f.id,
+    fileName: f.fileName.trim() || "document",
+    mimeType: f.mimeType ?? null,
+    sizeBytes: f.sizeBytes || 0,
+    dataUrl: f.dataUrl,
+    uploadedAt: f.uploadedAt || nowIso(),
+  }));
+}
+
+function assertBalancedLines(lines: MobizoneVoucherLine[]): void {
+  const debit = lines.filter((l) => l.side === "debit").reduce((a, l) => a + l.amountPkr, 0);
+  const credit = lines.filter((l) => l.side === "credit").reduce((a, l) => a + l.amountPkr, 0);
+  if (Math.abs(debit - credit) > 0.001) {
+    throw new Error(`Voucher must balance (debit ${debit} ≠ credit ${credit}).`);
+  }
+  if (!(debit > 0)) throw new Error("Amount must be greater than zero.");
+}
+
+function resolveMoneyAccountName(db: MobizoneDb, ref: MoneyAccountRef): string {
+  if (ref.kind === "cash") return "Cash on hand";
+  const acc = db.bankAccounts.find((a) => a.id === ref.accountId);
+  if (!acc) throw new Error("Bank account not found.");
+  return bankLedgerName(acc);
+}
+
+export function recordContraVoucher(
+  branchCode: string,
+  input: {
+    from: MoneyAccountRef;
+    to: MoneyAccountRef;
+    amountPkr: number;
+    entryDate?: string | null;
+    reference?: string | null;
+    note?: string | null;
+    attachments?: MobizoneDocumentAttachment[] | null;
+  },
+): MobizoneVoucher {
+  if (!(input.amountPkr > 0)) throw new Error("Amount must be greater than zero.");
+  const fromKey = input.from.kind === "cash" ? "cash" : `bank:${input.from.accountId}`;
+  const toKey = input.to.kind === "cash" ? "cash" : `bank:${input.to.accountId}`;
+  if (fromKey === toKey) throw new Error("From and To accounts must be different.");
+  const db = loadMobizoneDb(branchCode);
+  if (input.from.kind === "bank") assertBankAccountWhenNeeded(db, input.amountPkr, input.from.accountId);
+  if (input.to.kind === "bank") assertBankAccountWhenNeeded(db, input.amountPkr, input.to.accountId);
+  const amount = input.amountPkr;
+  const lines: MobizoneVoucherLine[] = [
+    {
+      accountKind: input.from.kind,
+      accountId: input.from.kind === "bank" ? input.from.accountId : null,
+      accountName: resolveMoneyAccountName(db, input.from),
+      side: "credit",
+      amountPkr: amount,
+    },
+    {
+      accountKind: input.to.kind,
+      accountId: input.to.kind === "bank" ? input.to.accountId : null,
+      accountName: resolveMoneyAccountName(db, input.to),
+      side: "debit",
+      amountPkr: amount,
+    },
+  ];
+  assertBalancedLines(lines);
+  const voucher: MobizoneVoucher = {
+    id: newId(),
+    kind: "contra",
+    createdAt: billDateToIso(input.entryDate),
+    reference: input.reference?.trim() || null,
+    note: input.note?.trim() || null,
+    amountPkr: amount,
+    lines,
+    attachments: normalizeAttachments(input.attachments),
+  };
+  db.vouchers = [voucher, ...(db.vouchers ?? [])];
+  saveMobizoneDb(branchCode, db);
+  return voucher;
+}
+
+export type GeneralVoucherLineInput = {
+  accountKind: MobizoneVoucherLine["accountKind"];
+  accountId?: string | null;
+  side: "debit" | "credit";
+  amountPkr: number;
+};
+
+function resolveVoucherAccountName(
+  db: MobizoneDb,
+  kind: MobizoneVoucherLine["accountKind"],
+  accountId: string | null | undefined,
+): string {
+  if (kind === "cash") return "Cash on hand";
+  if (kind === "bank") {
+    const acc = db.bankAccounts.find((a) => a.id === accountId);
+    if (!acc) throw new Error("Bank account not found.");
+    return bankLedgerName(acc);
+  }
+  if (kind === "customer") {
+    const c = db.customers.find((x) => x.id === accountId);
+    if (!c) throw new Error("Customer account not found.");
+    return c.name;
+  }
+  if (kind === "shopkeeper") {
+    const s = db.shopkeepers.find((x) => x.id === accountId);
+    if (!s) throw new Error("Supplier / shopkeeper account not found.");
+    return `Shop ${s.shopNo} — ${s.name}`;
+  }
+  const exp = db.expenseAccounts.find((x) => x.id === accountId);
+  if (!exp) throw new Error("Expense account not found.");
+  return exp.name;
+}
+
+export function recordGeneralVoucher(
+  branchCode: string,
+  input: {
+    lines: GeneralVoucherLineInput[];
+    entryDate?: string | null;
+    reference?: string | null;
+    note?: string | null;
+    attachments?: MobizoneDocumentAttachment[] | null;
+  },
+): MobizoneVoucher {
+  if (!input.lines || input.lines.length < 2) {
+    throw new Error("Add at least two lines (debit and credit).");
+  }
+  const db = loadMobizoneDb(branchCode);
+  const lines: MobizoneVoucherLine[] = input.lines.map((raw) => {
+    if (!(raw.amountPkr > 0)) throw new Error("Each line amount must be greater than zero.");
+    if (raw.accountKind !== "cash" && !raw.accountId) {
+      throw new Error(`Select an account for ${raw.accountKind}.`);
+    }
+    if (raw.accountKind === "bank") {
+      assertBankAccountWhenNeeded(db, raw.amountPkr, raw.accountId);
+    }
+    return {
+      accountKind: raw.accountKind,
+      accountId: raw.accountKind === "cash" ? null : raw.accountId ?? null,
+      accountName: resolveVoucherAccountName(db, raw.accountKind, raw.accountId),
+      side: raw.side,
+      amountPkr: raw.amountPkr,
+    };
+  });
+  assertBalancedLines(lines);
+  const amount = lines.filter((l) => l.side === "debit").reduce((a, l) => a + l.amountPkr, 0);
+  const voucher: MobizoneVoucher = {
+    id: newId(),
+    kind: "general",
+    createdAt: billDateToIso(input.entryDate),
+    reference: input.reference?.trim() || null,
+    note: input.note?.trim() || null,
+    amountPkr: amount,
+    lines,
+    attachments: normalizeAttachments(input.attachments),
+  };
+  db.vouchers = [voucher, ...(db.vouchers ?? [])];
+  const ids = new Set(
+    lines.filter((l) => l.accountKind === "customer" && l.accountId).map((l) => l.accountId!),
+  );
+  for (const id of ids) recomputeCustomerPending(db, id);
+  saveMobizoneDb(branchCode, db);
+  return voucher;
 }
 
 /** One-click demo starter data for first-time shops (safe to run once). */
@@ -852,6 +1204,7 @@ export function seedFriendlyDefaults(branchCode: string): void {
       notes: null,
     });
   }
+  seedExpenseAccounts(branchCode);
 }
 
 export function recordLedgerPayment(

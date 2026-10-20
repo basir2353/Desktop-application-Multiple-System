@@ -155,6 +155,78 @@ export function MzChip({
   );
 }
 
+/** Quick date presets for From/To filters on reports & history. */
+export function MzDateRangeChips({
+  fromDate,
+  toDate,
+  onChange,
+}: {
+  fromDate: string;
+  toDate: string;
+  onChange: (from: string, to: string) => void;
+}): React.JSX.Element {
+  const today = (() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return { y, m, day, ymd: `${y}-${m}-${day}`, monthStart: `${y}-${m}-01`, yearStart: `${y}-01-01` };
+  })();
+  const presets = [
+    { label: "Today", from: today.ymd, to: today.ymd },
+    { label: "Month", from: today.monthStart, to: today.ymd },
+    { label: "Year", from: today.yearStart, to: today.ymd },
+    { label: "All", from: "", to: "" },
+  ] as const;
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flex: 1 }}>
+          <MzField label="From date">
+            <MzInput
+              value={fromDate}
+              onChangeText={(v) => onChange(v, toDate)}
+              placeholder="YYYY-MM-DD"
+            />
+          </MzField>
+        </View>
+        <View style={{ flex: 1 }}>
+          <MzField label="To date">
+            <MzInput
+              value={toDate}
+              onChangeText={(v) => onChange(fromDate, v)}
+              placeholder="YYYY-MM-DD"
+            />
+          </MzField>
+        </View>
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {presets.map((p) => {
+          const active = fromDate === p.from && toDate === p.to;
+          return (
+            <Pressable
+              key={p.label}
+              onPress={() => onChange(p.from, p.to)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 10,
+                backgroundColor: active ? mz.accent : mz.cardSoft,
+                borderWidth: 1,
+                borderColor: active ? mz.accent : mz.border,
+              }}
+            >
+              <Text style={{ color: active ? mz.onGold : mz.text, fontWeight: "700", fontSize: 12 }}>
+                {p.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 export function MzScreenTitle({
   title,
   subtitle,

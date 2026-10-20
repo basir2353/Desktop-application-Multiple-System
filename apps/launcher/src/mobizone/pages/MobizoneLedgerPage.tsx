@@ -1,9 +1,18 @@
 import { useMemo, useState } from "react";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { mutedClass } from "../../pops/lib/themeClasses";
+import { useSessionStore } from "../../stores/sessionStore";
 import { useMobizoneDb } from "../hooks/useMobizone";
-import { formatPkr, recordLedgerPayment } from "../lib/mobizoneStore";
+import { canEditMobizoneBillDate } from "../lib/mobizoneAccess";
 import {
+  filterByDateRange,
+  formatPkr,
+  monthStartDateInput,
+  recordLedgerPayment,
+  todayDateInput,
+} from "../lib/mobizoneStore";
+import {
+  MzDateRangeFilter,
   MzField,
   MzInput,
   MzPrimaryButton,
@@ -14,6 +23,8 @@ import {
 
 export function MobizoneLedgerPage(): JSX.Element {
   const { branchCode, db, refresh } = useMobizoneDb();
+  const claims = useSessionStore((s) => s.claims);
+  const canSetEntryDate = canEditMobizoneBillDate(claims);
   const [partyKind, setPartyKind] = useState<"customer" | "shopkeeper">("customer");
   const [partyId, setPartyId] = useState("");
   const [direction, setDirection] = useState<"receive" | "pay">("receive");
@@ -24,10 +35,17 @@ export function MobizoneLedgerPage(): JSX.Element {
   const [note, setNote] = useState("");
   const [applySaleId, setApplySaleId] = useState("");
   const [applyPurchaseId, setApplyPurchaseId] = useState("");
+  const [entryDate, setEntryDate] = useState(todayDateInput);
+  const [fromDate, setFromDate] = useState(monthStartDateInput);
+  const [toDate, setToDate] = useState(todayDateInput);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const parties = partyKind === "customer" ? db.customers : db.shopkeepers;
+  const ledgerRows = useMemo(
+    () => filterByDateRange(db.ledger, fromDate || null, toDate || null),
+    [db.ledger, fromDate, toDate],
+  );
   const openSales = useMemo(
     () => db.sales.filter((s) => s.remainingPkr > 0 && (!partyId || s.customerId === partyId || s.shopkeeperId === partyId)),
     [db.sales, partyId],
@@ -45,6 +63,7 @@ export function MobizoneLedgerPage(): JSX.Element {
     setMsg(null);
     if (!branchCode) return;
     try {
+      const resolvedDate = canSetEntryDate ? entryDate || todayDateInput() : todayDateInput();
       recordLedgerPayment(branchCode, {
         partyKind,
         partyId,
@@ -56,12 +75,14 @@ export function MobizoneLedgerPage(): JSX.Element {
         note: note || null,
         applyToSaleId: direction === "receive" ? applySaleId || null : null,
         applyToPurchaseId: direction === "pay" ? applyPurchaseId || null : null,
+        entryDate: resolvedDate,
       });
       refresh();
       setMsg("Ledger payment saved.");
       setAmount("");
       setTxnRef("");
       setNote("");
+      setEntryDate(todayDateInput());
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not save.");
     }
@@ -70,7 +91,7 @@ export function MobizoneLedgerPage(): JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Udhaar & ledger"
+        title="Credit & ledger"
         subtitle="Record partial payments, cash/bank, and clear remaining balances on sales or purchases."
       />
       {err ? <p className="text-sm text-red-600">{err}</p> : null}
@@ -79,6 +100,16 @@ export function MobizoneLedgerPage(): JSX.Element {
       <div className="grid gap-4 lg:grid-cols-2">
         <MzSection title="New payment">
           <div className="grid gap-3 sm:grid-cols-2">
+            {canSetEntryDate ? (
+              <MzField label="Date * (admin)">
+                <MzInput
+                  type="date"
+                  value={entryDate}
+                  onChange={(e) => setEntryDate(e.target.value)}
+                  className="mz-date-input"
+                />
+              </MzField>
+            ) : null}
             <MzField label="Party type">
               <MzSelect
                 value={partyKind}
@@ -103,8 +134,8 @@ export function MobizoneLedgerPage(): JSX.Element {
             </MzField>
             <MzField label="Direction">
               <MzSelect value={direction} onChange={(e) => setDirection(e.target.value as "receive" | "pay")}>
-                <option value="receive">Receive (un se lena)</option>
-                <option value="pay">Pay (unhein dena)</option>
+                <option value="receive">Receive</option>
+                <option value="pay">Pay</option>
               </MzSelect>
             </MzField>
             <MzField label="Amount (PKR)">
@@ -165,9 +196,17 @@ export function MobizoneLedgerPage(): JSX.Element {
           </MzPrimaryButton>
         </MzSection>
 
-        <MzSection title="Recent ledger">
-          <ul className="max-h-[480px] space-y-2 overflow-y-auto text-sm">
-            {db.ledger.slice(0, 50).map((e) => (
+        <MzSection title={`Ledger history · ${ledgerRows.length}`}>
+          <MzDateRangeFilter
+            fromDate={fromDate}
+            toDate={toDate}
+            onChange={(from, to) => {
+              setFromDate(from);
+              setToDate(to);
+            }}
+          />
+          <ul className="mt-3 max-h-[480px] space-y-2 overflow-y-auto text-sm">
+            {ledgerRows.map((e) => (
               <li key={e.id} className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-800">
                 <p className="font-medium text-slate-900 dark:text-white">
                   {e.direction === "receive" ? "+" : "−"}
@@ -179,7 +218,9 @@ export function MobizoneLedgerPage(): JSX.Element {
                 </p>
               </li>
             ))}
-            {db.ledger.length === 0 ? <li className={mutedClass}>No ledger entries yet.</li> : null}
+            {ledgerRows.length === 0 ? (
+              <li className={mutedClass}>No ledger entries in this date range.</li>
+            ) : null}
           </ul>
         </MzSection>
       </div>

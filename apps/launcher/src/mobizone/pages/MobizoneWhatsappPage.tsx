@@ -18,7 +18,7 @@ export function MobizoneWhatsappPage(): JSX.Element {
   const [partyId, setPartyId] = useState("");
   const [phone, setPhone] = useState("");
   const [letter, setLetter] = useState(
-    "Assalam o Alaikum,\n\nPlease find your account details from MobiZone.\n\nJazakAllah.",
+    "Hello,\n\nPlease find your account details from MobiZone.\n\nThank you.",
   );
 
   const sale = db.sales.find((s) => s.id === id);

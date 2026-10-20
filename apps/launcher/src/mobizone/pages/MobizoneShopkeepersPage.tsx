@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { cardClass, mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
@@ -140,14 +141,21 @@ export function MobizoneShopkeepersPage(): JSX.Element {
                         Balance {formatPkr(bal)} {bal > 0 ? "(we owe)" : bal < 0 ? "(they owe)" : ""}
                       </p>
                     </button>
-                    <MzSecondaryButton
-                      onClick={() =>
-                        branchCode &&
-                        openWhatsApp(s.phone, buildWhatsAppAccountStatement(branchCode, "shopkeeper", s.id))
-                      }
-                    >
-                      WhatsApp
-                    </MzSecondaryButton>
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        to={`/pops/mobizone/search?q=${encodeURIComponent(s.name)}&focus=shopkeeper&shopkeeperId=${s.id}`}
+                      >
+                        <MzSecondaryButton>Full history</MzSecondaryButton>
+                      </Link>
+                      <MzSecondaryButton
+                        onClick={() =>
+                          branchCode &&
+                          openWhatsApp(s.phone, buildWhatsAppAccountStatement(branchCode, "shopkeeper", s.id))
+                        }
+                      >
+                        WhatsApp
+                      </MzSecondaryButton>
+                    </div>
                   </li>
                 );
               })
@@ -181,7 +189,7 @@ export function MobizoneShopkeepersPage(): JSX.Element {
             <ul className="space-y-1 text-sm">
               {purchases.map((p) => (
                 <li key={p.id} className="border-b border-slate-100 py-2 dark:border-slate-800">
-                  BUY {p.brand} {p.model} ({p.imei}) · {formatPkr(p.purchasePricePkr)} · udhaar{" "}
+                  BUY {p.brand} {p.model} ({p.imei}) · {formatPkr(p.purchasePricePkr)} · credit{" "}
                   {formatPkr(p.remainingPkr || 0)}
                 </li>
               ))}

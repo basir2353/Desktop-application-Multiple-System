@@ -28,7 +28,7 @@ const FIELD_GROUPS: { title: string; keys: (keyof MobizoneReceiptFields)[] }[] =
     title: "Shop header",
     keys: ["shopName", "shopPhone", "shopAddress", "documentTitle", "timestamp"],
   },
-  // Customer name/phone/CNIC/address hamesha bill par print hote hain (toggle nahi).
+  // Customer name/phone/CNIC/address always print on the bill (not toggleable).
   {
     title: "Device",
     keys: ["device", "imei", "warranty"],
@@ -111,7 +111,7 @@ export function MobizoneReceiptSettingsPage(): JSX.Element {
   function onSave(): void {
     if (!branchCode) return;
     saveMobizoneReceiptSettings(branchCode, settings);
-    setMsg("Receipt settings saved — next Print bill yeh layout use karega.");
+    setMsg("Receipt settings saved — the next Print bill will use this layout.");
   }
 
   function onReset(): void {
@@ -127,18 +127,18 @@ export function MobizoneReceiptSettingsPage(): JSX.Element {
     <MzPage>
       <PageHeader
         title="Receipt print settings"
-        subtitle="Restaurant-style thermal bill — customer Name, Phone, CNIC, Address hamesha print. Shop header/footer yahan."
+        subtitle="Restaurant-style thermal bill — customer name, phone, CNIC, and address always print. Set shop header/footer here."
       />
       <p className={`text-sm ${mutedClass}`}>
-        Bill layout restaurant POS jaisa: dashed lines, Items, Cash/Bank/Remaining, TOTAL. Customer block hamesha ON.
+        Bill layout is like a restaurant POS: dashed lines, items, cash/bank/remaining, TOTAL. Customer block is always on.
       </p>
       {msg ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p> : null}
       <p className={`text-sm ${mutedClass}`}>
-        Thermal / OS printer assign karne ke liye{" "}
+        To assign a thermal / OS printer, open the{" "}
         <Link className="text-violet-600 underline dark:text-violet-400" to="/pops/printer">
           Receipt printer
         </Link>{" "}
-        page use karein. Yeh page bill par kya dikhega control karta hai.
+        page. This page controls what appears on the bill.
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">

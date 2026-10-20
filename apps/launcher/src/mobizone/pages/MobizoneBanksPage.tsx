@@ -1,13 +1,31 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { cardClass, mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
-import { formatPkr, getCashBankBalances, upsertBankAccount } from "../lib/mobizoneStore";
-import { MzField, MzInput, MzPrimaryButton, MzSection, MzTextArea } from "../ui/MobizoneUi";
+import {
+  formatPkr,
+  getCashBankBalances,
+  getCashBankPeriodActivity,
+  monthStartDateInput,
+  todayDateInput,
+  upsertBankAccount,
+} from "../lib/mobizoneStore";
+import {
+  MzDateRangeFilter,
+  MzField,
+  MzInput,
+  MzPrimaryButton,
+  MzSecondaryButton,
+  MzSection,
+  MzTextArea,
+} from "../ui/MobizoneUi";
 
 export function MobizoneBanksPage(): JSX.Element {
   const { branchCode, db, refresh } = useMobizoneDb();
   const balances = getCashBankBalances(db);
+  const [fromDate, setFromDate] = useState(monthStartDateInput);
+  const [toDate, setToDate] = useState(todayDateInput);
   const [bankName, setBankName] = useState("");
   const [accountTitle, setAccountTitle] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
@@ -15,6 +33,11 @@ export function MobizoneBanksPage(): JSX.Element {
   const [opening, setOpening] = useState("0");
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState<string | null>(null);
+
+  const period = useMemo(
+    () => getCashBankPeriodActivity(db, fromDate || monthStartDateInput(), toDate || todayDateInput()),
+    [db, fromDate, toDate],
+  );
 
   function onSave(): void {
     setErr(null);
@@ -48,7 +71,18 @@ export function MobizoneBanksPage(): JSX.Element {
       />
       {err ? <p className="text-sm text-red-600">{err}</p> : null}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <MzSection title="Date filter">
+        <MzDateRangeFilter
+          fromDate={fromDate}
+          toDate={toDate}
+          onChange={(from, to) => {
+            setFromDate(from || monthStartDateInput());
+            setToDate(to || todayDateInput());
+          }}
+        />
+      </MzSection>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className={`${cardClass} p-4`}>
           <p className={`text-xs uppercase ${mutedClass}`}>Cash on hand</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{formatPkr(balances.cash)}</p>
@@ -56,6 +90,20 @@ export function MobizoneBanksPage(): JSX.Element {
         <div className={`${cardClass} p-4`}>
           <p className={`text-xs uppercase ${mutedClass}`}>All banks total</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{formatPkr(balances.bank)}</p>
+        </div>
+        <div className={`${cardClass} p-4`}>
+          <p className={`text-xs uppercase ${mutedClass}`}>Cash in period</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+            +{formatPkr(period.cashIn)}
+          </p>
+          <p className="text-sm tabular-nums text-rose-600 dark:text-rose-300">−{formatPkr(period.cashOut)}</p>
+        </div>
+        <div className={`${cardClass} p-4`}>
+          <p className={`text-xs uppercase ${mutedClass}`}>Banks in period</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+            +{formatPkr(period.bankIn)}
+          </p>
+          <p className="text-sm tabular-nums text-rose-600 dark:text-rose-300">−{formatPkr(period.bankOut)}</p>
         </div>
       </div>
 
@@ -89,21 +137,40 @@ export function MobizoneBanksPage(): JSX.Element {
             {db.bankAccounts.length === 0 ? (
               <li className={`text-sm ${mutedClass}`}>No bank accounts yet.</li>
             ) : (
-              db.bankAccounts.map((a) => (
-                <li key={a.id} className={`${cardClass} p-3`}>
-                  <p className="font-semibold text-slate-900 dark:text-white">
-                    {a.bankName} — {a.accountTitle}
-                  </p>
-                  <p className={`text-xs ${mutedClass}`}>
-                    {a.accountNumber || "—"} · IBAN {a.iban || "—"}
-                  </p>
-                  <p className="mt-1 text-sm font-medium tabular-nums">
-                    Balance {formatPkr(balances.byAccount[a.id] ?? a.openingBalancePkr)}
-                  </p>
-                </li>
-              ))
+              db.bankAccounts.map((a) => {
+                const act = period.byAccount[a.id] ?? { inPkr: 0, outPkr: 0, netPkr: 0 };
+                return (
+                  <li key={a.id} className={`${cardClass} p-3`}>
+                    <p className="font-semibold text-slate-900 dark:text-white">
+                      {a.bankName} — {a.accountTitle}
+                    </p>
+                    <p className={`text-xs ${mutedClass}`}>
+                      {a.accountNumber || "—"} · IBAN {a.iban || "—"}
+                    </p>
+                    <p className="mt-1 text-sm font-medium tabular-nums">
+                      Balance {formatPkr(balances.byAccount[a.id] ?? a.openingBalancePkr)}
+                    </p>
+                    <p className={`mt-1 text-xs ${mutedClass}`}>
+                      Period: +{formatPkr(act.inPkr)} / −{formatPkr(act.outPkr)} · net {formatPkr(act.netPkr)}
+                    </p>
+                    <Link
+                      className="mt-2 inline-block text-xs font-semibold text-[var(--mz-accent)] underline-offset-2 hover:underline"
+                      to={`/pops/mobizone/money-ledger?kind=bank&accountId=${a.id}&from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`}
+                    >
+                      Open ledger (date filter)
+                    </Link>
+                  </li>
+                );
+              })
             )}
           </ul>
+          <div className="mt-3">
+            <Link
+              to={`/pops/mobizone/money-ledger?kind=cash&from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`}
+            >
+              <MzSecondaryButton>Cash ledger (same dates)</MzSecondaryButton>
+            </Link>
+          </div>
         </MzSection>
       </div>
     </div>

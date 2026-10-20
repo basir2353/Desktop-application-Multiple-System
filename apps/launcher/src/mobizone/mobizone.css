@@ -148,6 +148,28 @@ html[data-theme="light"] .mz-input {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mz-accent) 28%, transparent);
 }
 
+.mz-input[type="date"],
+.mz-date-input {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  color-scheme: light;
+}
+
+.mz-input[type="date"]::-webkit-calendar-picker-indicator,
+.mz-date-input::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  cursor: pointer;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.mz-input[type="date"]:disabled,
+.mz-date-input:disabled {
+  opacity: 1;
+  cursor: pointer;
+}
+
 .mz-input:-webkit-autofill,
 .mz-input:-webkit-autofill:hover,
 .mz-input:-webkit-autofill:focus,
@@ -183,6 +205,109 @@ html[data-theme="light"] .mz-input {
   color: var(--mz-btn-secondary-text);
   font-weight: 600;
   padding: 0.55rem 0.9rem;
+}
+
+/* Compact photo slots — fit 4-up grids without clipping buttons */
+.mz-photo-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.mz-photo-upload-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.mz-photo-thumb {
+  width: 100%;
+  height: 5.5rem;
+  border-radius: 0.7rem;
+  object-fit: cover;
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+}
+
+.mz-photo-thumb--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--mz-border);
+  box-shadow: none;
+  font-size: 0.65rem;
+  color: var(--mz-muted);
+  background: color-mix(in srgb, var(--mz-card) 80%, transparent);
+}
+
+.mz-photo-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.mz-photo-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--mz-border);
+  background: var(--mz-btn-secondary-bg);
+  color: var(--mz-btn-secondary-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mz-photo-remove {
+  grid-column: 1 / -1;
+  min-height: auto;
+  padding: 0.15rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--mz-rose);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+.mz-photo-camera {
+  margin-top: 0.25rem;
+  overflow: hidden;
+  border-radius: 0.7rem;
+  border: 1px solid var(--mz-border);
+}
+
+.mz-photo-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+@media (min-width: 520px) {
+  .mz-photo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .mz-photo-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .mz-sticky-actions {
@@ -249,7 +374,69 @@ html[data-theme="light"] .mz-input {
   font-variant-numeric: tabular-nums;
 }
 
-/* Home order strip — Sale / Purchase dominate */
+.mz-balance-ledgers {
+  position: relative;
+  z-index: 1;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid color-mix(in srgb, var(--mz-border) 70%, transparent);
+}
+
+.mz-balance-ledgers-label {
+  margin: 0 0 0.55rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mz-muted);
+}
+
+.mz-balance-ledger-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.mz-balance-ledger-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 7.5rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.75rem;
+  text-decoration: none;
+  background: color-mix(in srgb, var(--mz-teal) 16%, var(--mz-card));
+  border: 1px solid color-mix(in srgb, var(--mz-teal) 35%, transparent);
+  color: var(--mz-text);
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.mz-balance-ledger-chip--bank {
+  background: color-mix(in srgb, var(--mz-blue) 14%, var(--mz-card));
+  border-color: color-mix(in srgb, var(--mz-blue) 35%, transparent);
+}
+
+.mz-balance-ledger-chip:hover {
+  filter: brightness(1.06);
+}
+
+.mz-balance-ledger-chip:active {
+  transform: scale(0.98);
+}
+
+.mz-balance-ledger-name {
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mz-balance-ledger-amt {
+  font-size: 0.9rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Home order strip — Sale / Purchase + returns */
 .mz-order-strip {
   display: grid;
   grid-template-columns: 1fr;
@@ -259,6 +446,12 @@ html[data-theme="light"] .mz-input {
 @media (min-width: 720px) {
   .mz-order-strip {
     grid-template-columns: 1.15fr 1fr;
+  }
+}
+
+@media (min-width: 720px) {
+  .mz-order-strip .mz-order-cta:nth-child(n + 3) {
+    min-height: 6.75rem;
   }
 }
 

@@ -14,8 +14,10 @@ import {
   sumPosRecentOrdersItemQty,
   formatRecentOrderTime,
   isPaidPosRecentOrder,
+  posRecentOrderContact,
   posRecentOrderTotal,
   POS_RECENT_ORDERS_PREVIEW_LIMIT,
+  shortPosOrderRef,
   withClosedPosOrderStatus,
   type PosRecentOrder,
   type PosRecentOrderModeFilter,
@@ -1024,6 +1026,7 @@ export function PosLatestOrdersPanel({
                   order.bill?.status === "completed" &&
                   !rpraDoneBillIds.has(order.bill!.id);
                 const station = formatPosStationDisplay(order.stationLabel, order.orderMode);
+                const contact = posRecentOrderContact(order);
 
                 const onCardActivate = () => {
                   if (showEdit && onEdit) {
@@ -1165,8 +1168,11 @@ export function PosLatestOrdersPanel({
                       >
                         <div className="min-w-0 flex-1 basis-[8rem]">
                           <div className="flex min-w-0 items-center gap-1.5">
-                            <span className="max-w-[9rem] shrink-0 truncate font-mono text-[11px] font-bold text-slate-900 dark:text-white" title={order.ref}>
-                              {order.ref}
+                            <span
+                              className="max-w-[11rem] shrink-0 truncate font-mono text-[9px] font-semibold leading-tight text-slate-700 dark:text-slate-300"
+                              title={order.ref}
+                            >
+                              {shortPosOrderRef(order.ref)}
                             </span>
                             <span
                               className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(order.statusTone)}`}
@@ -1190,6 +1196,20 @@ export function PosLatestOrdersPanel({
                               </span>
                             ) : null}
                           </div>
+                          {contact.customer || contact.phone || contact.address ? (
+                            <div className="mt-0.5 min-w-0 space-y-0.5 text-[9px] leading-snug text-slate-600 dark:text-slate-400">
+                              {contact.customer || contact.phone ? (
+                                <p className="truncate" title={[contact.customer, contact.phone].filter(Boolean).join(" · ")}>
+                                  {[contact.customer, contact.phone].filter(Boolean).join(" · ")}
+                                </p>
+                              ) : null}
+                              {contact.address ? (
+                                <p className="truncate text-sky-700 dark:text-sky-300" title={contact.address}>
+                                  📍 {contact.address}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="w-14 shrink-0 text-right">
                           {orderTotal != null ? (
@@ -1230,8 +1250,11 @@ export function PosLatestOrdersPanel({
                     >
                       <div className="space-y-0.5">
                         <div className="flex items-start justify-between gap-1">
-                          <span className="font-mono text-sm font-bold leading-tight text-slate-900 dark:text-white">
-                            {order.ref}
+                          <span
+                            className="min-w-0 truncate font-mono text-[9px] font-semibold leading-tight text-slate-700 dark:text-slate-300"
+                            title={order.ref}
+                          >
+                            {shortPosOrderRef(order.ref)}
                           </span>
                           <button
                             type="button"
@@ -1252,6 +1275,16 @@ export function PosLatestOrdersPanel({
                             {order.orderTakerName ? `By ${order.orderTakerName}` : null}
                             {order.orderTakerName && order.updatedByName ? " · " : null}
                             {order.updatedByName ? `Updated ${order.updatedByName}` : null}
+                          </span>
+                        ) : null}
+                        {contact.customer || contact.phone ? (
+                          <span className="block truncate text-[8px] text-slate-500" title={[contact.customer, contact.phone].filter(Boolean).join(" · ")}>
+                            {[contact.customer, contact.phone].filter(Boolean).join(" · ")}
+                          </span>
+                        ) : null}
+                        {contact.address ? (
+                          <span className="block truncate text-[8px] text-sky-700 dark:text-sky-300" title={contact.address}>
+                            📍 {contact.address}
                           </span>
                         ) : null}
                       </div>

@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { MobizoneSale } from "@platform/contracts";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
+import { useSessionStore } from "../../stores/sessionStore";
+import { canEditMobizoneBillDate } from "../lib/mobizoneAccess";
+import { listSuggestions, rememberSuggestions } from "../lib/mobizoneSuggestions";
 import {
   buildWhatsAppSaleText,
   findDeviceByImei,
   formatPkr,
+  normalizeImeiScan,
   openWhatsApp,
   printSaleReceipt,
   recordSale,
+  todayDateInput,
 } from "../lib/mobizoneStore";
+import { MzOptionalCameraImeiScan } from "../components/MzOptionalCameraImeiScan";
 import {
   MzField,
   MzInput,
@@ -21,12 +28,17 @@ import {
   MzSection,
   MzSelect,
   MzStickyActions,
+  MzSuggestInput,
+  MzTextArea,
 } from "../ui/MobizoneUi";
 
 export function MobizoneSellPage(): JSX.Element {
   const { branchCode, db, refresh } = useMobizoneDb();
+  const [params] = useSearchParams();
+  const claims = useSessionStore((s) => s.claims);
+  const canSetBillDate = canEditMobizoneBillDate(claims);
   const inStock = useMemo(() => db.devices.filter((d) => d.status === "in_stock"), [db.devices]);
-  const [scan, setScan] = useState("");
+  const [scan, setScan] = useState(() => normalizeImeiScan(params.get("imei") ?? ""));
   const [deviceId, setDeviceId] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -36,6 +48,9 @@ export function MobizoneSellPage(): JSX.Element {
   const [photo, setPhoto] = useState<string | null>(null);
   const [cnicFront, setCnicFront] = useState<string | null>(null);
   const [cnicBack, setCnicBack] = useState<string | null>(null);
+  const [otherPhoto, setOtherPhoto] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [batteryHealth, setBatteryHealth] = useState("");
   const [price, setPrice] = useState("");
   const [cash, setCash] = useState("");
   const [bank, setBank] = useState("");
@@ -43,6 +58,7 @@ export function MobizoneSellPage(): JSX.Element {
   const [txnRef, setTxnRef] = useState("");
   const [verified, setVerified] = useState(false);
   const [dueDate, setDueDate] = useState("");
+  const [billDate, setBillDate] = useState(todayDateInput);
   const [warrantyDays, setWarrantyDays] = useState("0");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -54,6 +70,54 @@ export function MobizoneSellPage(): JSX.Element {
     }
   }, [db.bankAccounts, bankAccountId]);
 
+  // Deep-link / barcode scan: ?imei=… selects that in-stock phone.
+  useEffect(() => {
+    if (!branchCode) return;
+    const code = normalizeImeiScan(params.get("imei") ?? "");
+    if (!code) return;
+    const found = findDeviceByImei(branchCode, code);
+    if (!found || found.status !== "in_stock") return;
+    setScan(found.imei);
+    setDeviceId(found.id);
+    setPrice(String(found.salePricePkr ?? found.purchasePricePkr));
+    setBatteryHealth(found.batteryHealth ?? "");
+    setErr(null);
+  }, [branchCode, params, db.devices]);
+
+  const suggest = useMemo(
+    () => ({
+      personName: listSuggestions(branchCode, db, "personName"),
+      phone: listSuggestions(branchCode, db, "phone"),
+      address: listSuggestions(branchCode, db, "address"),
+      cnic: listSuggestions(branchCode, db, "cnic"),
+    }),
+    [branchCode, db],
+  );
+
+  function applyKnownCustomer(nameOrPhone: string): void {
+    const q = nameOrPhone.trim().toLowerCase();
+    if (!q) return;
+    const hit =
+      db.customers.find((c) => c.name.trim().toLowerCase() === q) ||
+      db.customers.find((c) => (c.phone ?? "").trim().toLowerCase() === q) ||
+      db.sales.find((s) => s.customerName.trim().toLowerCase() === q || (s.customerPhone ?? "").trim().toLowerCase() === q);
+    if (!hit) return;
+    if ("name" in hit) {
+      setCustomerName(hit.name);
+      if (hit.phone) setCustomerPhone(hit.phone);
+      if (hit.address) setCustomerAddress(hit.address);
+      if (hit.cnic) setCustomerCnic(hit.cnic);
+      if (hit.photoDataUrl) setPhoto(hit.photoDataUrl);
+      if (hit.cnicFrontDataUrl) setCnicFront(hit.cnicFrontDataUrl);
+      if (hit.cnicBackDataUrl) setCnicBack(hit.cnicBackDataUrl);
+      return;
+    }
+    setCustomerName(hit.customerName);
+    if (hit.customerPhone) setCustomerPhone(hit.customerPhone);
+    if (hit.customerAddress) setCustomerAddress(hit.customerAddress);
+    if (hit.customerCnic) setCustomerCnic(hit.customerCnic);
+  }
+
   const selected = inStock.find((d) => d.id === deviceId) ?? null;
   const priceN = Number(price) || 0;
   const cashN = Number(cash) || 0;
@@ -61,9 +125,12 @@ export function MobizoneSellPage(): JSX.Element {
   const received = cashN + bankN;
   const remaining = Math.max(0, priceN - received);
 
-  function applyScan(): void {
-    if (!branchCode || !scan.trim()) return;
-    const found = findDeviceByImei(branchCode, scan.trim());
+  function applyScan(raw = scan): void {
+    if (!branchCode) return;
+    const code = normalizeImeiScan(raw);
+    if (!code) return;
+    setScan(code);
+    const found = findDeviceByImei(branchCode, code);
     if (!found || found.status !== "in_stock") {
       setErr("No in-stock device matched that IMEI / barcode.");
       return;
@@ -71,12 +138,18 @@ export function MobizoneSellPage(): JSX.Element {
     setErr(null);
     setDeviceId(found.id);
     setPrice(String(found.salePricePkr ?? found.purchasePricePkr));
+    setBatteryHealth(found.batteryHealth ?? "");
   }
 
   function onDeviceChange(id: string): void {
     setDeviceId(id);
     const d = inStock.find((x) => x.id === id);
-    if (d) setPrice(String(d.salePricePkr ?? d.purchasePricePkr));
+    if (d) {
+      setPrice(String(d.salePricePkr ?? d.purchasePricePkr));
+      setBatteryHealth(d.batteryHealth ?? "");
+    } else {
+      setBatteryHealth("");
+    }
   }
 
   function onSave(): void {
@@ -91,13 +164,14 @@ export function MobizoneSellPage(): JSX.Element {
       return;
     }
     if (!customerPhone.trim()) {
-      setErr("Customer phone bill / WhatsApp ke liye zaroori hai.");
+      setErr("Customer phone is required for the bill / WhatsApp.");
       return;
     }
+    const resolvedBillDate = canSetBillDate ? billDate || todayDateInput() : todayDateInput();
     const resolvedBankId =
       bankAccountId || (bankN > 0 && db.bankAccounts.length === 1 ? db.bankAccounts[0]!.id : "");
     if (bankN > 0 && !resolvedBankId) {
-      setErr("Bank amount enter kiya hai — pehle Banks page se account add/select karein.");
+      setErr("Bank amount entered — add/select an account on the Banks page first.");
       return;
     }
     const acc = db.bankAccounts.find((a) => a.id === resolvedBankId);
@@ -111,6 +185,10 @@ export function MobizoneSellPage(): JSX.Element {
         customerPhotoDataUrl: photo,
         cnicFrontDataUrl: cnicFront,
         cnicBackDataUrl: cnicBack,
+        otherPhotoDataUrl: otherPhoto,
+        note: note.trim() || null,
+        batteryHealth: batteryHealth.trim() || null,
+        billDate: resolvedBillDate,
         shopkeeperId: shopkeeperId || null,
         pricePkr: priceN,
         dueDate: remaining > 0 ? dueDate || null : null,
@@ -130,6 +208,12 @@ export function MobizoneSellPage(): JSX.Element {
           },
         },
       });
+      rememberSuggestions(branchCode, {
+        personName: customerName,
+        phone: customerPhone,
+        address: customerAddress,
+        cnic: customerCnic,
+      });
       refresh();
       setLastSale(sale);
       setMsg(`Sale saved — profit ${formatPkr(sale.profitPkr)}. Remaining ${formatPkr(sale.remainingPkr)}.`);
@@ -143,10 +227,14 @@ export function MobizoneSellPage(): JSX.Element {
       setPhoto(null);
       setCnicFront(null);
       setCnicBack(null);
+      setOtherPhoto(null);
+      setNote("");
+      setBatteryHealth("");
       setCash("");
       setBank("");
       setTxnRef("");
       setDueDate("");
+      setBillDate(todayDateInput());
       setDeviceId("");
       setScan("");
       setPrice("");
@@ -172,7 +260,7 @@ export function MobizoneSellPage(): JSX.Element {
     <MzPage>
       <PageHeader
         title="Sell phone"
-        subtitle="Customer details + print/WhatsApp receipt — barcode/IMEI scan se phone open."
+        subtitle="Customer details + print/WhatsApp receipt — scan barcode/IMEI to open the phone."
       />
       {err ? <p className="text-sm text-red-600 dark:text-red-400">{err}</p> : null}
       {msg ? (
@@ -198,6 +286,7 @@ export function MobizoneSellPage(): JSX.Element {
             />
             <MzSecondaryButton onClick={applyScan}>Open</MzSecondaryButton>
           </div>
+          <MzOptionalCameraImeiScan onDetected={(code) => applyScan(code)} />
           <MzField label="In-stock devices">
             <MzSelect value={deviceId} onChange={(e) => onDeviceChange(e.target.value)}>
               <option value="">Select phone…</option>
@@ -209,25 +298,75 @@ export function MobizoneSellPage(): JSX.Element {
             </MzSelect>
           </MzField>
           {selected ? (
-            <p className={`text-sm ${mutedClass}`}>
-              Cost {formatPkr(selected.purchasePricePkr)} · {selected.colour ?? "—"} · {selected.storage ?? "—"}
-            </p>
+            <div className={`space-y-1 text-sm ${mutedClass}`}>
+              <p>
+                <span className="font-semibold text-slate-800 dark:text-slate-100">
+                  Purchase price: {formatPkr(selected.purchasePricePkr)}
+                </span>
+                {" · "}
+                {[selected.colour, selected.storage, selected.batteryHealth ? `Battery ${selected.batteryHealth}` : null]
+                  .filter(Boolean)
+                  .join(" · ") || "—"}
+              </p>
+              {selected.notes ? <p>Notes: {selected.notes}</p> : null}
+            </div>
+          ) : null}
+          {selected ? (
+            <MzField label="Battery health">
+              <MzInput
+                value={batteryHealth}
+                onChange={(e) => setBatteryHealth(e.target.value)}
+                placeholder="e.g. 92% / Excellent"
+              />
+            </MzField>
           ) : null}
         </MzSection>
 
         <MzSection title="Customer / shopkeeper">
           <div className="grid gap-3 sm:grid-cols-2">
-            <MzField label="Customer name * (bill par)">
-              <MzInput value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+            {canSetBillDate ? (
+              <MzField label="Bill date * (admin)">
+                <MzInput
+                  type="date"
+                  value={billDate}
+                  onChange={(e) => setBillDate(e.target.value)}
+                  className="mz-date-input"
+                />
+              </MzField>
+            ) : null}
+            <MzField label="Customer name * (on bill)">
+              <MzSuggestInput
+                listId="mz-sell-name"
+                suggestions={suggest.personName}
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                onBlur={(e) => applyKnownCustomer(e.target.value)}
+              />
             </MzField>
-            <MzField label="CNIC / ID (bill par)">
-              <MzInput value={customerCnic} onChange={(e) => setCustomerCnic(e.target.value)} />
+            <MzField label="CNIC / ID (on bill)">
+              <MzSuggestInput
+                listId="mz-sell-cnic"
+                suggestions={suggest.cnic}
+                value={customerCnic}
+                onChange={(e) => setCustomerCnic(e.target.value)}
+              />
             </MzField>
             <MzField label="Mobile * (bill + WhatsApp)">
-              <MzInput value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-sell-phone"
+                suggestions={suggest.phone}
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                onBlur={(e) => applyKnownCustomer(e.target.value)}
+              />
             </MzField>
-            <MzField label="Address (bill par)">
-              <MzInput value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} />
+            <MzField label="Address (on bill)">
+              <MzSuggestInput
+                listId="mz-sell-address"
+                suggestions={suggest.address}
+                value={customerAddress}
+                onChange={(e) => setCustomerAddress(e.target.value)}
+              />
             </MzField>
             <MzField label="Shopkeeper account (optional)">
               <MzSelect value={shopkeeperId} onChange={(e) => setShopkeeperId(e.target.value)}>
@@ -240,10 +379,11 @@ export function MobizoneSellPage(): JSX.Element {
               </MzSelect>
             </MzField>
           </div>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="mz-photo-grid">
             <MzPhotoUpload label="Customer picture" value={photo} onChange={setPhoto} />
             <MzPhotoUpload label="CNIC front" value={cnicFront} onChange={setCnicFront} />
             <MzPhotoUpload label="CNIC back" value={cnicBack} onChange={setCnicBack} />
+            <MzPhotoUpload label="Other (any photo)" value={otherPhoto} onChange={setOtherPhoto} />
           </div>
         </MzSection>
 
@@ -271,8 +411,18 @@ export function MobizoneSellPage(): JSX.Element {
             <MzField label="Transaction reference">
               <MzInput value={txnRef} onChange={(e) => setTxnRef(e.target.value)} />
             </MzField>
-            <MzField label="Udhaar due date">
-              <MzInput type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={remaining <= 0} />
+            <MzField label="Credit due date">
+              <MzInput
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="mz-date-input"
+              />
+              {remaining <= 0 ? (
+                <span className="mt-1 block text-[11px] text-slate-500">
+                  Used when cash + bank is less than sale price (credit).
+                </span>
+              ) : null}
             </MzField>
             <MzField label="Warranty (days)">
               <MzInput type="number" min={0} value={warrantyDays} onChange={(e) => setWarrantyDays(e.target.value)} />
@@ -281,6 +431,17 @@ export function MobizoneSellPage(): JSX.Element {
               <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} />
               Bank payment verified
             </label>
+            <div className="sm:col-span-2">
+              <MzField label="Note (prints on bill)">
+                <MzTextArea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Any note / remarks…"
+                  maxLength={800}
+                  rows={3}
+                />
+              </MzField>
+            </div>
           </div>
           <div className={`flex flex-wrap gap-4 text-sm ${mutedClass}`}>
             <span>

@@ -27,6 +27,8 @@ export function useMobizoneDb(): {
         shopkeepers: [],
         ledger: [],
         expenses: [],
+        expenseAccounts: [],
+        vouchers: [],
       };
     }
     return loadMobizoneDb(branchCode);

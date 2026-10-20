@@ -79,7 +79,7 @@ export const MOBIZONE_RECEIPT_FIELD_LABELS: Record<keyof MobizoneReceiptFields, 
   cash: "Cash amount",
   bank: "Bank amount",
   bankDetails: "Bank name / txn",
-  remaining: "Remaining (udhaar)",
+  remaining: "Remaining (credit)",
   dueDate: "Due date",
   footer: "Footer message",
 };

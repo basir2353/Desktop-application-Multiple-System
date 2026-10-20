@@ -3,9 +3,14 @@ import { Redirect } from "expo-router";
 import { useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
-import { formatPkr, getBusinessReport } from "../src/mobizone/storeCore";
+import {
+  formatPkr,
+  getBusinessReport,
+  monthStartDateInput,
+  todayDateInput,
+} from "../src/mobizone/storeCore";
 import { mz } from "../src/mobizone/theme";
-import { MzCard, MzField, MzInput, MzScreenTitle } from "../src/mobizone/ui";
+import { MzCard, MzDateRangeChips, MzScreenTitle, MzSection } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useSessionStore } from "../src/stores/sessionStore";
 
@@ -15,13 +20,11 @@ const isMobizoneApp = extra?.appVariant === "mobizone";
 export default function MobizoneReportsScreen(): React.JSX.Element {
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode } = useMobizoneDb();
-  const today = new Date().toISOString().slice(0, 10);
-  const monthStart = `${today.slice(0, 8)}01`;
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
+  const [from, setFrom] = useState(monthStartDateInput);
+  const [to, setTo] = useState(todayDateInput);
 
   const report = useMemo(
-    () => getBusinessReport(branchCode, from, to),
+    () => getBusinessReport(branchCode, from || "1970-01-01", to || todayDateInput()),
     [branchCode, from, to],
   );
   const profitPct =
@@ -37,18 +40,16 @@ export default function MobizoneReportsScreen(): React.JSX.Element {
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
         <MzScreenTitle title="Reports" subtitle="Profit & Loss · dues · cash/bank" />
 
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <MzField label="From">
-              <MzInput value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" />
-            </MzField>
-          </View>
-          <View style={{ flex: 1 }}>
-            <MzField label="To">
-              <MzInput value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" />
-            </MzField>
-          </View>
-        </View>
+        <MzSection title="Date filter">
+          <MzDateRangeChips
+            fromDate={from}
+            toDate={to}
+            onChange={(f, t) => {
+              setFrom(f);
+              setTo(t);
+            }}
+          />
+        </MzSection>
 
         <MzCard style={{ backgroundColor: mz.ink, borderColor: mz.accent }}>
           <Text

@@ -76,13 +76,16 @@ export const mobizoneDeviceSchema = z.object({
   model: z.string().min(1).max(120),
   colour: z.string().max(60).nullable().optional(),
   storage: z.string().max(40).nullable().optional(),
+  batteryHealth: z.string().max(40).nullable().optional(),
+  /** Extra tags e.g. JV, Non PTA — shows on bill / barcode sticker. */
+  etc: z.string().max(120).nullable().optional(),
   condition: mobizoneConditionSchema.default("used"),
   purchasePricePkr: z.number().nonnegative(),
   salePricePkr: z.number().nonnegative().nullable().optional(),
   barcode: z.string().max(64).nullable().optional(),
   status: z.enum(["in_stock", "sold", "reserved"]).default("in_stock"),
   shopkeeperId: z.string().uuid().nullable().optional(),
-  notes: z.string().max(500).nullable().optional(),
+  notes: z.string().max(800).nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -100,6 +103,10 @@ export const mobizoneSaleSchema = z.object({
   customerPhotoDataUrl: z.string().nullable().optional(),
   cnicFrontDataUrl: z.string().nullable().optional(),
   cnicBackDataUrl: z.string().nullable().optional(),
+  otherPhotoDataUrl: z.string().nullable().optional(),
+  note: z.string().max(800).nullable().optional(),
+  batteryHealth: z.string().max(40).nullable().optional(),
+  etc: z.string().max(120).nullable().optional(),
   imei: z.string(),
   brand: z.string(),
   model: z.string(),
@@ -116,9 +123,20 @@ export const mobizoneSaleSchema = z.object({
 });
 export type MobizoneSale = z.infer<typeof mobizoneSaleSchema>;
 
+export const mobizoneExpenseAccountSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  notes: z.string().max(400).nullable().optional(),
+  createdAt: z.string(),
+});
+export type MobizoneExpenseAccount = z.infer<typeof mobizoneExpenseAccountSchema>;
+
 export const mobizoneExpenseSchema = z.object({
   id: z.string().uuid(),
+  /** Display name — usually the expense account name (e.g. Rent). */
   title: z.string().min(1).max(200),
+  /** Category account (Rent, Electricity, Food…). */
+  accountId: z.string().uuid().nullable().optional(),
   amountPkr: z.number().positive(),
   method: z.enum(["cash", "bank"]),
   bankAccountId: z.string().uuid().nullable().optional(),
@@ -126,6 +144,51 @@ export const mobizoneExpenseSchema = z.object({
   createdAt: z.string(),
 });
 export type MobizoneExpense = z.infer<typeof mobizoneExpenseSchema>;
+
+/** Account kinds that can appear on Contra / General vouchers. */
+export const mobizoneVoucherAccountKindSchema = z.enum([
+  "cash",
+  "bank",
+  "customer",
+  "shopkeeper",
+  "expense",
+]);
+export type MobizoneVoucherAccountKind = z.infer<typeof mobizoneVoucherAccountKindSchema>;
+
+export const mobizoneVoucherLineSchema = z.object({
+  accountKind: mobizoneVoucherAccountKindSchema,
+  /** Null for cash; bank / customer / shopkeeper / expense account id otherwise. */
+  accountId: z.string().uuid().nullable().optional(),
+  accountName: z.string().min(1).max(200),
+  side: z.enum(["debit", "credit"]),
+  amountPkr: z.number().positive(),
+});
+export type MobizoneVoucherLine = z.infer<typeof mobizoneVoucherLineSchema>;
+
+/** Uploaded reference file (PDF, Word, PPT, image, or any other type). */
+export const mobizoneDocumentAttachmentSchema = z.object({
+  id: z.string().uuid(),
+  fileName: z.string().min(1).max(260),
+  mimeType: z.string().max(160).nullable().optional(),
+  sizeBytes: z.number().int().nonnegative(),
+  dataUrl: z.string().min(1),
+  uploadedAt: z.string(),
+});
+export type MobizoneDocumentAttachment = z.infer<typeof mobizoneDocumentAttachmentSchema>;
+
+export const mobizoneVoucherSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(["contra", "general"]),
+  /** Transfer / entry date as ISO timestamp. */
+  createdAt: z.string(),
+  reference: z.string().max(120).nullable().optional(),
+  note: z.string().max(400).nullable().optional(),
+  amountPkr: z.number().positive(),
+  lines: z.array(mobizoneVoucherLineSchema).min(2),
+  /** Optional reference documents of any type (PDF, Word, PPT, etc.). */
+  attachments: z.array(mobizoneDocumentAttachmentSchema).max(8).optional().default([]),
+});
+export type MobizoneVoucher = z.infer<typeof mobizoneVoucherSchema>;
 
 export const mobizonePurchaseSchema = z.object({
   id: z.string().uuid(),
@@ -139,16 +202,21 @@ export const mobizonePurchaseSchema = z.object({
   sellerPhotoDataUrl: z.string().nullable().optional(),
   cnicFrontDataUrl: z.string().nullable().optional(),
   cnicBackDataUrl: z.string().nullable().optional(),
+  otherPhotoDataUrl: z.string().nullable().optional(),
+  note: z.string().max(800).nullable().optional(),
   imei: z.string(),
   brand: z.string(),
   model: z.string(),
   colour: z.string().nullable().optional(),
   storage: z.string().nullable().optional(),
+  batteryHealth: z.string().max(40).nullable().optional(),
+  etc: z.string().max(120).nullable().optional(),
   condition: mobizoneConditionSchema,
   purchasePricePkr: z.number().nonnegative(),
   paidPkr: z.number().nonnegative().default(0),
   remainingPkr: z.number().nonnegative().default(0),
   dueDate: z.string().nullable().optional(),
+  returnedAt: z.string().nullable().optional(),
   payment: mobizoneSplitPaymentSchema,
   createdAt: z.string(),
 });

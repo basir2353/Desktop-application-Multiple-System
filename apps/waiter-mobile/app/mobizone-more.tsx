@@ -14,8 +14,11 @@ const isMobizoneApp = extra?.appVariant === "mobizone";
 
 const LINKS = [
   { href: "/mobizone-stock", title: "Stock / Inventory", note: "In-stock phones & IMEI" },
-  { href: "/mobizone-reports", title: "Reports", note: "Profit, dues, balances" },
-  { href: "/mobizone-expenses", title: "Shop expenses", note: "Salary, rent — profit se minus" },
+  { href: "/mobizone-reports", title: "Reports", note: "Profit, dues, balances · date filter" },
+  { href: "/mobizone-expenses", title: "Create Expense", note: "Record by expense account" },
+  { href: "/mobizone-expense-accounts", title: "Account Expense", note: "Rent, Electricity, Food…" },
+  { href: "/mobizone-contra", title: "Contra Voucher", note: "Cash ↔ Bank transfer" },
+  { href: "/mobizone-general-voucher", title: "General Voucher", note: "Double entry + documents" },
   {
     href: "/mobizone-receipt-settings",
     title: "Bill print settings",
@@ -29,7 +32,7 @@ const LINKS = [
 export default function MobizoneMoreScreen(): React.JSX.Element {
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
-  const claims = useSessionStore((s) => s.claims);
+  const waiterEmail = useSessionStore((s) => s.waiterEmail);
   const clearSession = useSessionStore((s) => s.clear);
   const branch = useBranchStore((s) => s.branch);
   const clearBranch = useBranchStore((s) => s.clear);
@@ -68,7 +71,7 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ color: mz.white, fontWeight: "800", fontSize: 16 }}>
-              {claims?.email ?? "Shop user"}
+              {waiterEmail ?? "Shop user"}
             </Text>
             <Text style={{ color: "rgba(233,238,243,0.65)", marginTop: 2, fontSize: 12 }}>
               {branch?.name ?? "Main"} · Connected

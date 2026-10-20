@@ -1,19 +1,23 @@
 import { useMemo, useState } from "react";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { useMobizoneBranchCode } from "../hooks/useMobizone";
-import { formatPkr, getBusinessReport, printHtmlPage } from "../lib/mobizoneStore";
-import { MzField, MzInput, MzPrimaryButton, MzSecondaryButton, MzStat } from "../ui/MobizoneUi";
+import {
+  formatPkr,
+  getBusinessReport,
+  monthStartDateInput,
+  printHtmlPage,
+  todayDateInput,
+} from "../lib/mobizoneStore";
+import { MzDateRangeFilter, MzPrimaryButton, MzSection, MzStat } from "../ui/MobizoneUi";
 
 export function MobizoneBusinessReportPage(): JSX.Element {
   const branchCode = useMobizoneBranchCode();
-  const today = new Date().toISOString().slice(0, 10);
-  const monthStart = `${today.slice(0, 8)}01`;
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
+  const [from, setFrom] = useState(monthStartDateInput);
+  const [to, setTo] = useState(todayDateInput);
 
   const report = useMemo(() => {
     if (!branchCode) return null;
-    return getBusinessReport(branchCode, from, to);
+    return getBusinessReport(branchCode, from || "1970-01-01", to || todayDateInput());
   }, [branchCode, from, to]);
 
   function onPrint(): void {
@@ -30,7 +34,7 @@ export function MobizoneBusinessReportPage(): JSX.Element {
         <div class="card"><div class="label">Gross profit</div><div class="val">${formatPkr(report.grossProfitPkr)}</div></div>
         <div class="card"><div class="label">Expenses</div><div class="val">${formatPkr(report.expenseTotalPkr)}</div></div>
         <div class="card"><div class="label">Net profit / loss</div><div class="val">${formatPkr(report.profitPkr)}</div></div>
-        <div class="card"><div class="label">Stock value (maal)</div><div class="val">${formatPkr(report.stockValuePkr)}</div></div>
+        <div class="card"><div class="label">Stock value</div><div class="val">${formatPkr(report.stockValuePkr)}</div></div>
         <div class="card"><div class="label">Receivables (lena)</div><div class="val">${formatPkr(report.receivablesPkr)}</div></div>
         <div class="card"><div class="label">Payables (dena)</div><div class="val">${formatPkr(report.payablesPkr)}</div></div>
         <div class="card"><div class="label">Cash</div><div class="val">${formatPkr(report.cashBalancePkr)}</div></div>
@@ -45,33 +49,21 @@ export function MobizoneBusinessReportPage(): JSX.Element {
         title="Business report"
         subtitle="Any date range — purchases, sales, profit, receivables, payables, cash & bank on one printable page."
       />
-      <div className="flex flex-wrap items-end gap-3">
-        <MzField label="From">
-          <MzInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </MzField>
-        <MzField label="To">
-          <MzInput type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </MzField>
-        <MzSecondaryButton
-          onClick={() => {
-            setFrom(today);
-            setTo(today);
+      <MzSection title="Date filter">
+        <MzDateRangeFilter
+          fromDate={from}
+          toDate={to}
+          onChange={(f, t) => {
+            setFrom(f);
+            setTo(t);
           }}
-        >
-          Today
-        </MzSecondaryButton>
-        <MzSecondaryButton
-          onClick={() => {
-            setFrom(monthStart);
-            setTo(today);
-          }}
-        >
-          This month
-        </MzSecondaryButton>
-        <MzPrimaryButton onClick={onPrint} disabled={!report}>
-          Print report
-        </MzPrimaryButton>
-      </div>
+        />
+        <div className="mt-3">
+          <MzPrimaryButton onClick={onPrint} disabled={!report}>
+            Print report
+          </MzPrimaryButton>
+        </div>
+      </MzSection>
 
       {report ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -82,9 +74,9 @@ export function MobizoneBusinessReportPage(): JSX.Element {
           <MzStat label="Gross profit" value={formatPkr(report.grossProfitPkr)} />
           <MzStat label="Expenses (auto-deducted)" value={formatPkr(report.expenseTotalPkr)} />
           <MzStat label="Net profit / loss" value={formatPkr(report.profitPkr)} />
-          <MzStat label="Stock value (maal)" value={formatPkr(report.stockValuePkr)} />
-          <MzStat label="Receivables (lena baqi)" value={formatPkr(report.receivablesPkr)} />
-          <MzStat label="Payables (dena baqi)" value={formatPkr(report.payablesPkr)} />
+          <MzStat label="Stock value" value={formatPkr(report.stockValuePkr)} />
+          <MzStat label="Receivables" value={formatPkr(report.receivablesPkr)} />
+          <MzStat label="Payables" value={formatPkr(report.payablesPkr)} />
           <MzStat label="Cash balance" value={formatPkr(report.cashBalancePkr)} />
           <MzStat label="Bank balance" value={formatPkr(report.bankBalancePkr)} />
         </div>

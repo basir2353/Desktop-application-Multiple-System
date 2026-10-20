@@ -27,7 +27,10 @@ const MORE: MoreAction[] = [
   { title: "Today Buy", note: "Live", href: "/mobizone-reports", metric: "purchase" },
   { title: "Profit", note: "Today", href: "/mobizone-reports", metric: "profit" },
   { title: "Due", note: "Receivable", href: "/mobizone-reports", metric: "due" },
-  { title: "Expenses", note: "Shop costs", href: "/mobizone-expenses" },
+  { title: "Create Expense", note: "By account", href: "/mobizone-expenses" },
+  { title: "Account Expense", note: "Categories", href: "/mobizone-expense-accounts" },
+  { title: "Contra", note: "Cash ↔ Bank", href: "/mobizone-contra" },
+  { title: "General Voucher", note: "Double entry", href: "/mobizone-general-voucher" },
   { title: "Bill print", note: "Receipt", href: "/mobizone-receipt-settings" },
 ];
 

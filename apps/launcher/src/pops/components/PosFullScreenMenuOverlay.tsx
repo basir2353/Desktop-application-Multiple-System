@@ -22,7 +22,9 @@ import {
   filterPosRecentOrdersByMode,
   filterPosRecentOrdersWithinDays,
   formatRecentOrderTime,
+  posRecentOrderContact,
   posRecentOrderTotal,
+  shortPosOrderRef,
   sumPosRecentOrdersItemQty,
   type PosRecentOrder,
   type PosRecentOrderModeFilter,
@@ -1376,6 +1378,7 @@ export function PosFullScreenMenuOverlay({
                         order.stationLabel || order.orderMode,
                         order.orderMode,
                       );
+                      const contact = posRecentOrderContact(order);
                       return (
                         <li key={order.id}>
                           <div
@@ -1388,8 +1391,8 @@ export function PosFullScreenMenuOverlay({
                             <div className="flex min-w-0 items-start justify-between gap-2">
                               <div className="min-w-0 flex-1 overflow-hidden">
                                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                                  <span className="max-w-full truncate font-mono text-[10px] font-semibold text-amber-300" title={order.ref}>
-                                    {order.ref}
+                                  <span className="max-w-full truncate font-mono text-[9px] font-semibold text-amber-300" title={order.ref}>
+                                    {shortPosOrderRef(order.ref)}
                                   </span>
                                   <span
                                     className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ring-1 ${channelBadgeClass(order.orderMode)}`}
@@ -1400,6 +1403,20 @@ export function PosFullScreenMenuOverlay({
                                 <div className="truncate text-[11px] text-slate-300" title={station}>
                                   {station}
                                 </div>
+                                {contact.customer || contact.phone || contact.address ? (
+                                  <div className="mt-0.5 space-y-0.5 text-[9px] leading-snug text-slate-400">
+                                    {contact.customer || contact.phone ? (
+                                      <div className="truncate" title={[contact.customer, contact.phone].filter(Boolean).join(" · ")}>
+                                        {[contact.customer, contact.phone].filter(Boolean).join(" · ")}
+                                      </div>
+                                    ) : null}
+                                    {contact.address ? (
+                                      <div className="truncate text-sky-300" title={contact.address}>
+                                        📍 {contact.address}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                                 <div
                                   className="mt-0.5 line-clamp-2 break-words text-[10px] text-slate-500"
                                   title={order.summary}

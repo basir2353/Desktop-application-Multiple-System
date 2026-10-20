@@ -1,8 +1,14 @@
 import { Link } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { useMobizoneBranchCode, useMobizoneDb } from "../hooks/useMobizone";
-import { formatPkr, getMobizoneDashboard, seedFriendlyDefaults } from "../lib/mobizoneStore";
+import {
+  bankLedgerName,
+  formatPkr,
+  getCashBankBalances,
+  getMobizoneDashboard,
+  seedFriendlyDefaults,
+} from "../lib/mobizoneStore";
 import { MzPage, MzStat } from "../ui/MobizoneUi";
 
 /** Order strip — biggest CTAs on home */
@@ -10,14 +16,30 @@ const ORDERS = [
   {
     to: "/pops/mobizone/sell",
     title: "New Sale",
-    note: "Customer ko phone becho · cash / bank / udhaar",
+    note: "Sell phone to customer · cash / bank / credit",
     kind: "sale" as const,
+    eyebrow: "Primary order",
   },
   {
     to: "/pops/mobizone/purchase",
     title: "Purchase",
-    note: "Phone khareedo · IMEI stock add",
+    note: "Buy phone · add IMEI to stock",
     kind: "buy" as const,
+    eyebrow: "Stock order",
+  },
+  {
+    to: "/pops/mobizone/sale-return",
+    title: "Sale Return",
+    note: "Return sold phone · restock + refund",
+    kind: "sale" as const,
+    eyebrow: "Return order",
+  },
+  {
+    to: "/pops/mobizone/purchase-return",
+    title: "Purchase Return",
+    note: "Return bought phone to seller · remove from stock",
+    kind: "buy" as const,
+    eyebrow: "Return order",
   },
 ] as const;
 
@@ -25,14 +47,18 @@ const ORDERS = [
 const ALL = [
   { to: "/pops/mobizone/customers", title: "Customers", note: "CNIC / phone book" },
   { to: "/pops/mobizone/stock", title: "Stock", note: "IMEI inventory" },
-  { to: "/pops/mobizone/sales", title: "Total Sales", note: "Aaj + history" },
+  { to: "/pops/mobizone/sales", title: "Total Sales", note: "Today + history" },
   { to: "/pops/mobizone/purchases", title: "Total Purchase", note: "Buy ledger" },
   { to: "/pops/mobizone/business-report", title: "Today Profit", note: "Profit print" },
-  { to: "/pops/mobizone/ledger", title: "Due Receive", note: "Udhaar / partial" },
-  { to: "/pops/mobizone/search", title: "Search", note: "CNIC / IMEI" },
+  { to: "/pops/mobizone/ledger", title: "Due Receive", note: "Credit / partial" },
+  { to: "/pops/mobizone/search", title: "Universal Search", note: "Product / customer history" },
+  { to: "/pops/mobizone/legal-record", title: "Legal record", note: "Seller KYC + invoice" },
   { to: "/pops/mobizone/imei", title: "Scan", note: "Barcode / sticker" },
   { to: "/pops/mobizone/banks", title: "Banks", note: "Accounts" },
-  { to: "/pops/mobizone/expenses", title: "Expenses", note: "Shop costs" },
+  { to: "/pops/mobizone/expenses", title: "Create Expense", note: "Record by account" },
+  { to: "/pops/mobizone/expense-accounts", title: "Account Expense", note: "Rent, Electricity…" },
+  { to: "/pops/mobizone/contra-voucher", title: "Contra Voucher", note: "Cash ↔ Bank" },
+  { to: "/pops/mobizone/general-voucher", title: "General Voucher", note: "Double entry" },
   { to: "/pops/mobizone/shopkeepers", title: "Shops", note: "Shop 100, 64…" },
   { to: "/pops/mobizone/whatsapp", title: "WhatsApp", note: "Receipt send" },
   { to: "/pops/mobizone/receipt-settings", title: "Bill print", note: "Restaurant-style bill" },
@@ -40,8 +66,9 @@ const ALL = [
 
 export function MobizoneDashboardPage(): JSX.Element {
   const branchCode = useMobizoneBranchCode();
-  const { refresh } = useMobizoneDb();
+  const { db, refresh } = useMobizoneDb();
   const m = branchCode ? getMobizoneDashboard(branchCode) : null;
+  const money = useMemo(() => getCashBankBalances(db), [db]);
   const totalBalance = (m?.cashBalancePkr ?? 0) + (m?.bankBalancePkr ?? 0);
 
   useEffect(() => {
@@ -54,7 +81,7 @@ export function MobizoneDashboardPage(): JSX.Element {
     <MzPage>
       <PageHeader
         title="MobiZone"
-        subtitle="Order counter — sale & purchase pehle, baaki modules neeche."
+        subtitle="Order counter — sale & purchase first, other modules below."
       />
 
       <p className="mz-section-title" style={{ marginBottom: "-0.35rem" }}>
@@ -67,9 +94,7 @@ export function MobizoneDashboardPage(): JSX.Element {
             to={link.to}
             className={`mz-order-cta mz-order-cta--${link.kind}`}
           >
-            <span className="mz-order-eyebrow">
-              {link.kind === "sale" ? "Primary order" : "Stock order"}
-            </span>
+            <span className="mz-order-eyebrow">{link.eyebrow}</span>
             <span className="mz-order-title">{link.title}</span>
             <span className="mz-order-note">{link.note}</span>
             <span className="mz-order-arrow" aria-hidden>
@@ -92,9 +117,31 @@ export function MobizoneDashboardPage(): JSX.Element {
             Bank {m ? formatPkr(m.bankBalancePkr) : "—"}
           </span>
           <span style={{ color: "var(--mz-accent)" }}>
-            Maal {m ? formatPkr(m.stockValuePkr) : "—"}
+            Stock {m ? formatPkr(m.stockValuePkr) : "—"}
           </span>
           <span style={{ color: "var(--mz-muted)" }}>Phones {m?.inStock ?? "—"}</span>
+        </div>
+
+        <div className="mz-balance-ledgers">
+          <p className="mz-balance-ledgers-label">Ledgers / reports</p>
+          <div className="mz-balance-ledger-row">
+            <Link to="/pops/mobizone/money-ledger?kind=cash" className="mz-balance-ledger-chip">
+              <span className="mz-balance-ledger-name">Cash Ledger</span>
+              <span className="mz-balance-ledger-amt">{formatPkr(money.cash)}</span>
+            </Link>
+            {db.bankAccounts.map((a) => (
+              <Link
+                key={a.id}
+                to={`/pops/mobizone/money-ledger?kind=bank&accountId=${a.id}`}
+                className="mz-balance-ledger-chip mz-balance-ledger-chip--bank"
+              >
+                <span className="mz-balance-ledger-name">{bankLedgerName(a)} Ledger</span>
+                <span className="mz-balance-ledger-amt">
+                  {formatPkr(money.byAccount[a.id] ?? a.openingBalancePkr ?? 0)}
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -111,11 +158,11 @@ export function MobizoneDashboardPage(): JSX.Element {
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-        <MzStat label="Aaj sales" value={m ? formatPkr(m.todaySalesPkr) : "—"} />
-        <MzStat label="Aaj buy" value={m ? formatPkr(m.todayPurchasesPkr) : "—"} />
-        <MzStat label="Aaj profit" value={m ? formatPkr(m.todayProfitPkr) : "—"} />
-        <MzStat label="Lena baqi" value={m ? formatPkr(m.pendingReceivablesPkr) : "—"} />
-        <MzStat label="Dena baqi" value={m ? formatPkr(m.pendingPayablesPkr) : "—"} />
+        <MzStat label="Today sales" value={m ? formatPkr(m.todaySalesPkr) : "—"} />
+        <MzStat label="Today buy" value={m ? formatPkr(m.todayPurchasesPkr) : "—"} />
+        <MzStat label="Today profit" value={m ? formatPkr(m.todayProfitPkr) : "—"} />
+        <MzStat label="Receivable" value={m ? formatPkr(m.pendingReceivablesPkr) : "—"} />
+        <MzStat label="Payable" value={m ? formatPkr(m.pendingPayablesPkr) : "—"} />
         <MzStat label="Cash" value={m ? formatPkr(m.cashBalancePkr) : "—"} />
         <MzStat label="Bank" value={m ? formatPkr(m.bankBalancePkr) : "—"} />
         <MzStat label="Stock (pcs)" value={m?.inStock ?? "—"} />

@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MobizonePurchase } from "@platform/contracts";
 import { PageHeader } from "../../pops/ui/PageHeader";
+import { useSessionStore } from "../../stores/sessionStore";
 import { useMobizoneDb } from "../hooks/useMobizone";
-import { formatPkr, printPurchaseReceipt, recordPurchase } from "../lib/mobizoneStore";
+import { canEditMobizoneBillDate } from "../lib/mobizoneAccess";
+import { listSuggestions, rememberSuggestions } from "../lib/mobizoneSuggestions";
+import { formatPkr, printPurchaseReceipt, recordPurchase, todayDateInput } from "../lib/mobizoneStore";
 import { MzOptionalCameraImeiScan } from "../components/MzOptionalCameraImeiScan";
 import {
   MzField,
@@ -14,10 +17,14 @@ import {
   MzSection,
   MzSelect,
   MzStickyActions,
+  MzSuggestInput,
+  MzTextArea,
 } from "../ui/MobizoneUi";
 
 export function MobizonePurchasePage(): JSX.Element {
   const { branchCode, db, refresh } = useMobizoneDb();
+  const claims = useSessionStore((s) => s.claims);
+  const canSetBillDate = canEditMobizoneBillDate(claims);
   const [sellerName, setSellerName] = useState("");
   const [sellerCnic, setSellerCnic] = useState("");
   const [sellerPhone, setSellerPhone] = useState("");
@@ -26,12 +33,16 @@ export function MobizonePurchasePage(): JSX.Element {
   const [photo, setPhoto] = useState<string | null>(null);
   const [cnicFront, setCnicFront] = useState<string | null>(null);
   const [cnicBack, setCnicBack] = useState<string | null>(null);
+  const [otherPhoto, setOtherPhoto] = useState<string | null>(null);
+  const [note, setNote] = useState("");
   const [imei, setImei] = useState("");
   const [imei2, setImei2] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [colour, setColour] = useState("");
   const [storage, setStorage] = useState("");
+  const [batteryHealth, setBatteryHealth] = useState("");
+  const [etc, setEtc] = useState("");
   const [condition, setCondition] = useState<"new" | "used">("used");
   const [price, setPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
@@ -41,6 +52,7 @@ export function MobizonePurchasePage(): JSX.Element {
   const [txnRef, setTxnRef] = useState("");
   const [verified, setVerified] = useState(false);
   const [dueDate, setDueDate] = useState("");
+  const [billDate, setBillDate] = useState(todayDateInput);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lastPurchase, setLastPurchase] = useState<MobizonePurchase | null>(null);
@@ -50,6 +62,45 @@ export function MobizonePurchasePage(): JSX.Element {
       setBankAccountId(db.bankAccounts[0]!.id);
     }
   }, [db.bankAccounts, bankAccountId]);
+
+  const suggest = useMemo(
+    () => ({
+      brand: listSuggestions(branchCode, db, "brand"),
+      model: listSuggestions(branchCode, db, "model"),
+      colour: listSuggestions(branchCode, db, "colour"),
+      storage: listSuggestions(branchCode, db, "storage"),
+      etc: listSuggestions(branchCode, db, "etc"),
+      personName: listSuggestions(branchCode, db, "personName"),
+      phone: listSuggestions(branchCode, db, "phone"),
+      address: listSuggestions(branchCode, db, "address"),
+      cnic: listSuggestions(branchCode, db, "cnic"),
+    }),
+    [branchCode, db],
+  );
+
+  function applyKnownSeller(nameOrPhone: string): void {
+    const q = nameOrPhone.trim().toLowerCase();
+    if (!q) return;
+    const fromCustomer = db.customers.find(
+      (c) => c.name.trim().toLowerCase() === q || (c.phone ?? "").trim().toLowerCase() === q,
+    );
+    if (fromCustomer) {
+      setSellerName(fromCustomer.name);
+      if (fromCustomer.phone) setSellerPhone(fromCustomer.phone);
+      if (fromCustomer.address) setSellerAddress(fromCustomer.address);
+      if (fromCustomer.cnic) setSellerCnic(fromCustomer.cnic);
+      return;
+    }
+    const fromPurchase = db.purchases.find(
+      (p) =>
+        p.sellerName.trim().toLowerCase() === q || (p.sellerPhone ?? "").trim().toLowerCase() === q,
+    );
+    if (!fromPurchase) return;
+    setSellerName(fromPurchase.sellerName);
+    if (fromPurchase.sellerPhone) setSellerPhone(fromPurchase.sellerPhone);
+    if (fromPurchase.sellerAddress) setSellerAddress(fromPurchase.sellerAddress);
+    if (fromPurchase.sellerCnic) setSellerCnic(fromPurchase.sellerCnic);
+  }
 
   const priceN = Number(price) || 0;
   const paid = (Number(cash) || 0) + (Number(bank) || 0);
@@ -70,9 +121,10 @@ export function MobizonePurchasePage(): JSX.Element {
     const resolvedBankId =
       bankAccountId || (bankN > 0 && db.bankAccounts.length === 1 ? db.bankAccounts[0]!.id : "");
     if (bankN > 0 && !resolvedBankId) {
-      setErr("Bank amount enter kiya hai — pehle Banks page se account add/select karein.");
+      setErr("Bank amount entered — add/select an account on the Banks page first.");
       return;
     }
+    const resolvedBillDate = canSetBillDate ? billDate || todayDateInput() : todayDateInput();
     const acc = db.bankAccounts.find((a) => a.id === resolvedBankId);
     try {
       const row = recordPurchase(branchCode, {
@@ -83,6 +135,9 @@ export function MobizonePurchasePage(): JSX.Element {
         sellerPhotoDataUrl: photo,
         cnicFrontDataUrl: cnicFront,
         cnicBackDataUrl: cnicBack,
+        otherPhotoDataUrl: otherPhoto,
+        note: note.trim() || null,
+        billDate: resolvedBillDate,
         shopkeeperId: shopkeeperId || null,
         imei: imei.trim(),
         imei2: imei2.trim() || null,
@@ -90,6 +145,8 @@ export function MobizonePurchasePage(): JSX.Element {
         model,
         colour: colour.trim() || null,
         storage: storage.trim() || null,
+        batteryHealth: batteryHealth.trim() || null,
+        etc: etc.trim() || null,
         condition,
         purchasePricePkr: priceN,
         salePricePkr: salePrice ? Number(salePrice) : null,
@@ -109,11 +166,23 @@ export function MobizonePurchasePage(): JSX.Element {
           },
         },
       });
+      rememberSuggestions(branchCode, {
+        brand,
+        model,
+        colour,
+        storage,
+        etc,
+        personName: sellerName,
+        phone: sellerPhone,
+        address: sellerAddress,
+        cnic: sellerCnic,
+      });
       refresh();
       setLastPurchase(row);
       setMsg(
-        `Purchase saved — ${row.brand} ${row.model}. Paid ${formatPkr(row.paidPkr)} · Udhaar ${formatPkr(row.remainingPkr)}.`,
+        `Purchase saved — ${row.brand} ${row.model}. Paid ${formatPkr(row.paidPkr)} · Credit ${formatPkr(row.remainingPkr)}.`,
       );
+      printPurchaseReceipt(row, branchCode);
       setSellerName("");
       setSellerCnic("");
       setSellerPhone("");
@@ -122,18 +191,23 @@ export function MobizonePurchasePage(): JSX.Element {
       setPhoto(null);
       setCnicFront(null);
       setCnicBack(null);
+      setOtherPhoto(null);
+      setNote("");
       setImei("");
       setImei2("");
       setBrand("");
       setModel("");
       setColour("");
       setStorage("");
+      setBatteryHealth("");
+      setEtc("");
       setPrice("");
       setSalePrice("");
       setCash("");
       setBank("");
       setTxnRef("");
       setDueDate("");
+      setBillDate(todayDateInput());
       setVerified(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not save purchase.");
@@ -144,7 +218,7 @@ export function MobizonePurchasePage(): JSX.Element {
     <MzPage>
       <PageHeader
         title="Buy phone"
-        subtitle="Seller photo + CNIC, IMEI, cash/bank, aur udhaar due date."
+        subtitle="Seller photo + CNIC, IMEI, cash/bank, and credit due date."
       />
       {err ? <p className="text-sm text-red-600 dark:text-red-400">{err}</p> : null}
       {msg ? (
@@ -163,17 +237,50 @@ export function MobizonePurchasePage(): JSX.Element {
       <div className="grid gap-4 lg:grid-cols-2">
         <MzSection title="Seller / customer">
           <div className="grid gap-3 sm:grid-cols-2">
+            {canSetBillDate ? (
+              <MzField label="Bill date * (admin)">
+                <MzInput
+                  type="date"
+                  value={billDate}
+                  onChange={(e) => setBillDate(e.target.value)}
+                  className="mz-date-input"
+                />
+              </MzField>
+            ) : null}
             <MzField label="Full name *">
-              <MzInput value={sellerName} onChange={(e) => setSellerName(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-buy-name"
+                suggestions={suggest.personName}
+                value={sellerName}
+                onChange={(e) => setSellerName(e.target.value)}
+                onBlur={(e) => applyKnownSeller(e.target.value)}
+              />
             </MzField>
             <MzField label="CNIC / ID number">
-              <MzInput value={sellerCnic} onChange={(e) => setSellerCnic(e.target.value)} placeholder="xxxxx-xxxxxxx-x" />
+              <MzSuggestInput
+                listId="mz-buy-cnic"
+                suggestions={suggest.cnic}
+                value={sellerCnic}
+                onChange={(e) => setSellerCnic(e.target.value)}
+                placeholder="xxxxx-xxxxxxx-x"
+              />
             </MzField>
             <MzField label="Mobile number">
-              <MzInput value={sellerPhone} onChange={(e) => setSellerPhone(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-buy-phone"
+                suggestions={suggest.phone}
+                value={sellerPhone}
+                onChange={(e) => setSellerPhone(e.target.value)}
+                onBlur={(e) => applyKnownSeller(e.target.value)}
+              />
             </MzField>
             <MzField label="Address">
-              <MzInput value={sellerAddress} onChange={(e) => setSellerAddress(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-buy-address"
+                suggestions={suggest.address}
+                value={sellerAddress}
+                onChange={(e) => setSellerAddress(e.target.value)}
+              />
             </MzField>
             <MzField label="Shopkeeper (optional)">
               <MzSelect value={shopkeeperId} onChange={(e) => setShopkeeperId(e.target.value)}>
@@ -186,16 +293,17 @@ export function MobizonePurchasePage(): JSX.Element {
               </MzSelect>
             </MzField>
           </div>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="mz-photo-grid">
             <MzPhotoUpload label="Seller photo" value={photo} onChange={setPhoto} />
             <MzPhotoUpload label="CNIC front" value={cnicFront} onChange={setCnicFront} />
             <MzPhotoUpload label="CNIC back" value={cnicBack} onChange={setCnicBack} />
+            <MzPhotoUpload label="Other (any photo)" value={otherPhoto} onChange={setOtherPhoto} />
           </div>
         </MzSection>
 
         <MzSection title="Device">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            IMEI: type karo ya USB/Bluetooth barcode scanner use karo — camera permission zaroori nahi.
+            IMEI: type it or use a USB/Bluetooth barcode scanner — camera permission is optional.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <MzField label="IMEI *">
@@ -214,16 +322,46 @@ export function MobizonePurchasePage(): JSX.Element {
               <MzInput value={imei2} onChange={(e) => setImei2(e.target.value)} className="font-mono" />
             </MzField>
             <MzField label="Brand *">
-              <MzInput value={brand} onChange={(e) => setBrand(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-buy-brand"
+                suggestions={suggest.brand}
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="e.g. Infinix"
+              />
             </MzField>
             <MzField label="Model *">
-              <MzInput value={model} onChange={(e) => setModel(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-buy-model"
+                suggestions={suggest.model}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. Zero 8i"
+              />
             </MzField>
             <MzField label="Colour">
-              <MzInput value={colour} onChange={(e) => setColour(e.target.value)} />
+              <MzSuggestInput
+                listId="mz-buy-colour"
+                suggestions={suggest.colour}
+                value={colour}
+                onChange={(e) => setColour(e.target.value)}
+              />
             </MzField>
             <MzField label="Storage">
-              <MzInput value={storage} onChange={(e) => setStorage(e.target.value)} placeholder="128GB" />
+              <MzSuggestInput
+                listId="mz-buy-storage"
+                suggestions={suggest.storage}
+                value={storage}
+                onChange={(e) => setStorage(e.target.value)}
+                placeholder="128GB"
+              />
+            </MzField>
+            <MzField label="Battery health">
+              <MzInput
+                value={batteryHealth}
+                onChange={(e) => setBatteryHealth(e.target.value)}
+                placeholder="e.g. 92% / Excellent"
+              />
             </MzField>
             <MzField label="Condition">
               <MzSelect value={condition} onChange={(e) => setCondition(e.target.value as "new" | "used")}>
@@ -237,10 +375,22 @@ export function MobizonePurchasePage(): JSX.Element {
             <MzField label="Expected sale price">
               <MzInput type="number" min={0} value={salePrice} onChange={(e) => setSalePrice(e.target.value)} />
             </MzField>
+            <div className="sm:col-span-2">
+              <MzField label="Etc (JV / Non PTA / anything)">
+                <MzSuggestInput
+                  listId="mz-buy-etc"
+                  suggestions={suggest.etc}
+                  value={etc}
+                  onChange={(e) => setEtc(e.target.value)}
+                  placeholder="e.g. JV · Non PTA · Box pack…"
+                  maxLength={120}
+                />
+              </MzField>
+            </div>
           </div>
         </MzSection>
 
-        <MzSection title="Payment (cash + bank + udhaar)">
+        <MzSection title="Payment (cash + bank + credit)">
           <div className="grid gap-3 sm:grid-cols-2">
             <MzField label="Cash paid">
               <MzInput type="number" min={0} value={cash} onChange={(e) => setCash(e.target.value)} />
@@ -261,16 +411,37 @@ export function MobizonePurchasePage(): JSX.Element {
             <MzField label="Transaction reference">
               <MzInput value={txnRef} onChange={(e) => setTxnRef(e.target.value)} />
             </MzField>
-            <MzField label="Udhaar due date">
-              <MzInput type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={remaining <= 0} />
+            <MzField label="Credit due date">
+              <MzInput
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="mz-date-input"
+              />
+              {remaining <= 0 ? (
+                <span className="mt-1 block text-[11px] text-slate-500">
+                  Used when cash + bank is less than purchase price (credit).
+                </span>
+              ) : null}
             </MzField>
             <label className="flex items-end gap-2 pb-2 text-sm text-slate-700 dark:text-slate-300">
               <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} />
               Bank payment verified
             </label>
+            <div className="sm:col-span-2">
+              <MzField label="Note (prints on bill)">
+                <MzTextArea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Any note / remarks…"
+                  maxLength={800}
+                  rows={3}
+                />
+              </MzField>
+            </div>
           </div>
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            Paid {formatPkr(paid)} · Remaining udhaar{" "}
+            Paid {formatPkr(paid)} · Remaining credit{" "}
             <strong className="text-slate-900 dark:text-white">{formatPkr(remaining)}</strong>
           </p>
           <MzStickyActions>

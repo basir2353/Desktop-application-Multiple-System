@@ -1,9 +1,15 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { cardClass, mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
-import { findDeviceByImei, formatPkr } from "../lib/mobizoneStore";
+import { loadMobizoneReceiptSettings } from "../lib/mobizoneReceiptSettings";
+import {
+  findDeviceByImei,
+  formatPkr,
+  normalizeImeiScan,
+  printImeiBarcodeSticker,
+} from "../lib/mobizoneStore";
 import { MzOptionalCameraImeiScan } from "../components/MzOptionalCameraImeiScan";
 import { MzField, MzInput, MzPrimaryButton, MzSecondaryButton, MzSection } from "../ui/MobizoneUi";
 
@@ -14,12 +20,30 @@ export function MobizoneImeiPage(): JSX.Element {
   const [err, setErr] = useState<string | null>(null);
   const found = branchCode && q.trim() ? findDeviceByImei(branchCode, q.trim()) : undefined;
 
-  function onSearch(): void {
-    if (!found) {
-      setErr("No device found for that IMEI / barcode.");
+  function applyScan(raw: string): void {
+    const code = normalizeImeiScan(raw);
+    setQ(code);
+    setErr(null);
+    if (!branchCode || !code) return;
+    const device = findDeviceByImei(branchCode, code);
+    if (!device) {
+      setErr("No mobile found for this barcode / IMEI.");
       return;
     }
-    setErr(null);
+    // Scan = open that phone (sell if in stock, else history).
+    if (device.status === "in_stock") {
+      navigate(`/pops/mobizone/sell?imei=${encodeURIComponent(device.imei)}`);
+    } else {
+      navigate(`/pops/mobizone/search?q=${encodeURIComponent(device.imei)}&focus=imei`);
+    }
+  }
+
+  function onSearch(): void {
+    if (!q.trim()) {
+      setErr("Scan barcode or type IMEI.");
+      return;
+    }
+    applyScan(q);
   }
 
   function printSticker(deviceId?: string): void {
@@ -31,39 +55,20 @@ export function MobizoneImeiPage(): JSX.Element {
       setErr("Nothing to print — add stock or search an IMEI first.");
       return;
     }
-    const html = `<!doctype html><html><head><title>IMEI sticker</title>
-<style>
-  body{font-family:ui-monospace,monospace;padding:12px}
-  .box{border:1px dashed #333;padding:12px;width:280px}
-  .brand{font-size:14px;font-weight:700}
-  .imei{font-size:16px;letter-spacing:.04em;margin-top:8px}
-  .meta{font-size:11px;color:#444;margin-top:6px}
-</style></head><body>
-<div class="box">
-  <div class="brand">${device.brand} ${device.model}</div>
-  <div class="imei">IMEI ${device.imei}</div>
-  <div class="meta">${[device.colour, device.storage, device.condition].filter(Boolean).join(" · ")}</div>
-  <svg id="bc"></svg>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
-<script>JsBarcode("#bc", ${JSON.stringify(device.barcode || device.imei)}, {format:"CODE128",width:1.4,height:40,displayValue:false});
-setTimeout(()=>window.print(),400);<\/script>
-</body></html>`;
-    const w = window.open("", "_blank", "noopener,noreferrer,width=400,height=320");
-    if (!w) return;
-    w.document.write(html);
-    w.document.close();
+    setErr(null);
+    const shopName = loadMobizoneReceiptSettings().shopName;
+    printImeiBarcodeSticker(device, { shopName });
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="IMEI & barcode"
-        subtitle="Scan to open a phone record, or print IMEI stickers for stock."
+        subtitle="Print a barcode for each IMEI — scan it to open the same phone. Sticker: shop + model + barcode + *IMEI*."
       />
-      <MzSection title="Scanner">
+      <MzSection title="Scan barcode → open mobile">
         <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
-          Type or USB/Bluetooth scanner fills this field without camera. Camera scan is optional.
+          A USB/Bluetooth scanner fills this field. The barcode value is the IMEI, so the same phone opens.
         </p>
         <div className="flex flex-wrap gap-2">
           <MzField label="IMEI / barcode">
@@ -78,21 +83,18 @@ setTimeout(()=>window.print(),400);<\/script>
                   if (e.key === "Enter") onSearch();
                 }}
                 className="min-w-[260px] font-mono"
-                placeholder="Scan here…"
+                placeholder="Scan barcode / type IMEI…"
                 autoFocus
               />
               <MzOptionalCameraImeiScan
                 label="Camera scan (optional)"
-                onDetected={(code) => {
-                  setQ(code);
-                  setErr(null);
-                }}
+                onDetected={(code) => applyScan(code)}
               />
             </div>
           </MzField>
           <div className="flex items-end gap-2">
-            <MzPrimaryButton onClick={onSearch}>Find</MzPrimaryButton>
-            <MzSecondaryButton onClick={() => printSticker()}>Print sticker</MzSecondaryButton>
+            <MzPrimaryButton onClick={onSearch}>Open mobile</MzPrimaryButton>
+            <MzSecondaryButton onClick={() => printSticker()}>Print barcode</MzSecondaryButton>
           </div>
         </div>
         {err ? <p className="text-sm text-red-600">{err}</p> : null}
@@ -101,32 +103,53 @@ setTimeout(()=>window.print(),400);<\/script>
             <p className="font-semibold text-slate-900 dark:text-white">
               {found.brand} {found.model}
             </p>
-            <p className={`mt-1 font-mono text-sm ${mutedClass}`}>{found.imei}</p>
+            <p className={`mt-1 font-mono text-sm ${mutedClass}`}>*{found.imei}*</p>
             <p className={`mt-1 text-sm ${mutedClass}`}>
               {found.status.replace("_", " ")} · Cost {formatPkr(found.purchasePricePkr)}
+              {found.batteryHealth ? ` · Bat ${found.batteryHealth}` : ""}
             </p>
-            {found.status === "in_stock" ? (
-              <MzPrimaryButton className="mt-3" onClick={() => navigate("/pops/mobizone/sell")}>
-                Sell this phone
-              </MzPrimaryButton>
-            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <MzPrimaryButton onClick={() => printSticker(found.id)}>Print barcode sticker</MzPrimaryButton>
+              {found.status === "in_stock" ? (
+                <MzSecondaryButton
+                  onClick={() => navigate(`/pops/mobizone/sell?imei=${encodeURIComponent(found.imei)}`)}
+                >
+                  Sell this phone
+                </MzSecondaryButton>
+              ) : null}
+              <Link to={`/pops/mobizone/search?q=${encodeURIComponent(found.imei)}&focus=imei`}>
+                <MzSecondaryButton>Full history</MzSecondaryButton>
+              </Link>
+            </div>
           </div>
         ) : null}
       </MzSection>
 
-      <MzSection title="Recent stock (print any)">
+      <MzSection title="In-stock — print barcode">
         <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-          {db.devices.filter((d) => d.status === "in_stock").slice(0, 12).map((d) => (
-            <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-              <div>
-                <p className="text-sm font-medium text-slate-900 dark:text-white">
-                  {d.brand} {d.model}
-                </p>
-                <p className={`font-mono text-xs ${mutedClass}`}>{d.imei}</p>
-              </div>
-              <MzSecondaryButton onClick={() => printSticker(d.id)}>Print</MzSecondaryButton>
-            </li>
-          ))}
+          {db.devices
+            .filter((d) => d.status === "in_stock")
+            .slice(0, 30)
+            .map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">
+                    {d.brand} {d.model}
+                    {d.storage ? ` · ${d.storage}` : ""}
+                    {d.batteryHealth ? ` · ${d.batteryHealth}` : ""}
+                  </p>
+                  <p className={`font-mono text-xs ${mutedClass}`}>*{d.imei}*</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <MzSecondaryButton onClick={() => printSticker(d.id)}>Print barcode</MzSecondaryButton>
+                  <MzSecondaryButton
+                    onClick={() => navigate(`/pops/mobizone/sell?imei=${encodeURIComponent(d.imei)}`)}
+                  >
+                    Sell
+                  </MzSecondaryButton>
+                </div>
+              </li>
+            ))}
           {db.devices.filter((d) => d.status === "in_stock").length === 0 ? (
             <li className={`py-4 text-sm ${mutedClass}`}>No in-stock phones yet.</li>
           ) : null}

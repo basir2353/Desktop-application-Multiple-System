@@ -3,7 +3,11 @@ import { billChannelLabel, type OrderChannelLabel } from "./orderSales";
 import { computeTicketTotals } from "./posDiscount";
 import type { PosSettings } from "./posSettings";
 import { DEFAULT_POS_SETTINGS, effectiveServicePctForMode, effectiveTaxPctForMode } from "./posSettings";
-import { discountAmountFromTicketNotes, resolveTicketDeliveryNotes } from "./posLoadOrder";
+import {
+  discountAmountFromTicketNotes,
+  parseDeliveryFieldsFromNotes,
+  resolveTicketDeliveryNotes,
+} from "./posLoadOrder";
 import { inferPosModeFromLabel, type PosOrderModeLabel } from "./posOrderMode";
 
 export type PosOrderLine = {
@@ -69,6 +73,32 @@ export type PosRecentOrder = {
 
 export function canChangePosRecentOrderTable(order: PosRecentOrder): boolean {
   return order.kind === "pending" && order.orderMode === "Dine-in" && Boolean(order.pendingTicket);
+}
+
+/** Customer / phone / address from kitchen ticket or bill notes (mobile + delivery). */
+export function posRecentOrderContact(order: PosRecentOrder): {
+  customer: string;
+  phone: string;
+  address: string;
+} {
+  const notes =
+    resolveTicketDeliveryNotes(order.kitchenTicket ?? {}) ??
+    order.kitchenTicket?.notes ??
+    order.bill?.notes ??
+    (order.detail.kind === "paid" ? order.detail.notes : null);
+  const parsed = parseDeliveryFieldsFromNotes(notes);
+  return {
+    customer: parsed.customer.trim(),
+    phone: parsed.phone.trim(),
+    address: parsed.address.trim(),
+  };
+}
+
+/** Compact order ref for POS list cards — full value stays in title tooltip. */
+export function shortPosOrderRef(ref: string, max = 22): string {
+  const t = ref.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, 10)}…${t.slice(-8)}`;
 }
 
 export function canPayPosRecentOrder(order: PosRecentOrder): boolean {

@@ -2,19 +2,33 @@ import { useMemo, useState } from "react";
 import { PageHeader } from "../../pops/ui/PageHeader";
 import { mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
-import { filterByPeriod, formatPkr, recordLedgerPayment } from "../lib/mobizoneStore";
-import { MzField, MzSecondaryButton, MzSelect, MzStat } from "../ui/MobizoneUi";
-
-type Period = "daily" | "weekly" | "monthly" | "all";
+import {
+  filterByDateRange,
+  formatPkr,
+  monthStartDateInput,
+  recordLedgerPayment,
+  todayDateInput,
+} from "../lib/mobizoneStore";
+import {
+  MzDateRangeFilter,
+  MzSecondaryButton,
+  MzSection,
+  MzStat,
+} from "../ui/MobizoneUi";
 
 export function MobizoneReportsPage(): JSX.Element {
   const { db } = useMobizoneDb();
-  const [period, setPeriod] = useState<Period>("daily");
+  const [fromDate, setFromDate] = useState(monthStartDateInput);
+  const [toDate, setToDate] = useState(todayDateInput);
+
   const sales = useMemo(
-    () => filterByPeriod(db.sales.filter((s) => !s.returnedAt), period),
-    [db.sales, period],
+    () => filterByDateRange(db.sales.filter((s) => !s.returnedAt), fromDate || null, toDate || null),
+    [db.sales, fromDate, toDate],
   );
-  const purchases = useMemo(() => filterByPeriod(db.purchases, period), [db.purchases, period]);
+  const purchases = useMemo(
+    () => filterByDateRange(db.purchases.filter((p) => !p.returnedAt), fromDate || null, toDate || null),
+    [db.purchases, fromDate, toDate],
+  );
   const salesTotal = sales.reduce((a, s) => a + s.pricePkr, 0);
   const purchaseTotal = purchases.reduce((a, p) => a + p.purchasePricePkr, 0);
   const cashIn = sales.reduce((a, s) => a + (s.payment.cashPkr || 0), 0);
@@ -24,15 +38,20 @@ export function MobizoneReportsPage(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Sale & purchase reports" subtitle="Daily, weekly, and monthly trade summaries with cash vs bank." />
-      <MzField label="Period">
-        <MzSelect value={period} onChange={(e) => setPeriod(e.target.value as Period)} className="max-w-xs">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-          <option value="all">All time</option>
-        </MzSelect>
-      </MzField>
+      <PageHeader
+        title="Sale & purchase reports"
+        subtitle="Trade summaries with cash vs bank for any date range."
+      />
+      <MzSection title="Date filter">
+        <MzDateRangeFilter
+          fromDate={fromDate}
+          toDate={toDate}
+          onChange={(from, to) => {
+            setFromDate(from);
+            setToDate(to);
+          }}
+        />
+      </MzSection>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <MzStat label="Sales count" value={sales.length} />
         <MzStat label="Sales total" value={formatPkr(salesTotal)} />
@@ -44,44 +63,56 @@ export function MobizoneReportsPage(): JSX.Element {
         <MzStat label="Net cash" value={formatPkr(cashIn - cashOut)} />
         <MzStat label="Net bank" value={formatPkr(bankIn - bankOut)} />
       </div>
-      <p className={`text-sm ${mutedClass}`}>
-        Tip: open Sync & backup from the sidebar to protect this branch&apos;s MobiZone records.
-      </p>
     </div>
   );
 }
 
 export function MobizoneProfitPage(): JSX.Element {
   const { db } = useMobizoneDb();
-  const [period, setPeriod] = useState<Period>("monthly");
+  const [fromDate, setFromDate] = useState(monthStartDateInput);
+  const [toDate, setToDate] = useState(todayDateInput);
+
   const sales = useMemo(
-    () => filterByPeriod(db.sales.filter((s) => !s.returnedAt), period),
-    [db.sales, period],
+    () => filterByDateRange(db.sales.filter((s) => !s.returnedAt), fromDate || null, toDate || null),
+    [db.sales, fromDate, toDate],
   );
   const expenses = useMemo(
-    () => filterByPeriod(db.expenses ?? [], period),
-    [db.expenses, period],
+    () => filterByDateRange(db.expenses ?? [], fromDate || null, toDate || null),
+    [db.expenses, fromDate, toDate],
   );
+  const voucherExpense = useMemo(() => {
+    let total = 0;
+    for (const v of filterByDateRange(db.vouchers ?? [], fromDate || null, toDate || null)) {
+      for (const line of v.lines) {
+        if (line.accountKind !== "expense") continue;
+        total += line.side === "debit" ? line.amountPkr : -line.amountPkr;
+      }
+    }
+    return total;
+  }, [db.vouchers, fromDate, toDate]);
+
   const revenue = sales.reduce((a, s) => a + s.pricePkr, 0);
   const cost = sales.reduce((a, s) => a + s.costPkr, 0);
   const grossProfit = sales.reduce((a, s) => a + s.profitPkr, 0);
-  const expenseTotal = expenses.reduce((a, x) => a + x.amountPkr, 0);
+  const expenseTotal = expenses.reduce((a, x) => a + x.amountPkr, 0) + voucherExpense;
   const netProfit = grossProfit - expenseTotal;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Profit / loss"
-        subtitle="Gross phone profit (sale − purchase cost), minus shop expenses (salary, food, rent, etc.)."
+        subtitle="Gross phone profit (sale − purchase cost), minus shop expenses for the selected dates."
       />
-      <MzField label="Period">
-        <MzSelect value={period} onChange={(e) => setPeriod(e.target.value as Period)} className="max-w-xs">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-          <option value="all">All time</option>
-        </MzSelect>
-      </MzField>
+      <MzSection title="Date filter">
+        <MzDateRangeFilter
+          fromDate={fromDate}
+          toDate={toDate}
+          onChange={(from, to) => {
+            setFromDate(from);
+            setToDate(to);
+          }}
+        />
+      </MzSection>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <MzStat label="Revenue" value={formatPkr(revenue)} />
         <MzStat label="Cost of goods" value={formatPkr(cost)} />
@@ -89,10 +120,6 @@ export function MobizoneProfitPage(): JSX.Element {
         <MzStat label="Expenses" value={formatPkr(expenseTotal)} />
         <MzStat label="Net profit" value={formatPkr(netProfit)} />
       </div>
-      <p className={`text-sm ${mutedClass}`}>
-        Expenses add karne ke baad net profit automatically update hota hai — Expenses page se khana, salary, rent,
-        courier wagaira record karein.
-      </p>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
         Phone profits
       </h3>
@@ -113,7 +140,7 @@ export function MobizoneProfitPage(): JSX.Element {
             </p>
           </li>
         ))}
-        {sales.length === 0 ? <p className={`text-sm ${mutedClass}`}>No sold phones in this period.</p> : null}
+        {sales.length === 0 ? <p className={`text-sm ${mutedClass}`}>No sold phones in this date range.</p> : null}
       </ul>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
         Expenses deducted
@@ -135,8 +162,8 @@ export function MobizoneProfitPage(): JSX.Element {
             </p>
           </li>
         ))}
-        {expenses.length === 0 ? (
-          <p className={`text-sm ${mutedClass}`}>Is period mein koi expense nahi — net = gross profit.</p>
+        {expenses.length === 0 && voucherExpense === 0 ? (
+          <p className={`text-sm ${mutedClass}`}>No expenses in this date range — net equals gross profit.</p>
         ) : null}
       </ul>
     </div>
@@ -145,8 +172,17 @@ export function MobizoneProfitPage(): JSX.Element {
 
 export function MobizonePaymentsPage(): JSX.Element {
   const { branchCode, db, refresh } = useMobizoneDb();
-  const receivables = db.sales.filter((s) => !s.returnedAt && s.remainingPkr > 0);
-  const payables = db.purchases.filter((p) => (p.remainingPkr || 0) > 0);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
+  const receivables = useMemo(() => {
+    const open = db.sales.filter((s) => !s.returnedAt && s.remainingPkr > 0);
+    return filterByDateRange(open, fromDate || null, toDate || null);
+  }, [db.sales, fromDate, toDate]);
+  const payables = useMemo(() => {
+    const open = db.purchases.filter((p) => !p.returnedAt && (p.remainingPkr || 0) > 0);
+    return filterByDateRange(open, fromDate || null, toDate || null);
+  }, [db.purchases, fromDate, toDate]);
 
   function quickReceive(sale: (typeof receivables)[number]): void {
     if (!branchCode || !(sale.remainingPkr > 0)) return;
@@ -154,7 +190,7 @@ export function MobizonePaymentsPage(): JSX.Element {
     const partyId = sale.shopkeeperId ?? sale.customerId;
     if (!partyId) return;
     const cash = window.confirm(
-      `${formatPkr(sale.remainingPkr)} receive karna hai?\nOK = Cash · Cancel = Bank`,
+      `Receive ${formatPkr(sale.remainingPkr)}?\nOK = Cash · Cancel = Bank`,
     );
     try {
       recordLedgerPayment(branchCode, {
@@ -177,8 +213,19 @@ export function MobizonePaymentsPage(): JSX.Element {
     <div className="space-y-6">
       <PageHeader
         title="Pending payments"
-        subtitle="Receivables (lena) from sales and payables (dena) on udhaar purchases — clear them from Udhaar & ledger."
+        subtitle="Receivables from sales and payables on credit purchases — filter by bill date."
       />
+      <MzSection title="Date filter">
+        <MzDateRangeFilter
+          fromDate={fromDate}
+          toDate={toDate}
+          onChange={(from, to) => {
+            setFromDate(from);
+            setToDate(to);
+          }}
+          hint="Default is all open dues. Set dates to filter by sale/purchase date."
+        />
+      </MzSection>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MzStat label="Open receivables" value={receivables.length} />
         <MzStat label="Total to receive" value={formatPkr(receivables.reduce((a, s) => a + s.remainingPkr, 0))} />
@@ -211,10 +258,10 @@ export function MobizonePaymentsPage(): JSX.Element {
             </div>
           </li>
         ))}
-        {receivables.length === 0 ? <p className={`text-sm ${mutedClass}`}>No receivables.</p> : null}
+        {receivables.length === 0 ? <p className={`text-sm ${mutedClass}`}>No receivables in this range.</p> : null}
       </ul>
       <h3 className="text-sm font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
-        Payables (udhaar purchases)
+        Payables (credit purchases)
       </h3>
       <ul className="space-y-2">
         {payables.map((p) => (
@@ -233,7 +280,7 @@ export function MobizonePaymentsPage(): JSX.Element {
             </p>
           </li>
         ))}
-        {payables.length === 0 ? <p className={`text-sm ${mutedClass}`}>No payables.</p> : null}
+        {payables.length === 0 ? <p className={`text-sm ${mutedClass}`}>No payables in this range.</p> : null}
       </ul>
     </div>
   );

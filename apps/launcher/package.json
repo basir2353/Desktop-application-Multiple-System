@@ -36,6 +36,7 @@
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@zxing/browser": "^0.2.1",
     "drizzle-orm": "^0.38.4",
     "html-to-image": "^1.11.13",
     "qrcode": "^1.5.4",
