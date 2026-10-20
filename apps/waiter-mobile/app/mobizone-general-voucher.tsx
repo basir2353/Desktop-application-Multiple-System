@@ -14,7 +14,7 @@ import {
   todayDateInput,
   type GeneralVoucherLineInput,
 } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzCard,
   MzDateRangeChips,
@@ -46,6 +46,8 @@ const emptyLine = (side: "debit" | "credit"): LineDraft => ({
 });
 
 export default function MobizoneGeneralVoucherScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode, db, refresh, ready } = useMobizoneDb();
   const [reference, setReference] = useState("");
@@ -144,7 +146,7 @@ export default function MobizoneGeneralVoucherScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle
           title="General Voucher"
           subtitle="Double-entry across customers, suppliers, expenses, cash & bank"
@@ -186,12 +188,14 @@ export default function MobizoneGeneralVoucherScreen(): React.JSX.Element {
                         paddingVertical: 8,
                         borderRadius: 8,
                         alignItems: "center",
-                        backgroundColor: line.side === side ? mz.ink : mz.white,
+                        backgroundColor: line.side === side ? mz.navyDeep : mz.cardSoft,
+                        borderWidth: 1,
+                        borderColor: line.side === side ? mz.accent : mz.border,
                       }}
                     >
                       <Text
                         style={{
-                          color: line.side === side ? mz.white : mz.text,
+                          color: line.side === side ? mz.onNavy : mz.text,
                           fontWeight: "700",
                           fontSize: 12,
                         }}
@@ -215,7 +219,9 @@ export default function MobizoneGeneralVoucherScreen(): React.JSX.Element {
                         paddingHorizontal: 8,
                         paddingVertical: 6,
                         borderRadius: 8,
-                        backgroundColor: line.accountKind === k ? mz.accent : mz.white,
+                        backgroundColor: line.accountKind === k ? mz.accent : mz.cardSoft,
+                        borderWidth: 1,
+                        borderColor: line.accountKind === k ? mz.accent : mz.border,
                       }}
                     >
                       <Text
@@ -240,12 +246,14 @@ export default function MobizoneGeneralVoucherScreen(): React.JSX.Element {
                           paddingHorizontal: 8,
                           paddingVertical: 6,
                           borderRadius: 8,
-                          backgroundColor: line.accountId === o.id ? mz.ink : mz.white,
+                          backgroundColor: line.accountId === o.id ? mz.navyDeep : mz.cardSoft,
+                          borderWidth: 1,
+                          borderColor: line.accountId === o.id ? mz.accent : mz.border,
                         }}
                       >
                         <Text
                           style={{
-                            color: line.accountId === o.id ? mz.white : mz.text,
+                            color: line.accountId === o.id ? mz.onNavy : mz.text,
                             fontSize: 11,
                             fontWeight: "600",
                           }}

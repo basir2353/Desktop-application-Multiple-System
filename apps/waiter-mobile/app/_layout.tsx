@@ -190,6 +190,21 @@ function ThemedStack() {
           <Stack.Screen name="admin-users" options={{ title: "User management" }} />
           <Stack.Screen name="admin-activity" options={{ title: "Activity & reports" }} />
           <Stack.Screen name="admin-pra" options={{ headerShown: false }} />
+          <Stack.Screen name="tradeflow-home" options={{ headerShown: false }} />
+          <Stack.Screen name="tradeflow-entry" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-home" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-stock" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-scan" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-sale" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-purchase" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-more" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-customers" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-reports" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-expenses" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-expense-accounts" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-contra" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-general-voucher" options={{ headerShown: false }} />
+          <Stack.Screen name="mobizone-receipt-settings" options={{ headerShown: false }} />
         </Stack>
       </View>
     </View>

@@ -8,7 +8,7 @@ import {
   seedExpenseAccounts,
   upsertExpenseAccount,
 } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzCard,
   MzEmpty,
@@ -25,6 +25,8 @@ const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
 export default function MobizoneExpenseAccountsScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode, db, refresh, ready } = useMobizoneDb();
@@ -73,7 +75,7 @@ export default function MobizoneExpenseAccountsScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle
           title="Account Expense"
           subtitle="Create categories: Rent, Electricity, Food, Salary…"

@@ -1,6 +1,6 @@
 import Constants from "expo-constants";
 import { useEffect, useState } from "react";
-import { Linking, Pressable, Text, View } from "react-native";
+import { Linking, Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "./ui";
 
@@ -62,6 +62,9 @@ export function MobileUpdateBanner(): JSX.Element | null {
   const [dismissedCode, setDismissedCode] = useState<number | null>(null);
 
   useEffect(() => {
+    // APK update feed is native-only; on web it just shows a noisy "Failed to fetch".
+    if (Platform.OS === "web") return;
+
     let cancelled = false;
 
     async function check(): Promise<void> {
@@ -83,10 +86,8 @@ export function MobileUpdateBanner(): JSX.Element | null {
         setState({ kind: "available", feed });
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : String(err);
-        if (/404|Not Found|failed|network|timed out/i.test(message)) {
-          setState({ kind: "error", message });
-        }
+        // Keep silent — missing feed must not block login UI.
+        console.warn("[MobileUpdateBanner]", err instanceof Error ? err.message : err);
       }
     }
 

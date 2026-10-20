@@ -16,15 +16,21 @@ const REAL_REPO = REAL_REPO_CANDIDATES.find((p) => fs.existsSync(p)) || REAL_REP
 const config = getDefaultConfig(projectRoot);
 
 config.projectRoot = projectRoot;
+// Do NOT watch the whole monorepo root — Vite's apps/launcher/node_modules/.vite
+// can disappear mid-session and Metro's FallbackWatcher crashes with ENOENT.
 config.watchFolders = [
   projectRoot,
-  monorepoRoot,
   path.join(monorepoRoot, "packages"),
-  REAL_REPO,
   path.join(REAL_REPO, "packages"),
   "D:\\emc",
   "C:\\emc",
 ].filter((p, i, arr) => p && fs.existsSync(p) && arr.indexOf(p) === i);
+
+config.resolver.blockList = [
+  /[/\\]\.vite[/\\].*/,
+  /[/\\]apps[/\\]launcher[/\\].*/,
+  /[/\\]backend-desktop[/\\].*/,
+];
 
 const appNodeModules = path.resolve(projectRoot, "node_modules");
 config.resolver.nodeModulesPaths = [

@@ -6,6 +6,7 @@ import {
   seedFriendlyDefaults,
   type MobizoneDb,
 } from "./storeCore";
+import { pullDesktopShopControl } from "./shopControlSync";
 import { hydrateMobizoneStorage } from "./storage";
 import type { MobizoneDashboard } from "@platform/contracts";
 
@@ -30,6 +31,12 @@ export function useMobizoneDb(): {
       await hydrateMobizoneStorage(branchCode);
       if (!alive) return;
       seedFriendlyDefaults(branchCode);
+      try {
+        await pullDesktopShopControl(branchCode);
+      } catch {
+        /* offline / API not redeployed yet — keep local settings */
+      }
+      if (!alive) return;
       setReady(true);
       setTick((n) => n + 1);
     })();

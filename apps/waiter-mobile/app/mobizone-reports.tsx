@@ -9,7 +9,7 @@ import {
   monthStartDateInput,
   todayDateInput,
 } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import { MzCard, MzDateRangeChips, MzScreenTitle, MzSection } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useSessionStore } from "../src/stores/sessionStore";
@@ -18,6 +18,8 @@ const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
 export default function MobizoneReportsScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode } = useMobizoneDb();
   const [from, setFrom] = useState(monthStartDateInput);
@@ -37,7 +39,7 @@ export default function MobizoneReportsScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle title="Reports" subtitle="Profit & Loss · dues · cash/bank" />
 
         <MzSection title="Date filter">
@@ -51,7 +53,7 @@ export default function MobizoneReportsScreen(): React.JSX.Element {
           />
         </MzSection>
 
-        <MzCard style={{ backgroundColor: mz.ink, borderColor: mz.accent }}>
+        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.accent }}>
           <Text
             style={{
               color: "rgba(233,238,243,0.7)",
@@ -113,19 +115,21 @@ function Mini({
   value: string;
   tone: string;
 }): React.JSX.Element {
+  const mz = useMz();
+  const { tileW } = useMzLayout();
   return (
     <View
       style={{
-        width: "47.5%",
+        width: tileW,
         backgroundColor: mz.card,
-        borderRadius: 14,
-        padding: 14,
+        borderRadius: 12,
+        padding: 12,
         borderWidth: 1,
         borderColor: mz.border,
       }}
     >
       <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "600" }}>{label}</Text>
-      <Text style={{ color: tone, fontSize: 15, fontWeight: "800", marginTop: 6 }}>{value}</Text>
+      <Text style={{ color: tone, fontSize: 14, fontWeight: "800", marginTop: 4 }}>{value}</Text>
     </View>
   );
 }

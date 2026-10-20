@@ -946,7 +946,7 @@ export function printImeiBarcodeSticker(
   device: MobizoneDevice,
   opts?: { shopName?: string | null; copies?: number },
 ): void {
-  const shop = (opts?.shopName ?? loadMobizoneReceiptSettings().shopName ?? "MobiZone").trim() || "MobiZone";
+  const shop = (opts?.shopName ?? loadMobizoneReceiptSettings("MAIN").shopName ?? "MobiZone").trim() || "MobiZone";
   const imei1 = normalizeImeiScan(device.imei) || device.imei.trim();
   const imei2Raw = (device.imei2 ?? "").trim();
   const imei2 = imei2Raw ? normalizeImeiScan(imei2Raw) || imei2Raw : "";
@@ -2600,10 +2600,12 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function buildWhatsAppSaleText(sale: MobizoneSale): string {
+export function buildWhatsAppSaleText(sale: MobizoneSale, branchCode?: string | null): string {
   const bank = sale.payment.bank;
+  const settings = branchCode ? loadMobizoneReceiptSettings(branchCode) : null;
+  const shopWa = (settings?.whatsappNumber || settings?.shopPhone || "").trim();
   return [
-    `*MobiZone Sale Receipt*`,
+    `*${settings?.shopName || "MobiZone"} Sale Receipt*`,
     `Customer: ${sale.customerName}`,
     sale.customerPhone ? `Phone: ${sale.customerPhone}` : null,
     sale.customerCnic ? `CNIC: ${sale.customerCnic}` : null,
@@ -2621,14 +2623,20 @@ export function buildWhatsAppSaleText(sale: MobizoneSale): string {
     sale.warrantyDays ? `Warranty: ${sale.warrantyDays} days` : null,
     sale.note ? `Note: ${sale.note}` : null,
     `Date: ${new Date(sale.createdAt).toLocaleString()}`,
+    shopWa ? `Shop WhatsApp: ${shopWa}` : null,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-export function buildWhatsAppPurchaseText(purchase: MobizonePurchase): string {
+export function buildWhatsAppPurchaseText(
+  purchase: MobizonePurchase,
+  branchCode?: string | null,
+): string {
+  const settings = branchCode ? loadMobizoneReceiptSettings(branchCode) : null;
+  const shopWa = (settings?.whatsappNumber || settings?.shopPhone || "").trim();
   return [
-    `*MobiZone Purchase Receipt*`,
+    `*${settings?.shopName || "MobiZone"} Purchase Receipt*`,
     `Seller: ${purchase.sellerName}`,
     purchase.sellerPhone ? `Phone: ${purchase.sellerPhone}` : null,
     purchase.sellerCnic ? `CNIC: ${purchase.sellerCnic}` : null,
@@ -2643,6 +2651,7 @@ export function buildWhatsAppPurchaseText(purchase: MobizonePurchase): string {
     `Bank: ${formatPkr(purchase.payment.bankPkr || 0)}`,
     purchase.note ? `Note: ${purchase.note}` : null,
     `Date: ${new Date(purchase.createdAt).toLocaleString()}`,
+    shopWa ? `Shop WhatsApp: ${shopWa}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -2760,7 +2769,7 @@ export function printLegalPurchaseDossier(
   const purchase = enrichPurchaseSeller(raw, branchCode);
   const device = db.devices.find((d) => d.id === purchase.deviceId);
   const sale = db.sales.find((s) => s.deviceId === purchase.deviceId && !s.returnedAt);
-  const settings = loadMobizoneReceiptSettings();
+  const settings = loadMobizoneReceiptSettings(branchCode);
   const shop = settings.shopName || "MobiZone";
 
   const img = (src: string | null | undefined, label: string) =>
@@ -2857,21 +2866,26 @@ function thermalPartyBlock(
 function thermalShell(width: number, body: string): string {
   return `
 <style>
-  .rcpt{max-width:${width}px;margin:0 auto;font-family:"Courier New",Courier,monospace;font-size:12px;color:#111;line-height:1.35}
-  .rcpt .shop{font-size:16px;font-weight:800;margin:0;text-align:center;letter-spacing:.02em}
-  .rcpt .sub{text-align:center;font-size:11px;margin:1px 0;color:#222}
-  .rcpt .title{text-align:center;font-size:13px;font-weight:800;margin:6px 0 2px;text-transform:uppercase}
-  .rcpt .dash{text-align:center;letter-spacing:1px;margin:6px 0;color:#333;white-space:pre;overflow:hidden}
-  .rcpt .sec{font-size:11px;font-weight:800;margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
-  .rcpt .kv{display:flex;justify-content:space-between;gap:8px;margin:2px 0}
-  .rcpt .kv span:last-child{text-align:right;font-weight:600}
-  .rcpt .item{margin:4px 0}
+  @page{margin:4mm}
+  .rcpt{max-width:${width}px;margin:0 auto;font-family:ui-monospace,"Cascadia Mono","Courier New",monospace;font-size:12px;color:#0f172a;line-height:1.4;padding:6px 4px}
+  .rcpt .brand{text-align:center;padding:4px 0 6px;border-bottom:2px solid #0f172a;margin-bottom:6px}
+  .rcpt .shop{font-size:17px;font-weight:800;margin:0;letter-spacing:.04em;text-transform:uppercase}
+  .rcpt .sub{text-align:center;font-size:11px;margin:2px 0;color:#334155}
+  .rcpt .title{text-align:center;font-size:12px;font-weight:800;margin:8px 0 2px;letter-spacing:.12em;text-transform:uppercase}
+  .rcpt .pill{display:inline-block;border:1px solid #0f172a;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700;margin:4px 0}
+  .rcpt .dash{text-align:center;letter-spacing:1px;margin:6px 0;color:#64748b;white-space:pre;overflow:hidden}
+  .rcpt .sec{font-size:10px;font-weight:800;margin:8px 0 4px;text-transform:uppercase;letter-spacing:.08em;color:#0f766e}
+  .rcpt .kv{display:flex;justify-content:space-between;gap:10px;margin:2px 0}
+  .rcpt .kv span:first-child{color:#475569}
+  .rcpt .kv span:last-child{text-align:right;font-weight:700;color:#0f172a}
+  .rcpt .item{margin:4px 0;padding:4px 0}
   .rcpt .item .name{font-weight:800}
-  .rcpt .item .meta{font-size:11px;color:#333}
-  .rcpt .totalbox{margin-top:6px;padding:6px 0;border-top:2px solid #111;border-bottom:2px solid #111}
-  .rcpt .totalbox .kv span{font-size:14px;font-weight:800}
-  .rcpt .foot{text-align:center;margin-top:10px;font-size:11px}
-  .rcpt .cut{text-align:center;margin-top:8px;font-size:10px;color:#666}
+  .rcpt .item .meta{font-size:11px;color:#475569}
+  .rcpt .totalbox{margin-top:8px;padding:8px 0;border-top:2px solid #0f172a;border-bottom:2px solid #0f172a}
+  .rcpt .totalbox .kv span{font-size:14px;font-weight:800;color:#0f172a}
+  .rcpt .foot{text-align:center;margin-top:10px;font-size:11px;color:#334155}
+  .rcpt .wa{text-align:center;margin-top:4px;font-size:10px;color:#0f766e;font-weight:700}
+  .rcpt .cut{text-align:center;margin-top:8px;font-size:10px;color:#94a3b8}
 </style>
 <div class="rcpt">${body}</div>`;
 }
@@ -2890,16 +2904,18 @@ export function buildSaleReceiptHtml(
   const dash = thermalDash(width);
   const deviceLabel = `${enriched.brand} ${enriched.model}${enriched.etc ? ` ${enriched.etc}` : ""}`;
   const received = (enriched.payment.cashPkr || 0) + (enriched.payment.bankPkr || 0);
+  const wa = (settings.whatsappNumber || settings.shopPhone || "").trim();
   const body = `
-  ${f.shopName ? `<p class="shop">${escapeHtml(settings.shopName)}</p>` : ""}
-  ${f.shopPhone && settings.shopPhone ? `<p class="sub">Tel: ${escapeHtml(settings.shopPhone)}</p>` : ""}
-  ${f.shopAddress && settings.shopAddress ? `<p class="sub">${escapeHtml(settings.shopAddress)}</p>` : ""}
-  ${dash}
+  <div class="brand">
+    ${f.shopName ? `<p class="shop">${escapeHtml(settings.shopName)}</p>` : ""}
+    ${f.shopPhone && settings.shopPhone ? `<p class="sub">Tel ${escapeHtml(settings.shopPhone)}</p>` : ""}
+    ${f.shopAddress && settings.shopAddress ? `<p class="sub">${escapeHtml(settings.shopAddress)}</p>` : ""}
+  </div>
   ${f.documentTitle ? `<p class="title">${escapeHtml(settings.documentTitle)}</p>` : ""}
+  <div style="text-align:center"><span class="pill">BILL ${escapeHtml(enriched.id.slice(0, 8).toUpperCase())}</span></div>
   ${f.timestamp ? `<p class="sub">${escapeHtml(new Date(enriched.createdAt).toLocaleString())}</p>` : ""}
-  <p class="sub">Bill # ${escapeHtml(enriched.id.slice(0, 8).toUpperCase())}</p>
   ${dash}
-  ${thermalPartyBlock("Customer details", {
+  ${thermalPartyBlock("Customer", {
     name: enriched.customerName,
     phone: enriched.customerPhone,
     cnic: enriched.customerCnic,
@@ -2928,7 +2944,8 @@ export function buildSaleReceiptHtml(
   ${enriched.note ? `${dash}<div class="sec">Note</div><p class="sub" style="text-align:left;white-space:pre-wrap">${escapeHtml(enriched.note)}</p>` : ""}
   ${f.salePrice ? `<div class="totalbox">${thermalKv("TOTAL", formatPkr(enriched.pricePkr))}</div>` : ""}
   ${f.footer && settings.footerText ? `<p class="foot">${escapeHtml(settings.footerText)}</p>` : `<p class="foot">Thank you — visit again</p>`}
-  <p class="cut">*** ${escapeHtml(settings.shopName || "MobiZone")} ***</p>`;
+  ${wa ? `<p class="wa">WhatsApp ${escapeHtml(wa)}</p>` : ""}
+  <p class="cut">— ${escapeHtml(settings.shopName || "MobiZone")} —</p>`;
   return thermalShell(width, body);
 }
 
@@ -2944,16 +2961,18 @@ export function buildPurchaseReceiptHtml(
   const width = settings.paperWidthMm === 58 ? 280 : 360;
   const dash = thermalDash(width);
   const deviceLabel = `${enriched.brand} ${enriched.model}${enriched.storage ? ` ${enriched.storage}` : ""}${enriched.etc ? ` ${enriched.etc}` : ""}`;
+  const wa = (settings.whatsappNumber || settings.shopPhone || "").trim();
   const body = `
-  ${f.shopName ? `<p class="shop">${escapeHtml(settings.shopName)}</p>` : ""}
-  ${f.shopPhone && settings.shopPhone ? `<p class="sub">Tel: ${escapeHtml(settings.shopPhone)}</p>` : ""}
-  ${f.shopAddress && settings.shopAddress ? `<p class="sub">${escapeHtml(settings.shopAddress)}</p>` : ""}
-  ${dash}
+  <div class="brand">
+    ${f.shopName ? `<p class="shop">${escapeHtml(settings.shopName)}</p>` : ""}
+    ${f.shopPhone && settings.shopPhone ? `<p class="sub">Tel ${escapeHtml(settings.shopPhone)}</p>` : ""}
+    ${f.shopAddress && settings.shopAddress ? `<p class="sub">${escapeHtml(settings.shopAddress)}</p>` : ""}
+  </div>
   <p class="title">${escapeHtml((settings.documentTitle || "Sale Receipt").replace(/Sale/i, "Purchase"))}</p>
+  <div style="text-align:center"><span class="pill">BILL ${escapeHtml(enriched.id.slice(0, 8).toUpperCase())}</span></div>
   ${f.timestamp ? `<p class="sub">${escapeHtml(new Date(enriched.createdAt).toLocaleString())}</p>` : ""}
-  <p class="sub">Bill # ${escapeHtml(enriched.id.slice(0, 8).toUpperCase())}</p>
   ${dash}
-  ${thermalPartyBlock("Seller details", {
+  ${thermalPartyBlock("Seller", {
     name: enriched.sellerName,
     phone: enriched.sellerPhone,
     cnic: enriched.sellerCnic,
@@ -2979,7 +2998,8 @@ export function buildPurchaseReceiptHtml(
   ${enriched.note ? `${dash}<div class="sec">Note</div><p class="sub" style="text-align:left;white-space:pre-wrap">${escapeHtml(enriched.note)}</p>` : ""}
   ${f.salePrice ? `<div class="totalbox">${thermalKv("TOTAL", formatPkr(enriched.purchasePricePkr))}</div>` : ""}
   ${f.footer && settings.footerText ? `<p class="foot">${escapeHtml(settings.footerText)}</p>` : `<p class="foot">Thank you</p>`}
-  <p class="cut">*** ${escapeHtml(settings.shopName || "MobiZone")} ***</p>`;
+  ${wa ? `<p class="wa">WhatsApp ${escapeHtml(wa)}</p>` : ""}
+  <p class="cut">— ${escapeHtml(settings.shopName || "MobiZone")} —</p>`;
   return thermalShell(width, body);
 }
 

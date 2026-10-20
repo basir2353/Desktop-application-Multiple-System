@@ -108,7 +108,14 @@ export function describeApiServer(): {
 /** Resolves the API host for the whole app. Local/custom presets still win. */
 export function getApiBaseUrl(): string {
   const { apiPreset, cloudApiUrl } = readPersistedApiChoice();
-  if (apiPreset === "local") return LOCAL_API_URL;
+  // Safety net: never silently use dead local API when Vite is baked to Railway.
+  if (apiPreset === "local") {
+    const baked = BAKED_API_URL;
+    if (baked && !isLocalDevUrl(baked)) {
+      return normalizeLiveUrl(baked);
+    }
+    return LOCAL_API_URL;
+  }
   if (apiPreset === "custom" && cloudApiUrl) return normalizeLiveUrl(cloudApiUrl);
   return readResolvedLiveUrl() ?? getLiveApiUrl();
 }

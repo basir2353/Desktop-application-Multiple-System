@@ -1,8 +1,16 @@
+import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
-import { Redirect } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { MzAttachStrip, type AttachBundle } from "../src/mobizone/MzAttachStrip";
+import { MzImeiScanner } from "../src/mobizone/MzImeiScanner";
 import { MzShell } from "../src/mobizone/MzShell";
+import { normalizeImeiScan } from "../src/mobizone/normalizeImei";
+import {
+  loadMobizoneReceiptSettings,
+  resolveWhatsAppTarget,
+} from "../src/mobizone/receiptSettings";
 import {
   buildWhatsAppSaleText,
   findDeviceByImei,
@@ -11,7 +19,7 @@ import {
   printSaleReceipt,
   recordSale,
 } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzChip,
   MzField,
@@ -27,18 +35,25 @@ const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
 export default function MobizoneSaleScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode, db, refresh, ready } = useMobizoneDb();
+  const params = useLocalSearchParams<{ imei?: string }>();
   const inStock = useMemo(() => db.devices.filter((d) => d.status === "in_stock"), [db.devices]);
 
   const [scan, setScan] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [deviceId, setDeviceId] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [customerCnic, setCustomerCnic] = useState("");
-  const [attachCnic, setAttachCnic] = useState(false);
-  const [attachPhoto, setAttachPhoto] = useState(false);
+  const [attach, setAttach] = useState<AttachBundle>({
+    photoDataUrl: null,
+    cnicFrontDataUrl: null,
+    cnicBackDataUrl: null,
+  });
   const [price, setPrice] = useState("");
   const [cash, setCash] = useState("");
   const [bank, setBank] = useState("");
@@ -49,10 +64,25 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
   const [shareWa, setShareWa] = useState(true);
 
   useEffect(() => {
+    setShareWa(loadMobizoneReceiptSettings(branchCode).whatsappDefaultOn);
+  }, [branchCode, ready]);
+
+  useEffect(() => {
     if (!bankAccountId && db.bankAccounts.length === 1) {
       setBankAccountId(db.bankAccounts[0]!.id);
     }
   }, [db.bankAccounts, bankAccountId]);
+
+  useEffect(() => {
+    const fromScan = normalizeImeiScan(String(params.imei ?? ""));
+    if (!fromScan) return;
+    setScan(fromScan);
+    const found = findDeviceByImei(branchCode, fromScan);
+    if (found && found.status === "in_stock") {
+      setDeviceId(found.id);
+      setPrice(String(found.salePricePkr ?? found.purchasePricePkr));
+    }
+  }, [params.imei, branchCode]);
 
   if (!accessToken) return <Redirect href="/" />;
   if (extra?.appVariant && !isMobizoneApp) return <Redirect href="/home" />;
@@ -63,9 +93,11 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
   const bankN = payMode === "cash" || payMode === "udhaar" ? 0 : Number(bank) || 0;
   const remaining = Math.max(0, priceN - cashN - bankN);
 
-  function applyScan(): void {
+  function applyScan(raw = scan): void {
     if (!ready) return;
-    const found = findDeviceByImei(branchCode, scan.trim());
+    const code = normalizeImeiScan(raw);
+    setScan(code);
+    const found = findDeviceByImei(branchCode, code);
     if (!found || found.status !== "in_stock") {
       Alert.alert("Not found", "No in-stock device matched that IMEI / barcode.");
       return;
@@ -105,9 +137,9 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
         customerPhone: customerPhone.trim() || null,
         customerAddress: customerAddress.trim() || null,
         customerCnic: customerCnic.trim() || null,
-        customerPhotoDataUrl: attachPhoto ? "attached://customer-photo" : null,
-        cnicFrontDataUrl: attachCnic ? "attached://cnic-front" : null,
-        cnicBackDataUrl: attachCnic ? "attached://cnic-back" : null,
+        customerPhotoDataUrl: attach.photoDataUrl,
+        cnicFrontDataUrl: attach.cnicFrontDataUrl,
+        cnicBackDataUrl: attach.cnicBackDataUrl,
         pricePkr: priceN,
         dueDate: remaining > 0 ? dueDate.trim() : null,
         warrantyDays: Number(warrantyDays) || 0,
@@ -137,7 +169,12 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
         {
           text: shareWa ? "OK · WhatsApp" : "OK",
           onPress: () => {
-            if (shareWa) openWhatsApp(sale.customerPhone, buildWhatsAppSaleText(sale));
+            if (!shareWa) return;
+            const settings = loadMobizoneReceiptSettings(branchCode);
+            openWhatsApp(
+              resolveWhatsAppTarget(sale.customerPhone, settings),
+              buildWhatsAppSaleText(sale, branchCode),
+            );
           },
         },
       ]);
@@ -146,8 +183,7 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
       setCustomerPhone("");
       setCustomerAddress("");
       setCustomerCnic("");
-      setAttachCnic(false);
-      setAttachPhoto(false);
+      setAttach({ photoDataUrl: null, cnicFrontDataUrl: null, cnicBackDataUrl: null });
       setPrice("");
       setCash("");
       setBank("");
@@ -161,16 +197,43 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle title="New Sale" subtitle="Select phone · customer · cash / bank / udhaar" />
         {!ready ? <ActivityIndicator color={mz.accent} /> : null}
 
         <MzSection title="Phone">
           <MzField label="Scan IMEI / Barcode">
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <MzInput value={scan} onChangeText={setScan} placeholder="Enter or scan IMEI" />
-              <Pressable onPress={applyScan} style={btnSoft}>
-                <Text style={{ color: mz.navy, fontWeight: "800" }}>Find</Text>
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <MzInput
+                value={scan}
+                onChangeText={setScan}
+                placeholder="Enter or scan IMEI"
+                style={{ flex: 1 }}
+              />
+              <Pressable
+                onPress={() => setScannerOpen(true)}
+                style={{
+                  width: 46,
+                  height: 46,
+                  borderRadius: 12,
+                  backgroundColor: mz.navy,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="barcode-outline" size={20} color={mz.accent} />
+              </Pressable>
+              <Pressable
+                onPress={() => applyScan()}
+                style={{
+                  backgroundColor: mz.accent,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  justifyContent: "center",
+                  minHeight: 46,
+                }}
+              >
+                <Text style={{ color: mz.onAccent, fontWeight: "800" }}>Find</Text>
               </Pressable>
             </View>
           </MzField>
@@ -253,18 +316,7 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
               placeholder="Customer address"
             />
           </MzField>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <AttachChip
-              label={attachCnic ? "CNIC attached ✓" : "Attach CNIC"}
-              active={attachCnic}
-              onPress={() => setAttachCnic((v) => !v)}
-            />
-            <AttachChip
-              label={attachPhoto ? "Photo attached ✓" : "Customer photo"}
-              active={attachPhoto}
-              onPress={() => setAttachPhoto((v) => !v)}
-            />
-          </View>
+          <MzAttachStrip value={attach} onChange={setAttach} photoLabel="Customer photo" />
         </MzSection>
 
         <MzSection title="Payment">
@@ -387,65 +439,44 @@ export default function MobizoneSaleScreen(): React.JSX.Element {
                 borderRadius: 6,
                 borderWidth: 2,
                 borderColor: mz.navy,
-                backgroundColor: shareWa ? mz.gold : mz.white,
+                backgroundColor: shareWa ? mz.gold : mz.cardSoft,
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
               {shareWa ? <Text style={{ color: mz.navy, fontWeight: "900", fontSize: 12 }}>✓</Text> : null}
             </View>
-            <Text style={{ color: mz.text, fontWeight: "600" }}>Share receipt on WhatsApp</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: mz.text, fontWeight: "600" }}>Share receipt on WhatsApp</Text>
+              {(() => {
+                const wa = loadMobizoneReceiptSettings(branchCode).whatsappNumber?.trim();
+                return wa ? (
+                  <Text style={{ color: mz.muted, fontSize: 12, marginTop: 2 }}>
+                    Shop WA (desktop): {wa}
+                  </Text>
+                ) : null;
+              })()}
+            </View>
           </Pressable>
         </MzSection>
 
         <MzPrimaryButton label="Save Sale · Print bill" onPress={onSave} />
       </ScrollView>
+      <MzImeiScanner
+        visible={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScanned={(code) => applyScan(code)}
+      />
     </MzShell>
   );
 }
 
 function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  const mz = useMz();
   return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
       <Text style={{ color: mz.muted }}>{label}</Text>
       <Text style={{ color: tone ?? mz.text, fontWeight: "700" }}>{value}</Text>
     </View>
   );
 }
-
-function AttachChip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}): React.JSX.Element {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 10,
-        backgroundColor: active ? "#EEF6FF" : mz.ivory,
-        borderWidth: 1,
-        borderColor: active ? mz.blue : mz.border,
-      }}
-    >
-      <Text style={{ color: active ? mz.blue : mz.navy, fontWeight: "700", fontSize: 12 }}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-const btnSoft = {
-  backgroundColor: mz.gold,
-  borderWidth: 1,
-  borderColor: mz.gold,
-  borderRadius: 12,
-  paddingHorizontal: 14,
-  justifyContent: "center" as const,
-};

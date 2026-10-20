@@ -19,6 +19,12 @@ import { ThemeToggle } from "../src/components/ThemeToggle";
 import { decodeAccessToken } from "../src/lib/jwt";
 import { warmApiConnection } from "../src/lib/warmApi";
 import {
+  assertMobizoneAccount,
+  MOBIZONE_DEMO_EMAIL,
+  MOBIZONE_DEMO_PASSWORD,
+} from "../src/mobizone/assertMobizoneAccount";
+import { MzLoginView } from "../src/mobizone/MzLoginView";
+import {
   homeRouteForRole,
   isAdminOrIncharge,
   resolveStaffRole,
@@ -88,12 +94,14 @@ export default function LoginScreen() {
   const [branchCode, setBranchCode] = useState("ISB-GT");
   const [pin, setPin] = useState("");
   const [email, setEmail] = useState(
-    isAdminApp || isMobizoneApp
-      ? "admin.restaurant@pops.demo"
-      : ROLE_DEFAULTS[defaultRole].email,
+    isMobizoneApp
+      ? MOBIZONE_DEMO_EMAIL
+      : isAdminApp
+        ? "admin.restaurant@pops.demo"
+        : ROLE_DEFAULTS[defaultRole].email,
   );
   const [password, setPassword] = useState(
-    isAdminApp || isMobizoneApp ? "Owner@12345" : "changeme-please-01",
+    isMobizoneApp || isAdminApp ? MOBIZONE_DEMO_PASSWORD : "changeme-please-01",
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -120,6 +128,10 @@ export default function LoginScreen() {
 
   if (accessToken && !loading && !postLoginNav) {
     if (isMobizoneApp) {
+      if (!claims || (claims.systemType ?? "").toLowerCase() !== "mobizone") {
+        useSessionStore.getState().clear();
+        return null;
+      }
       return <Redirect href={branch ? "/mobizone-home" : "/branch"} />;
     }
     if (isAdminApp) {
@@ -200,6 +212,7 @@ export default function LoginScreen() {
       const decoded = decodeAccessToken(tokens.accessToken);
 
       if (isMobizoneApp) {
+        assertMobizoneAccount(decoded);
         setPostLoginNav(true);
         clearBranch();
         setTokens(tokens.accessToken, tokens.refreshToken, decoded, email.trim());
@@ -242,13 +255,7 @@ export default function LoginScreen() {
     }
   }
 
-  const roleCopy = isMobizoneApp
-    ? {
-        title: "MobiZone ERP",
-        subtitle: "Buy · Sell · Stock · Udhaar — live shop login.",
-        demoPin: undefined as string | undefined,
-      }
-    : isAdminApp
+  const roleCopy = isAdminApp
     ? {
         title: "Admin / Incharge",
         subtitle: "Full dashboard — sales, users, activity, and PRA.",
@@ -256,40 +263,34 @@ export default function LoginScreen() {
       }
     : ROLE_DEFAULTS[roleTab];
 
+  if (isMobizoneApp) {
+    return (
+      <MzLoginView
+        email={email}
+        password={password}
+        loading={loading}
+        error={error}
+        onEmailChange={setEmail}
+        onPasswordChange={setPassword}
+        onSubmit={() => void handlePasswordLogin()}
+      />
+    );
+  }
+
   return (
-    <Screen
-      safeTop
-      style={
-        isMobizoneApp
-          ? { backgroundColor: "#F6F4EF", flex: 1 }
-          : undefined
-      }
-    >
+    <Screen safeTop>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 24 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <View style={{ flex: 1 }}>
-              {isMobizoneApp ? (
-                <>
-                  <Text style={{ color: "#14243A", fontSize: 28, fontWeight: "800", letterSpacing: 0.3 }}>
-                    MobiZone
-                  </Text>
-                  <Text style={{ color: "#B89653", fontSize: 14, marginTop: 6, lineHeight: 20 }}>
-                    Classic Navy · Gold · Ivory · Buy · Sell · Stock · Udhaar
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Title>{appName}</Title>
-                  <Subtitle>
-                    {isAdminApp
-                      ? "Admin login — sales dashboard, users, activity, and PRA."
-                      : "One Staff APK · Waiter or Rider · then Email or PIN below."}
-                  </Subtitle>
-                </>
-              )}
+              <Title>{appName}</Title>
+              <Subtitle>
+                {isAdminApp
+                  ? "Admin login — sales dashboard, users, activity, and PRA."
+                  : "One Staff APK · Waiter or Rider · then Email or PIN below."}
+              </Subtitle>
             </View>
-            {!isMobizoneApp ? <ThemeToggle /> : null}
+            <ThemeToggle />
           </View>
 
           {roleTabs.length > 0 ? (

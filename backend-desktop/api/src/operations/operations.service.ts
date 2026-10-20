@@ -661,6 +661,59 @@ export class OperationsService implements OnModuleInit {
     return { name: org.name };
   }
 
+  async getMobizoneShopControl(organizationId: string): Promise<Record<string, unknown>> {
+    await this.db.execute(sql`
+      CREATE TABLE IF NOT EXISTS org_app_settings (
+        organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        key text NOT NULL,
+        value jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (organization_id, key)
+      )
+    `);
+    const rows = await this.db.execute(sql`
+      SELECT value FROM org_app_settings
+      WHERE organization_id = ${organizationId}::uuid AND key = 'mobizone.shop-control'
+      LIMIT 1
+    `);
+    const row = (rows as unknown as { rows?: Array<{ value: unknown }> }).rows?.[0]
+      ?? (Array.isArray(rows) ? (rows as Array<{ value: unknown }>)[0] : undefined);
+    if (!row?.value || typeof row.value !== "object") {
+      return { controlledByDesktop: true, updatedAt: null };
+    }
+    return { ...(row.value as Record<string, unknown>), controlledByDesktop: true };
+  }
+
+  async putMobizoneShopControl(
+    organizationId: string,
+    body: unknown,
+  ): Promise<Record<string, unknown>> {
+    if (!body || typeof body !== "object") {
+      throw new BadRequestException("Invalid shop control payload");
+    }
+    const payload = {
+      ...(body as Record<string, unknown>),
+      controlledByDesktop: true,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.db.execute(sql`
+      CREATE TABLE IF NOT EXISTS org_app_settings (
+        organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        key text NOT NULL,
+        value jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (organization_id, key)
+      )
+    `);
+    await this.db.execute(sql`
+      INSERT INTO org_app_settings (organization_id, key, value, updated_at)
+      VALUES (${organizationId}::uuid, 'mobizone.shop-control', ${JSON.stringify(payload)}::jsonb, now())
+      ON CONFLICT (organization_id, key)
+      DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+    `);
+    return payload;
+  }
+
   /**
    * Org Settings data wipe: HR, Restaurant (POS/kitchen/cash/journals), or All modules.
    * Confirm with exact business name or the word RESET.

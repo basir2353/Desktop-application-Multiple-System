@@ -17,7 +17,7 @@ export function colorsForMode(mode: ThemeMode): AppColors {
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
-  mode: "dark",
+  mode: "light",
   hydrated: false,
 
   setMode: (mode) => {

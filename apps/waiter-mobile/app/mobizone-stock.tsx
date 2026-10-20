@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
 import { formatPkr } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzBadge,
   MzCard,
@@ -19,6 +19,8 @@ const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
 export default function MobizoneStockScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { db } = useMobizoneDb();
@@ -44,7 +46,7 @@ export default function MobizoneStockScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle
           title="Stock"
           subtitle={`${stock.length} in stock · New ${newCount} · Used ${usedCount}`}
@@ -95,7 +97,7 @@ export default function MobizoneStockScreen(): React.JSX.Element {
                   width: 52,
                   height: 52,
                   borderRadius: 14,
-                  backgroundColor: mz.ink,
+                  backgroundColor: mz.navyDeep,
                   borderWidth: 1,
                   borderColor: mz.accent,
                   alignItems: "center",
@@ -138,21 +140,23 @@ export default function MobizoneStockScreen(): React.JSX.Element {
 }
 
 function StatPill({ label, value }: { label: string; value: string }): React.JSX.Element {
+  const mz = useMz();
   return (
     <View
       style={{
         flex: 1,
+        minWidth: 0,
         backgroundColor: mz.card,
-        borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 8,
+        borderRadius: 10,
+        paddingVertical: 8,
+        paddingHorizontal: 6,
         borderWidth: 1,
         borderColor: mz.border,
         alignItems: "center",
       }}
     >
       <Text style={{ color: mz.muted, fontSize: 10, fontWeight: "700" }}>{label}</Text>
-      <Text style={{ color: mz.navy, fontWeight: "800", fontSize: 16, marginTop: 2 }}>
+      <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 15, marginTop: 2 }}>
         {value}
       </Text>
     </View>

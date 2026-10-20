@@ -22,16 +22,13 @@ try {
     localStorage.removeItem("platform-system-v1");
     localStorage.removeItem("platform-session-v1");
   }
-  // API host: honor ?api=local|live|railway. In Vite DEV with a local VITE_API_BASE_URL,
-  // default to Local API so newly seeded systems (e.g. MobiZone) work without Railway deploy.
-  // Must update both localStorage AND the zustand store — persist may have already
-  // hydrated before this block runs (import order).
+  // API host: honor ?api=local|live|railway.
+  // Default is ALWAYS live Railway — stuck localStorage "apiPreset: local" was breaking
+  // Super Admin / MaterialFlow / Mobizone / every login with "Cannot reach …127.0.0.1:3000".
+  // Opt into local only with an explicit ?api=local (after pnpm dev:api).
   const apiParam = params.get("api");
-  const bakedApi = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
-  const preferLocalDev =
-    import.meta.env.DEV &&
-    (bakedApi.includes("127.0.0.1") || bakedApi.includes("localhost"));
-  if (apiParam === "local" || (preferLocalDev && apiParam !== "live" && apiParam !== "railway")) {
+  const wantLocal = apiParam === "local";
+  if (wantLocal) {
     localStorage.setItem(
       "platform-data-mode-v2",
       JSON.stringify({
@@ -44,7 +41,8 @@ try {
       apiPreset: "local",
       cloudApiUrl: "",
     });
-  } else if (apiParam === "live" || apiParam === "railway") {
+  } else {
+    // Force live for every boot (including when prior sessions saved apiPreset=local).
     localStorage.setItem(
       "platform-data-mode-v2",
       JSON.stringify({

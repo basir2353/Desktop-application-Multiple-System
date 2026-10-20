@@ -476,6 +476,13 @@ const STATEMENTS = [
     ON pops_bills (branch_id, status, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS pops_kitchen_tickets_branch_status_idx
     ON pops_kitchen_tickets (branch_id, status)`,
+  `CREATE TABLE IF NOT EXISTS org_app_settings (
+    organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    key text NOT NULL,
+    value jsonb NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (organization_id, key)
+  )`,
 ];
 export function ensureAuthSchema(options) {
   return runStatements(AUTH_SCHEMA_STATEMENTS, options);

@@ -7,10 +7,10 @@ import {
   DEFAULT_MOBIZONE_RECEIPT_SETTINGS,
   MOBIZONE_RECEIPT_FIELD_LABELS,
   loadMobizoneReceiptSettings,
-  saveMobizoneReceiptSettings,
   type MobizoneReceiptFields,
   type MobizoneReceiptSettings,
 } from "../lib/mobizoneReceiptSettings";
+import { publishMobizoneShopControl } from "../lib/mobizoneShopControlApi";
 import { buildSaleReceiptHtml, formatPkr, printHtmlPage } from "../lib/mobizoneStore";
 import {
   MzField,
@@ -108,10 +108,16 @@ export function MobizoneReceiptSettingsPage(): JSX.Element {
     setMsg(null);
   }
 
-  function onSave(): void {
+  async function onSave(): Promise<void> {
     if (!branchCode) return;
-    saveMobizoneReceiptSettings(branchCode, settings);
-    setMsg("Receipt settings saved — the next Print bill will use this layout.");
+    try {
+      await publishMobizoneShopControl(branchCode, settings);
+      setMsg(
+        "Saved & published to live — mobile apps will use this shop phone, WhatsApp number, and printer receipt.",
+      );
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Save failed");
+    }
   }
 
   function onReset(): void {
@@ -126,24 +132,21 @@ export function MobizoneReceiptSettingsPage(): JSX.Element {
   return (
     <MzPage>
       <PageHeader
-        title="Receipt print settings"
-        subtitle="Restaurant-style thermal bill — customer name, phone, CNIC, and address always print. Set shop header/footer here."
+        title="Printer receipt & shop control"
+        subtitle="Desktop is master — shop phone, WhatsApp number, and modern thermal layout sync to the MobiZone mobile app."
       />
       <p className={`text-sm ${mutedClass}`}>
-        Bill layout is like a restaurant POS: dashed lines, items, cash/bank/remaining, TOTAL. Customer block is always on.
+        Organized bill: shop header · customer block · items · payment · TOTAL. Assign the OS/thermal device on{" "}
+        <Link className="text-teal-600 underline dark:text-teal-400" to="/pops/printer">
+          Receipt printer
+        </Link>
+        .
       </p>
       {msg ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p> : null}
-      <p className={`text-sm ${mutedClass}`}>
-        To assign a thermal / OS printer, open the{" "}
-        <Link className="text-violet-600 underline dark:text-violet-400" to="/pops/printer">
-          Receipt printer
-        </Link>{" "}
-        page. This page controls what appears on the bill.
-      </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <MzSection title="Shop details (bill header)">
+          <MzSection title="Shop & WhatsApp (controls mobile)">
             <div className="grid gap-3 sm:grid-cols-2">
               <MzField label="Shop name">
                 <MzInput
@@ -151,13 +154,36 @@ export function MobizoneReceiptSettingsPage(): JSX.Element {
                   onChange={(e) => setSettings((s) => ({ ...s, shopName: e.target.value }))}
                 />
               </MzField>
-              <MzField label="Shop phone">
+              <MzField label="Shop phone (on bill)">
                 <MzInput
                   value={settings.shopPhone}
-                  onChange={(e) => setSettings((s) => ({ ...s, shopPhone: e.target.value }))}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      shopPhone: e.target.value,
+                      whatsappNumber: s.whatsappNumber || e.target.value,
+                    }))
+                  }
                   placeholder="03XXXXXXXXX"
                 />
               </MzField>
+              <MzField label="WhatsApp number (send from mobile)">
+                <MzInput
+                  value={settings.whatsappNumber}
+                  onChange={(e) => setSettings((s) => ({ ...s, whatsappNumber: e.target.value }))}
+                  placeholder="03XXXXXXXXX or 923…"
+                />
+              </MzField>
+              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={settings.whatsappDefaultOn}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, whatsappDefaultOn: e.target.checked }))
+                  }
+                />
+                Mobile: default “Share on WhatsApp” after sale / purchase
+              </label>
               <div className="sm:col-span-2">
                 <MzField label="Shop address">
                   <MzInput

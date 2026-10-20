@@ -11,7 +11,7 @@ import {
   seedExpenseAccounts,
   todayDateInput,
 } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzCard,
   MzChip,
@@ -30,6 +30,8 @@ const extra = Constants.expoConfig?.extra as { appVariant?: string } | undefined
 const isMobizoneApp = extra?.appVariant === "mobizone";
 
 export default function MobizoneExpensesScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode, db, refresh, ready } = useMobizoneDb();
@@ -103,7 +105,7 @@ export default function MobizoneExpensesScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle
           title="Create Expense"
           subtitle="Select account (Rent, Electricity…) — account name is the title"
@@ -116,7 +118,7 @@ export default function MobizoneExpensesScreen(): React.JSX.Element {
           </Text>
         </Pressable>
 
-        <MzCard style={{ backgroundColor: mz.ink, borderColor: mz.accent }}>
+        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.accent }}>
           <Text style={{ color: "rgba(233,238,243,0.7)", fontSize: 11, fontWeight: "700" }}>
             FILTERED TOTAL
           </Text>
@@ -221,10 +223,12 @@ export default function MobizoneExpensesScreen(): React.JSX.Element {
                 paddingHorizontal: 12,
                 paddingVertical: 8,
                 borderRadius: 10,
-                backgroundColor: !filterAccountId ? mz.ink : mz.cardSoft,
+                backgroundColor: !filterAccountId ? mz.navyDeep : mz.cardSoft,
+                borderWidth: 1,
+                borderColor: !filterAccountId ? mz.accent : mz.border,
               }}
             >
-              <Text style={{ color: !filterAccountId ? mz.white : mz.text, fontWeight: "700", fontSize: 12 }}>
+              <Text style={{ color: !filterAccountId ? mz.onNavy : mz.text, fontWeight: "700", fontSize: 12 }}>
                 All
               </Text>
             </Pressable>
@@ -236,12 +240,14 @@ export default function MobizoneExpensesScreen(): React.JSX.Element {
                   paddingHorizontal: 12,
                   paddingVertical: 8,
                   borderRadius: 10,
-                  backgroundColor: filterAccountId === a.id ? mz.ink : mz.cardSoft,
+                  backgroundColor: filterAccountId === a.id ? mz.navyDeep : mz.cardSoft,
+                  borderWidth: 1,
+                  borderColor: filterAccountId === a.id ? mz.accent : mz.border,
                 }}
               >
                 <Text
                   style={{
-                    color: filterAccountId === a.id ? mz.white : mz.text,
+                    color: filterAccountId === a.id ? mz.onNavy : mz.text,
                     fontWeight: "700",
                     fontSize: 12,
                   }}

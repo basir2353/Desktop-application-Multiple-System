@@ -14,7 +14,7 @@ import {
   todayDateInput,
   type MoneyAccountRef,
 } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzCard,
   MzDateRangeChips,
@@ -37,6 +37,8 @@ function parseRef(value: string): MoneyAccountRef {
 }
 
 export default function MobizoneContraScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode, db, refresh, ready } = useMobizoneDb();
   const balances = useMemo(() => getCashBankBalances(db), [db]);
@@ -104,14 +106,14 @@ export default function MobizoneContraScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle
           title="Contra Voucher"
           subtitle="Transfer money between Cash and Bank accounts"
         />
         {!ready ? <ActivityIndicator color={mz.accent} /> : null}
 
-        <MzCard style={{ backgroundColor: mz.ink }}>
+        <MzCard style={{ backgroundColor: mz.navyDeep }}>
           <Text style={{ color: "rgba(233,238,243,0.7)", fontSize: 11, fontWeight: "700" }}>
             CASH ON HAND
           </Text>

@@ -120,9 +120,9 @@ export const businessSystems: Record<BusinessSystemId, BusinessSystem> = {
     tagline: "Mobile buy · sell · IMEI stock",
     description:
       "Buy/sell phones with CNIC photos, shopkeeper ledgers, bank accounts, IMEI search, WhatsApp statements, and printable P&L.",
-    accentClass: "text-violet-400",
+    accentClass: "text-teal-400",
     iconLetter: "MZ",
-    gradientClass: "from-violet-500 to-fuchsia-600",
+    gradientClass: "from-slate-800 to-teal-600",
     routePrefix: "/pops",
     hiddenNavPaths: new Set([
       "menu",

@@ -87,9 +87,11 @@ export default function BranchScreen() {
       <View>
         <Title>Select branch</Title>
         <Subtitle>
-          {role === "rider"
-            ? "Choose the branch you are delivering for today."
-            : "Choose the restaurant branch you are serving today."}
+          {isMobizoneApp
+            ? "Choose the shop branch for today’s sales & stock."
+            : role === "rider"
+              ? "Choose the branch you are delivering for today."
+              : "Choose the restaurant branch you are serving today."}
         </Subtitle>
       </View>
 

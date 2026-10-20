@@ -24,13 +24,27 @@
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
-        "REQUEST_INSTALL_PACKAGES"
+        "REQUEST_INSTALL_PACKAGES",
+        "CAMERA",
+        "android.permission.CAMERA"
       ],
       "usesCleartextTraffic": true
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "MobiZone needs the camera to scan IMEI barcodes and capture CNIC / party photos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "MobiZone needs the camera to attach seller / buyer photos and CNIC images."
+        }
+      ]
     ]
   }
 }

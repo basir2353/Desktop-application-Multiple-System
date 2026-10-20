@@ -1,9 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Redirect, useRouter } from "expo-router";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { MzShell } from "../src/mobizone/MzShell";
 import { formatPkr } from "../src/mobizone/storeCore";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import { MzCard, MzEmpty, MzNavyHeader } from "../src/mobizone/ui";
 import { useMobizoneDb } from "../src/mobizone/useMobizone";
 import { useBranchStore } from "../src/stores/branchStore";
@@ -35,6 +36,8 @@ const MORE: MoreAction[] = [
 ];
 
 export default function MobizoneHomeScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const router = useRouter();
   const accessToken = useSessionStore((s) => s.accessToken);
   const branch = useBranchStore((s) => s.branch);
@@ -65,7 +68,7 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
   return (
     <MzShell>
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 14 }}
+        contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}
         refreshControl={
           <RefreshControl refreshing={!ready} onRefresh={refresh} tintColor={mz.accent} />
         }
@@ -74,7 +77,8 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
           title={branch?.name ?? "Main Shop"}
           subtitle={`Order counter · ${todayLabel}`}
           right={
-            <View
+            <Pressable
+              onPress={() => router.push("/mobizone-scan" as never)}
               style={{
                 width: 44,
                 height: 44,
@@ -86,17 +90,16 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
                 borderColor: mz.accent,
               }}
             >
-              <Text style={{ color: mz.accent, fontWeight: "900", fontSize: 14 }}>MZ</Text>
-            </View>
+              <Ionicons name="scan" size={20} color={mz.accent} />
+            </Pressable>
           }
         />
 
-        {/* ORDER — primary, biggest on home */}
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: 8 }}>
           <Text
             style={{
               color: mz.ink,
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: "800",
               letterSpacing: 1.1,
             }}
@@ -106,33 +109,33 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
 
           <Pressable
             onPress={() => router.push("/mobizone-sale" as never)}
-            style={{
+            style={({ pressed }) => ({
               backgroundColor: mz.accent,
-              borderRadius: 18,
-              paddingVertical: 22,
-              paddingHorizontal: 18,
-              minHeight: 108,
+              borderRadius: 16,
+              paddingVertical: 18,
+              paddingHorizontal: 16,
+              minHeight: 84,
               justifyContent: "center",
-              shadowColor: mz.accent,
-              shadowOpacity: 0.35,
-              shadowRadius: 12,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 6,
-            }}
+              opacity: pressed ? 0.92 : 1,
+              transform: [{ scale: pressed ? 0.99 : 1 }],
+            })}
           >
-            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, fontWeight: "800" }}>
-              PRIMARY ORDER
-            </Text>
-            <Text style={{ color: mz.white, fontSize: 26, fontWeight: "900", marginTop: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="cart" size={14} color="rgba(255,255,255,0.9)" />
+              <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 11, fontWeight: "800" }}>
+                PRIMARY ORDER
+              </Text>
+            </View>
+            <Text style={{ color: mz.white, fontSize: 24, fontWeight: "900", marginTop: 4 }}>
               New Sale
             </Text>
-            <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
-              Customer ko phone becho · cash / bank / udhaar
+            <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 12, marginTop: 3, fontWeight: "600" }}>
+              Sell phone · cash / bank / udhaar
             </Text>
             <View
               style={{
                 position: "absolute",
-                right: 16,
+                right: 14,
                 top: "50%",
                 marginTop: -18,
                 width: 36,
@@ -143,34 +146,38 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
                 justifyContent: "center",
               }}
             >
-              <Text style={{ color: mz.white, fontSize: 20, fontWeight: "900" }}>›</Text>
+              <Ionicons name="arrow-forward" size={18} color={mz.white} />
             </View>
           </Pressable>
 
           <Pressable
             onPress={() => router.push("/mobizone-purchase" as never)}
-            style={{
-              backgroundColor: mz.ink,
-              borderRadius: 18,
-              paddingVertical: 20,
-              paddingHorizontal: 18,
-              minHeight: 96,
+            style={({ pressed }) => ({
+              backgroundColor: mz.navyDeep,
+              borderRadius: 16,
+              paddingVertical: 16,
+              paddingHorizontal: 16,
+              minHeight: 76,
               justifyContent: "center",
-              borderWidth: 2,
+              borderWidth: 1.5,
               borderColor: mz.accent,
-            }}
+              opacity: pressed ? 0.92 : 1,
+            })}
           >
-            <Text style={{ color: mz.accent, fontSize: 12, fontWeight: "800" }}>STOCK ORDER</Text>
-            <Text style={{ color: mz.white, fontSize: 22, fontWeight: "900", marginTop: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="bag-add" size={14} color={mz.accent} />
+              <Text style={{ color: mz.accent, fontSize: 11, fontWeight: "800" }}>STOCK ORDER</Text>
+            </View>
+            <Text style={{ color: mz.white, fontSize: 20, fontWeight: "900", marginTop: 4 }}>
               Purchase
             </Text>
-            <Text style={{ color: "rgba(233,238,243,0.75)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
-              Phone khareedo · IMEI stock add
+            <Text style={{ color: "rgba(233,238,243,0.75)", fontSize: 12, marginTop: 3, fontWeight: "600" }}>
+              Buy phone · IMEI into stock
             </Text>
             <View
               style={{
                 position: "absolute",
-                right: 16,
+                right: 14,
                 top: "50%",
                 marginTop: -18,
                 width: 36,
@@ -181,16 +188,50 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
                 justifyContent: "center",
               }}
             >
-              <Text style={{ color: mz.accent, fontSize: 20, fontWeight: "900" }}>›</Text>
+              <Ionicons name="arrow-forward" size={18} color={mz.accent} />
             </View>
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push("/mobizone-scan" as never)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
+              backgroundColor: mz.card,
+              borderRadius: 12,
+              padding: 10,
+              borderWidth: 1,
+              borderColor: mz.border,
+            }}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: mz.cardSoft,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name="barcode-outline" size={20} color={mz.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 14 }}>Scan IMEI / CNIC</Text>
+              <Text style={{ color: mz.muted, fontSize: 11, marginTop: 2 }}>
+                Barcode scanner · ID camera · face photo
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={mz.muted} />
           </Pressable>
         </View>
 
         <View
           style={{
-            backgroundColor: mz.white,
-            borderRadius: 14,
-            padding: 14,
+            backgroundColor: mz.card,
+            borderRadius: 12,
+            padding: 12,
             borderWidth: 1,
             borderColor: mz.border,
           }}
@@ -234,14 +275,14 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
                 key={a.title}
                 onPress={() => router.push(a.href as never)}
                 style={{
-                  width: "47.5%",
-                  backgroundColor: mz.white,
+                  width: tileW,
+                  backgroundColor: mz.card,
                   borderRadius: 12,
-                  paddingVertical: 12,
-                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 10,
                   borderWidth: 1,
                   borderColor: mz.border,
-                  minHeight: 72,
+                  minHeight: 64,
                 }}
               >
                 <Text style={{ color: mz.ink, fontWeight: "800", fontSize: 13 }}>{a.title}</Text>
@@ -301,8 +342,9 @@ export default function MobizoneHomeScreen(): React.JSX.Element {
 }
 
 function MiniLight({ label, value }: { label: string; value: string }): React.JSX.Element {
+  const mz = useMz();
   return (
-    <View style={{ minWidth: 88 }}>
+    <View style={{ minWidth: 80, flexGrow: 1 }}>
       <Text style={{ color: mz.muted, fontSize: 11, fontWeight: "600" }}>{label}</Text>
       <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 13, marginTop: 2 }}>{value}</Text>
     </View>

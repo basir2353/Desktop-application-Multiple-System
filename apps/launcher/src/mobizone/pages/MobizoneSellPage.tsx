@@ -6,6 +6,10 @@ import { mutedClass } from "../../pops/lib/themeClasses";
 import { useMobizoneDb } from "../hooks/useMobizone";
 import { useSessionStore } from "../../stores/sessionStore";
 import { canEditMobizoneBillDate } from "../lib/mobizoneAccess";
+import {
+  loadMobizoneReceiptSettings,
+  resolveWhatsAppTarget,
+} from "../lib/mobizoneReceiptSettings";
 import { listSuggestions, rememberSuggestions } from "../lib/mobizoneSuggestions";
 import {
   buildWhatsAppSaleText,
@@ -246,8 +250,12 @@ export function MobizoneSellPage(): JSX.Element {
 
   function whatsappLast(): void {
     const last = lastSale ?? db.sales[0];
-    if (!last) return;
-    openWhatsApp(last.customerPhone, buildWhatsAppSaleText(last));
+    if (!last || !branchCode) return;
+    const settings = loadMobizoneReceiptSettings(branchCode);
+    openWhatsApp(
+      resolveWhatsAppTarget(last.customerPhone, settings),
+      buildWhatsAppSaleText(last, branchCode),
+    );
   }
 
   function printLast(): void {

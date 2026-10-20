@@ -150,8 +150,19 @@ export function LoginPage(): JSX.Element {
     const assignedSystemId = businessSystemIdFromSystemType(claims.systemType);
     if (assignedSystemId && systemId && assignedSystemId !== systemId) {
       clearSession();
+      if (systemId === "mobizone") {
+        throw new Error(
+          `Only MobiZone accounts can sign in here. This login belongs to ${assignedSystemId}.`,
+        );
+      }
       throw new Error(
         `This account is permanently assigned to the ${assignedSystemId} system and cannot access ${systemId}.`,
+      );
+    }
+    if (systemId === "mobizone" && claims.systemType && claims.systemType !== "mobizone") {
+      clearSession();
+      throw new Error(
+        `Only MobiZone accounts can sign in here. This login belongs to ${claims.systemType}.`,
       );
     }
 
@@ -277,6 +288,189 @@ export function LoginPage(): JSX.Element {
     );
   }
 
+  if (systemId === "mobizone") {
+    const mzFeatures = [
+      { label: "IMEI", path: "M9 7h6M9 11h6M9 15h4M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" },
+      { label: "Buy / Sell", path: "M3 3h2l.4 2M7 13h10l3-8H6.4M7 13L5.4 5M7 13l-2 9m12-9l2 9M9 22a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z" },
+      { label: "Udhaar", path: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" },
+      { label: "Reports", path: "M4 19h16M7 16V9m5 7V5m5 11v-3" },
+    ] as const;
+
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center bg-[#E9EEF3] px-5 py-6">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(roleSelectPath("mobizone"))}
+            className="text-xs font-semibold text-slate-500 transition hover:text-slate-800"
+          >
+            ← Role
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                clearDeviceInstall();
+                useSystemStore.getState().clearSystem();
+                clearSession();
+                window.location.assign("/?reset-install=1");
+              }}
+              className="text-xs font-semibold text-slate-500 transition hover:text-slate-800"
+            >
+              ← Systems
+            </button>
+            <ThemeToggle />
+          </div>
+        </div>
+
+        <div className="mb-3 flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#0C1524] text-[#14B8A6] shadow-md shadow-slate-900/20">
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 7h6M9 11h6M9 15h4M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" strokeLinecap="round" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-xl font-extrabold tracking-tight text-[#0C1524]">MobiZone</p>
+            <p className="text-xs font-semibold text-slate-500">Phone shop ERP · IMEI stock</p>
+          </div>
+        </div>
+
+        <div className="mb-3 flex flex-wrap gap-2">
+          {mzFeatures.map((f) => (
+            <span
+              key={f.label}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#CDD6E1] bg-white px-2.5 py-1 text-[11px] font-bold text-[#0C1524]"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-[#0F9B8E]" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d={f.path} strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {f.label}
+            </span>
+          ))}
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-[#0C1524] p-4 shadow-xl shadow-slate-900/25">
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#14B8A6]">
+            Secure login · {isAdminLogin ? "Admin" : "Staff"}
+          </p>
+          <h1 className="mt-1 text-lg font-extrabold text-[#E9EEF3]">{roleMeta!.label}</h1>
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-400">
+            MobiZone accounts only — restaurant / pharmacy / MaterialFlow users are blocked.
+          </p>
+
+          {!isAdminLogin ? (
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold ${
+                  mode === "password" ? "bg-[#0F9B8E] text-white" : "bg-white/10 text-slate-300"
+                }`}
+                onClick={() => setMode("password")}
+              >
+                Email &amp; password
+              </button>
+              <button
+                type="button"
+                className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold ${
+                  mode === "pin" ? "bg-[#0F9B8E] text-white" : "bg-white/10 text-slate-300"
+                }`}
+                onClick={() => setMode("pin")}
+              >
+                4-digit PIN
+              </button>
+            </div>
+          ) : null}
+
+          {isAdminLogin || mode === "password" ? (
+            <form className="mt-3 space-y-2.5" onSubmit={onSubmitPassword}>
+              <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Email
+                <div className="mt-1 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16v16H4z" opacity="0" />
+                    <path d="M4 6l8 7 8-7M4 6h16v12H4z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <input
+                    className="w-full bg-transparent py-2.5 text-sm text-[#E9EEF3] outline-none placeholder:text-slate-500"
+                    value={email}
+                    onChange={(ev) => setEmail(ev.target.value)}
+                    autoComplete="username"
+                  />
+                </div>
+              </label>
+              <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Password
+                <div className="mt-1 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="5" y="11" width="14" height="10" rx="2" />
+                    <path d="M8 11V8a4 4 0 018 0v3" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    className="w-full bg-transparent py-2.5 text-sm text-[#E9EEF3] outline-none placeholder:text-slate-500"
+                    type="password"
+                    value={password}
+                    onChange={(ev) => setPassword(ev.target.value)}
+                    autoComplete="current-password"
+                  />
+                </div>
+              </label>
+              {error ? <div className="rounded-lg bg-rose-500/20 px-3 py-2 text-xs font-semibold text-rose-200">{error}</div> : null}
+              <Button className="w-full !bg-[#0F9B8E] hover:!bg-[#0B7A70]" disabled={loading} type="submit">
+                {loading ? "Signing in…" : `Sign in as ${roleMeta!.label}`}
+              </Button>
+              <p className="pt-0.5 text-[11px] text-slate-500">
+                Demo · admin.mobizone@pops.demo / Owner@12345
+              </p>
+            </form>
+          ) : (
+            <form className="mt-3 space-y-2.5" onSubmit={onSubmitPin}>
+              <p className="text-xs text-slate-400">
+                {pinUsers > 0
+                  ? `${pinUsers} staff PIN(s) for this branch.`
+                  : "Admin must configure staff PINs under Users first."}
+              </p>
+              <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                4-digit PIN
+                <input
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm tracking-[0.4em] text-[#E9EEF3] outline-none"
+                  inputMode="numeric"
+                  maxLength={4}
+                  pattern="\d{4}"
+                  value={pin}
+                  onChange={(ev) => setPin(ev.target.value.replace(/\D/g, "").slice(0, 4))}
+                  autoComplete="one-time-code"
+                />
+              </label>
+              <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Staff email
+                <input
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-[#E9EEF3] outline-none"
+                  value={pinEmail}
+                  onChange={(ev) => setPinEmail(ev.target.value)}
+                  autoComplete="username"
+                />
+              </label>
+              <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Password
+                <input
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-[#E9EEF3] outline-none"
+                  type="password"
+                  value={password}
+                  onChange={(ev) => setPassword(ev.target.value)}
+                  autoComplete="current-password"
+                />
+              </label>
+              {error ? <div className="rounded-lg bg-rose-500/20 px-3 py-2 text-xs font-semibold text-rose-200">{error}</div> : null}
+              <Button className="w-full !bg-[#0F9B8E] hover:!bg-[#0B7A70]" disabled={loading} type="submit">
+                {loading ? "Signing in…" : `Sign in as ${roleMeta!.label}`}
+              </Button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center bg-gradient-to-b from-teal-50 via-slate-50 to-slate-100 px-6 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
       <div className="mb-4 flex items-center justify-between">
@@ -305,7 +499,7 @@ export function LoginPage(): JSX.Element {
       </div>
 
       <div className="mb-3 rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-center text-xs font-semibold text-teal-800 dark:text-teal-200">
-        Design refresh · Desktop v0.3.0 · auto-update live
+        Design refresh · Desktop v{launcherPkg.version} · auto-update live
       </div>
 
       <div className={`${loginCardClass} border-teal-500/20 shadow-lg shadow-teal-900/5 ${accentRing}`}>

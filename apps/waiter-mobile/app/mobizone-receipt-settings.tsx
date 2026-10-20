@@ -10,7 +10,7 @@ import {
   type MobizoneReceiptFields,
   type MobizoneReceiptSettings,
 } from "../src/mobizone/receiptSettings";
-import { mz } from "../src/mobizone/theme";
+import { useMz, useMzLayout } from "../src/mobizone/theme";
 import {
   MzCard,
   MzField,
@@ -36,6 +36,8 @@ const TOGGLES: { key: keyof MobizoneReceiptFields; label: string }[] = [
 ];
 
 export default function MobizoneReceiptSettingsScreen(): React.JSX.Element {
+  const mz = useMz();
+  const { pad, gap, tileW } = useMzLayout();
   const accessToken = useSessionStore((s) => s.accessToken);
   const { branchCode } = useMobizoneDb();
   const [settings, setSettings] = useState<MobizoneReceiptSettings>(DEFAULT_MOBIZONE_RECEIPT_SETTINGS);
@@ -54,13 +56,13 @@ export default function MobizoneReceiptSettingsScreen(): React.JSX.Element {
 
   return (
     <MzShell>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 8, paddingBottom: 20, gap }}>
         <MzScreenTitle
           title="Bill print settings"
           subtitle="Restaurant thermal bill · customer block always ON"
         />
 
-        <MzCard style={{ backgroundColor: mz.ink, borderColor: mz.accent }}>
+        <MzCard style={{ backgroundColor: mz.navyDeep, borderColor: mz.accent }}>
           <Text style={{ color: mz.accent, fontWeight: "800" }}>Always on bill</Text>
           <Text style={{ color: "rgba(233,238,243,0.7)", marginTop: 6, fontSize: 13 }}>
             Customer Name · Phone · CNIC · Address — restaurant style dashed layout

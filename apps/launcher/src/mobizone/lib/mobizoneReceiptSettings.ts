@@ -24,6 +24,10 @@ export type MobizoneReceiptSettings = {
   shopName: string;
   shopPhone: string;
   shopAddress: string;
+  /** Shop WhatsApp number — desktop master; mobile uses for send/footer. */
+  whatsappNumber: string;
+  /** Default ON for “Share on WhatsApp” after sale/purchase on mobile. */
+  whatsappDefaultOn: boolean;
   documentTitle: string;
   footerText: string;
   paperWidthMm: 58 | 80;
@@ -56,6 +60,8 @@ export const DEFAULT_MOBIZONE_RECEIPT_SETTINGS: MobizoneReceiptSettings = {
   shopName: "MobiZone",
   shopPhone: "",
   shopAddress: "",
+  whatsappNumber: "",
+  whatsappDefaultOn: true,
   documentTitle: "Sale Receipt",
   footerText: "Thank you for your business",
   paperWidthMm: 80,
@@ -88,12 +94,18 @@ function storageKey(branchCode: string): string {
   return `mobizone-receipt-settings-v1:${branchCode || "MAIN"}`;
 }
 
-function normalize(raw: Partial<MobizoneReceiptSettings> | null | undefined): MobizoneReceiptSettings {
+export function normalizeMobizoneReceiptSettings(
+  raw: Partial<MobizoneReceiptSettings> | null | undefined,
+): MobizoneReceiptSettings {
   const fields = { ...DEFAULT_MOBIZONE_RECEIPT_FIELDS, ...(raw?.fields ?? {}) };
+  const shopPhone = (raw?.shopPhone ?? "").trim();
+  const whatsappNumber = (raw?.whatsappNumber ?? shopPhone).trim();
   return {
     shopName: (raw?.shopName ?? DEFAULT_MOBIZONE_RECEIPT_SETTINGS.shopName).trim() || "MobiZone",
-    shopPhone: raw?.shopPhone ?? "",
+    shopPhone,
     shopAddress: raw?.shopAddress ?? "",
+    whatsappNumber,
+    whatsappDefaultOn: raw?.whatsappDefaultOn !== false,
     documentTitle: (raw?.documentTitle ?? DEFAULT_MOBIZONE_RECEIPT_SETTINGS.documentTitle).trim() || "Sale Receipt",
     footerText: raw?.footerText ?? DEFAULT_MOBIZONE_RECEIPT_SETTINGS.footerText,
     paperWidthMm: raw?.paperWidthMm === 58 ? 58 : 80,
@@ -104,10 +116,10 @@ function normalize(raw: Partial<MobizoneReceiptSettings> | null | undefined): Mo
 export function loadMobizoneReceiptSettings(branchCode: string): MobizoneReceiptSettings {
   try {
     const raw = localStorage.getItem(storageKey(branchCode));
-    if (!raw) return normalize(null);
-    return normalize(JSON.parse(raw) as Partial<MobizoneReceiptSettings>);
+    if (!raw) return normalizeMobizoneReceiptSettings(null);
+    return normalizeMobizoneReceiptSettings(JSON.parse(raw) as Partial<MobizoneReceiptSettings>);
   } catch {
-    return normalize(null);
+    return normalizeMobizoneReceiptSettings(null);
   }
 }
 
@@ -115,5 +127,18 @@ export function saveMobizoneReceiptSettings(
   branchCode: string,
   settings: MobizoneReceiptSettings,
 ): void {
-  localStorage.setItem(storageKey(branchCode), JSON.stringify(normalize(settings)));
+  localStorage.setItem(
+    storageKey(branchCode),
+    JSON.stringify(normalizeMobizoneReceiptSettings(settings)),
+  );
+}
+
+/** Digits for wa.me — prefers party phone, falls back to desktop-saved shop WhatsApp. */
+export function resolveWhatsAppTarget(
+  partyPhone: string | null | undefined,
+  settings: MobizoneReceiptSettings,
+): string {
+  const party = (partyPhone ?? "").replace(/\D/g, "");
+  if (party.length >= 10) return party;
+  return (settings.whatsappNumber || settings.shopPhone || "").replace(/\D/g, "");
 }
