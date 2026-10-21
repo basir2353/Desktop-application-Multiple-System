@@ -16,6 +16,7 @@ target/
 *.local
 local/live-env.json
 local/live-database.url
+local/google-drive.env
 local/.env
 local/.env.*
 

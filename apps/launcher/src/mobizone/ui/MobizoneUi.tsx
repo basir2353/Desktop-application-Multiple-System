@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { maybeUploadToGoogleDrive } from "../lib/googleDriveApi";
 import "../mobizone.css";
 
 export function MzPage({ children }: { children: ReactNode }): JSX.Element {
@@ -292,7 +293,8 @@ export function MzPhotoUpload({
     if (!file) return;
     try {
       const dataUrl = await readImageAsDataUrl(file);
-      onChange(dataUrl);
+      const stored = await maybeUploadToGoogleDrive(dataUrl, file.name);
+      onChange(stored);
       setCameraOpen(false);
     } catch {
       onChange(null);
@@ -306,9 +308,12 @@ export function MzPhotoUpload({
       return;
     }
     try {
-      onChange(compressVideoFrame(video));
-      setCameraOpen(false);
-      setCamErr(null);
+      const dataUrl = compressVideoFrame(video);
+      void maybeUploadToGoogleDrive(dataUrl, `camera-${Date.now()}.jpg`).then((stored) => {
+        onChange(stored);
+        setCameraOpen(false);
+        setCamErr(null);
+      });
     } catch {
       setCamErr("Capture failed — try Gallery.");
     }
@@ -396,7 +401,9 @@ export function formatFileSize(bytes: number): string {
 export function openDocumentAttachment(doc: MzDocumentFile): void {
   const a = document.createElement("a");
   a.href = doc.dataUrl;
-  a.download = doc.fileName;
+  if (!doc.dataUrl.startsWith("http")) {
+    a.download = doc.fileName;
+  }
   a.rel = "noopener";
   a.target = "_blank";
   document.body.appendChild(a);
@@ -438,12 +445,13 @@ export function MzDocumentUpload({
       }
       try {
         const dataUrl = await readDocumentAsDataUrl(file);
+        const stored = await maybeUploadToGoogleDrive(dataUrl, file.name);
         next.push({
           id: newDocId(),
           fileName: file.name,
           mimeType: file.type || null,
           sizeBytes: file.size,
-          dataUrl,
+          dataUrl: stored,
           uploadedAt: new Date().toISOString(),
         });
       } catch {

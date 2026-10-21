@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { maybeUploadToGoogleDrive } from "./googleDrive";
 import { captureWithCamera, type CaptureKind } from "./mediaCapture";
 import { useMz } from "./theme";
 
@@ -68,7 +69,11 @@ export function MzAttachStrip({
     try {
       const dataUrl = await captureWithCamera(slot.kind);
       if (!dataUrl) return;
-      onChange({ ...value, [slot.key]: dataUrl });
+      const stored = await maybeUploadToGoogleDrive(
+        dataUrl,
+        `${slot.kind}-${Date.now()}.jpg`,
+      );
+      onChange({ ...value, [slot.key]: stored });
     } catch (err) {
       Alert.alert("Camera", err instanceof Error ? err.message : "Could not open camera");
     } finally {

@@ -54,6 +54,7 @@ export const mobizoneNavItems: PopsNavItem[] = [
   },
   { type: "link", path: "mobizone/whatsapp", label: "WhatsApp" },
   { type: "link", path: "mobizone/receipt-settings", label: "Bill print settings" },
+  { type: "link", path: "mobizone/google-drive", label: "Google Drive" },
   { type: "link", path: "printer", label: "Receipt printer" },
   { type: "link", path: "sync", label: "Sync & backup" },
   { type: "link", path: "auth", label: "Users & roles" },

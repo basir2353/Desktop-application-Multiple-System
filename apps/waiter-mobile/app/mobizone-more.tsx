@@ -1,8 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Redirect, useRouter } from "expo-router";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { getApiBaseUrl } from "../src/lib/apiBase";
+import {
+  disconnectGoogleDrive,
+  fetchGoogleDriveStatus,
+  startGoogleDriveConnect,
+  type GoogleDriveStatus,
+} from "../src/mobizone/googleDrive";
 import { MzShell } from "../src/mobizone/MzShell";
 import { useMz, useMzLayout } from "../src/mobizone/theme";
 import { MzCard, MzScreenTitle } from "../src/mobizone/ui";
@@ -37,6 +44,20 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
   const branch = useBranchStore((s) => s.branch);
   const clearBranch = useBranchStore((s) => s.clear);
   const { db } = useMobizoneDb();
+  const [drive, setDrive] = useState<GoogleDriveStatus | null>(null);
+  const [driveBusy, setDriveBusy] = useState(false);
+
+  const refreshDrive = useCallback(async () => {
+    try {
+      setDrive(await fetchGoogleDriveStatus());
+    } catch {
+      setDrive(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDrive();
+  }, [refreshDrive]);
 
   if (!accessToken) return <Redirect href="/" />;
   if (extra?.appVariant && !isMobizoneApp) return <Redirect href="/home" />;
@@ -114,6 +135,100 @@ export default function MobizoneMoreScreen(): React.JSX.Element {
             <Ionicons name="chevron-forward" size={16} color={mz.muted} />
           </Pressable>
         ))}
+
+        <MzCard style={{ borderColor: mz.border, gap: 8 }}>
+          <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 11, letterSpacing: 0.6 }}>
+            GOOGLE DRIVE (OPTIONAL)
+          </Text>
+          <Text style={{ color: mz.muted, fontSize: 12, lineHeight: 16 }}>
+            Agar connect karo to photos / CNIC Drive pe save hongi. Warna pehle jaisa app mein hi
+            rahengi.
+          </Text>
+          {drive?.connected ? (
+            <Text style={{ color: mz.ink, fontWeight: "700", fontSize: 13 }}>
+              Connected{drive.email ? ` · ${drive.email}` : ""}
+            </Text>
+          ) : (
+            <Text style={{ color: mz.muted, fontSize: 12 }}>
+              {drive && !drive.configured
+                ? "Server pe Drive env set nahi (admin)."
+                : "Not connected"}
+            </Text>
+          )}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {drive?.configured && !drive.connected ? (
+              <Pressable
+                disabled={driveBusy}
+                onPress={() => {
+                  setDriveBusy(true);
+                  void startGoogleDriveConnect()
+                    .then(() =>
+                      Alert.alert(
+                        "Google Drive",
+                        "Browser mein Google sign-in complete karo, phir yahan Refresh dabao.",
+                      ),
+                    )
+                    .catch((err) =>
+                      Alert.alert(
+                        "Google Drive",
+                        err instanceof Error ? err.message : "Connect failed",
+                      ),
+                    )
+                    .finally(() => setDriveBusy(false));
+                }}
+                style={{
+                  backgroundColor: mz.accent,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: mz.onAccent, fontWeight: "800", fontSize: 12 }}>Connect</Text>
+              </Pressable>
+            ) : null}
+            {drive?.connected ? (
+              <Pressable
+                disabled={driveBusy}
+                onPress={() => {
+                  setDriveBusy(true);
+                  void disconnectGoogleDrive()
+                    .then(setDrive)
+                    .catch((err) =>
+                      Alert.alert(
+                        "Google Drive",
+                        err instanceof Error ? err.message : "Disconnect failed",
+                      ),
+                    )
+                    .finally(() => setDriveBusy(false));
+                }}
+                style={{
+                  backgroundColor: mz.dangerSoft,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: mz.dangerBorder,
+                }}
+              >
+                <Text style={{ color: mz.rose, fontWeight: "800", fontSize: 12 }}>Disconnect</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              disabled={driveBusy}
+              onPress={() => void refreshDrive()}
+              style={{
+                backgroundColor: mz.cardSoft,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: mz.border,
+              }}
+            >
+              <Text style={{ color: mz.ink, fontWeight: "700", fontSize: 12 }}>Refresh</Text>
+            </Pressable>
+          </View>
+        </MzCard>
 
         <MzCard style={{ borderColor: mz.accent, gap: 4 }}>
           <Text style={{ color: mz.accent, fontWeight: "800", fontSize: 11, letterSpacing: 0.6 }}>

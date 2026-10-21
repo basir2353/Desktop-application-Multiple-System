@@ -401,6 +401,13 @@ const icons: Record<string, (props: IconProps) => JSX.Element> = {
       <path d="M6 17h12v4H6z" />
     </Svg>
   ),
+  "Google Drive": (p) => (
+    <Svg {...p}>
+      <path d="M8 4l4 7H4l4-7z" />
+      <path d="M12 11l4 7H8l4-7z" />
+      <path d="M16 4l4 7h-8l4-7z" />
+    </Svg>
+  ),
 };
 
 export function PopsNavIcon({ label, className }: { label: string; className?: string }): JSX.Element {
